@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Equipos Consultores — Gestión de paneles</title>
+  <link rel="icon" href="assets/logo-equipos-vertical.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/estilo.css" />
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       CONFIGURACIÓN
+       Reemplazá `firebaseConfig` por la de TU proyecto Firebase
+       (Consola Firebase → Configuración del proyecto → Tus apps → Web).
+
+       Mientras esté sin configurar, la app arranca en MODO DEMO: datos
+       de ejemplo en memoria, sin backend y sin base. Sirve para recorrer
+       la interfaz; no guarda nada.
+  ═══════════════════════════════════════════════════════════════════ -->
+  <script>
+    window.firebaseConfig = {
+      apiKey:            "TU_API_KEY",
+      authDomain:        "TU_PROYECTO.firebaseapp.com",
+      projectId:         "TU_PROYECTO",
+      storageBucket:     "TU_PROYECTO.firebasestorage.app",
+      messagingSenderId: "TU_SENDER_ID",
+      appId:             "TU_APP_ID"
+    };
+
+    // Base de la API. Con Firebase Hosting, el rewrite de /api/** hacia la
+    // función `api` (ver firebase.json) hace que comparta origen con la SPA.
+    window.API_BASE = "/api";
+
+    // Versión del texto de consentimiento vigente. Queda guardada en cada
+    // consentimiento otorgado: es lo que hace demostrable qué consintió la
+    // persona. Al cambiar el texto, subí la versión acá.
+    window.VERSION_CONSENTIMIENTO = "consentimiento-2026-01";
+
+    window.APP_TZ = "America/Montevideo";
+  </script>
+</head>
+<body>
+  <div id="app">
+    <div class="center-screen"><div class="spinner"></div></div>
+  </div>
+  <div id="toast-wrap"></div>
+  <div id="modal-wrap"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
