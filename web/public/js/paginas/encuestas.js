@@ -341,7 +341,7 @@ function abrirIngesta(encuesta) {
   /* Editor de preguntas. */
   const preguntas$ = $('#preguntas', caja);
   const filaPregunta = (codigo = '', texto = '') => `
-    <div class="pick" style="display:grid;grid-template-columns:100px 1fr 110px 1fr 30px;gap:0.5rem;align-items:center">
+    <div class="pregunta-fila">
       <input type="text" class="p-codigo" placeholder="P1" value="${esc(codigo)}" />
       <input type="text" class="p-texto" placeholder="Texto de la pregunta" value="${esc(texto)}" />
       <select class="fselect p-tipo">
@@ -356,7 +356,7 @@ function abrirIngesta(encuesta) {
     preguntas$.insertAdjacentHTML('beforeend', filaPregunta(codigo, texto));
     preguntas$.lastElementChild.querySelector('.p-quitar').onclick = (e) => {
       e.preventDefault();
-      e.target.closest('.pick').remove();
+      e.target.closest('.pregunta-fila').remove();
     };
   };
   agregarFila();
@@ -410,7 +410,7 @@ function abrirIngesta(encuesta) {
       alerta$.innerHTML = alerta('Elegí la columna que identifica al respondente.');
       return;
     }
-    const preguntas = $$('.pick', preguntas$).map((fila, i) => ({
+    const preguntas = $$('.pregunta-fila', preguntas$).map((fila, i) => ({
       codigo: fila.querySelector('.p-codigo').value.trim(),
       texto: fila.querySelector('.p-texto').value.trim(),
       tipo: fila.querySelector('.p-tipo').value,

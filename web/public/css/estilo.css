@@ -371,3 +371,11 @@ tr.seleccionada td { background: var(--orange-light) !important; }
 
 /* Los botones de acción de las tablas no deben partirse en dos líneas. */
 td .btn, th .btn { white-space: nowrap; }
+
+/* ══ EDITOR DE PREGUNTAS (ingesta) ══ */
+/* Clase propia y no `.pick`: ahí los <input> son casillas de 16px. */
+.pregunta-fila { display: grid; grid-template-columns: 92px 1fr 108px 1fr 28px; gap: 0.5rem; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid #F0F0F0; }
+.pregunta-fila:last-of-type { border-bottom: none; }
+.pregunta-fila input, .pregunta-fila select { padding: 0.5rem 0.65rem; font-size: 0.8rem; }
+.pregunta-fila .p-quitar { justify-self: center; }
+@media (max-width: 620px) { .pregunta-fila { grid-template-columns: 1fr 1fr; } }
