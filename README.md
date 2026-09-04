@@ -91,9 +91,23 @@ paso de build).
    psql "$DSN_REMOTO" -f db/remoto/0001_init.sql
    ```
 
-2. **Proyecto Firebase** (uno solo): Auth con email/clave, Functions en Python,
-   Hosting y Firestore. Poner el id en `.firebaserc` y la config web en
-   `web/public/index.html`.
+2. **Proyecto Firebase `gestion-paneles`** (uno solo, ya fijado en
+   `.firebaserc`). Crearlo y habilitar lo que usa la app:
+
+   ```bash
+   firebase login
+   firebase projects:create gestion-paneles --display-name "Gestión de paneles"
+   firebase use gestion-paneles
+   firebase apps:create web "Admin de paneles"     # devuelve apiKey, senderId y appId
+   ```
+
+   En la consola: **Authentication** → habilitar *Correo electrónico/contraseña*;
+   **Firestore** → crear la base (modo producción; las reglas de este repo la
+   dejan cerrada salvo `usuarios/{uid}` de solo lectura).
+
+   Después pegar `apiKey`, `messagingSenderId` y `appId` en
+   `web/public/index.html`: el resto de la config ya está completa. Con la
+   `apiKey` puesta, la app deja el modo demo y pasa a pegarle al backend.
 
 3. **Secretos** por Secret Manager, nunca en el repo:
 
@@ -108,6 +122,12 @@ paso de build).
    `{ nombre, email, rol, activo: true }`. Roles: `admin`, `operaciones`
    (responsable de panel), `analista`, `dpo` (cumplimiento). Firestore no
    guarda ningún dato de panelista.
+
+   ```bash
+   npm install firebase-admin
+   gcloud auth application-default login
+   node scripts/alta_usuario.js ana@equipos.com.uy admin "Ana Pérez"
+   ```
 
 5. **Desplegar**: `firebase deploy`.
 
