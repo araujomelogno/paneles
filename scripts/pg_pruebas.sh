@@ -40,18 +40,18 @@ fi
 
 export PGHOST=localhost PGPORT="$PGPORT" PGUSER=postgres
 
-for base in paneles_local paneles_remoto; do
+for base in paneles_boveda paneles_semantica; do
   psql -q -d postgres -tAc "select 1 from pg_database where datname='$base'" \
     | grep -q 1 || createdb "$base"
 done
 
-psql -q -d paneles_local  -v ON_ERROR_STOP=1 -f "$RAIZ/db/local/0001_init.sql"       >/dev/null 2>&1 || true
-psql -q -d paneles_local  -v ON_ERROR_STOP=1 -f "$RAIZ/db/local/0002_revision_alta.sql" >/dev/null 2>&1 || true
-psql -q -d paneles_local  -v ON_ERROR_STOP=1 -f "$RAIZ/db/local/0003_baja_persona.sql"  >/dev/null 2>&1 || true
-psql -q -d paneles_remoto -v ON_ERROR_STOP=1 -f "$RAIZ/db/remoto/0001_init.sql"      >/dev/null 2>&1 || true
+psql -q -d paneles_boveda  -v ON_ERROR_STOP=1 -f "$RAIZ/db/boveda/0001_init.sql"       >/dev/null 2>&1 || true
+psql -q -d paneles_boveda  -v ON_ERROR_STOP=1 -f "$RAIZ/db/boveda/0002_revision_alta.sql" >/dev/null 2>&1 || true
+psql -q -d paneles_boveda  -v ON_ERROR_STOP=1 -f "$RAIZ/db/boveda/0003_baja_persona.sql"  >/dev/null 2>&1 || true
+psql -q -d paneles_semantica -v ON_ERROR_STOP=1 -f "$RAIZ/db/semantica/0001_init.sql"      >/dev/null 2>&1 || true
 
-export DSN_LOCAL="postgresql://postgres@localhost:$PGPORT/paneles_local"
-export DSN_REMOTO="postgresql://postgres@localhost:$PGPORT/paneles_remoto"
+export DSN_BOVEDA="postgresql://postgres@localhost:$PGPORT/paneles_boveda"
+export DSN_SEMANTICA="postgresql://postgres@localhost:$PGPORT/paneles_semantica"
 export EMBEDDINGS_PROVEEDOR=deterministico
-echo "DSN_LOCAL=$DSN_LOCAL"
-echo "DSN_REMOTO=$DSN_REMOTO"
+echo "DSN_BOVEDA=$DSN_BOVEDA"
+echo "DSN_SEMANTICA=$DSN_SEMANTICA"

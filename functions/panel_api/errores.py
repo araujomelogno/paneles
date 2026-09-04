@@ -52,7 +52,7 @@ class ConsentimientoFaltante(ErrorApi):
 
 
 class FugaDePII(ErrorApi):
-    """Guardrail R1.6: se intentó mandar PII al store remoto."""
+    """Guardrail R1.6: se intentó mandar PII al store semántico."""
 
     status = 500
     codigo = "fuga_de_pii"

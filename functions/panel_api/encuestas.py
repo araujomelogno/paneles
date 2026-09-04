@@ -1,11 +1,11 @@
 """R1.5 — Fielding de encuestas y vínculo de respuestas con `id_persona`.
 
-`encuesta.ref_estudio` (local) == `cuestionario.ref_estudio` (remoto): la
+`encuesta.ref_estudio` (bóveda) == `cuestionario.ref_estudio` (semántico): la
 misma uuid, generada al crear la encuesta. No hay FK entre stores; el cruce
 se resuelve por `ref_estudio` y por `id_persona`, y nada más.
 """
 
-from . import consentimiento, db, ingesta as mod_ingesta, remoto
+from . import consentimiento, db, ingesta as mod_ingesta, semantica
 from .errores import Conflicto, DatosInvalidos, NoEncontrado
 
 ESTADOS = ("borrador", "en_campo", "cerrada")
@@ -193,7 +193,7 @@ def marcar_respuesta(conn, encuesta_id, ids_persona, respondio=True):
     )
 
 
-def ingestar(conn_local, conn_remoto, encuesta_id, preguntas, filas,
+def ingestar(conn_boveda, conn_semantica, encuesta_id, preguntas, filas,
              columna_id="id_en_origen", origen=None, proveedor=None):
     """Gancho de fielding → ingesta semántica (R1.5).
 
@@ -201,9 +201,9 @@ def ingestar(conn_local, conn_remoto, encuesta_id, preguntas, filas,
     participaciones de esta ola (y, si hace falta, de `alias_origen`), y se
     lo pasa a la ingesta. La PII no entra en el mapa: solo el par de ids.
     """
-    encuesta = obtener(conn_local, encuesta_id)
+    encuesta = obtener(conn_boveda, encuesta_id)
 
-    participantes = listar_participacion(conn_local, encuesta_id)
+    participantes = listar_participacion(conn_boveda, encuesta_id)
     mapa = {
         p["id_en_origen"]: p["id_persona"]
         for p in participantes
@@ -217,8 +217,8 @@ def ingestar(conn_local, conn_remoto, encuesta_id, preguntas, filas,
         )
 
     resultado = mod_ingesta.ingestar(
-        conn_local,
-        conn_remoto,
+        conn_boveda,
+        conn_semantica,
         encuesta,
         preguntas,
         filas,
@@ -235,26 +235,26 @@ def ingestar(conn_local, conn_remoto, encuesta_id, preguntas, filas,
         if i in mapa
     ]
     if ids_con_respuesta:
-        marcar_respuesta(conn_local, encuesta_id, ids_con_respuesta, respondio=True)
+        marcar_respuesta(conn_boveda, encuesta_id, ids_con_respuesta, respondio=True)
 
     resultado["encuesta_id"] = encuesta_id
     return resultado
 
 
-def verificar_cruce(conn_local, conn_remoto, encuesta_id):
+def verificar_cruce(conn_boveda, conn_semantica, encuesta_id):
     """Comprueba el contrato de cruce entre stores para una encuesta.
 
     Es la verificación del DoD de R1.5 hecha desde la app: mismo
     `ref_estudio` de los dos lados, y las personas con respuestas del lado
-    remoto son exactamente las que participaron del lado local.
+    store semántico son exactamente las que participaron del lado de la bóveda.
     """
-    encuesta = obtener(conn_local, encuesta_id)
-    resumen = remoto.resumen_de_estudio(conn_remoto, encuesta["ref_estudio"])
-    participantes = {p["id_persona"] for p in listar_participacion(conn_local, encuesta_id)}
+    encuesta = obtener(conn_boveda, encuesta_id)
+    resumen = semantica.resumen_de_estudio(conn_semantica, encuesta["ref_estudio"])
+    participantes = {p["id_persona"] for p in listar_participacion(conn_boveda, encuesta_id)}
     return {
         "encuesta_id": encuesta_id,
         "ref_estudio": encuesta["ref_estudio"],
-        "local": {"convocados": len(participantes)},
-        "remoto": resumen,
+        "boveda": {"convocados": len(participantes)},
+        "semantica": resumen,
         "cruce_ok": resumen["individuos"] <= len(participantes),
     }

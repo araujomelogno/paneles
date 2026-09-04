@@ -1,7 +1,7 @@
 /* Encuestas — fielding, convocatoria e ingesta semántica (R1.5).
 
-   Acá se ve el puente entre stores: la encuesta local nace con un
-   `ref_estudio`, y la ingesta escribe del lado remoto el cuestionario con
+   Acá se ve el puente entre stores: la encuesta de la bóveda nace con un
+   `ref_estudio`, y la ingesta escribe del lado semántico el cuestionario con
    ese mismo uuid y las respuestas con el `id_persona` de cada panelista.
    Del archivo de campo solo cruza el id de la plataforma traducido a
    `id_persona`: la PII se queda en la bóveda. */
@@ -26,7 +26,7 @@ export async function render(main, ctx) {
   ]);
 
   main.innerHTML = encabezado('Encuestas', 'y olas',
-    'Cada encuesta nace con su ref_estudio: es la uuid que la ata a su cuestionario del lado remoto.') + `
+    'Cada encuesta nace con su ref_estudio: es la uuid que la ata a su cuestionario del lado semántico.') + `
     <div class="card">
       <div class="card-header"><span class="card-header-title">
         ${panelId ? esc(paneles.find((p) => p.id === panelId)?.nombre || 'Panel') : 'Todas las encuestas'}
@@ -81,7 +81,7 @@ function abrirNueva(paneles, panelPreseleccionado) {
       <div class="form-group"><label>Fecha de campo</label>
         <input type="date" name="fecha_campo" /></div>
       <div class="field-hint">Al crearla se genera su <code>ref_estudio</code>, que es lo que
-      después ata sus respuestas del lado remoto.</div>`,
+      después ata sus respuestas del lado semántico.</div>`,
     acciones: [
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
       { texto: 'Crear', clase: 'btn-orange', onClick: async (caja) => {
@@ -118,7 +118,7 @@ async function renderDetalle(main, encuestaId) {
           <dt>Estado</dt><dd>${estado(encuesta.estado, ESTADO_ETIQUETA[encuesta.estado])}</dd>
           <dt>ref_estudio</dt>
           <dd>${token(encuesta.ref_estudio, encuesta.ref_estudio)}
-            <div class="field-hint">La misma uuid identifica al cuestionario del lado remoto.
+            <div class="field-hint">La misma uuid identifica al cuestionario del lado semántico.
             No hay clave foránea entre stores: el cruce es por esta uuid y por id_persona.</div></dd>
         </dl>
       </div>
@@ -137,7 +137,7 @@ async function renderDetalle(main, encuestaId) {
       <div class="card-header"><span class="card-header-title">Cruce entre stores</span>
         <button class="btn btn-outline btn-sm" id="verificar">Verificar</button></div>
       <div class="card-body"><div id="cruce" class="muted small">
-        Verificá que lo que quedó del lado remoto se corresponde con lo convocado acá.
+        Verificá que lo que quedó del lado semántico se corresponde con lo convocado acá.
       </div></div>
     </div>`;
 
@@ -299,7 +299,7 @@ function abrirIngesta(encuesta) {
     cuerpo: `
       <div id="ing-alerta"></div>
       <div class="aviso">
-        <h4>Qué cruza al store remoto</h4>
+        <h4>Qué cruza al store semántico</h4>
         <p>Solo el <code>id_persona</code>, el <code>ref_estudio</code>, el texto de la
         respuesta y su embedding. El id de la plataforma de campo se traduce a
         <code>id_persona</code> <strong>en la bóveda</strong>; ninguna PII sale de acá.</p>
@@ -457,24 +457,24 @@ async function verificarCruce(encuestaId) {
     const cruce = await api.encuestas.cruce(encuestaId);
     contenedor.innerHTML = `
       <div class="resultado">
-        <div class="r"><div class="r-num">${cruce.local.convocados}</div>
-          <div class="r-label">Convocados (local)</div></div>
-        <div class="r"><div class="r-num">${cruce.remoto.individuos}</div>
-          <div class="r-label">Individuos (remoto)</div></div>
-        <div class="r"><div class="r-num">${cruce.remoto.preguntas}</div>
+        <div class="r"><div class="r-num">${cruce.boveda.convocados}</div>
+          <div class="r-label">Convocados (bóveda)</div></div>
+        <div class="r"><div class="r-num">${cruce.semantica.individuos}</div>
+          <div class="r-label">Individuos (semántico)</div></div>
+        <div class="r"><div class="r-num">${cruce.semantica.preguntas}</div>
           <div class="r-label">Preguntas</div></div>
-        <div class="r"><div class="r-num">${cruce.remoto.respuestas}</div>
+        <div class="r"><div class="r-num">${cruce.semantica.respuestas}</div>
           <div class="r-label">Respuestas</div></div>
       </div>
       <div class="alert ${cruce.cruce_ok ? 'alert-success' : 'alert-error'}">
         ${cruce.cruce_ok
-          ? 'Los dos stores comparten el mismo ref_estudio y las personas del remoto salen de lo convocado acá.'
-          : 'El remoto tiene individuos que no fueron convocados en esta encuesta. Revisar.'}
+          ? 'Los dos stores comparten el mismo ref_estudio y las personas del store semántico salen de lo convocado acá.'
+          : 'El store semántico tiene individuos que no fueron convocados en esta encuesta. Revisar.'}
       </div>`;
   } catch (error) {
     contenedor.innerHTML = alerta(
       error.status === 404
-        ? 'Esta encuesta todavía no tiene nada del lado remoto: falta ingestar.'
+        ? 'Esta encuesta todavía no tiene nada del lado semántico: falta ingestar.'
         : error.message,
       error.status === 404 ? 'info' : 'error');
   }

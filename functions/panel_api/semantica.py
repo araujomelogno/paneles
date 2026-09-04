@@ -1,10 +1,10 @@
-"""Cliente del store remoto (Postgres + pgvector).
+"""Cliente del store semántico (Postgres + pgvector).
 
 Es el único módulo que escribe del otro lado. Toda escritura pasa primero
 por el guardrail de PII (R1.6): si un payload trae una clave de PII, la
 operación aborta antes de tocar la base.
 
-Lo único que viaja al remoto: `id_persona`, `ref_estudio`, metadatos del
+Lo único que viaja al store semántico: `id_persona`, `ref_estudio`, metadatos del
 cuestionario y de las preguntas, el texto de respuesta ya despersonalizado
 y su embedding.
 """
@@ -23,7 +23,7 @@ def _vector(valores):
 def asegurar_cuestionario(conn, ref_estudio, nombre, fecha_campo=None, metadata=None):
     """Crea (o recupera) el cuestionario del estudio. Idempotente por
     `ref_estudio`, que es la misma uuid que `encuesta.ref_estudio` del
-    store local: ese es el puente entre los dos stores."""
+    store de bóveda: ese es el puente entre los dos stores."""
     metadata = metadata or {}
     pii.validar_sin_pii({"nombre": nombre, "metadata": metadata}, contexto="cuestionario")
 
@@ -45,7 +45,7 @@ def asegurar_cuestionario(conn, ref_estudio, nombre, fecha_campo=None, metadata=
 def asegurar_individuos(conn, ids_persona):
     """Crea los `individuo` que falten y devuelve `{id_persona: individuo_id}`.
 
-    Un `individuo` remoto es un token opaco y nada más: no tiene ni puede
+    Un `individuo` del store semántico es un token opaco y nada más: no tiene ni puede
     tener PII.
     """
     ids = [str(i) for i in dict.fromkeys(ids_persona)]
@@ -136,7 +136,7 @@ def upsert_respuestas(conn, respuestas):
 def borrar_persona(conn, id_persona):
     """Borra el individuo y, en cascada, todas sus respuestas y embeddings.
 
-    Es el lado remoto de la cascada de retiro de consentimiento.
+    Es el lado semántico de la cascada de retiro de consentimiento.
     """
     n = db.ejecutar(conn, "delete from individuo where id_persona = %s", (str(id_persona),))
     return {"id_persona": str(id_persona), "individuos_borrados": n}
@@ -161,7 +161,7 @@ def borrar_respuestas_de_estudio(conn, id_persona, ref_estudio):
 
 
 def auditar_columnas(conn):
-    """Auditoría en vivo del esquema remoto: columnas con nombre de PII.
+    """Auditoría en vivo del esquema semántico: columnas con nombre de PII.
 
     Complementa la auditoría estática del DDL, por si alguien agregó una
     columna a mano en la base (cosa que CLAUDE.md prohíbe, pero se verifica
@@ -188,10 +188,10 @@ def auditar_columnas(conn):
 
 
 def resumen_de_estudio(conn, ref_estudio):
-    """Cuántas respuestas y personas quedaron del lado remoto para un estudio.
+    """Cuántas respuestas y personas quedaron del lado semántico para un estudio.
 
     Es la verificación de R1.5 desde la UI: si el número cierra con las
-    participaciones locales, el puente `ref_estudio` funcionó.
+    participaciones de la bóveda, el puente `ref_estudio` funcionó.
     """
     fila = db.una(
         conn,
@@ -211,7 +211,7 @@ def resumen_de_estudio(conn, ref_estudio):
         (str(ref_estudio),),
     )
     if not fila:
-        raise NoEncontrado(f"El store remoto no tiene el estudio {ref_estudio}.")
+        raise NoEncontrado(f"El store semántico no tiene el estudio {ref_estudio}.")
     return {
         "ref_estudio": str(ref_estudio),
         "nombre": fila["nombre"],

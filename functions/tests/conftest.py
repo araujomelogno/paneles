@@ -4,7 +4,7 @@ Corren contra un Postgres real (no hay dobles de la base): el dedup, el gate
 de consentimiento y la cascada dependen de índices únicos, de `on delete
 cascade` y de pgvector, así que probarlos contra un fake no probaría nada.
 
-`scripts/pg_pruebas.sh` levanta el cluster y exporta DSN_LOCAL y DSN_REMOTO.
+`scripts/pg_pruebas.sh` levanta el cluster y exporta DSN_BOVEDA y DSN_SEMANTICA.
 Sin esas variables, las pruebas que necesitan base se saltean; las que no
 (auditoría de PII sobre el DDL, ruteo) corren igual.
 """
@@ -18,12 +18,12 @@ import pytest
 RAIZ = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(RAIZ / "functions"))
 
-TABLAS_LOCALES = [
+TABLAS_BOVEDA = [
     "alta_en_revision", "persona_borrada", "canje", "puntos_movimiento",
     "objetivo_composicion", "participacion", "encuesta", "consentimiento",
     "membresia", "alias_origen", "panel", "persona", "catalogo_premio",
 ]
-TABLAS_REMOTAS = ["respuesta", "pregunta", "individuo", "cuestionario"]
+TABLAS_SEMANTICA = ["respuesta", "pregunta", "individuo", "cuestionario"]
 
 VERSION_TEXTO = "consentimiento-2026-01"
 
@@ -36,26 +36,26 @@ def _conectar(dsn):
 
 
 @pytest.fixture(scope="session")
-def dsn_local():
-    dsn = os.environ.get("DSN_LOCAL")
+def dsn_boveda():
+    dsn = os.environ.get("DSN_BOVEDA")
     if not dsn:
-        pytest.skip("Sin DSN_LOCAL: correr `source scripts/pg_pruebas.sh` primero.")
+        pytest.skip("Sin DSN_BOVEDA: correr `source scripts/pg_pruebas.sh` primero.")
     return dsn
 
 
 @pytest.fixture(scope="session")
-def dsn_remoto():
-    dsn = os.environ.get("DSN_REMOTO")
+def dsn_semantica():
+    dsn = os.environ.get("DSN_SEMANTICA")
     if not dsn:
-        pytest.skip("Sin DSN_REMOTO: correr `source scripts/pg_pruebas.sh` primero.")
+        pytest.skip("Sin DSN_SEMANTICA: correr `source scripts/pg_pruebas.sh` primero.")
     return dsn
 
 
 @pytest.fixture
-def local(dsn_local):
-    conn = _conectar(dsn_local)
+def conn_boveda(dsn_boveda):
+    conn = _conectar(dsn_boveda)
     with conn.cursor() as cur:
-        cur.execute(f"truncate {', '.join(TABLAS_LOCALES)} restart identity cascade")
+        cur.execute(f"truncate {', '.join(TABLAS_BOVEDA)} restart identity cascade")
     conn.commit()
     yield conn
     conn.rollback()
@@ -63,12 +63,12 @@ def local(dsn_local):
 
 
 @pytest.fixture
-def remota(dsn_remoto):
-    """Conexión al store remoto. Se llama `remota` y no `remoto` para no
-    tapar al módulo `panel_api.remoto` en los tests que lo importan."""
-    conn = _conectar(dsn_remoto)
+def conn_semantica(dsn_semantica):
+    """Conexión al store semántico. Las fixtures se llaman `conn_*` porque son
+    conexiones, y así no tapan al módulo `panel_api.semantica`."""
+    conn = _conectar(dsn_semantica)
     with conn.cursor() as cur:
-        cur.execute(f"truncate {', '.join(TABLAS_REMOTAS)} restart identity cascade")
+        cur.execute(f"truncate {', '.join(TABLAS_SEMANTICA)} restart identity cascade")
     conn.commit()
     yield conn
     conn.rollback()

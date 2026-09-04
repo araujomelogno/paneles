@@ -4,7 +4,7 @@
  * Firestore (`usuarios/{uid}`) con el rol.
  *
  * El padrón es de personal de Equipos. Acá no va ningún dato de panelista:
- * la PII de panelistas vive solo en el store local (ver CLAUDE.md).
+ * la PII de panelistas vive solo en el store de bóveda (ver CLAUDE.md).
  *
  * Uso:
  *   npm install firebase-admin

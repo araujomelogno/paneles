@@ -7,19 +7,19 @@ Empezá leyendo `CLAUDE.md`, después el PRD, y desarrollá por fases empezando 
 
 | Archivo | Qué es | Destino en el repo |
 |---|---|---|
-| `CLAUDE.md` | Contexto persistente: invariantes (dos stores, PII nunca al remoto), identidad, reglas de negocio, stack. **Léelo primero y siempre.** | raíz `/` |
+| `CLAUDE.md` | Contexto persistente: invariantes (dos stores, PII nunca al store semántico), identidad, reglas de negocio, stack. **Léelo primero y siempre.** | raíz `/` |
 | `PRD_gestion_de_paneles_detallado.md` | PRD del sistema: problema, objetivos, no-objetivos, arquitectura, y las 4 fases con requisitos (R1.x…R4.x), criterios de aceptación y DoD. Documento **autoritativo** de producto. | `docs/` |
 | `PRD_consulta_semantica_cuestionarios.md` | Spec del **módulo de consulta semántica** (mecánica interna del motor: modelo vectorial, ingesta, embeddings, ranking, verificación con Claude). Es un módulo de este sistema, no un producto aparte. | `docs/` |
 | `HANDOFF_fase1.md` | Work order de la **Fase 1**: alcance, superficie de API mapeada a R1.x, lógica de dedup, máquina de estados de consentimiento, contrato de cruce entre stores, DoD. **Primer sprint.** | `docs/` |
-| `db/local/0001_init.sql` | DDL del **store local** (Cloud SQL): bóveda de identidad (PII + demográficos) + módulo de paneles. | `db/local/` |
-| `db/remoto/0001_init.sql` | DDL del **store remoto** (Cloud SQL + pgvector): contenido semántico (embeddings + `id_persona`). | `db/remoto/` |
+| `db/boveda/0001_init.sql` | DDL del **store de bóveda** (Cloud SQL): bóveda de identidad (PII + demográficos) + módulo de paneles. | `db/boveda/` |
+| `db/semantica/0001_init.sql` | DDL del **store semántico** (Cloud SQL + pgvector): contenido semántico (embeddings + `id_persona`). | `db/semantica/` |
 
 ## Orden de lectura para Claude Code
 
-1. `CLAUDE.md` — invariantes y stack (no violar la regla de "PII nunca al remoto").
+1. `CLAUDE.md` — invariantes y stack (no violar la regla de "PII nunca al store semántico").
 2. `PRD_gestion_de_paneles_detallado.md` — qué se construye y por qué; las 4 fases.
 3. `PRD_consulta_semantica_cuestionarios.md` — cómo funciona el motor por dentro.
-4. `db/local/0001_init.sql` + `db/remoto/0001_init.sql` — el modelo de datos.
+4. `db/boveda/0001_init.sql` + `db/semantica/0001_init.sql` — el modelo de datos.
 5. `HANDOFF_fase1.md` — el primer sprint, acotado.
 6. `functions/panel_api/ingesta.py` — el pipeline de ingesta implementado.
 
@@ -32,8 +32,8 @@ Empezá leyendo `CLAUDE.md`, después el PRD, y desarrollá por fases empezando 
 ├─ firebase.json  .firebaserc  firestore.rules
 ├─ docs/                      PRDs y handoff de fase
 ├─ db/
-│  ├─ local/                  migraciones del store local (bóveda + paneles)
-│  └─ remoto/                 migraciones del store remoto (pgvector)
+│  ├─ boveda/                 migraciones de la bóveda (PII + paneles)
+│  └─ semantica/              migraciones del store semántico (pgvector)
 ├─ functions/                 Cloud Functions for Firebase (Python)
 │  ├─ main.py                 punto de entrada HTTP: /api/**
 │  ├─ panel_api/              el núcleo de dominio
@@ -48,7 +48,7 @@ Empezá leyendo `CLAUDE.md`, después el PRD, y desarrollá por fases empezando 
 ## Stack (resumen; detalle en `CLAUDE.md`)
 
 - **App:** Firebase — Auth + Cloud Functions (Python) + Hosting.
-- **Datos:** dos instancias **Cloud SQL for Postgres** separadas — local (bóveda + paneles) y remota (vector, con pgvector). Nunca en la misma instancia.
+- **Datos:** dos instancias **Cloud SQL for Postgres** separadas — bóveda (PII + paneles) y semántica (vector, con pgvector). Nunca en la misma instancia.
 - **Embeddings:** Voyage `voyage-3.5` (1024 dims) por defecto, detrás de una interfaz para cambiar de proveedor.
 
 ## Cómo arrancar
@@ -82,13 +82,13 @@ paso de build).
 ### Puesta en marcha real
 
 1. **Dos instancias Cloud SQL for Postgres**, separadas — nunca la misma. En la
-   remota, `create extension vector`. Aplicar las migraciones en orden:
+   semántica, `create extension vector`. Aplicar las migraciones en orden:
 
    ```bash
-   psql "$DSN_LOCAL"  -f db/local/0001_init.sql
-   psql "$DSN_LOCAL"  -f db/local/0002_revision_alta.sql
-   psql "$DSN_LOCAL"  -f db/local/0003_baja_persona.sql
-   psql "$DSN_REMOTO" -f db/remoto/0001_init.sql
+   psql "$DSN_BOVEDA"  -f db/boveda/0001_init.sql
+   psql "$DSN_BOVEDA"  -f db/boveda/0002_revision_alta.sql
+   psql "$DSN_BOVEDA"  -f db/boveda/0003_baja_persona.sql
+   psql "$DSN_SEMANTICA" -f db/semantica/0001_init.sql
    ```
 
 2. **Proyecto Firebase `gestion-paneles`** (uno solo, ya fijado en
@@ -112,8 +112,8 @@ paso de build).
 3. **Secretos** por Secret Manager, nunca en el repo:
 
    ```bash
-   firebase functions:secrets:set DSN_LOCAL
-   firebase functions:secrets:set DSN_REMOTO
+   firebase functions:secrets:set DSN_BOVEDA
+   firebase functions:secrets:set DSN_SEMANTICA
    firebase functions:secrets:set EMBEDDINGS_API_KEY
    ```
 
@@ -131,6 +131,23 @@ paso de build).
 
 5. **Desplegar**: `firebase deploy`.
 
+   El `predeploy` de `firebase.json` crea el `venv` de `functions/` e instala
+   `requirements.txt` antes de cada deploy: `firebase-tools` lo necesita para
+   descubrir las funciones Python, y sin él falla con *«Missing virtual
+   environment at venv directory»*. Si preferís armarlo a mano:
+
+   ```bash
+   cd functions && python3.11 -m venv venv && venv/bin/pip install -r requirements.txt
+   ```
+
+   Los tres secretos del paso 3 tienen que **existir antes** del primer deploy:
+   la función los declara y Cloud Functions falla si alguno no está en Secret
+   Manager. Si todavía no hay Cloud SQL, se pueden crear con un valor de relleno
+   para que el deploy pase, y actualizarlos después.
+
+   Para desplegar por partes: `firebase deploy --only hosting`,
+   `--only functions`, `--only firestore:rules`.
+
 ## Fase 1 — qué está implementado
 
 | Requisito | Dónde |
@@ -140,7 +157,7 @@ paso de build).
 | R1.3 consentimiento por finalidad | `panel_api/consentimiento.py` |
 | R1.4 paneles y membresía N:M | `panel_api/paneles.py` |
 | R1.5 fielding y vínculo de respuestas | `panel_api/encuestas.py` + `ingesta.py` |
-| R1.6 separación de stores | `panel_api/pii.py` + `panel_api/remoto.py` |
+| R1.6 separación de stores | `panel_api/pii.py` + `panel_api/semantica.py` |
 | Cascada de baja | `panel_api/bajas.py` |
 
 ## Decisiones pendientes (no bloquean el arranque de la Fase 1)

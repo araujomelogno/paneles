@@ -1,8 +1,8 @@
 """Contexto de una request: las dos conexiones y el proveedor de embeddings.
 
-El remoto se abre en forma perezosa: la mayoría de las rutas de Fase 1 no lo
-tocan, y cada conexión de más al store de embeddings es superficie de
-exposición que no hace falta abrir.
+El store semántico se abre en forma perezosa: la mayoría de las rutas de la
+Fase 1 no lo tocan, y cada conexión de más al store de embeddings es
+superficie de exposición que no hace falta abrir.
 """
 
 import contextlib
@@ -11,19 +11,19 @@ from . import config, db, embeddings as mod_embeddings
 
 
 class Contexto:
-    def __init__(self, conn_local, cfg=None):
-        self.local = conn_local
+    def __init__(self, conn_boveda, cfg=None):
+        self.boveda = conn_boveda
         self.cfg = cfg
-        self._remoto = None
+        self._semantica = None
         self._embeddings = None
         self._pila = contextlib.ExitStack()
 
     @property
-    def remoto(self):
-        if self._remoto is None:
+    def semantica(self):
+        if self._semantica is None:
             cfg = self.cfg or config.cargar()
-            self._remoto = self._pila.enter_context(db.conectar(cfg.dsn_remoto))
-        return self._remoto
+            self._semantica = self._pila.enter_context(db.conectar(cfg.dsn_semantica))
+        return self._semantica
 
     @property
     def embeddings(self):
@@ -33,14 +33,14 @@ class Contexto:
 
     def cerrar(self):
         self._pila.close()
-        self._remoto = None
+        self._semantica = None
 
 
 @contextlib.contextmanager
 def abrir(cfg=None):
     cfg = cfg or config.cargar()
-    with db.conectar(cfg.dsn_local) as conn_local:
-        ctx = Contexto(conn_local, cfg)
+    with db.conectar(cfg.dsn_boveda) as conn_boveda:
+        ctx = Contexto(conn_boveda, cfg)
         try:
             yield ctx
         finally:

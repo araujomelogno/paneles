@@ -15,14 +15,17 @@ from firebase_functions import https_fn, options
 from panel_api import auth, config, contexto, ruteo
 from panel_api.errores import ErrorApi
 
-firebase_admin.initialize_app()
+# Idempotente: el descubrimiento de funciones y el emulador pueden cargar
+# este módulo más de una vez, y initialize_app() falla si ya hay app default.
+if not firebase_admin._apps:
+    firebase_admin.initialize_app()
 
 # Debe coincidir con FUNCTIONS_REGION en el frontend.
 REGION = "us-central1"
 
 SECRETOS = [
-    "DSN_LOCAL",       # store local: bóveda de PII + paneles
-    "DSN_REMOTO",      # store remoto: embeddings (instancia distinta)
+    "DSN_BOVEDA",         # bóveda: PII + módulo de paneles
+    "DSN_SEMANTICA",      # store semántico: embeddings (instancia distinta)
     "EMBEDDINGS_API_KEY",
 ]
 

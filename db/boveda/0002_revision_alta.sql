@@ -1,5 +1,5 @@
 -- ============================================================
---  STORE LOCAL — Migración 0002
+--  STORE DE BÓVEDA — Migración 0002
 --  Altas en revisión (dedup ambiguo) + índice de apoyo al dedup.
 --
 --  El HANDOFF de Fase 1 define un caso de dedup que no fusiona:
@@ -11,7 +11,7 @@
 -- Alta que quedó pendiente de decisión humana: no creó persona todavía.
 create table alta_en_revision (
   id                bigint generated always as identity primary key,
-  -- Payload del alta tal como llegó (PII: vive solo en el store local).
+  -- Payload del alta tal como llegó (PII: vive solo en el store de bóveda).
   datos             jsonb  not null,
   -- Candidatas con las que hubo match ambiguo: [{"id_persona": "...", "motivo": "..."}]
   candidatos        jsonb  not null default '[]'::jsonb,

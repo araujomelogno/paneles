@@ -40,7 +40,7 @@ Equipos corre muchos estudios de investigación de mercado cuyos microdatos son 
 - Como responsable de datos, quiero que el mismo individuo sea reconocido entre estudios mediante un identificador estable, para habilitar el cruce.
 
 **Responsable de cumplimiento (DPO)**
-- Como DPO, quiero que la PII quede en una bóveda local separada y que el store analítico solo maneje tokens opacos, para minimizar el riesgo de reidentificación.
+- Como DPO, quiero que la PII quede en una bóveda separada y que el store analítico solo maneje tokens opacos, para minimizar el riesgo de reidentificación.
 - Como DPO, quiero poder atender derechos del titular operando sobre la bóveda, para cumplir con URCDP.
 
 **Casos borde**
@@ -57,8 +57,8 @@ Equipos corre muchos estudios de investigación de mercado cuyos microdatos son 
 - [ ] `individuo` no guarda PII, solo el token opaco.
 - [ ] `respuesta` tiene índice vectorial HNSW y unicidad por (individuo, pregunta).
 
-**Bóveda de identidad local.** Store separado que mapea PII ↔ `id_persona`, con token aleatorio y opaco (no derivado de la PII).
-- [ ] La PII nunca se escribe en el store remoto.
+**Bóveda de identidad.** Store separado que mapea PII ↔ `id_persona`, con token aleatorio y opaco (no derivado de la PII).
+- [ ] La PII nunca se escribe en el store semántico.
 - [ ] El mismo individuo obtiene el mismo `id_persona` entre estudios.
 
 **Pipeline de ingesta.** Desde archivo de cuestionario + Excel ancho de respuestas.
@@ -103,7 +103,7 @@ Equipos corre muchos estudios de investigación de mercado cuyos microdatos son 
 
 ## Open Questions
 
-- **[datos/legal]** ¿El identificador de persona es opaco, o es un valor sensible (p. ej. cédula) que debe tokenizarse en la bóveda antes de llegar al store remoto? *(bloqueante para la ingesta)*
+- **[datos/legal]** ¿El identificador de persona es opaco, o es un valor sensible (p. ej. cédula) que debe tokenizarse en la bóveda antes de llegar al store semántico? *(bloqueante para la ingesta)*
 - **[legal]** Base legal y consentimiento para el perfilado entre estudios bajo URCDP; tratamiento de datos sensibles (opinión política, salud) que aparezcan dentro de respuestas abiertas. *(bloqueante)*
 - **[datos]** Proveedor y dimensión de embeddings (Voyage 3.5 / OpenAI / self-hosted): costo, calidad en español rioplatense y residencia de datos.
 - **[ingeniería]** Dónde vive la orquestación de la consulta: n8n vs. un backend propio.
