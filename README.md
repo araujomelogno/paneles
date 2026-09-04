@@ -131,6 +131,23 @@ paso de build).
 
 5. **Desplegar**: `firebase deploy`.
 
+   El `predeploy` de `firebase.json` crea el `venv` de `functions/` e instala
+   `requirements.txt` antes de cada deploy: `firebase-tools` lo necesita para
+   descubrir las funciones Python, y sin él falla con *«Missing virtual
+   environment at venv directory»*. Si preferís armarlo a mano:
+
+   ```bash
+   cd functions && python3.11 -m venv venv && venv/bin/pip install -r requirements.txt
+   ```
+
+   Los tres secretos del paso 3 tienen que **existir antes** del primer deploy:
+   la función los declara y Cloud Functions falla si alguno no está en Secret
+   Manager. Si todavía no hay Cloud SQL, se pueden crear con un valor de relleno
+   para que el deploy pase, y actualizarlos después.
+
+   Para desplegar por partes: `firebase deploy --only hosting`,
+   `--only functions`, `--only firestore:rules`.
+
 ## Fase 1 — qué está implementado
 
 | Requisito | Dónde |

@@ -1,15 +1,30 @@
 {
   "hosting": {
     "public": "web/public",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
     "rewrites": [
-      { "source": "/api/**", "function": "api" },
-      { "source": "**", "destination": "/index.html" }
+      {
+        "source": "/api/**",
+        "function": "api"
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
     ],
     "headers": [
       {
         "source": "**/*.@(js|css)",
-        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
       }
     ]
   },
@@ -18,7 +33,18 @@
       "source": "functions",
       "codebase": "default",
       "runtime": "python311",
-      "ignore": ["venv", ".git", "__pycache__", "tests", ".pytest_cache"]
+      "ignore": [
+        "venv",
+        ".venv",
+        ".git",
+        "__pycache__",
+        "tests",
+        ".pytest_cache",
+        "pytest.ini"
+      ],
+      "predeploy": [
+        "cd \"$RESOURCE_DIR\" && (test -d venv || python3.11 -m venv venv) && venv/bin/pip install --quiet --disable-pip-version-check -r requirements.txt"
+      ]
     }
   ],
   "firestore": {
@@ -26,10 +52,20 @@
     "indexes": "firestore.indexes.json"
   },
   "emulators": {
-    "auth": { "port": 9099 },
-    "functions": { "port": 5001 },
-    "firestore": { "port": 8080 },
-    "hosting": { "port": 5000 },
-    "ui": { "enabled": true }
+    "auth": {
+      "port": 9099
+    },
+    "functions": {
+      "port": 5001
+    },
+    "firestore": {
+      "port": 8080
+    },
+    "hosting": {
+      "port": 5000
+    },
+    "ui": {
+      "enabled": true
+    }
   }
 }
