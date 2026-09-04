@@ -1,15 +1,15 @@
-"""Guardrail R1.6 — la PII nunca se escribe en el store remoto.
+"""Guardrail R1.6 — la PII nunca se escribe en el store semántico.
 
 Dos controles, uno estático y uno en tiempo de ejecución:
 
-* `auditar_esquema(sql)` lee el DDL del store remoto y devuelve las
+* `auditar_esquema(sql)` lee el DDL del store semántico y devuelve las
   columnas cuyo nombre delata PII. La prueba del DoD ("0 columnas de PII
-  en el store remoto") corre sobre esto.
+  en el store semántico") corre sobre esto.
 * `validar_sin_pii(payload)` inspecciona todo diccionario que esté por
-  salir hacia el remoto. Si aparece una clave de PII, la operación
+  salir hacia el store semántico. Si aparece una clave de PII, la operación
   aborta: es preferible romper la ingesta a filtrar un dato.
 
-Al remoto solo pueden viajar: `id_persona`, `ref_estudio`, metadatos de
+Al store semántico solo pueden viajar: `id_persona`, `ref_estudio`, metadatos de
 cuestionario y pregunta, el texto de respuesta ya despersonalizado y su
 embedding.
 """
@@ -18,7 +18,7 @@ import re
 
 from .errores import FugaDePII
 
-# Campos de PII de la bóveda (`persona`, en db/local/0001_init.sql) más los
+# Campos de PII de la bóveda (`persona`, en db/boveda/0001_init.sql) más los
 # sinónimos habituales con los que podrían colarse desde una plataforma
 # externa (Dooblo, Alchemer) o desde un Excel de campo.
 CAMPOS_PII = frozenset({
@@ -61,11 +61,11 @@ def campos_pii_en(payload, contexto=""):
 
 
 def validar_sin_pii(payload, contexto=""):
-    """Aborta si `payload` lleva PII. Se llama antes de cada escritura remota."""
+    """Aborta si `payload` lleva PII. Se llama antes de cada escritura al store semántico."""
     encontradas = campos_pii_en(payload, contexto)
     if encontradas:
         raise FugaDePII(
-            "Se intentó escribir PII en el store remoto; la operación se abortó.",
+            "Se intentó escribir PII en el store semántico; la operación se abortó.",
             {"contexto": contexto or "desconocido", "campos": encontradas},
         )
     return payload

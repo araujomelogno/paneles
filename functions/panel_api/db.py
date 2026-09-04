@@ -22,16 +22,16 @@ def conectar(dsn):
 
 
 @contextlib.contextmanager
-def local(cfg=None):
+def boveda(cfg=None):
     cfg = cfg or config.cargar()
-    with conectar(cfg.dsn_local) as conn:
+    with conectar(cfg.dsn_boveda) as conn:
         yield conn
 
 
 @contextlib.contextmanager
-def remoto(cfg=None):
+def semantica(cfg=None):
     cfg = cfg or config.cargar()
-    with conectar(cfg.dsn_remoto) as conn:
+    with conectar(cfg.dsn_semantica) as conn:
         yield conn
 
 

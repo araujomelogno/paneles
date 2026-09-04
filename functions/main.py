@@ -24,8 +24,8 @@ if not firebase_admin._apps:
 REGION = "us-central1"
 
 SECRETOS = [
-    "DSN_LOCAL",       # store local: bóveda de PII + paneles
-    "DSN_REMOTO",      # store remoto: embeddings (instancia distinta)
+    "DSN_BOVEDA",         # bóveda: PII + módulo de paneles
+    "DSN_SEMANTICA",      # store semántico: embeddings (instancia distinta)
     "EMBEDDINGS_API_KEY",
 ]
 

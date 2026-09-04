@@ -5,12 +5,12 @@ Referencia de producto: `PRD_gestion_de_paneles_detallado.md` y `PRD_consulta_se
 
 ## Invariante central: dos stores
 
-- **Local** (`esquema_local.sql`): Cloud SQL for Postgres, instancia separada de la remota. Bóveda de PII + módulo de paneles (paneles, membresías, consentimiento, participación, muestreo, gamificación). Los atributos demográficos (sexo, localidad, fecha de nacimiento → tramo etario) son **autoritativos acá**.
-- **Remoto** (`esquema_cuestionarios.sql`): Cloud SQL for Postgres + pgvector. **Solo** embeddings + `id_persona`. Contenido puro.
+- **Bóveda** (`db/boveda/`): Cloud SQL for Postgres, instancia separada de la semántica. PII + módulo de paneles (paneles, membresías, consentimiento, participación, muestreo, gamificación). Los atributos demográficos (sexo, localidad, fecha de nacimiento → tramo etario) son **autoritativos acá**.
+- **Semántico** (`db/semantica/`): Cloud SQL for Postgres + pgvector. **Solo** embeddings + `id_persona`. Contenido puro.
 
-**Regla dura #1: la PII nunca se escribe en el store remoto.** Al remoto solo viaja `id_persona`. Cualquier código que intente persistir nombre, email, celular, documento, fecha exacta u observaciones del lado remoto está mal.
+**Regla dura #1: la PII nunca se escribe en el store semántico.** Al store semántico solo viaja `id_persona`. Cualquier código que intente persistir nombre, email, celular, documento, fecha exacta u observaciones del lado semántico está mal.
 
-Cruce entre stores: por conjuntos de `id_persona`. Los dos lados comparten `ref_estudio` (uuid) para vincular `encuesta` (local) ↔ `cuestionario` (remoto). No hay FK entre stores; es una referencia lógica.
+Cruce entre stores: por conjuntos de `id_persona`. Los dos lados comparten `ref_estudio` (uuid) para vincular `encuesta` (bóveda) ↔ `cuestionario` (semántico). No hay FK entre stores; es una referencia lógica.
 
 ## Identidad
 
@@ -21,7 +21,7 @@ Cruce entre stores: por conjuntos de `id_persona`. Los dos lados comparten `ref_
 
 - No se puede convocar ni incluir en muestreo a una persona sin `consentimiento` **vigente** para la finalidad correspondiente.
 - El uso semántico entre estudios exige la finalidad `uso_semantico` vigente, **distinta** de `contacto_participacion`.
-- Baja / retiro de consentimiento ⇒ **borrado en cascada**: PII (local) + embeddings (remoto) + salida del muestreo.
+- Baja / retiro de consentimiento ⇒ **borrado en cascada**: PII (bóveda) + embeddings (semántico) + salida del muestreo.
 - Saldo de puntos siempre **>= 0**; sin sobregiro en canje; puntos con vencimiento. (No hay constraint DDL: se valida en la app / trigger.)
 - Se ganan puntos solo por participación de **calidad** (`respondio = true` y `calidad_estado = 'ok'`).
 
@@ -32,13 +32,13 @@ Capa de aplicación en **Firebase**; los datos en **Postgres**. Firebase NO reem
 - **Auth:** Firebase Auth (app admin y, más adelante, la landing de panelistas). Resuelve el modelo de auth.
 - **Backend / lógica:** Cloud Functions for Firebase, runtime **Python** (continuidad con `ingesta.py`); acceso a las bases vía el conector de Cloud SQL; `pgvector-python` para vectores.
 - **Frontend admin:** SPA (React) en Firebase Hosting.
-- **Store remoto (vector):** Cloud SQL for Postgres + pgvector (full GCP).
-- **Store local (bóveda + paneles):** Cloud SQL for Postgres, en una instancia dedicada y separada (proyecto/VPC aparte, acceso bloqueado). "Separado" = control de acceso, misma nube.
-- **Ambos stores en Cloud SQL**, en instancias distintas: nunca en la misma instancia (la separación local/remoto es parte del diseño de privacidad).
+- **Store semántico (vector):** Cloud SQL for Postgres + pgvector (full GCP).
+- **Bóveda (PII + paneles):** Cloud SQL for Postgres, en una instancia dedicada y separada (proyecto/VPC aparte, acceso bloqueado). "Separado" = control de acceso, misma nube.
+- **Ambos stores en Cloud SQL**, en instancias distintas: nunca en la misma instancia (la separación bóveda/semántico es parte del diseño de privacidad).
 - **Embeddings:** Voyage `voyage-3.5` (1024 dims) por defecto, detrás de una interfaz para cambiar de proveedor.
 
 ### Por qué los datos siguen en Postgres (no Firestore)
-La búsqueda semántica depende de **pgvector** y de consultas relacionales (joins respuesta↔pregunta↔persona, rollup a individuo, puente local↔remoto por `id_persona`, distancia a fuerza bruta sobre subconjuntos). Firestore no cubre ese patrón: su vector search es un KNN plano, sin joins ni agregación. Y el módulo de paneles necesita integridad relacional (membresías N:M, estados de consentimiento, ledger de puntos con saldo ≥ 0, índices únicos de dedup). Mover los datos a Firestore sería deshacer el diseño. Firebase se usa para auth, funciones y hosting; los datos, en Postgres.
+La búsqueda semántica depende de **pgvector** y de consultas relacionales (joins respuesta↔pregunta↔persona, rollup a individuo, puente bóveda↔semántico por `id_persona`, distancia a fuerza bruta sobre subconjuntos). Firestore no cubre ese patrón: su vector search es un KNN plano, sin joins ni agregación. Y el módulo de paneles necesita integridad relacional (membresías N:M, estados de consentimiento, ledger de puntos con saldo ≥ 0, índices únicos de dedup). Mover los datos a Firestore sería deshacer el diseño. Firebase se usa para auth, funciones y hosting; los datos, en Postgres.
 
 ## Convenciones
 

@@ -386,7 +386,7 @@ function abrirOtorgar(idPersona) {
 const TEXTO_RETIRO = {
   uso_semantico: {
     titulo: 'Retirar el consentimiento de uso semántico',
-    cuerpo: `<p>Se borran del store remoto <strong>todos los embeddings</strong> de esta
+    cuerpo: `<p>Se borran del store semántico <strong>todos los embeddings</strong> de esta
       persona. Sigue en el panel y se la puede seguir convocando.</p>`,
   },
   contacto_participacion: {
@@ -398,8 +398,8 @@ const TEXTO_RETIRO = {
     titulo: 'Baja total del panel',
     cuerpo: `<p>Cascada completa e <strong>irreversible</strong>:</p>
       <ul>
-        <li>se borra su PII de la bóveda local;</li>
-        <li>se borran sus embeddings del store remoto;</li>
+        <li>se borra su PII de la bóveda;</li>
+        <li>se borran sus embeddings del store semántico;</li>
         <li>sale del muestreo y de todos los paneles.</li>
       </ul>
       <p>Queda solo una lápida con el token opaco, para poder probar que el retiro se atendió.</p>`,

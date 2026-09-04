@@ -23,14 +23,14 @@ Equipos administra paneles de investigación de mercado —conjuntos estables de
 ### Non-Goals
 - No re-especifica la **mecánica interna** del motor semántico (modelo vectorial, ingesta, embeddings, algoritmo de ranking, verificación): eso vive en el spec del Módulo de consulta semántica. La **consulta como feature** (formas demográfica/semántica/mixta) sí se especifica acá (Fase 2).
 - No es un CRUD de personas: almacenar sin accionar sobre salud del panel queda fuera del valor.
-- No espeja atributos demográficos al store remoto por defecto (se mantiene como contenido puro por riesgo mosaico).
+- No espeja atributos demográficos al store semántico por defecto (se mantiene como contenido puro por riesgo mosaico).
 - No declara anonimización (siguen siendo datos personales bajo URCDP).
 - No automatiza el tratamiento fiscal de premios.
 
 ### Arquitectura
 Un sistema, dos módulos, dos stores:
-- **Local:** bóveda de identidad (PII + atributos demográficos autoritativos), paneles y membresías, consentimiento, muestreo, gamificación. Sirve la gestión de panel y la **consulta puramente demográfica** sin tocar embeddings.
-- **Remoto:** base vectorial (embeddings + `id_persona`), para la **consulta semántica**.
+- **Bóveda:** identidad (PII + atributos demográficos autoritativos), paneles y membresías, consentimiento, muestreo, gamificación. Sirve la gestión de panel y la **consulta puramente demográfica** sin tocar embeddings.
+- **Semántico:** base vectorial (embeddings + `id_persona`), para la **consulta semántica**.
 - **Consulta mixta:** puente por conjuntos de `id_persona` entre stores, sin duplicar columnas.
 
 ### Personas
@@ -87,16 +87,16 @@ R1.5 — Fielding y vínculo de respuestas.
 - Dada una encuesta fieldeada a un panel, cuando se ingestan sus respuestas, entonces cada respuesta queda asociada al `id_persona` del panelista que la respondió.
 
 R1.6 — Separación de stores.
-- En ningún caso se escribe PII en el store remoto; solo viaja el `id_persona`.
+- En ningún caso se escribe PII en el store semántico; solo viaja el `id_persona`.
 
-**Dependencias:** esquema de bóveda y de store remoto (diseñados); capacidad de ingesta (PRD previo) en su forma básica para el gancho de fielding.
+**Dependencias:** esquema de bóveda y de store semántico (diseñados); capacidad de ingesta (PRD previo) en su forma básica para el gancho de fielding.
 
-**Criterios de salida (DoD).** Se puede enrolar, deduplicar, consentir, armar paneles con membresías múltiples, fieldear una encuesta a un panel y ver sus respuestas ingestadas asociadas al `id_persona` correcto; cero PII en el store remoto.
+**Criterios de salida (DoD).** Se puede enrolar, deduplicar, consentir, armar paneles con membresías múltiples, fieldear una encuesta a un panel y ver sus respuestas ingestadas asociadas al `id_persona` correcto; cero PII en el store semántico.
 
 **Métricas de la fase**
 - 0 duplicados no detectados en el set de prueba de dedup.
 - 100% de altas con consentimiento registrado por finalidad.
-- 0 fugas de PII al store remoto (auditoría de esquema).
+- 0 fugas de PII al store semántico (auditoría de esquema).
 
 **Riesgos y preguntas de la fase**
 - **[datos]** Calidad de la clave de dedup: si no hay documento ni email confiable, el dedup se degrada.
@@ -106,14 +106,14 @@ R1.6 — Separación de stores.
 
 ### Fase 2 — Salud del panel y consulta
 
-**Objetivo.** Convertir los datos en visibilidad y respuestas: registrar participación por panelista/encuesta, medir composición contra un objetivo, y habilitar consulta demográfica (local), semántica (remoto, ya existente) y mixta (puente por `id_persona`).
+**Objetivo.** Convertir los datos en visibilidad y respuestas: registrar participación por panelista/encuesta, medir composición contra un objetivo, y habilitar consulta demográfica (bóveda), semántica (store semántico, ya existente) y mixta (puente por `id_persona`).
 
 **Alcance — dentro**
 - Registro de participación: convocado sí/no, respondió sí/no, nº acumulado de convocatorias, fecha de último contacto.
 - Carga del universo de referencia / cuotas del cliente.
 - Composición: descriptivo **y** brecha contra el objetivo.
 - Reporte de participación (tablero).
-- Consulta demográfica (local, sobre la bóveda).
+- Consulta demográfica (sobre la bóveda).
 - Consulta mixta (puente por `id_persona`, con estrategia según selectividad).
 
 **Alcance — fuera:** el muestreo que *acciona* (fase 3), gamificación.
@@ -135,19 +135,19 @@ R2.2 — Carga de universo de referencia.
 R2.3 — Composición descriptiva y brecha.
 - Dado un panel con objetivo cargado, cuando se pide composición, entonces se muestra la distribución descriptiva y la brecha por segmento contra el objetivo.
 
-R2.4 — Consulta demográfica pura (local).
-- Dada una consulta solo con factores demográficos, cuando se ejecuta, entonces se resuelve enteramente en el store local y no accede al store remoto.
+R2.4 — Consulta demográfica pura (bóveda).
+- Dada una consulta solo con factores demográficos, cuando se ejecuta, entonces se resuelve enteramente en el store de bóveda y no accede al store semántico.
 
 R2.5 — Consulta mixta (puente).
-- Dada una consulta demográfica + semántica, cuando el segmento demográfico es chico, entonces se filtra primero local y se mide distancia sobre ese subconjunto de `id_persona` en el remoto.
-- Dada una consulta mixta donde el criterio semántico es el selectivo, entonces se rankea primero en el remoto y se filtra demografía en el local.
+- Dada una consulta demográfica + semántica, cuando el segmento demográfico es chico, entonces se filtra primero en la bóveda y se mide distancia sobre ese subconjunto de `id_persona` en el store semántico.
+- Dada una consulta mixta donde el criterio semántico es el selectivo, entonces se rankea primero en el store semántico y se filtra demografía en la bóveda.
 
 R2.6 — Reporte de participación.
 - Dado un panel, cuando se abre el tablero, entonces se ven tasa de respuesta, tiempo desde último contacto y distribución de convocatorias.
 
 **Dependencias:** Fase 1; capacidad de **consulta semántica** (PRD previo).
 
-**Criterios de salida (DoD).** Se puede ver composición vs objetivo, historial de convocatorias por panelista, y correr las tres formas de consulta con resultados correctos; la demográfica pura no accede al remoto.
+**Criterios de salida (DoD).** Se puede ver composición vs objetivo, historial de convocatorias por panelista, y correr las tres formas de consulta con resultados correctos; la demográfica pura no accede al store semántico.
 
 **Métricas de la fase**
 - Exactitud de la brecha de composición contra un objetivo conocido (validación manual).
@@ -221,7 +221,7 @@ R3.6 — Bono dirigido.
 **Alcance — dentro**
 - Análisis longitudinal: seguir al mismo `id_persona` a través de olas (evolución de postura).
 - Muestreo por **optimización con restricciones**: cerrar brecha de cuota sujeto a fatiga y equidad de rotación.
-- Espejo de segmentadores gruesos (sexo, localidad, tramo etario) al store remoto, **condicional** a que la consulta mixta se vuelva intensiva.
+- Espejo de segmentadores gruesos (sexo, localidad, tramo etario) al store semántico, **condicional** a que la consulta mixta se vuelva intensiva.
 - Endurecimiento del auto-registro: verificación (email/celular) y anti-fraude/dedup en la landing.
 
 **Alcance — fuera:** automatización fiscal.
@@ -240,7 +240,7 @@ R4.2 — Optimizador de muestreo.
 - Dado un objetivo de cuota y restricciones de fatiga/rotación, cuando se solicita, entonces se devuelve una selección que maximiza el cierre de brecha sujeto a las restricciones.
 
 R4.3 — Espejo de segmentadores (condicional).
-- Dado que la consulta mixta supera un umbral de uso/latencia, cuando se activa el espejo, entonces los segmentadores gruesos quedan disponibles seudonimizados en el remoto y la consulta mixta deja de abrir la bóveda.
+- Dado que la consulta mixta supera un umbral de uso/latencia, cuando se activa el espejo, entonces los segmentadores gruesos quedan disponibles seudonimizados en el store semántico y la consulta mixta deja de abrir la bóveda.
 
 R4.4 — Landing endurecida.
 - Dado un auto-registro, cuando se envía, entonces se verifica el email/celular y se deduplica contra panelistas existentes antes de confirmar.

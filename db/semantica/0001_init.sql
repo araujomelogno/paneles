@@ -5,7 +5,7 @@
 --  TODO es semántico: cada respuesta se embebe (pregunta + respuesta)
 --  y la aproximación es por similitud. No hay match exacto ni capa
 --  de conceptos. La unidad es el INDIVIDUO, que cruza estudios vía un
---  id_persona OPACO emitido/mantenido por la bóveda de identidad local.
+--  id_persona OPACO emitido/mantenido por la bóveda de identidad.
 -- ============================================================
 
 create extension if not exists vector;
@@ -14,7 +14,7 @@ create table cuestionario (
   id           bigint generated always as identity primary key,
   nombre       text not null,
   fecha_campo  date,
-  ref_estudio  uuid unique,          -- = encuesta.ref_estudio del store local (cruce entre stores)
+  ref_estudio  uuid unique,          -- = encuesta.ref_estudio del store de bóveda (cruce entre stores)
   metadata     jsonb not null default '{}'::jsonb,
   creado_en    timestamptz not null default now()
 );

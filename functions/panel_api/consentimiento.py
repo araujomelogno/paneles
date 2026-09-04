@@ -3,7 +3,7 @@
 Dos finalidades independientes (limitación de finalidad):
 
 * `contacto_participacion` — habilita convocar y muestrear.
-* `uso_semantico`          — habilita ingestar respuestas al store remoto.
+* `uso_semantico`          — habilita ingestar respuestas al store semántico.
 
 Tener una NO implica tener la otra. El gate se aplica en el punto de uso,
 no en el alta: una persona puede estar en el panel y aun así quedar fuera

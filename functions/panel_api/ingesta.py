@@ -1,4 +1,4 @@
-"""Pipeline de ingesta: Excel ancho → formato largo → embeddings → remoto.
+"""Pipeline de ingesta: Excel ancho → formato largo → embeddings → store semántico.
 
 Mecánica (PRD del módulo de consulta semántica):
 
@@ -14,11 +14,11 @@ Mecánica (PRD del módulo de consulta semántica):
 
 El puente entre stores: la columna de identidad del Excel trae el id que usó
 la plataforma de campo (Dooblo, Alchemer). Ese id se traduce a `id_persona`
-**en el store local** contra `alias_origen`. Lo único que cruza al remoto es
+**en el store de bóveda** contra `alias_origen`. Lo único que cruza al store semántico es
 el `id_persona`. La PII se queda de este lado.
 """
 
-from . import consentimiento, db, embeddings as mod_embeddings, remoto
+from . import consentimiento, db, embeddings as mod_embeddings, semantica
 from .errores import DatosInvalidos
 
 
@@ -70,14 +70,14 @@ def despivotar(filas, preguntas, columna_id):
     return largo
 
 
-def mapear_a_id_persona(conn_local, origen, ids_en_origen):
+def mapear_a_id_persona(conn_boveda, origen, ids_en_origen):
     """Traduce ids de la plataforma de campo a `id_persona`, contra la
     bóveda. Devuelve `(mapa, sin_mapear)`."""
     ids = [str(i) for i in dict.fromkeys(ids_en_origen)]
     if not ids:
         return {}, []
     filas = db.todas(
-        conn_local,
+        conn_boveda,
         """
         select id_en_origen, id_persona
           from alias_origen
@@ -90,8 +90,8 @@ def mapear_a_id_persona(conn_local, origen, ids_en_origen):
 
 
 def ingestar(
-    conn_local,
-    conn_remoto,
+    conn_boveda,
+    conn_semantica,
     encuesta,
     preguntas,
     filas,
@@ -100,7 +100,7 @@ def ingestar(
     proveedor=None,
     mapa_personas=None,
 ):
-    """Corre la ingesta de un estudio. `encuesta` es el dict del store local
+    """Corre la ingesta de un estudio. `encuesta` es el dict del store de bóveda
     (necesita `ref_estudio`, `nombre`, `fecha_campo`).
 
     Aplica el gate de `uso_semantico`: quien no lo tenga vigente queda fuera
@@ -122,12 +122,12 @@ def ingestar(
 
     ids_origen = list(dict.fromkeys(r[0] for r in largo))
 
-    # ── Traducción a id_persona: pasa enteramente en el store local ──
+    # ── Traducción a id_persona: pasa enteramente en el store de bóveda ──
     if mapa_personas:
         mapa = {str(k): str(v) for k, v in mapa_personas.items()}
         sin_mapear = [i for i in ids_origen if i not in mapa]
     elif origen:
-        mapa, sin_mapear = mapear_a_id_persona(conn_local, origen, ids_origen)
+        mapa, sin_mapear = mapear_a_id_persona(conn_boveda, origen, ids_origen)
     else:
         raise DatosInvalidos(
             "Para ingestar hace falta `origen` (para resolver los alias contra "
@@ -136,7 +136,7 @@ def ingestar(
 
     # ── Gate de consentimiento (R1.3 / regla de finalidad) ──
     habilitadas, bloqueadas = consentimiento.filtrar_con_consentimiento(
-        conn_local, set(mapa.values()), consentimiento.SEMANTICO
+        conn_boveda, set(mapa.values()), consentimiento.SEMANTICO
     )
     habilitadas = set(habilitadas)
 
@@ -153,17 +153,17 @@ def ingestar(
             "aviso": "Ninguna respuesta quedó habilitada para ingestar.",
         }
 
-    # ── A partir de acá se escribe del lado remoto: solo id_persona ──
-    cuestionario_id = remoto.asegurar_cuestionario(
-        conn_remoto,
+    # ── A partir de acá se escribe del lado semántico: solo id_persona ──
+    cuestionario_id = semantica.asegurar_cuestionario(
+        conn_semantica,
         ref_estudio,
         encuesta["nombre"],
         encuesta.get("fecha_campo"),
         {"panel_id": encuesta.get("panel_id")},
     )
-    id_por_codigo = remoto.upsert_preguntas(conn_remoto, cuestionario_id, preguntas)
+    id_por_codigo = semantica.upsert_preguntas(conn_semantica, cuestionario_id, preguntas)
     ids_persona = [mapa[r[0]] for r in largo]
-    individuo_por_persona = remoto.asegurar_individuos(conn_remoto, ids_persona)
+    individuo_por_persona = semantica.asegurar_individuos(conn_semantica, ids_persona)
 
     textos = [r[3] for r in largo]
     vectores = proveedor.embeber_en_lotes(textos)
@@ -178,7 +178,7 @@ def ingestar(
         }
         for (id_origen, codigo, etiqueta, texto), vector in zip(largo, vectores)
     ]
-    escritas = remoto.upsert_respuestas(conn_remoto, respuestas)
+    escritas = semantica.upsert_respuestas(conn_semantica, respuestas)
 
     return {
         "ref_estudio": ref_estudio,

@@ -6,7 +6,7 @@
    `ref_estudio`— para poder recorrer la interfaz de verdad, pero NO es el
    sistema: no persiste nada, no hay Postgres y no hay embeddings.
 
-   El "store remoto" de acá es un objeto aparte a propósito: se ve que solo
+   El "store semántico" de acá es un objeto aparte a propósito: se ve que solo
    recibe `id_persona` y `ref_estudio`, nunca PII. */
 
 const VERSION = window.VERSION_CONSENTIMIENTO || 'consentimiento-2026-01';
@@ -23,7 +23,7 @@ const diasAtras = (n) => new Date(Date.now() - n * 86400000).toISOString();
 /* ── Estado ─────────────────────────────────────────────────────── */
 
 const bd = {
-  // Store local: bóveda de PII + paneles.
+  // Store de bóveda: PII + paneles.
   personas: [],
   alias: [],
   paneles: [],
@@ -33,9 +33,9 @@ const bd = {
   participaciones: [],
   revisiones: [],
   borradas: [],
-  // Store remoto: SOLO id_persona, ref_estudio y contenido despersonalizado.
-  remoto: { cuestionarios: [], individuos: [], preguntas: [], respuestas: [] },
-  secuencias: { panel: 1, encuesta: 1, revision: 1, consentimiento: 1, remoto: 1 },
+  // Store semántico: SOLO id_persona, ref_estudio y contenido despersonalizado.
+  semantica: { cuestionarios: [], individuos: [], preguntas: [], respuestas: [] },
+  secuencias: { panel: 1, encuesta: 1, revision: 1, consentimiento: 1, semantica: 1 },
 };
 
 const siguiente = (clave) => bd.secuencias[clave]++;
@@ -116,7 +116,7 @@ function sembrar() {
   });
 }
 
-/* ── Operaciones del store local ────────────────────────────────── */
+/* ── Operaciones del store de bóveda ────────────────────────────────── */
 
 function crearPanel(nombre, descripcion) {
   const panel = {
@@ -191,7 +191,7 @@ function convocar(encuestaId, cuerpo) {
   };
 }
 
-/* ── Ingesta: lo único que cruza al "store remoto" es el id_persona ── */
+/* ── Ingesta: lo único que cruza al "store semántico" es el id_persona ── */
 
 function ingestar(encuestaId, cuerpo) {
   const encuesta = bd.encuestas.find((e) => e.id === encuestaId);
@@ -205,17 +205,17 @@ function ingestar(encuestaId, cuerpo) {
     if (alias) mapa[alias.id_en_origen] = p.id_persona;
   });
 
-  let cuestionario = bd.remoto.cuestionarios.find((c) => c.ref_estudio === encuesta.ref_estudio);
+  let cuestionario = bd.semantica.cuestionarios.find((c) => c.ref_estudio === encuesta.ref_estudio);
   if (!cuestionario) {
     cuestionario = {
-      id: siguiente('remoto'), nombre: encuesta.nombre,
+      id: siguiente('semantica'), nombre: encuesta.nombre,
       fecha_campo: encuesta.fecha_campo, ref_estudio: encuesta.ref_estudio,
     };
-    bd.remoto.cuestionarios.push(cuestionario);
+    bd.semantica.cuestionarios.push(cuestionario);
   }
   preguntas.forEach((p) => {
-    if (!bd.remoto.preguntas.some((q) => q.cuestionario_id === cuestionario.id && q.codigo === p.codigo)) {
-      bd.remoto.preguntas.push({ id: siguiente('remoto'), cuestionario_id: cuestionario.id, ...p });
+    if (!bd.semantica.preguntas.some((q) => q.cuestionario_id === cuestionario.id && q.codigo === p.codigo)) {
+      bd.semantica.preguntas.push({ id: siguiente('semantica'), cuestionario_id: cuestionario.id, ...p });
     }
   });
 
@@ -229,26 +229,26 @@ function ingestar(encuestaId, cuerpo) {
     if (!idPersona) { if (idOrigen) sinMapear.push(idOrigen); return; }
     if (!vigente(idPersona, 'uso_semantico')) { sinConsentimiento.add(idPersona); return; }
 
-    let individuo = bd.remoto.individuos.find((i) => i.id_persona === idPersona);
+    let individuo = bd.semantica.individuos.find((i) => i.id_persona === idPersona);
     if (!individuo) {
-      individuo = { id: siguiente('remoto'), id_persona: idPersona };
-      bd.remoto.individuos.push(individuo);
+      individuo = { id: siguiente('semantica'), id_persona: idPersona };
+      bd.semantica.individuos.push(individuo);
     }
     preguntas.forEach((pregunta) => {
       const crudo = fila[pregunta.codigo];
       if (crudo === undefined || crudo === null || String(crudo).trim() === '') return;
       const etiqueta = pregunta.opciones?.[String(crudo).trim()] ?? String(crudo).trim();
-      const preguntaRemota = bd.remoto.preguntas.find(
+      const preguntaSemantica = bd.semantica.preguntas.find(
         (q) => q.cuestionario_id === cuestionario.id && q.codigo === pregunta.codigo);
-      const existente = bd.remoto.respuestas.find(
-        (r) => r.individuo_id === individuo.id && r.pregunta_id === preguntaRemota.id);
+      const existente = bd.semantica.respuestas.find(
+        (r) => r.individuo_id === individuo.id && r.pregunta_id === preguntaSemantica.id);
       const texto = `${pregunta.texto} → ${etiqueta}`;
       if (existente) {
         existente.valor_texto = etiqueta;
         existente.texto_embebido = texto;
       } else {
-        bd.remoto.respuestas.push({
-          individuo_id: individuo.id, pregunta_id: preguntaRemota.id,
+        bd.semantica.respuestas.push({
+          individuo_id: individuo.id, pregunta_id: preguntaSemantica.id,
           valor_texto: etiqueta, texto_embebido: texto, embedding: '[…1024 dims…]',
         });
       }
@@ -262,7 +262,7 @@ function ingestar(encuestaId, cuerpo) {
   return {
     encuesta_id: encuestaId, ref_estudio: encuesta.ref_estudio,
     respuestas_escritas: escritas,
-    personas: bd.remoto.individuos.length,
+    personas: bd.semantica.individuos.length,
     preguntas: preguntas.length,
     sin_mapear: [...new Set(sinMapear)],
     sin_consentimiento: [...sinConsentimiento],
@@ -544,15 +544,15 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
 
   if (metodo === 'GET' && partes[2] === 'cruce') {
     const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
-    const cuestionario = bd.remoto.cuestionarios.find((c) => c.ref_estudio === encuesta.ref_estudio);
-    const preguntasDe = bd.remoto.preguntas.filter((q) => q.cuestionario_id === cuestionario?.id);
+    const cuestionario = bd.semantica.cuestionarios.find((c) => c.ref_estudio === encuesta.ref_estudio);
+    const preguntasDe = bd.semantica.preguntas.filter((q) => q.cuestionario_id === cuestionario?.id);
     const idsPregunta = new Set(preguntasDe.map((q) => q.id));
-    const respuestas = bd.remoto.respuestas.filter((r) => idsPregunta.has(r.pregunta_id));
+    const respuestas = bd.semantica.respuestas.filter((r) => idsPregunta.has(r.pregunta_id));
     const convocados = bd.participaciones.filter((p) => p.encuesta_id === encuesta.id).length;
     return {
       encuesta_id: encuesta.id, ref_estudio: encuesta.ref_estudio,
-      local: { convocados },
-      remoto: {
+      boveda: { convocados },
+      semantica: {
         ref_estudio: encuesta.ref_estudio, nombre: cuestionario?.nombre || null,
         preguntas: preguntasDe.length, respuestas: respuestas.length,
         individuos: new Set(respuestas.map((r) => r.individuo_id)).size,
@@ -574,13 +574,13 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
       bd.membresias.filter((m) => m.id_persona === idPersona && m.estado === 'activo')
         .forEach((m) => { m.estado = 'baja'; m.fecha_baja = ahora(); bajas++; });
     }
-    let borradasRemoto = 0;
+    let borradasSemantica = 0;
     if (finalidad === 'todas' || finalidad === 'uso_semantico') {
-      const individuo = bd.remoto.individuos.find((i) => i.id_persona === idPersona);
+      const individuo = bd.semantica.individuos.find((i) => i.id_persona === idPersona);
       if (individuo) {
-        borradasRemoto = bd.remoto.respuestas.filter((r) => r.individuo_id === individuo.id).length;
-        bd.remoto.respuestas = bd.remoto.respuestas.filter((r) => r.individuo_id !== individuo.id);
-        bd.remoto.individuos = bd.remoto.individuos.filter((i) => i.id_persona !== idPersona);
+        borradasSemantica = bd.semantica.respuestas.filter((r) => r.individuo_id === individuo.id).length;
+        bd.semantica.respuestas = bd.semantica.respuestas.filter((r) => r.individuo_id !== individuo.id);
+        bd.semantica.individuos = bd.semantica.individuos.filter((i) => i.id_persona !== idPersona);
       }
     }
     let piiBorrada = false;
@@ -592,14 +592,14 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
       bd.participaciones = bd.participaciones.filter((p) => p.id_persona !== idPersona);
       bd.borradas.push({
         id_persona: idPersona, motivo: 'retiro_consentimiento', finalidad,
-        borrado_local_en: ahora(), borrado_remoto_en: ahora(), remoto_error: null,
+        borrado_local_en: ahora(), borrado_semantica_en: ahora(), semantica_error: null,
       });
       piiBorrada = true;
     }
     return {
       id_persona: idPersona, finalidad_retirada: finalidad,
       membresias_dadas_de_baja: bajas, pii_borrada: piiBorrada,
-      remoto: { estado: 'ok', respuestas_borradas: borradasRemoto },
+      semantica: { estado: 'ok', respuestas_borradas: borradasSemantica },
     };
   }
 
@@ -608,7 +608,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   }
 
   if (clave === 'GET /cumplimiento/pendientes') {
-    return { items: bd.borradas.filter((b) => !b.borrado_remoto_en) };
+    return { items: bd.borradas.filter((b) => !b.borrado_semantica_en) };
   }
   if (clave === 'POST /cumplimiento/reintentar') return { resultados: [] };
   if (clave === 'GET /auditoria/pii') return { limpio: true, hallazgos: [] };
@@ -616,15 +616,15 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   throw new ErrorDemo(`El modo demo no implementa ${clave}.`, 404);
 }
 
-/* Lo que el "store remoto" tiene guardado. La página de cumplimiento lo
+/* Lo que el "store semántico" tiene guardado. La página de cumplimiento lo
    muestra para hacer visible el invariante: solo id_persona, nunca PII. */
-export function espiarRemoto() {
+export function espiarSemantica() {
   return {
-    cuestionarios: bd.remoto.cuestionarios.length,
-    individuos: bd.remoto.individuos.map((i) => i.id_persona),
-    respuestas: bd.remoto.respuestas.length,
-    muestra: bd.remoto.respuestas.slice(0, 5).map((r) => ({
-      id_persona: bd.remoto.individuos.find((i) => i.id === r.individuo_id)?.id_persona,
+    cuestionarios: bd.semantica.cuestionarios.length,
+    individuos: bd.semantica.individuos.map((i) => i.id_persona),
+    respuestas: bd.semantica.respuestas.length,
+    muestra: bd.semantica.respuestas.slice(0, 5).map((r) => ({
+      id_persona: bd.semantica.individuos.find((i) => i.id === r.individuo_id)?.id_persona,
       texto_embebido: r.texto_embebido,
       embedding: r.embedding,
     })),

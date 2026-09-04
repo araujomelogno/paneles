@@ -1,6 +1,6 @@
 -- ============================================================
---  STORE LOCAL  --  Bóveda de identidad + Módulo de paneles
---  Cloud SQL for Postgres (instancia separada de la remota).
+--  STORE DE BÓVEDA  --  Bóveda de identidad + Módulo de paneles
+--  Cloud SQL for Postgres (instancia separada de la semántica).
 --  Contiene PII y toda la gestión de panel. La PII nunca sale de acá.
 --  (Supersede a boveda_identidad.sql: incluye la bóveda ampliada.)
 -- ============================================================
@@ -15,7 +15,7 @@ create table persona (
   documento        text,
   nombre           text,
   sexo             text,          -- demográfico
-  fecha_nacimiento date,          -- demográfico (identificador fino: solo local)
+  fecha_nacimiento date,          -- demográfico (identificador fino: solo acá)
   localidad        text,          -- demográfico
   email            text,
   celular          text,
@@ -88,7 +88,7 @@ create table consentimiento (
 create index on consentimiento (id_persona, finalidad);
 
 -- ---------- Encuestas / olas y participación ----------------
--- ref_estudio: uuid compartido con el store remoto (cuestionario.ref_estudio)
+-- ref_estudio: uuid compartido con el store semántico (cuestionario.ref_estudio)
 -- para cruzar las respuestas semánticas de esta encuesta.
 create table encuesta (
   id           bigint generated always as identity primary key,
@@ -161,7 +161,7 @@ create table canje (
 create index on canje (id_persona);
 
 -- ---------- RLS (baseline) ----------------------------------
--- Store local: acceso vía el servicio de la app con un rol dedicado.
+-- Store de bóveda: acceso vía el servicio de la app con un rol dedicado.
 -- Definir políticas según el modelo de auth.
 alter table persona              enable row level security;
 alter table alias_origen         enable row level security;
