@@ -1,0 +1,7 @@
+firebase-functions~=0.4.2
+firebase-admin~=6.5.0
+psycopg[binary]~=3.1
+cloud-sql-python-connector[pg8000]~=1.9
+pgvector~=0.2.5
+requests~=2.32
+openpyxl~=3.1

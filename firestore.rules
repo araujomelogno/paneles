@@ -1,0 +1,29 @@
+rules_version = '2';
+
+// ════════════════════════════════════════════════════════════════════
+//  Firestore en este proyecto guarda UNA sola cosa: el padrón de
+//  usuarios de la app de administración (personal de Equipos) con su
+//  rol. Los datos del panel y la PII viven en Cloud SQL (ver CLAUDE.md,
+//  "Por qué los datos siguen en Postgres"). Nada de PII de panelistas
+//  puede escribirse acá.
+//
+//  Escritura: solo desde el backend (Admin SDK / Cloud Functions), que
+//  no pasa por estas reglas. Desde el cliente, todo es de solo lectura
+//  y limitado al propio documento.
+// ════════════════════════════════════════════════════════════════════
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Cada usuario autenticado puede leer únicamente su propia ficha,
+    // para que la SPA sepa su rol y su nombre.
+    match /usuarios/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // Todo lo demás queda cerrado.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

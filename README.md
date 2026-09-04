@@ -11,37 +11,38 @@ Empezá leyendo `CLAUDE.md`, después el PRD, y desarrollá por fases empezando 
 | `PRD_gestion_de_paneles_detallado.md` | PRD del sistema: problema, objetivos, no-objetivos, arquitectura, y las 4 fases con requisitos (R1.x…R4.x), criterios de aceptación y DoD. Documento **autoritativo** de producto. | `docs/` |
 | `PRD_consulta_semantica_cuestionarios.md` | Spec del **módulo de consulta semántica** (mecánica interna del motor: modelo vectorial, ingesta, embeddings, ranking, verificación con Claude). Es un módulo de este sistema, no un producto aparte. | `docs/` |
 | `HANDOFF_fase1.md` | Work order de la **Fase 1**: alcance, superficie de API mapeada a R1.x, lógica de dedup, máquina de estados de consentimiento, contrato de cruce entre stores, DoD. **Primer sprint.** | `docs/` |
-| `esquema_local.sql` | DDL del **store local** (Cloud SQL): bóveda de identidad (PII + demográficos) + módulo de paneles. | `db/local/0001_init.sql` |
-| `esquema_cuestionarios.sql` | DDL del **store remoto** (Cloud SQL + pgvector): contenido semántico (embeddings + `id_persona`). | `db/remoto/0001_init.sql` |
-| `ingesta.py` | Script de ingesta (ancho → largo, resolución código/etiqueta, embeddings en lotes, upsert). Referencia de la mecánica del módulo semántico. | `ingesta/` |
+| `db/local/0001_init.sql` | DDL del **store local** (Cloud SQL): bóveda de identidad (PII + demográficos) + módulo de paneles. | `db/local/` |
+| `db/remoto/0001_init.sql` | DDL del **store remoto** (Cloud SQL + pgvector): contenido semántico (embeddings + `id_persona`). | `db/remoto/` |
 
 ## Orden de lectura para Claude Code
 
 1. `CLAUDE.md` — invariantes y stack (no violar la regla de "PII nunca al remoto").
 2. `PRD_gestion_de_paneles_detallado.md` — qué se construye y por qué; las 4 fases.
 3. `PRD_consulta_semantica_cuestionarios.md` — cómo funciona el motor por dentro.
-4. `esquema_local.sql` + `esquema_cuestionarios.sql` — el modelo de datos.
+4. `db/local/0001_init.sql` + `db/remoto/0001_init.sql` — el modelo de datos.
 5. `HANDOFF_fase1.md` — el primer sprint, acotado.
-6. `ingesta.py` — referencia al implementar el enganche de ingesta.
+6. `functions/panel_api/ingesta.py` — el pipeline de ingesta implementado.
 
-## Estructura de repo sugerida
+## Estructura del repo
 
 ```
 /
 ├─ CLAUDE.md
 ├─ README.md
-├─ docs/
-│  ├─ PRD_gestion_de_paneles_detallado.md
-│  ├─ PRD_consulta_semantica_cuestionarios.md
-│  └─ HANDOFF_fase1.md
+├─ firebase.json  .firebaserc  firestore.rules
+├─ docs/                      PRDs y handoff de fase
 ├─ db/
-│  ├─ local/    0001_init.sql   (= esquema_local.sql)
-│  └─ remoto/   0001_init.sql   (= esquema_cuestionarios.sql)
-├─ functions/   # Cloud Functions for Firebase (runtime Python)
-│  ├─ main.py
-│  └─ requirements.txt
-├─ ingesta/     # ingesta.py y utilidades de carga
-└─ web/         # SPA admin (React) para Firebase Hosting
+│  ├─ local/                  migraciones del store local (bóveda + paneles)
+│  └─ remoto/                 migraciones del store remoto (pgvector)
+├─ functions/                 Cloud Functions for Firebase (Python)
+│  ├─ main.py                 punto de entrada HTTP: /api/**
+│  ├─ panel_api/              el núcleo de dominio
+│  └─ tests/                  pruebas del DoD, contra Postgres real
+├─ scripts/                   cluster de pruebas y chequeo de sintaxis JS
+└─ web/public/                SPA de administración (HTML + módulos ES)
+   ├─ index.html              configuración y shell
+   ├─ css/estilo.css          identidad visual de Equipos
+   └─ js/                     app.js, api.js, demo.js, ui.js, paginas/
 ```
 
 ## Stack (resumen; detalle en `CLAUDE.md`)
@@ -52,10 +53,75 @@ Empezá leyendo `CLAUDE.md`, después el PRD, y desarrollá por fases empezando 
 
 ## Cómo arrancar
 
-1. Provisionar las dos instancias Cloud SQL y aplicar las migraciones (`db/local`, `db/remoto`).
-2. Configurar el proyecto Firebase (Auth, Functions Python, Hosting) y el conector de Cloud SQL desde las funciones.
-3. Secrets por variables de entorno (DSN de cada store, API key de embeddings); nunca en el repo.
-4. Tomar `HANDOFF_fase1.md` como primer sprint. No pasar a la fase siguiente hasta cerrar su Definition of Done.
+### Ver la interfaz sin nada instalado
+
+`web/public/index.html` arranca en **modo demo** mientras `firebaseConfig` tenga
+los valores de ejemplo: datos en memoria, sin backend y sin base. Sirve para
+recorrer la interfaz; no guarda nada.
+
+```bash
+cd web/public && python3 -m http.server 8099    # abrir http://localhost:8099
+```
+
+### Correr las pruebas
+
+Las pruebas del backend corren contra un Postgres real con pgvector (el dedup,
+el gate de consentimiento y la cascada dependen de índices únicos y de
+`on delete cascade`: probarlos contra un doble no probaría nada).
+
+```bash
+pip install "psycopg[binary]" pytest
+source scripts/pg_pruebas.sh          # levanta el cluster y exporta los DSN
+cd functions && python3 -m pytest     # 88 pruebas
+scripts/pg_pruebas.sh detener         # al terminar
+```
+
+`scripts/chequear_js.sh` chequea la sintaxis de los módulos del frontend (no hay
+paso de build).
+
+### Puesta en marcha real
+
+1. **Dos instancias Cloud SQL for Postgres**, separadas — nunca la misma. En la
+   remota, `create extension vector`. Aplicar las migraciones en orden:
+
+   ```bash
+   psql "$DSN_LOCAL"  -f db/local/0001_init.sql
+   psql "$DSN_LOCAL"  -f db/local/0002_revision_alta.sql
+   psql "$DSN_LOCAL"  -f db/local/0003_baja_persona.sql
+   psql "$DSN_REMOTO" -f db/remoto/0001_init.sql
+   ```
+
+2. **Proyecto Firebase** (uno solo): Auth con email/clave, Functions en Python,
+   Hosting y Firestore. Poner el id en `.firebaserc` y la config web en
+   `web/public/index.html`.
+
+3. **Secretos** por Secret Manager, nunca en el repo:
+
+   ```bash
+   firebase functions:secrets:set DSN_LOCAL
+   firebase functions:secrets:set DSN_REMOTO
+   firebase functions:secrets:set EMBEDDINGS_API_KEY
+   ```
+
+4. **Padrón de usuarios**: por cada persona de Equipos que use la app, un
+   usuario en Firebase Auth y un documento `usuarios/{uid}` en Firestore con
+   `{ nombre, email, rol, activo: true }`. Roles: `admin`, `operaciones`
+   (responsable de panel), `analista`, `dpo` (cumplimiento). Firestore no
+   guarda ningún dato de panelista.
+
+5. **Desplegar**: `firebase deploy`.
+
+## Fase 1 — qué está implementado
+
+| Requisito | Dónde |
+|---|---|
+| R1.1 alta en la bóveda | `panel_api/personas.py` · `POST /api/panelistas` |
+| R1.2 dedup de identidad | `panel_api/dedup.py` + `panel_api/revision.py` |
+| R1.3 consentimiento por finalidad | `panel_api/consentimiento.py` |
+| R1.4 paneles y membresía N:M | `panel_api/paneles.py` |
+| R1.5 fielding y vínculo de respuestas | `panel_api/encuestas.py` + `ingesta.py` |
+| R1.6 separación de stores | `panel_api/pii.py` + `panel_api/remoto.py` |
+| Cascada de baja | `panel_api/bajas.py` |
 
 ## Decisiones pendientes (no bloquean el arranque de la Fase 1)
 
