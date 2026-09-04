@@ -11,20 +11,22 @@
   <link rel="stylesheet" href="css/estilo.css" />
 
   <!-- ══════════════════════════════════════════════════════════════════
-       CONFIGURACIÓN
-       Reemplazá `firebaseConfig` por la de TU proyecto Firebase
-       (Consola Firebase → Configuración del proyecto → Tus apps → Web).
+       CONFIGURACIÓN — proyecto Firebase `gestion-paneles`
 
-       Mientras esté sin configurar, la app arranca en MODO DEMO: datos
-       de ejemplo en memoria, sin backend y sin base. Sirve para recorrer
-       la interfaz; no guarda nada.
+       Faltan tres valores que solo aparecen al registrar la app web:
+       apiKey, messagingSenderId y appId. Se copian de
+       Consola Firebase → Configuración del proyecto → Tus apps → Web.
+
+       Mientras `apiKey` siga en TU_API_KEY, la app arranca en MODO DEMO:
+       datos de ejemplo en memoria, sin backend y sin base. Sirve para
+       recorrer la interfaz; no guarda nada.
   ═══════════════════════════════════════════════════════════════════ -->
   <script>
     window.firebaseConfig = {
       apiKey:            "TU_API_KEY",
-      authDomain:        "TU_PROYECTO.firebaseapp.com",
-      projectId:         "TU_PROYECTO",
-      storageBucket:     "TU_PROYECTO.firebasestorage.app",
+      authDomain:        "gestion-paneles.firebaseapp.com",
+      projectId:         "gestion-paneles",
+      storageBucket:     "gestion-paneles.firebasestorage.app",
       messagingSenderId: "TU_SENDER_ID",
       appId:             "TU_APP_ID"
     };
