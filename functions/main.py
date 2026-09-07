@@ -8,6 +8,7 @@ Secretos por variable de entorno / Secret Manager; nunca en el repo.
 """
 
 import json
+import os
 
 import firebase_admin
 from firebase_functions import https_fn, options
@@ -20,8 +21,15 @@ from panel_api.errores import ErrorApi
 if not firebase_admin._apps:
     firebase_admin.initialize_app()
 
-# Debe coincidir con FUNCTIONS_REGION en el frontend.
+# Si cambia, hay que cambiar también la región del rewrite de /api/** en
+# firebase.json: los dos tienen que apuntar al mismo lado.
 REGION = "us-central1"
+
+# Conector de Acceso a VPC sin servidor. Es la vía por la que la función llega
+# a las IP privadas de las dos instancias de Cloud SQL; sin él no hay base.
+# Se lee del entorno del deploy (no del runtime): `export VPC_CONNECTOR=...`
+# antes de `firebase deploy`. Ver docs/DESPLIEGUE.md.
+VPC_CONNECTOR = os.environ.get("VPC_CONNECTOR") or None
 
 SECRETOS = [
     "DSN_BOVEDA",         # bóveda: PII + módulo de paneles
@@ -50,6 +58,12 @@ def _camino_de(req):
 @https_fn.on_request(
     region=REGION,
     secrets=SECRETOS,
+    vpc_connector=VPC_CONNECTOR,
+    # Solo el tráfico a las IP privadas sale por la VPC; el resto (Voyage,
+    # Secret Manager) sigue saliendo directo.
+    vpc_connector_egress_settings=(
+        options.VpcEgressSetting.PRIVATE_RANGES_ONLY if VPC_CONNECTOR else None
+    ),
     cors=options.CorsOptions(cors_origins=["*"], cors_methods=["get", "post", "patch", "delete", "options"]),
     memory=options.MemoryOption.MB_512,
     timeout_sec=300,
