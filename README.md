@@ -10,6 +10,7 @@ Empezá leyendo `CLAUDE.md`, después el PRD, y desarrollá por fases empezando 
 | `CLAUDE.md` | Contexto persistente: invariantes (dos stores, PII nunca al store semántico), identidad, reglas de negocio, stack. **Léelo primero y siempre.** | raíz `/` |
 | `PRD_gestion_de_paneles_detallado.md` | PRD del sistema: problema, objetivos, no-objetivos, arquitectura, y las 4 fases con requisitos (R1.x…R4.x), criterios de aceptación y DoD. Documento **autoritativo** de producto. | `docs/` |
 | `PRD_consulta_semantica_cuestionarios.md` | Spec del **módulo de consulta semántica** (mecánica interna del motor: modelo vectorial, ingesta, embeddings, ranking, verificación con Claude). Es un módulo de este sistema, no un producto aparte. | `docs/` |
+| `DESPLIEGUE.md` | Manual de despliegue: qué y cómo configurar cada pieza, verificación y problemas frecuentes. | `docs/` |
 | `HANDOFF_fase1.md` | Work order de la **Fase 1**: alcance, superficie de API mapeada a R1.x, lógica de dedup, máquina de estados de consentimiento, contrato de cruce entre stores, DoD. **Primer sprint.** | `docs/` |
 | `db/boveda/0001_init.sql` | DDL del **store de bóveda** (Cloud SQL): bóveda de identidad (PII + demográficos) + módulo de paneles. | `db/boveda/` |
 | `db/semantica/0001_init.sql` | DDL del **store semántico** (Cloud SQL + pgvector): contenido semántico (embeddings + `id_persona`). | `db/semantica/` |
@@ -81,72 +82,22 @@ paso de build).
 
 ### Puesta en marcha real
 
-1. **Dos instancias Cloud SQL for Postgres**, separadas — nunca la misma. En la
-   semántica, `create extension vector`. Aplicar las migraciones en orden:
+El instructivo completo —las dos instancias de Cloud SQL, el conector de VPC,
+los secretos, Voyage, el padrón de usuarios y la verificación paso a paso—
+está en **[`docs/DESPLIEGUE.md`](DESPLIEGUE.md)**.
 
-   ```bash
-   psql "$DSN_BOVEDA"  -f db/boveda/0001_init.sql
-   psql "$DSN_BOVEDA"  -f db/boveda/0002_revision_alta.sql
-   psql "$DSN_BOVEDA"  -f db/boveda/0003_baja_persona.sql
-   psql "$DSN_SEMANTICA" -f db/semantica/0001_init.sql
-   ```
+El resumen, para ubicarse:
 
-2. **Proyecto Firebase `gestion-paneles`** (uno solo, ya fijado en
-   `.firebaserc`). Crearlo y habilitar lo que usa la app:
-
-   ```bash
-   firebase login
-   firebase projects:create gestion-paneles --display-name "Gestión de paneles"
-   firebase use gestion-paneles
-   firebase apps:create web "Admin de paneles"     # devuelve apiKey, senderId y appId
-   ```
-
-   En la consola: **Authentication** → habilitar *Correo electrónico/contraseña*;
-   **Firestore** → crear la base (modo producción; las reglas de este repo la
-   dejan cerrada salvo `usuarios/{uid}` de solo lectura).
-
-   Después pegar `apiKey`, `messagingSenderId` y `appId` en
-   `web/public/index.html`: el resto de la config ya está completa. Con la
-   `apiKey` puesta, la app deja el modo demo y pasa a pegarle al backend.
-
-3. **Secretos** por Secret Manager, nunca en el repo:
-
-   ```bash
-   firebase functions:secrets:set DSN_BOVEDA
-   firebase functions:secrets:set DSN_SEMANTICA
-   firebase functions:secrets:set EMBEDDINGS_API_KEY
-   ```
-
-4. **Padrón de usuarios**: por cada persona de Equipos que use la app, un
-   usuario en Firebase Auth y un documento `usuarios/{uid}` en Firestore con
-   `{ nombre, email, rol, activo: true }`. Roles: `admin`, `operaciones`
-   (responsable de panel), `analista`, `dpo` (cumplimiento). Firestore no
-   guarda ningún dato de panelista.
-
-   ```bash
-   npm install firebase-admin
-   gcloud auth application-default login
-   node scripts/alta_usuario.js ana@equipos.com.uy admin "Ana Pérez"
-   ```
-
-5. **Desplegar**: `firebase deploy`.
-
-   El `predeploy` de `firebase.json` crea el `venv` de `functions/` e instala
-   `requirements.txt` antes de cada deploy: `firebase-tools` lo necesita para
-   descubrir las funciones Python, y sin él falla con *«Missing virtual
-   environment at venv directory»*. Si preferís armarlo a mano:
-
-   ```bash
-   cd functions && python3.11 -m venv venv && venv/bin/pip install -r requirements.txt
-   ```
-
-   Los tres secretos del paso 3 tienen que **existir antes** del primer deploy:
-   la función los declara y Cloud Functions falla si alguno no está en Secret
-   Manager. Si todavía no hay Cloud SQL, se pueden crear con un valor de relleno
-   para que el deploy pase, y actualizarlos después.
-
-   Para desplegar por partes: `firebase deploy --only hosting`,
-   `--only functions`, `--only firestore:rules`.
+1. Dos instancias **Cloud SQL for Postgres** separadas (nunca la misma), sin
+   IP pública. En la semántica, `create extension vector`.
+2. Aplicar las migraciones: `db/boveda/` (tres) y `db/semantica/` (una).
+3. Un **conector de Acceso a VPC**: es lo que le permite a la función llegar
+   a las IP privadas de las bases.
+4. Tres secretos en Secret Manager: `DSN_BOVEDA`, `DSN_SEMANTICA` y
+   `EMBEDDINGS_API_KEY`. Tienen que existir **antes** del primer deploy.
+5. Auth con correo/contraseña, Firestore en modo producción, y el padrón de
+   usuarios con `scripts/alta_usuario.js`.
+6. `export VPC_CONNECTOR=paneles-conn && firebase deploy`.
 
 ## Fase 1 — qué está implementado
 
