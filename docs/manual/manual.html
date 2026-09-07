@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<title>Manual de usuario — Gestión de paneles</title>
+<link rel="stylesheet" href="tipografia/montserrat.css" />
+<link rel="stylesheet" href="estilo.css" />
+<style>
+  @page { size: A4; margin: 18mm 16mm 20mm; }
+</style>
+</head>
+<body>
+
+
+<!-- ════════════════ ÍNDICE ════════════════ -->
+<div class="indice">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Contenido</div>
+    <h2>Qué vas a encontrar</h2>
+  </div>
+  <ol>
+    <li><a href="#s1"><span><span class="num">1</span> El sistema en dos minutos</span></a>
+      <ul><li>Qué resuelve · Las dos bases · Quién puede hacer qué</li></ul></li>
+    <li><a href="#s2"><span><span class="num">2</span> Entrar al sistema</span></a>
+      <ul><li>Ingreso · Olvidé la contraseña · Sin acceso</li></ul></li>
+    <li><a href="#s3"><span><span class="num">3</span> Panelistas</span></a>
+      <ul><li>Buscar · Enrolar · Duplicados · Revisión de altas · La ficha</li></ul></li>
+    <li><a href="#s4"><span><span class="num">4</span> Paneles</span></a>
+      <ul><li>Crear · Agregar miembros · Dar de baja una membresía</li></ul></li>
+    <li><a href="#s5"><span><span class="num">5</span> Encuestas</span></a>
+      <ul><li>Crear una ola · Convocar · Ingestar respuestas · Verificar el cruce</li></ul></li>
+    <li><a href="#s6"><span><span class="num">6</span> Cumplimiento</span></a>
+      <ul><li>Retirar consentimiento · Baja total · Auditoría de privacidad</li></ul></li>
+    <li><a href="#s7"><span><span class="num">7</span> Preguntas frecuentes</span></a></li>
+    <li><a href="#s8"><span><span class="num">8</span> Glosario</span></a></li>
+  </ol>
+
+  <div class="aviso info" style="margin-top:12mm">
+    <div class="t">Sobre las imágenes</div>
+    <p>Todas las capturas son de la aplicación real, con datos de ejemplo. Lo que
+    veas en pantalla va a coincidir con lo que muestra este manual, salvo por
+    los nombres y los identificadores.</p>
+  </div>
+</div>
+
+<!-- ════════════════ 1 ════════════════ -->
+<section id="s1">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 1</div>
+    <h2>El sistema en dos minutos</h2>
+    <p>Qué hace, cómo guarda los datos y qué puede hacer cada rol.</p>
+  </div>
+
+  <p>Este sistema administra los <strong>paneles de investigación de mercado</strong>
+  de Equipos: quiénes son los panelistas, a qué paneles pertenecen, qué
+  consintieron, a qué encuestas se los convocó y qué respondieron.</p>
+
+  <p>Un panel es un activo que se degrada solo si no se cuida: pierde
+  representatividad, la gente se fatiga y abandona, se sobre-encuesta siempre a
+  los mismos. El sistema existe para mantenerlo sano y, a la vez, para que el
+  manejo de datos personales esté en regla.</p>
+
+  <h3><span class="n">1.1</span> Las dos bases, y por qué importa</h3>
+
+  <p>Los datos viven en <strong>dos bases separadas</strong>, y esa separación es
+  deliberada:</p>
+
+  <table>
+    <tr>
+      <td class="destacado">La bóveda</td>
+      <td>Guarda los <strong>datos personales</strong>: nombre, documento, email,
+      celular, fecha de nacimiento, localidad. También los paneles, las
+      membresías, el consentimiento y la participación.</td>
+    </tr>
+    <tr>
+      <td class="destacado">El store semántico</td>
+      <td>Guarda las <strong>respuestas</strong> de las encuestas y su
+      representación vectorial, que es lo que permite después buscarlas por
+      significado. Acá <strong>no hay ningún dato personal</strong>: cada persona
+      figura solo con un identificador opaco.</td>
+    </tr>
+  </table>
+
+  <p>El puente entre las dos es ese identificador, el <code>id_persona</code>: un
+  código aleatorio que no dice nada de la persona. Vas a verlo en varias
+  pantallas, en gris y en letra monoespaciada. Se puede copiar con un clic.</p>
+
+  <div class="aviso">
+    <div class="t">La regla que el sistema no te deja romper</div>
+    <p>Ningún dato personal puede llegar al store semántico. No es una
+    recomendación: el sistema aborta la operación si detecta que un archivo de
+    ingesta trae una columna con nombre, email, documento o teléfono.</p>
+  </div>
+
+  <h3><span class="n">1.2</span> Quién puede hacer qué</h3>
+
+  <p>Tu rol lo define quien administra el sistema, y aparece debajo de tu nombre
+  en el menú de la izquierda. Las opciones que no te corresponden simplemente no
+  van a funcionar.</p>
+
+  <table>
+    <thead><tr><th>Rol</th><th>Puede</th><th>No puede</th></tr></thead>
+    <tr>
+      <td class="destacado">Administración</td>
+      <td>Todo</td><td>—</td>
+    </tr>
+    <tr>
+      <td class="destacado">Responsable de panel</td>
+      <td>Enrolar panelistas, armar paneles y membresías, crear encuestas,
+      convocar, ingestar</td>
+      <td>Retirar consentimientos y dar de baja</td>
+    </tr>
+    <tr>
+      <td class="destacado">Analista</td>
+      <td>Crear encuestas, convocar, ingestar respuestas, consultar</td>
+      <td>Enrolar panelistas y gestionar paneles</td>
+    </tr>
+    <tr>
+      <td class="destacado">Cumplimiento / DPO</td>
+      <td>Ver todo, retirar consentimientos, dar de baja</td>
+      <td>Enrolar y gestionar paneles</td>
+    </tr>
+  </table>
+</section>
+
+<!-- ════════════════ 2 ════════════════ -->
+<section id="s2">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 2</div>
+    <h2>Entrar al sistema</h2>
+    <p>Ingreso con tu cuenta de Equipos.</p>
+  </div>
+
+  <ol class="pasos">
+    <li>Abrí la dirección del sistema en el navegador.</li>
+    <li>Escribí tu <strong>email de Equipos</strong> y tu clave.</li>
+    <li>Tocá <strong>Ingresar</strong>.</li>
+  </ol>
+
+  <figure>
+    <img src="capturas/01-ingreso.jpg" alt="Pantalla de ingreso" />
+    <figcaption><b>Pantalla de ingreso.</b> El acceso es con el email de Equipos,
+    no con la cédula.</figcaption>
+  </figure>
+
+  <h3><span class="n">2.1</span> Si olvidaste la contraseña</h3>
+  <p>Escribí tu email en el campo de arriba y tocá <strong>¿Olvidaste tu
+  contraseña?</strong>. Te llega un correo para elegir una nueva. Si no aparece,
+  revisá el correo no deseado.</p>
+
+  <h3><span class="n">2.2</span> Si te dice «Sin acceso»</h3>
+  <p>Tu cuenta existe pero todavía no está habilitada en el sistema de paneles, o
+  fue desactivada. Pedile el alta a quien administra: es un trámite de un
+  minuto.</p>
+
+  <div class="aviso ok">
+    <div class="t">Cerrar sesión</div>
+    <p>El botón está abajo de todo en el menú de la izquierda, debajo de tu
+    nombre. Conviene usarlo si trabajás en una computadora compartida: acá hay
+    datos personales de terceros.</p>
+  </div>
+</section>
+
+<!-- ════════════════ 3 ════════════════ -->
+<section id="s3">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 3</div>
+    <h2>Panelistas</h2>
+    <p>Enrolar gente, encontrarla y ver todo lo que el sistema sabe de ella.</p>
+  </div>
+
+  <p>Es la pantalla con la que más vas a trabajar. Cada fila es una persona, y
+  las columnas te dicen de un vistazo lo que importa para operar: si se la puede
+  contactar, si se pueden usar sus respuestas y en cuántos paneles está.</p>
+
+  <figure>
+    <img src="capturas/02-panelistas.jpg" alt="Listado de panelistas" />
+    <figcaption><b>Listado de panelistas.</b> La columna
+    <i>Consentimiento</i> muestra las dos finalidades por separado: verde es que
+    la tiene vigente, gris que no.</figcaption>
+  </figure>
+
+  <h3><span class="n">3.1</span> Buscar a alguien</h3>
+  <p>Escribí en el buscador cualquier parte del <strong>nombre, el email o el
+  documento</strong>. La lista se filtra sola mientras escribís, no hace falta
+  apretar nada. El desplegable de al lado limita la búsqueda a un panel.</p>
+
+  <h3><span class="n">3.2</span> Enrolar un panelista</h3>
+
+  <ol class="pasos">
+    <li>Tocá <strong>+ Enrolar panelista</strong>, arriba a la derecha.</li>
+    <li>Completá los datos. <strong>Documento</strong> y <strong>email</strong> son
+    los más importantes: son las dos claves con las que el sistema detecta si la
+    persona ya estaba. Si tenés uno de los dos, cargalo.</li>
+    <li>Si el alta viene de una plataforma de campo, completá <strong>Origen</strong>
+    (por ejemplo <code>dooblo</code>) y <strong>Id en el origen</strong>. Es lo que
+    después permite enganchar sus respuestas automáticamente.</li>
+  </ol>
+
+  <figure>
+    <img class="recorte" src="capturas/03-alta-datos.jpg" alt="Formulario de alta" />
+    <figcaption><b>Formulario de alta.</b> Solo el consentimiento es
+    obligatorio; del resto alcanza con documento, email o nombre. El formato en
+    que se escribe la fecha lo pone tu navegador.</figcaption>
+  </figure>
+
+  <ol class="pasos" start="4">
+    <li>Marcá las finalidades que la persona consintió. <strong>Son dos
+    decisiones distintas</strong> y hay que preguntarlas por separado.</li>
+    <li>Tocá <strong>Enrolar</strong>.</li>
+  </ol>
+
+  <figure>
+    <img class="recorte" src="capturas/04-alta-consentimiento.jpg" alt="Las dos finalidades de consentimiento" />
+    <figcaption><b>Las dos finalidades.</b> «Contacto y participación» habilita
+    convocarla; «uso semántico» habilita guardar sus respuestas para consultarlas
+    entre estudios. Tener una no implica tener la otra.</figcaption>
+  </figure>
+
+  <div class="aviso grave">
+    <div class="t">Sin consentimiento no hay alta</div>
+    <p>Si no marcás ninguna finalidad, el sistema rechaza el alta. No es un
+    error de la pantalla: una persona sin consentimiento registrado no puede
+    estar en el panel.</p>
+  </div>
+
+  <figure>
+    <img src="capturas/05-alta-confirmada.jpg" alt="Aviso de alta confirmada" />
+    <figcaption><b>Listo.</b> El aviso aparece abajo a la derecha y se va solo.</figcaption>
+  </figure>
+
+  <h3><span class="n">3.3</span> Si la persona ya estaba enrolada</h3>
+
+  <p>El sistema no crea duplicados. Cuando el documento o el email coinciden con
+  alguien que ya está, <strong>reutiliza esa persona</strong> en vez de crear una
+  nueva, y te lo dice.</p>
+
+  <figure>
+    <img src="capturas/06-dedup-reutiliza.jpg" alt="Aviso de persona reutilizada" />
+    <figcaption><b>Duplicado detectado.</b> El aviso indica por qué dato
+    coincidió. La persona conserva su identificador, su historial y sus paneles.</figcaption>
+  </figure>
+
+  <p>Si el alta traía algún dato que faltaba en la ficha original, se completa.
+  Lo que ya estaba cargado <strong>no se pisa</strong>: se asume que el dato viejo
+  fue verificado.</p>
+
+  <h3><span class="n">3.4</span> Cuando el alta queda en revisión</h3>
+
+  <p>Hay un caso que el sistema <strong>no resuelve solo</strong>: cuando el alta
+  no trae documento ni email, pero el nombre y la fecha de nacimiento coinciden
+  con alguien ya enrolado. Homónimos con la misma fecha existen, y fusionar dos
+  personas por error es peor que preguntar.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/07-alta-en-revision.jpg" alt="Aviso de alta en revisión" />
+    <figcaption><b>Coincidencia ambigua.</b> Todavía no se creó ninguna persona:
+    el alta queda esperando una decisión.</figcaption>
+  </figure>
+
+  <p>Estas altas se acumulan en <strong>Revisión de altas</strong>, en el menú de
+  la izquierda. Conviene mirarlas una vez por semana: mientras estén ahí, esas
+  personas no existen en el sistema.</p>
+
+  <figure>
+    <img src="capturas/08-revisiones.jpg" alt="Listado de altas en revisión" />
+    <figcaption><b>Altas esperando decisión.</b> El desplegable de arriba
+    permite ver también las ya resueltas.</figcaption>
+  </figure>
+
+  <ol class="pasos">
+    <li>Tocá <strong>Resolver</strong> en la fila que quieras atender.</li>
+    <li>Compará el alta que llegó con la persona que ya está enrolada. Mirá la
+    localidad, el sexo y cualquier dato de contacto: suelen ser lo que
+    desempata.</li>
+    <li>Elegí:
+      <ul class="puntos">
+        <li><strong>Es la misma</strong> — se fusiona con la persona existente y se
+        completan los datos que faltaban.</li>
+        <li><strong>Es otra persona</strong> — se crea una persona nueva, con su
+        propio identificador.</li>
+        <li><strong>Descartar alta</strong> — no se crea nada. Para altas cargadas
+        por error.</li>
+      </ul>
+    </li>
+  </ol>
+
+  <figure>
+    <img class="recorte" src="capturas/09-resolver-revision.jpg" alt="Resolver un alta en revisión" />
+    <figcaption><b>La decisión.</b> Si dudás, conviene averiguar antes de
+    fusionar: separar dos personas mal fusionadas es mucho más trabajoso.</figcaption>
+  </figure>
+
+  <h3><span class="n">3.5</span> La ficha de un panelista</h3>
+
+  <p>Desde el listado, <strong>Ver ficha</strong> abre todo lo que el sistema sabe
+  de una persona: sus datos, su historial de consentimiento, los paneles a los
+  que pertenece y cuántas veces se la convocó.</p>
+
+  <figure>
+    <img src="capturas/10-ficha-panelista.jpg" alt="Ficha de un panelista" />
+    <figcaption><b>Ficha completa.</b> Arriba a la derecha, las tres cifras que
+    importan para manejar fatiga: convocatorias, respondidas y hace cuánto fue el
+    último contacto.</figcaption>
+  </figure>
+
+  <div class="aviso info">
+    <div class="t">El tramo etario se calcula solo</div>
+    <p>No se carga: sale de la fecha de nacimiento. Por eso conviene cargarla
+    aunque la persona no quiera dar el dato exacto — es lo que después permite
+    medir la composición del panel.</p>
+  </div>
+</section>
+
+<!-- ════════════════ 4 ════════════════ -->
+<section id="s4">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 4</div>
+    <h2>Paneles</h2>
+    <p>Agrupar panelistas. Una persona puede estar en varios paneles a la vez.</p>
+  </div>
+
+  <figure>
+    <img src="capturas/11-paneles.jpg" alt="Listado de paneles" />
+    <figcaption><b>Los paneles.</b> Cada uno muestra cuántos miembros activos
+    tiene y cuántas encuestas se le fieldearon.</figcaption>
+  </figure>
+
+  <h3><span class="n">4.1</span> Crear un panel</h3>
+  <p>Tocá <strong>+ Nuevo panel</strong>, poné nombre y una descripción de para qué
+  es. La descripción no es decorativa: dentro de un año va a ser lo único que
+  explique por qué ese panel existe.</p>
+
+  <h3><span class="n">4.2</span> Ver y agregar miembros</h3>
+
+  <ol class="pasos">
+    <li>Tocá <strong>Abrir</strong> en el panel.</li>
+    <li>Vas a ver a los miembros activos, con su demografía y su consentimiento.
+    El desplegable de arriba permite ver a los que están de baja.</li>
+  </ol>
+
+  <figure>
+    <img src="capturas/12-panel-miembros.jpg" alt="Miembros de un panel" />
+    <figcaption><b>Miembros del panel.</b> Desde acá se llega a la ficha de cada
+    persona o se la quita del panel.</figcaption>
+  </figure>
+
+  <ol class="pasos" start="3">
+    <li>Tocá <strong>+ Agregar panelistas</strong>.</li>
+    <li>Buscá y marcá a quienes quieras sumar. Solo aparecen los que
+    <strong>todavía no son miembros</strong>.</li>
+    <li>Tocá <strong>Agregar seleccionados</strong>.</li>
+  </ol>
+
+  <figure>
+    <img class="recorte" src="capturas/13-agregar-miembros.jpg" alt="Agregar panelistas a un panel" />
+    <figcaption><b>Agregar en lote.</b> Se pueden marcar varios de una vez.</figcaption>
+  </figure>
+
+  <div class="aviso ok">
+    <div class="t">Sumar a alguien a un segundo panel no lo duplica</div>
+    <p>Es la misma persona, con el mismo identificador y el mismo historial, en
+    dos paneles. Su pertenencia al primero no se altera.</p>
+  </div>
+
+  <h3><span class="n">4.3</span> Quitar a alguien de un panel</h3>
+  <p>El botón <strong>Quitar</strong> marca la membresía como <em>baja</em>. La
+  persona <strong>no se borra</strong>: sigue en el sistema, en sus otros paneles,
+  y su historial de participación en este panel sigue siendo cierto. Si más
+  adelante la volvés a agregar, se reactiva la membresía que ya existía.</p>
+</section>
+
+<!-- ════════════════ 5 ════════════════ -->
+<section id="s5">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 5</div>
+    <h2>Encuestas</h2>
+    <p>Fieldear una ola, convocar al panel y traer las respuestas al sistema.</p>
+  </div>
+
+  <figure>
+    <img src="capturas/14-encuestas.jpg" alt="Listado de encuestas" />
+    <figcaption><b>Las olas.</b> La barra verde es la tasa de respuesta.
+    <i>ref_estudio</i> es el código que ata esta encuesta con sus respuestas del
+    lado semántico.</figcaption>
+  </figure>
+
+  <h3><span class="n">5.1</span> Crear una encuesta</h3>
+
+  <ol class="pasos">
+    <li>Tocá <strong>+ Nueva encuesta</strong>.</li>
+    <li>Elegí el panel al que se le va a fieldear, poné el nombre de la ola y la
+    fecha de campo.</li>
+    <li>Tocá <strong>Crear</strong>.</li>
+  </ol>
+
+  <figure>
+    <img class="recorte" src="capturas/15-encuesta-nueva.jpg" alt="Crear una encuesta" />
+    <figcaption><b>Nueva encuesta.</b> Al crearla se genera su
+    <i>ref_estudio</i>, que no hay que tocar ni recordar.</figcaption>
+  </figure>
+
+  <figure>
+    <img src="capturas/16-encuesta-detalle.jpg" alt="Detalle de una encuesta" />
+    <figcaption><b>La encuesta recién creada.</b> Desde acá se convoca, se
+    ingestan las respuestas y se verifica que todo haya quedado bien.</figcaption>
+  </figure>
+
+  <h3><span class="n">5.2</span> Convocar al panel</h3>
+
+  <p>Tocá <strong>Convocar al panel</strong>. Se convoca a todos los miembros
+  activos, con una excepción importante:</p>
+
+  <figure>
+    <img class="recorte" src="capturas/17-convocar-aviso.jpg" alt="Aviso antes de convocar" />
+    <figcaption><b>El filtro de consentimiento.</b> Quien no tenga «contacto y
+    participación» vigente queda afuera, aunque sea miembro del panel.</figcaption>
+  </figure>
+
+  <p>Al terminar, el sistema te dice cuántos entraron y cuántos quedaron afuera:</p>
+
+  <figure>
+    <img class="recorte" src="capturas/18-convocatoria-resultado.jpg" alt="Resultado de la convocatoria" />
+    <figcaption><b>Resultado.</b> Si aparecen personas «sin consentimiento», no
+    es un error: es el sistema protegiéndote de contactar a quien no
+    corresponde.</figcaption>
+  </figure>
+
+  <h3><span class="n">5.3</span> Ingestar las respuestas</h3>
+
+  <p>Cuando el campo terminó y tenés el archivo de respuestas, tocá
+  <strong>Ingestar respuestas</strong>. El archivo tiene que estar en
+  <strong>formato ancho</strong>: una fila por persona, una columna por pregunta, y
+  el encabezado de cada columna es el código de esa pregunta.</p>
+
+  <ol class="pasos">
+    <li>Arrastrá o elegí el <code>.xlsx</code> o <code>.csv</code> del export de
+    campo.</li>
+    <li>Confirmá cuál es la <strong>columna que identifica al respondente</strong>.
+    El sistema suele adivinarla. Tiene que traer el mismo id que cargaste como
+    «Id en el origen» al enrolar.</li>
+    <li>Completá el <strong>texto de cada pregunta</strong>. Los códigos vienen del
+    archivo; el texto lo ponés vos, y es importante: es lo que después permite
+    encontrar esa respuesta buscando por significado.</li>
+    <li>En las preguntas cerradas, cargá las opciones con el formato
+    <code>1=Televisión; 2=Redes sociales</code>. Así el sistema guarda la etiqueta
+    y no el número.</li>
+    <li>Tocá <strong>Ingestar</strong>.</li>
+  </ol>
+
+  <figure>
+    <img class="recorte" src="capturas/19-ingesta.jpg" alt="Pantalla de ingesta" />
+    <figcaption><b>Ingesta.</b> El recuadro de arriba recuerda qué información
+    cruza al store semántico y qué se queda en la bóveda.</figcaption>
+  </figure>
+
+  <figure>
+    <img class="recorte" src="capturas/20-ingesta-resultado.jpg" alt="Resultado de la ingesta" />
+    <figcaption><b>Resultado.</b> «Sin mapear» son filas cuyo id no corresponde a
+    ningún convocado; «sin consentimiento», personas sin uso semántico
+    vigente.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Ingestar dos veces el mismo archivo no duplica nada</div>
+    <p>Si te equivocaste en el texto de una pregunta, corregilo y volvé a
+    ingestar el mismo archivo: las respuestas se actualizan en lugar de
+    duplicarse.</p>
+  </div>
+
+  <h3><span class="n">5.4</span> Verificar el cruce</h3>
+
+  <p>Tocá <strong>Verificar</strong> en la tarjeta de abajo. Compara lo que quedó
+  de los dos lados y confirma que las respuestas guardadas corresponden a las
+  personas que convocaste.</p>
+
+  <figure>
+    <img src="capturas/21-cruce.jpg" alt="Verificación del cruce entre stores" />
+    <figcaption><b>Cruce verificado.</b> Es normal que haya menos individuos que
+    convocados: solo se ingestan las respuestas de quienes consintieron el uso
+    semántico.</figcaption>
+  </figure>
+</section>
+
+<!-- ════════════════ 6 ════════════════ -->
+<section id="s6">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 6</div>
+    <h2>Cumplimiento</h2>
+    <p>Atender los derechos de los panelistas. Solo para los roles de
+    Administración y Cumplimiento.</p>
+  </div>
+
+  <p>Cuando un panelista pide que dejen de contactarlo, que no usen más sus
+  respuestas, o directamente irse del panel, esto es lo que hay que hacer. Las
+  tres opciones están en su ficha, abajo a la derecha, en
+  <strong>Derechos del titular</strong>.</p>
+
+  <h3><span class="n">6.1</span> Las tres opciones</h3>
+
+  <table>
+    <thead><tr><th>Si la persona pide…</th><th>Elegí</th><th>Qué pasa</th></tr></thead>
+    <tr>
+      <td>«No usen más mis respuestas»</td>
+      <td class="destacado">Retirar uso semántico</td>
+      <td>Se borran sus respuestas del store semántico. <strong>Sigue en el
+      panel</strong> y se la puede seguir convocando.</td>
+    </tr>
+    <tr>
+      <td>«No me contacten más»</td>
+      <td class="destacado">Retirar contacto</td>
+      <td>Sale del muestreo: se dan de baja sus membresías. Sus respuestas
+      quedan, porque las consintió por separado.</td>
+    </tr>
+    <tr>
+      <td>«Quiero irme del panel»</td>
+      <td class="destacado">Baja total</td>
+      <td>Se borra todo: sus datos personales, sus respuestas y sus
+      membresías.</td>
+    </tr>
+  </table>
+
+  <h3><span class="n">6.2</span> La baja total</h3>
+
+  <figure>
+    <img class="recorte" src="capturas/23-baja-total.jpg" alt="Confirmación de baja total" />
+    <figcaption><b>Confirmación.</b> El sistema te dice exactamente qué va a
+    borrar antes de hacerlo.</figcaption>
+  </figure>
+
+  <div class="aviso grave">
+    <div class="t">Es irreversible</div>
+    <p>No hay deshacer. Los datos se borran de verdad, de las dos bases. Si la
+    persona vuelve más adelante, hay que enrolarla de cero y va a tener un
+    identificador nuevo: su historial anterior no se recupera.</p>
+    <p>Queda registrado que la baja se hizo —con la fecha y quién la pidió— pero
+    sin ningún dato personal. Eso es lo que permite demostrar, si alguien
+    pregunta, que el pedido se atendió.</p>
+  </div>
+
+  <h3><span class="n">6.3</span> La pantalla de Cumplimiento</h3>
+
+  <figure>
+    <img src="capturas/22-cumplimiento.jpg" alt="Pantalla de cumplimiento" />
+    <figcaption><b>Cumplimiento.</b> A la izquierda, la auditoría y las bajas a
+    medio terminar; a la derecha, el recordatorio de qué implica cada retiro.</figcaption>
+  </figure>
+
+  <h4>Auditoría del store semántico</h4>
+  <p><strong>Auditar ahora</strong> revisa que no se haya colado ningún dato
+  personal del lado semántico. Tiene que decir siempre <strong>0 columnas</strong>.
+  Si alguna vez dice otra cosa, avisá a quien administra el sistema antes de
+  seguir trabajando.</p>
+
+  <h4>Bajas con borrado pendiente</h4>
+  <p>Una baja borra en dos bases distintas, y la segunda puede fallar por un
+  problema de red. Cuando pasa, la baja se completa igual —los datos personales
+  se borran— y queda listada acá. <strong>Reintentar</strong> vuelve a intentar el
+  borrado que faltó. Si la lista está vacía, no hay nada pendiente.</p>
+</section>
+
+<!-- ════════════════ 7 ════════════════ -->
+<section id="s7">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 7</div>
+    <h2>Preguntas frecuentes</h2>
+  </div>
+
+  <h4>Enrolé a alguien y no aparece en el listado</h4>
+  <p>Fijate si el alta quedó en <strong>Revisión de altas</strong>. Pasa cuando el
+  alta no traía documento ni email y coincidió con alguien por nombre y fecha de
+  nacimiento.</p>
+
+  <h4>Convoqué al panel y entraron menos personas de las que esperaba</h4>
+  <p>Los que faltan no tienen «contacto y participación» vigente. Están en el
+  panel pero no se los puede contactar. El aviso al terminar la convocatoria te
+  dice cuántos fueron.</p>
+
+  <h4>Ingesté el archivo y quedaron filas «sin mapear»</h4>
+  <p>El id de esas filas no corresponde a ninguna persona convocada. Suele ser
+  una de dos: la persona no fue convocada a esta encuesta, o se enroló sin
+  cargarle el «Id en el origen». Revisá que la columna elegida en el paso 2 sea
+  la correcta.</p>
+
+  <h4>Aparecieron personas «sin consentimiento» al ingestar</h4>
+  <p>Están convocadas y respondieron, pero no consintieron el uso semántico. Sus
+  respuestas no se guardan. Es correcto, no hay nada que arreglar.</p>
+
+  <h4>Me equivoqué en el texto de una pregunta al ingestar</h4>
+  <p>Corregilo y volvé a ingestar el mismo archivo. No se duplica nada.</p>
+
+  <h4>Quiero cambiar el documento o el email de una persona</h4>
+  <p>La ficha todavía no permite editar los datos. Si hay un dato mal cargado,
+  pedíselo a quien administra el sistema.</p>
+
+  <h4>Di de baja a alguien por error</h4>
+  <p>Si fue <strong>quitar del panel</strong> o <strong>retirar un
+  consentimiento</strong>, se puede volver atrás: agregala de nuevo al panel o
+  volvé a otorgarle la finalidad. Si fue <strong>baja total</strong>, no: hay que
+  enrolarla de cero y el historial anterior se perdió.</p>
+
+  <h4>Veo un cartel celeste que dice «Modo demo»</h4>
+  <p>Estás en una copia de prueba con datos inventados, no en el sistema real.
+  Nada de lo que hagas se guarda. Pedí la dirección correcta.</p>
+</section>
+
+<!-- ════════════════ 8 ════════════════ -->
+<section id="s8">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 8</div>
+    <h2>Glosario</h2>
+    <p>Los términos que aparecen en pantalla, en castellano.</p>
+  </div>
+
+  <table>
+    <tr><td class="destacado">Panelista</td>
+      <td>Persona que forma parte de uno o más paneles. Es la misma persona en
+      todo el sistema, aunque participe de muchos estudios.</td></tr>
+    <tr><td class="destacado">Panel</td>
+      <td>Conjunto estable de personas al que se le fieldean encuestas de forma
+      repetida.</td></tr>
+    <tr><td class="destacado">Membresía</td>
+      <td>La pertenencia de una persona a un panel. Una persona puede tener
+      varias, y darse de baja de una no afecta a las otras.</td></tr>
+    <tr><td class="destacado">Encuesta u ola</td>
+      <td>Un relevamiento concreto sobre un panel, con su fecha de campo.</td></tr>
+    <tr><td class="destacado">Convocatoria</td>
+      <td>El acto de invitar a los miembros de un panel a responder una
+      encuesta.</td></tr>
+    <tr><td class="destacado">Consentimiento</td>
+      <td>El permiso que dio la persona, con la versión del texto que aceptó y la
+      fecha. Hay dos finalidades independientes.</td></tr>
+    <tr><td class="destacado">Contacto y participación</td>
+      <td>La finalidad que habilita convocar a la persona.</td></tr>
+    <tr><td class="destacado">Uso semántico</td>
+      <td>La finalidad que habilita guardar sus respuestas para poder
+      consultarlas por significado entre distintos estudios.</td></tr>
+    <tr><td class="destacado">Bóveda</td>
+      <td>La base donde viven los datos personales y toda la gestión del
+      panel.</td></tr>
+    <tr><td class="destacado">Store semántico</td>
+      <td>La base donde viven las respuestas y su representación vectorial. Sin
+      datos personales.</td></tr>
+    <tr><td class="destacado">id_persona</td>
+      <td>El código opaco que identifica a una persona en todo el sistema. Es lo
+      único que viaja al store semántico.</td></tr>
+    <tr><td class="destacado">ref_estudio</td>
+      <td>El código que ata una encuesta con sus respuestas del lado
+      semántico.</td></tr>
+    <tr><td class="destacado">Id en el origen</td>
+      <td>El identificador que le puso la plataforma de campo (Dooblo, Alchemer)
+      a esa persona. Es lo que permite enganchar sus respuestas al
+      ingestar.</td></tr>
+    <tr><td class="destacado">Formato ancho</td>
+      <td>La forma en que vienen los export de campo: una fila por persona, una
+      columna por pregunta.</td></tr>
+    <tr><td class="destacado">Dedup</td>
+      <td>La detección de que una persona que se está enrolando ya estaba en el
+      sistema.</td></tr>
+    <tr><td class="destacado">Tramo etario</td>
+      <td>El rango de edad, calculado a partir de la fecha de nacimiento.</td></tr>
+    <tr><td class="destacado">PII</td>
+      <td>Sigla de <i>información personal identificable</i>: nombre, documento,
+      email, teléfono, fecha de nacimiento.</td></tr>
+  </table>
+
+  <div class="pie-pagina">
+    Equipos Consultores · Sistema de gestión de paneles · Manual de usuario ·
+    Fase 1
+  </div>
+</section>
+
+</body>
+</html>

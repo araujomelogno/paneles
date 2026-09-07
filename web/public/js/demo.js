@@ -459,6 +459,12 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
 
   if (clave === 'POST /paneles') return { ...crearPanel(cuerpo.nombre, cuerpo.descripcion), miembros: 0 };
 
+  if (metodo === 'GET' && partes[0] === 'paneles' && partes.length === 2) {
+    const panel = bd.paneles.find((p) => p.id === Number(partes[1]));
+    if (!panel) throw new ErrorDemo('No existe el panel.', 404);
+    return panel;
+  }
+
   if (metodo === 'GET' && partes[0] === 'paneles' && partes[2] === 'miembros') {
     const panelId = Number(partes[1]);
     const filtro = consulta.estado || 'activo';
@@ -488,6 +494,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
 
   if (metodo === 'PATCH' && partes[0] === 'paneles') {
     const panel = bd.paneles.find((p) => p.id === Number(partes[1]));
+    if (!panel) throw new ErrorDemo('No existe el panel.', 404);
     panel.estado = cuerpo.estado;
     return panel;
   }
@@ -511,11 +518,14 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   }
 
   if (metodo === 'GET' && partes[0] === 'encuestas' && partes.length === 2) {
-    return bd.encuestas.find((e) => e.id === Number(partes[1]));
+    const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
+    if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
+    return encuesta;
   }
 
   if (metodo === 'PATCH' && partes[0] === 'encuestas') {
     const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
+    if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
     encuesta.estado = cuerpo.estado;
     return encuesta;
   }
