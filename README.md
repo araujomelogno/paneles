@@ -11,6 +11,7 @@ Empezá leyendo `CLAUDE.md`, después el PRD, y desarrollá por fases empezando 
 | `PRD_gestion_de_paneles_detallado.md` | PRD del sistema: problema, objetivos, no-objetivos, arquitectura, y las 4 fases con requisitos (R1.x…R4.x), criterios de aceptación y DoD. Documento **autoritativo** de producto. | `docs/` |
 | `PRD_consulta_semantica_cuestionarios.md` | Spec del **módulo de consulta semántica** (mecánica interna del motor: modelo vectorial, ingesta, embeddings, ranking, verificación con Claude). Es un módulo de este sistema, no un producto aparte. | `docs/` |
 | `DESPLIEGUE.md` | Manual de despliegue: qué y cómo configurar cada pieza, verificación y problemas frecuentes. | `docs/` |
+| `manual/Manual_de_usuario.pdf` | Manual de usuario: paso a paso de cada tarea, con capturas de la aplicación. | `docs/manual/` |
 | `HANDOFF_fase1.md` | Work order de la **Fase 1**: alcance, superficie de API mapeada a R1.x, lógica de dedup, máquina de estados de consentimiento, contrato de cruce entre stores, DoD. **Primer sprint.** | `docs/` |
 | `db/boveda/0001_init.sql` | DDL del **store de bóveda** (Cloud SQL): bóveda de identidad (PII + demográficos) + módulo de paneles. | `db/boveda/` |
 | `db/semantica/0001_init.sql` | DDL del **store semántico** (Cloud SQL + pgvector): contenido semántico (embeddings + `id_persona`). | `db/semantica/` |

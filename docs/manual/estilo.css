@@ -1,0 +1,131 @@
+/* Estilos del manual de usuario. Compartidos por portada.html y
+   manual.html; los márgenes de página los pone cada archivo, porque la
+   portada va a sangre y el cuerpo no. */
+
+  /* ── Marca Equipos Consultores ── */
+  :root {
+    --orange: #E96436; --orange-dark: #C8512A; --orange-light: #FDF0EB;
+    --dark: #3A3838; --dark2: #222222; --gray: #7A7A7A;
+    --gray-light: #EEEEEE; --gray-xlight: #F7F7F7; --border: #E2E2E2;
+    --green: #1E9E57; --green-light: #E8F6EE;
+    --red: #B83A26; --red-light: #FEF0EF;
+    --amber: #B7791F; --amber-light: #FBF3E3;
+    --blue: #3A6EA5; --blue-light: #EAF1F8;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--dark2); font-size: 10.5pt; line-height: 1.6; font-weight: 500;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+
+  h1, h2, h3, h4 { font-weight: 800; letter-spacing: -0.02em; color: var(--dark); }
+
+  /* ══ PORTADA ══ */
+  .portada {
+    height: 297mm; background: var(--dark); color: #fff; position: relative;
+    overflow: hidden; display: flex; flex-direction: column;
+    justify-content: center; padding: 0 26mm; page-break-after: always;
+  }
+  .portada::before { content: ''; position: absolute; bottom: -40px; left: -50px;
+    width: 260px; height: 260px; background: var(--orange); opacity: 0.9; }
+  .portada::after { content: ''; position: absolute; top: 60px; right: -40px;
+    width: 150px; height: 150px; background: var(--orange); opacity: 0.16; }
+  .portada-inner { position: relative; z-index: 1; }
+  .portada img { height: 84px; margin-bottom: 34mm; display: block; }
+  .portada .barra { height: 5px; width: 62px; background: var(--orange); margin-bottom: 10mm; }
+  .portada h1 { font-size: 33pt; color: #fff; line-height: 1.08; letter-spacing: -0.035em; }
+  .portada h1 em { color: var(--orange); font-style: normal; display: block; }
+  .portada .sub { margin-top: 8mm; font-size: 12pt; color: rgba(255,255,255,0.62); font-weight: 500; }
+  .portada .pie { position: absolute; bottom: 22mm; right: 26mm; z-index: 1;
+    font-size: 8.5pt; color: rgba(255,255,255,0.42); letter-spacing: 0.04em;
+    display: flex; gap: 4mm; }
+  .portada .pie span + span::before { content: '·'; margin-right: 4mm; }
+
+  /* ══ ÍNDICE ══ */
+  .indice { page-break-after: always; }
+  .indice ol { list-style: none; margin-top: 8mm; }
+  .indice > ol > li { border-bottom: 1px solid var(--border); padding: 3.5mm 0; }
+  .indice > ol > li > a { display: flex; justify-content: space-between; gap: 8mm;
+    text-decoration: none; color: var(--dark); font-weight: 700; font-size: 11.5pt; }
+  .indice .num { color: var(--orange); font-weight: 800; min-width: 9mm; }
+  .indice ul { list-style: none; margin: 1.5mm 0 0 9mm; }
+  .indice ul li { font-size: 9.5pt; color: var(--gray); font-weight: 500; padding: 0.6mm 0; }
+
+  /* ══ SECCIONES ══ */
+  section { page-break-before: always; }
+  .cab { border-bottom: 2px solid var(--dark); padding-bottom: 4mm; margin-bottom: 7mm; }
+  .cab .barra { height: 4px; width: 40px; background: var(--orange); margin-bottom: 3.5mm; }
+  .cab .kicker { font-size: 8pt; font-weight: 700; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--orange); }
+  .cab h2 { font-size: 21pt; margin-top: 1.5mm; }
+  .cab p { font-size: 10pt; color: var(--gray); margin-top: 2mm; max-width: 150mm; }
+
+  h3 { font-size: 13pt; margin: 9mm 0 3mm; padding-top: 1mm; }
+  h3 .n { color: var(--orange); }
+  h4 { font-size: 10.5pt; margin: 6mm 0 2mm; letter-spacing: 0; }
+  p { margin-bottom: 3mm; }
+  p + h3 { margin-top: 8mm; }
+  strong { font-weight: 700; color: var(--dark); }
+  code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 0.87em; background: var(--gray-xlight); border: 1px solid var(--border);
+    border-radius: 2px; padding: 0.3mm 1.2mm; }
+
+  ul.puntos, ol.pasos { margin: 0 0 4mm 5mm; }
+  ul.puntos li { margin-bottom: 1.8mm; }
+
+  /* ══ PASOS ══ */
+  ol.pasos { list-style: none; margin-left: 0; counter-reset: paso; }
+  /* El contador tiene que respetar el atributo `start` de la lista. */
+  ol.pasos[start="2"] { counter-reset: paso 1; }
+  ol.pasos[start="3"] { counter-reset: paso 2; }
+  ol.pasos[start="4"] { counter-reset: paso 3; }
+  ol.pasos[start="5"] { counter-reset: paso 4; }
+  ol.pasos[start="6"] { counter-reset: paso 5; }
+  ol.pasos > li { counter-increment: paso; position: relative;
+    padding-left: 11mm; margin-bottom: 4.5mm; page-break-inside: avoid; }
+  ol.pasos > li::before {
+    content: counter(paso); position: absolute; left: 0; top: -0.4mm;
+    width: 7.5mm; height: 7.5mm; border-radius: 50%; background: var(--orange);
+    color: #fff; font-size: 9pt; font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* ══ FIGURAS ══ */
+  figure { margin: 5mm 0 7mm; page-break-inside: avoid; }
+  figure img { width: 100%; border: 1px solid var(--border); border-radius: 3px; display: block; }
+  figure img.recorte { border-color: #D6D6D6; box-shadow: 0 2px 10px rgba(0,0,0,0.07); }
+  figcaption { font-size: 8.5pt; color: var(--gray); font-weight: 600;
+    margin-top: 2mm; padding-left: 1mm; border-left: 3px solid var(--orange); }
+  figcaption b { color: var(--dark); font-weight: 700; }
+
+  /* ══ AVISOS ══ */
+  .aviso { border-left: 3px solid var(--amber); background: var(--amber-light);
+    padding: 3.5mm 4.5mm; margin: 4mm 0 5mm; border-radius: 2px; page-break-inside: avoid; }
+  .aviso.ok { border-left-color: var(--green); background: var(--green-light); }
+  .aviso.grave { border-left-color: var(--red); background: var(--red-light); }
+  .aviso.info { border-left-color: var(--blue); background: var(--blue-light); }
+  .aviso .t { font-size: 8.5pt; font-weight: 800; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--dark); margin-bottom: 1.5mm; }
+  .aviso p { font-size: 9.5pt; margin-bottom: 1.5mm; }
+  .aviso p:last-child { margin-bottom: 0; }
+
+  /* ══ TABLAS ══ */
+  table { width: 100%; border-collapse: collapse; margin: 4mm 0 6mm;
+    font-size: 9.5pt; page-break-inside: avoid; }
+  th { text-align: left; background: var(--gray-xlight); color: var(--gray);
+    font-size: 8pt; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 2.5mm 3mm; border-bottom: 1px solid var(--border); }
+  td { padding: 2.8mm 3mm; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.destacado { font-weight: 700; color: var(--dark); white-space: nowrap; }
+
+  .badge { display: inline-block; padding: 0.5mm 2mm; border-radius: 2px;
+    font-size: 7.5pt; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+  .badge.on { background: var(--green-light); color: var(--green); }
+  .badge.off { background: var(--gray-light); color: var(--gray); }
+
+  .pie-pagina { margin-top: 10mm; padding-top: 3mm; border-top: 1px solid var(--border);
+    font-size: 8pt; color: var(--gray); }
