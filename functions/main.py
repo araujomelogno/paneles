@@ -23,7 +23,7 @@ if not firebase_admin._apps:
 
 # Si cambia, hay que cambiar también la región del rewrite de /api/** en
 # firebase.json: los dos tienen que apuntar al mismo lado.
-REGION = "us-central1"
+REGION = "southamerica-east1"
 
 # Conector de Acceso a VPC sin servidor. Es la vía por la que la función llega
 # a las IP privadas de las dos instancias de Cloud SQL; sin él no hay base.
