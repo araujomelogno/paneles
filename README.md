@@ -91,7 +91,7 @@ El resumen, para ubicarse:
 
 1. Dos instancias **Cloud SQL for Postgres** separadas (nunca la misma), sin
    IP pública. En la semántica, `create extension vector`.
-2. Aplicar las migraciones: `db/boveda/` (tres) y `db/semantica/` (una).
+2. Aplicar las migraciones: `db/boveda/` (tres) y `db/semantica/` (dos).
 3. Un **conector de Acceso a VPC**: es lo que le permite a la función llegar
    a las IP privadas de las bases.
 4. Tres secretos en Secret Manager: `DSN_BOVEDA`, `DSN_SEMANTICA` y

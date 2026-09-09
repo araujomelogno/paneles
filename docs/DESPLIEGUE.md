@@ -13,7 +13,10 @@ que más confunde.
 > Postgres 16 crea por defecto instancias **Enterprise Plus**, que no admite
 > tiers de núcleo compartido: por eso va `--edition=ENTERPRISE`. Se agregó el
 > toolchain de **macOS/Homebrew** (paso 1: `cloud-sql-proxy`, `libpq`, ADC) que
-> `gcloud sql connect` (paso 6) da por sentado.
+> `gcloud sql connect` (paso 6) da por sentado. La región ya viene unificada en
+> `southamerica-east1` en el código, con un guard que lo verifica en cada
+> deploy; y la semántica tiene una migración más (`0002`, la vista de
+> procedencia).
 
 ---
 
@@ -169,17 +172,41 @@ functions). Para Uruguay, `southamerica-east1` (São Paulo) es la más cercana.
 
 > ⚠️ **Consistencia de región (código + infra).** El conector de VPC **tiene
 > que estar en la misma región que la función**, o el `firebase deploy` (paso
-> 10) falla y la función no llega a las bases. Y el código trae la función en
-> `us-central1` por defecto, en **dos** lugares que hay que cambiar a tu región:
+> 10) falla y la función no llega a las bases.
 >
-> - `functions/main.py`: `REGION = "us-central1"` → `REGION = "southamerica-east1"`
-> - `firebase.json`: en el rewrite de `/api/**`, `"region": "us-central1"` → `"region": "southamerica-east1"`
+> **El código ya viene en `southamerica-east1`**, en los dos lugares donde la
+> región se declara:
 >
-> Hacé estos dos cambios **antes** de crear el conector (paso 5) y de desplegar.
-> Con eso, instancias, conector y función quedan todas en `southamerica-east1`
-> —lo mejor para latencia y para URCDP, porque la PII no sale de la región—.
-> (Alternativa sin tocar código: dejar todo en `us-central1`, pero ahí la PII
-> queda en EE.UU., que es justo lo que URCDP mira con lupa.)
+> | Archivo | Qué declara |
+> |---|---|
+> | `functions/main.py` → `REGION` | Dónde se despliega la función |
+> | `firebase.json` → rewrite de `/api/**` | A qué región apunta Hosting |
+>
+> No hay que tocar nada para quedar en São Paulo: instancias, conector y
+> función alineadas, que es lo mejor para latencia y para URCDP porque la PII
+> no sale de la región.
+>
+> Si algún día cambiás de región, **cambiá los dos archivos**. Un guard lo
+> verifica antes de cada deploy y lo cancela si no coinciden
+> (`scripts/verificar_region.py`, enganchado en el `predeploy`); si además
+> exportaste `VPC_CONNECTOR`, también compara la región del conector contra
+> `gcloud`. Podés correrlo cuando quieras:
+>
+> ```bash
+> python3 scripts/verificar_region.py
+> ```
+
+> **A tener en cuenta:** las regiones que Firebase recomienda para colocar
+> funciones junto a Hosting son `us-west1`, `us-central1`, `us-east1`,
+> `europe-west1` y `asia-east1`; São Paulo no está en esa lista. Es una
+> recomendación de rendimiento, no un límite: el rewrite hacia otra región
+> funciona igual, pero el salto de Hosting a la función no queda optimizado.
+> Para usuarios en Uruguay conviene igual, porque la latencia que más pesa es
+> la de la función contra Cloud SQL, que son varias consultas por request.
+>
+> Si `/api/**` diera 404 o anduviera lento, la alternativa es llevar todo a
+> `us-central1` —las dos instancias, el conector y las dos declaraciones—,
+> pero ahí la PII queda en EE.UU., que es justo lo que URCDP mira con lupa.
 
 > **Pendiente de definir:** dónde vive la PII es tema URCDP. Está anotado como
 > decisión abierta en el README y conviene cerrarlo antes de cargar datos
@@ -346,6 +373,7 @@ gcloud sql connect paneles-semantica --user=app_paneles --database=paneles_seman
 ```
 ```
 \i db/semantica/0001_init.sql
+\i db/semantica/0002_vista_procedencia.sql
 \q
 ```
 
@@ -400,11 +428,13 @@ con re-embedding de todo el histórico.
 -- en la semántica
 select extversion from pg_extension where extname = 'vector';
 \d respuesta
+\d v_respuesta_estudio
 -- en la bóveda
 \dt
 ```
 
-La bóveda tiene que mostrar 13 tablas; la semántica, 4.
+La bóveda tiene que mostrar 13 tablas; la semántica, 4 tablas más la
+vista `v_respuesta_estudio`.
 
 ---
 
@@ -682,7 +712,7 @@ Cloud SQL. Para que la función tenga bases, exportá `DSN_BOVEDA` y
 [ ] Bases y usuario app_paneles en las dos
 [ ] Región aplicada en código (main.py REGION + firebase.json rewrite) e infra
 [ ] Conector paneles-conn creado
-[ ] Migraciones aplicadas: 3 en la bóveda, 1 en la semántica
+[ ] Migraciones aplicadas: 3 en la bóveda, 2 en la semántica
 [ ] create extension vector confirmado en la semántica
 [ ] DSN_BOVEDA, DSN_SEMANTICA y EMBEDDINGS_API_KEY en Secret Manager
 [ ] Authentication con correo/contraseña habilitado
