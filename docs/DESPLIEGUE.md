@@ -263,17 +263,15 @@ Filtrá por tipo: con IP pública y privada a la vez, el orden de la lista no
 está garantizado y la que necesitás es la **privada**.
 
 ```bash
+# Lista las IP de la instancia; la privada es la 10.x.x.x
 gcloud sql instances describe paneles-boveda \
-  --flatten="ipAddresses[]" \
-  --filter="ipAddresses.type=PRIVATE" \
-  --format="value(ipAddresses.ipAddress)"
+  --format="value(ipAddresses[].ipAddress)"
 gcloud sql instances describe paneles-semantica \
-  --flatten="ipAddresses[]" \
-  --filter="ipAddresses.type=PRIVATE" \
-  --format="value(ipAddresses.ipAddress)"
+  --format="value(ipAddresses[].ipAddress)"
 ```
 
-Si preferís no pelear con el formato:
+Para aislar solo la privada (no sirve `--filter`: es un flag de `list`, no de
+`describe`), usá JSON + Python:
 
 ```bash
 gcloud sql instances describe paneles-boveda --format=json | \
