@@ -11,7 +11,9 @@ que más confunde.
 > Cloud SQL (edición Enterprise + `--ssl-mode`, ver 4.2), lectura de IP privada
 > (4.4), y **consistencia de región** entre función, conector y bases (4.2).
 > Postgres 16 crea por defecto instancias **Enterprise Plus**, que no admite
-> tiers de núcleo compartido: por eso va `--edition=ENTERPRISE`.
+> tiers de núcleo compartido: por eso va `--edition=ENTERPRISE`. Se agregó el
+> toolchain de **macOS/Homebrew** (paso 1: `cloud-sql-proxy`, `libpq`, ADC) que
+> `gcloud sql connect` (paso 6) da por sentado.
 
 ---
 
@@ -53,14 +55,45 @@ firebase --version    # npm install -g firebase-tools
 gcloud --version      # https://cloud.google.com/sdk/docs/install
 ```
 
+En **macOS con Homebrew**, la instalación completa (incluye lo que el paso 6
+necesita para conectar a las bases):
+
+```bash
+brew install python@3.11 node libpq cloud-sql-proxy
+brew install --cask google-cloud-sdk
+npm install -g firebase-tools
+brew link --force libpq          # deja psql en el PATH (libpq es keg-only)
+```
+
+> **Notas de macOS/Homebrew** (aprendidas a los tropezones):
+> - `gcloud` por Homebrew trae el **gestor de componentes deshabilitado**, así
+>   que `gcloud components install ...` NO funciona. Por eso `cloud-sql-proxy` y
+>   `psql` se instalan por brew aparte, no como componentes de gcloud.
+> - `gcloud sql connect` (paso 6) necesita **`cloud-sql-proxy` (v2)** y **`psql`**
+>   en el PATH; sin ellos falla con "Cloud SQL Proxy couldn't be found" o
+>   "Psql client not found".
+> - Si `gcloud` no aparece tras instalar el cask, reiniciá la terminal o agregá
+>   su path al `~/.zshrc`.
+
 Necesitás rol de **Owner** o **Editor** en el proyecto GCP, y permiso de
 facturación: Cloud SQL y Cloud Functions no corren en el plan gratuito.
 
 ```bash
 firebase login
 gcloud auth login
+gcloud auth application-default login   # ADC: las usa el proxy (paso 6) y el alta de usuarios (paso 9.3)
 gcloud config set project gestion-paneles
 ```
+
+> **`gcloud auth login` vs `application-default login`.** El primero te autentica
+> a *vos* para los comandos de gcloud; el segundo deja un archivo de credenciales
+> (ADC) que levantan solas las bibliotecas y binarios, como el Cloud SQL Auth
+> Proxy. Si falta el segundo, el proxy del paso 6 corta con
+> `could not find default credentials`.
+>
+> Si alguna acción sensible (crear Cloud SQL, tocar facturación/IAM) te pide
+> **reautenticar** con un loop de "Please enter your password", no contestes en
+> la terminal: corré `gcloud auth login` de nuevo y completá por el navegador.
 
 ---
 
@@ -292,6 +325,12 @@ conector y no va a poder abrir ninguna conexión.
 autorizadas mientras dura, y sacándola al salir. Por eso las instancias del
 paso 4.2 tienen IP pública con la lista vacía.
 
+> **Requisitos de este paso (macOS):** `gcloud sql connect` lanza el Cloud SQL
+> Auth Proxy y un cliente `psql`, y ambos tienen que estar en el PATH —los
+> instalaste en el paso 1 (`cloud-sql-proxy`, `libpq`)—. El proxy usa las ADC,
+> así que `gcloud auth application-default login` (paso 1) tiene que estar hecho,
+> o corta con `could not find default credentials`.
+
 ```bash
 gcloud sql connect paneles-boveda --user=app_paneles --database=paneles_boveda
 ```
@@ -311,6 +350,21 @@ gcloud sql connect paneles-semantica --user=app_paneles --database=paneles_seman
 ```
 
 El orden importa: `0002` y `0003` referencian tablas que crea `0001`.
+
+**Si `gcloud sql connect` sigue fallando en macOS** (a veces no encuentra el
+proxy pese al PATH), levantá el Auth Proxy a mano y conectá con `psql` directo
+—autentica por ADC, no por IP, así que funciona con las redes autorizadas
+vacías—:
+
+```bash
+gcloud sql instances describe paneles-boveda --format='value(connectionName)'
+# → gestion-paneles:southamerica-east1:paneles-boveda
+
+# Terminal 1 (dejalo corriendo):
+cloud-sql-proxy gestion-paneles:southamerica-east1:paneles-boveda --port 5432
+# Terminal 2:
+psql "host=127.0.0.1 port=5432 user=app_paneles dbname=paneles_boveda"
+```
 
 Si ya cerraste la IP pública, `gcloud sql connect` no entra. En ese caso las
 migraciones se corren desde una VM en la misma VPC:
