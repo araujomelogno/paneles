@@ -5,7 +5,7 @@ Corre contra los dos stores reales: el conn_boveda (conn_boveda) y el store sem�
 
 import pytest
 
-from panel_api import db, encuestas, ingesta, paneles, personas, semantica
+from panel_api import db, encuestas, ingesta, paneles, personas, pii, semantica
 
 from conftest import consentimientos
 
@@ -194,3 +194,135 @@ def test_una_fila_de_alguien_que_no_es_panelista_no_se_ingesta(
 
     assert resultado["sin_mapear"] == ["R-999"]
     assert resultado["respuestas_escritas"] == 3
+
+
+# ── Procedencia: de qué estudio es cada respuesta ────────────────────
+
+@pytest.fixture
+def dos_olas(conn_boveda, conn_semantica, proveedor):
+    """La misma persona respondiendo en dos estudios distintos, con el mismo
+    código de pregunta en los dos. Es el caso donde la procedencia importa."""
+    panel = paneles.crear(conn_boveda, "Panel bebidas")
+    id_persona = _panelista(conn_boveda, "1-1", "R-001")
+    paneles.agregar_miembro(conn_boveda, panel["id"], id_persona)
+
+    olas = []
+    for nombre, fecha, valor in (
+        ("Ola 1 bebidas", "2026-03-01", "1"),
+        ("Ola 2 bebidas", "2026-09-01", "3"),
+    ):
+        encuesta = encuestas.crear(conn_boveda, panel["id"], nombre, fecha)
+        encuestas.convocar(conn_boveda, encuesta["id"], todo_el_panel=True)
+        encuestas.ingestar(
+            conn_boveda, conn_semantica, encuesta["id"], PREGUNTAS,
+            [{"id_en_origen": "R-001", "P1": valor}], proveedor=proveedor,
+        )
+        olas.append(encuesta)
+    return {"id_persona": id_persona, "olas": olas}
+
+
+def test_el_mismo_codigo_en_dos_estudios_son_dos_preguntas(conn_semantica, dos_olas):
+    # `respuesta` no guarda el estudio, pero no hace falta: cada `pregunta`
+    # pertenece a un solo `cuestionario`, así que el mismo código en dos
+    # estudios da dos preguntas distintas y las respuestas no colisionan.
+    p1 = db.todas(
+        conn_semantica,
+        "select id, cuestionario_id from pregunta where codigo = 'P1' order by id",
+    )
+    assert len(p1) == 2                                  # una por cuestionario
+    assert len({p["cuestionario_id"] for p in p1}) == 2  # y son cuestionarios distintos
+    assert db.una(conn_semantica, "select count(*)::int as n from respuesta")["n"] == 2
+
+
+def test_cada_respuesta_dice_de_que_estudio_es(conn_semantica, dos_olas):
+    filas = db.todas(
+        conn_semantica,
+        """
+        select estudio, fecha_campo, ref_estudio, pregunta_codigo, valor_texto
+          from v_respuesta_estudio
+         order by fecha_campo
+        """,
+    )
+    assert [f["estudio"] for f in filas] == ["Ola 1 bebidas", "Ola 2 bebidas"]
+    assert [f["valor_texto"] for f in filas] == ["Fernet", "Cerveza"]
+    # El ref_estudio de cada respuesta es el de SU ola, no el de la otra.
+    refs = {str(f["ref_estudio"]) for f in filas}
+    assert refs == {o["ref_estudio"] for o in dos_olas["olas"]}
+
+
+def test_la_vista_de_procedencia_no_expone_pii(conn_semantica, dos_olas):
+    columnas = {
+        f["column_name"]
+        for f in db.todas(
+            conn_semantica,
+            """
+            select column_name from information_schema.columns
+             where table_name = 'v_respuesta_estudio'
+            """,
+        )
+    }
+    assert columnas & pii.CAMPOS_PII == set()
+    # Y la auditoría en vivo, que recorre todas las columnas del esquema
+    # incluidas las de vistas, sigue limpia.
+    assert semantica.auditar_columnas(conn_semantica) == []
+
+
+def test_la_vista_sirve_para_la_evolucion_de_una_persona(conn_semantica, dos_olas):
+    # R4.1: seguir al mismo id_persona a través de olas.
+    filas = db.todas(
+        conn_semantica,
+        """
+        select fecha_campo, valor_texto from v_respuesta_estudio
+         where id_persona = %s
+         order by fecha_campo
+        """,
+        (dos_olas["id_persona"],),
+    )
+    assert [f["valor_texto"] for f in filas] == ["Fernet", "Cerveza"]
+
+
+# ── Borrado acotado a un estudio ─────────────────────────────────────
+
+def test_borrar_las_respuestas_de_un_estudio_deja_las_de_los_otros(
+    conn_semantica, dos_olas
+):
+    primera, segunda = dos_olas["olas"]
+
+    resultado = semantica.borrar_respuestas_de_estudio(
+        conn_semantica, dos_olas["id_persona"], primera["ref_estudio"]
+    )
+
+    assert resultado["respuestas_borradas"] == 1
+    quedan = db.todas(
+        conn_semantica, "select estudio, valor_texto from v_respuesta_estudio"
+    )
+    assert [(f["estudio"], f["valor_texto"]) for f in quedan] == [
+        ("Ola 2 bebidas", "Cerveza")
+    ]
+
+
+def test_el_borrado_acotado_no_toca_a_otras_personas(
+    conn_boveda, conn_semantica, proveedor, dos_olas
+):
+    # Otra persona en la misma ola: su respuesta no se toca.
+    otra = _panelista(conn_boveda, "2-2", "R-002")
+    primera = dos_olas["olas"][0]
+    paneles.agregar_miembro(conn_boveda, primera["panel_id"], otra)
+    encuestas.convocar(conn_boveda, primera["id"], ids_persona=[otra])
+    encuestas.ingestar(
+        conn_boveda, conn_semantica, primera["id"], PREGUNTAS,
+        [{"id_en_origen": "R-002", "P1": "2"}], proveedor=proveedor,
+    )
+
+    semantica.borrar_respuestas_de_estudio(
+        conn_semantica, dos_olas["id_persona"], primera["ref_estudio"]
+    )
+
+    quedan = db.todas(
+        conn_semantica,
+        "select id_persona, estudio from v_respuesta_estudio order by estudio",
+    )
+    assert {(str(f["id_persona"]), f["estudio"]) for f in quedan} == {
+        (otra, "Ola 1 bebidas"),
+        (dos_olas["id_persona"], "Ola 2 bebidas"),
+    }

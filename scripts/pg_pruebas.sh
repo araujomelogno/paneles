@@ -49,6 +49,7 @@ psql -q -d paneles_boveda  -v ON_ERROR_STOP=1 -f "$RAIZ/db/boveda/0001_init.sql"
 psql -q -d paneles_boveda  -v ON_ERROR_STOP=1 -f "$RAIZ/db/boveda/0002_revision_alta.sql" >/dev/null 2>&1 || true
 psql -q -d paneles_boveda  -v ON_ERROR_STOP=1 -f "$RAIZ/db/boveda/0003_baja_persona.sql"  >/dev/null 2>&1 || true
 psql -q -d paneles_semantica -v ON_ERROR_STOP=1 -f "$RAIZ/db/semantica/0001_init.sql"      >/dev/null 2>&1 || true
+psql -q -d paneles_semantica -v ON_ERROR_STOP=1 -f "$RAIZ/db/semantica/0002_vista_procedencia.sql" >/dev/null 2>&1 || true
 
 export DSN_BOVEDA="postgresql://postgres@localhost:$PGPORT/paneles_boveda"
 export DSN_SEMANTICA="postgresql://postgres@localhost:$PGPORT/paneles_semantica"
