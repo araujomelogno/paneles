@@ -11,7 +11,7 @@
         "source": "/api/**",
         "function": {
           "functionId": "api",
-          "region": "us-central1"
+          "region": "southamerica-east1"
         }
       },
       {
@@ -29,6 +29,9 @@
           }
         ]
       }
+    ],
+    "predeploy": [
+      "python3 scripts/verificar_region.py"
     ]
   },
   "functions": [
@@ -46,6 +49,7 @@
         "pytest.ini"
       ],
       "predeploy": [
+        "python3 \"$RESOURCE_DIR/../scripts/verificar_region.py\"",
         "cd \"$RESOURCE_DIR\" && (test -d venv || python3.11 -m venv venv) && venv/bin/pip install --quiet --disable-pip-version-check -r requirements.txt"
       ]
     }

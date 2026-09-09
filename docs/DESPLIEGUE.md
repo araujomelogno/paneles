@@ -7,6 +7,14 @@ Los comandos son para macOS/Linux. Cada paso dice **dónde** se configura la
 cosa, porque están repartidas en cuatro lugares distintos y esa es la parte
 que más confunde.
 
+> **Revisión 2026-09.** Los comandos de creación de Cloud SQL se corrigieron
+> después de correrlos de verdad: `--no-authorized-networks` no existe (una
+> instancia nueva ya nace sin redes autorizadas), `--require-ssl` está
+> deprecado a favor de `--ssl-mode`, y Postgres 16 crea **Enterprise Plus**
+> por defecto, que no acepta `db-g1-small`. También se unificó la **región**,
+> que estaba en `us-central1` en el código y en `southamerica-east1` en este
+> documento: ver 4.2.
+
 ---
 
 ## 0 · El mapa
@@ -125,8 +133,46 @@ gcloud services vpc-peerings connect \
 
 ### 4.2 · Crear las instancias
 
-Elegí la región **una vez** y usá la misma en todo (instancias, conector,
-functions). Para Uruguay, `southamerica-east1` (São Paulo) es la más cercana.
+#### Primero: la región, y que sea una sola
+
+**La región tiene que ser la misma en cuatro lugares**: las dos instancias de
+Cloud SQL, el conector de VPC y la función. No es una preferencia de
+prolijidad:
+
+- Un **conector de Acceso a VPC solo sirve a funciones de su misma región**.
+  Si no coinciden, el deploy falla.
+- El **rewrite de `/api/**`** en `firebase.json` apunta a una región concreta.
+  Si no coincide con la de la función, Hosting reescribe hacia algo que no
+  existe y toda la API devuelve 404.
+
+El repo viene configurado en **`southamerica-east1`** (São Paulo), que es la
+región de GCP más cercana a Uruguay y deja la PII en Sudamérica. Está
+declarada en dos archivos:
+
+| Archivo | Qué declara |
+|---|---|
+| `functions/main.py` → `REGION` | Dónde se despliega la función |
+| `firebase.json` → rewrite de `/api/**` | A qué región apunta Hosting |
+
+Si cambiás de región, **cambiá los dos**. Hay un guard que lo verifica antes
+de cada deploy y lo cancela si no coinciden (`scripts/verificar_region.py`,
+enganchado en el `predeploy`); si además exportaste `VPC_CONNECTOR`, también
+comprueba la región del conector contra `gcloud`.
+
+> **A tener en cuenta:** las regiones que Firebase recomienda para colocar
+> funciones junto a Hosting son `us-west1`, `us-central1`, `us-east1`,
+> `europe-west1` y `asia-east1`; São Paulo no está en esa lista. El rewrite
+> hacia otra región funciona igual —es una recomendación de rendimiento, no
+> un límite—, pero el salto de Hosting a la función no queda optimizado. Para
+> usuarios en Uruguay conviene igual, porque la latencia que más pesa es la
+> de la función contra Cloud SQL, que son varias consultas por request.
+>
+> Si al desplegar `/api/**` diera 404 o anduviera lento, la alternativa es
+> llevar todo a `us-central1`: las dos instancias, el conector y las dos
+> declaraciones de región. La PII pasaría a estar en Estados Unidos, así que
+> es una decisión que hay que pasar por el análisis de URCDP.
+
+#### Los comandos
 
 > **Pendiente de definir:** dónde vive la PII es tema URCDP. Está anotado como
 > decisión abierta en el README y conviene cerrarlo antes de cargar datos
@@ -134,11 +180,12 @@ functions). Para Uruguay, `southamerica-east1` (São Paulo) es la más cercana.
 
 Las instancias llevan **IP privada** (por ahí las alcanza la función) y además
 **IP pública sin ninguna red autorizada**. La combinación suena rara pero es
-deliberada: con la lista de redes autorizadas vacía, Cloud SQL **rechaza
-todas** las conexiones públicas; lo único que entra es `gcloud sql connect`,
-que agrega tu IP mientras dura la sesión y la saca al salir. Sin eso no hay
-forma de aplicar las migraciones desde tu máquina, porque a una instancia con
-IP privada **solamente** solo se llega desde adentro de la VPC.
+deliberada: una instancia nueva nace sin redes autorizadas, así que Cloud SQL
+**rechaza todas** las conexiones públicas; lo único que entra es
+`gcloud sql connect`, que agrega tu IP mientras dura la sesión y la saca al
+salir. Sin eso no hay forma de aplicar las migraciones desde tu máquina,
+porque a una instancia con IP privada **solamente** solo se llega desde
+adentro de la VPC.
 
 ```bash
 REGION=southamerica-east1
@@ -146,26 +193,35 @@ REGION=southamerica-east1
 # Bóveda: PII + paneles.
 gcloud sql instances create paneles-boveda \
   --database-version=POSTGRES_16 \
+  --edition=ENTERPRISE \
   --tier=db-g1-small \
   --region=$REGION \
   --storage-auto-increase \
   --network=default \
-  --no-authorized-networks \
-  --require-ssl \
+  --ssl-mode=ENCRYPTED_ONLY \
   --backup-start-time=04:00 \
   --enable-point-in-time-recovery
 
 # Semántica: embeddings.
 gcloud sql instances create paneles-semantica \
   --database-version=POSTGRES_16 \
+  --edition=ENTERPRISE \
   --tier=db-g1-small \
   --region=$REGION \
   --storage-auto-increase \
   --network=default \
-  --no-authorized-networks \
-  --require-ssl \
+  --ssl-mode=ENCRYPTED_ONLY \
   --backup-start-time=04:30
 ```
+
+Tres detalles de esos flags, que se pagaron a los tropezones:
+
+- **`--edition=ENTERPRISE`** es obligatorio. Postgres 16 crea *Enterprise
+  Plus* por defecto, y esa edición no acepta tiers compartidos como
+  `db-g1-small`.
+- **No hay `--no-authorized-networks`.** Una instancia nueva ya nace sin redes
+  autorizadas; no hay nada que pasar.
+- **`--ssl-mode=ENCRYPTED_ONLY`** reemplaza al `--require-ssl` deprecado.
 
 La bóveda lleva **point-in-time recovery** y la semántica no, a propósito: la
 bóveda tiene el dato irrecuperable (PII, consentimiento), la semántica se
@@ -204,23 +260,18 @@ gcloud sql users create app_paneles --instance=paneles-semantica --password='...
 
 ### 4.4 · Anotá las IP privadas
 
-Las vas a necesitar para armar los DSN:
-
-Filtrá por tipo: con IP pública y privada a la vez, el orden de la lista no
-está garantizado y la que necesitás es la **privada**.
-
-```bash
-gcloud sql instances describe paneles-boveda \
-  --format="value(ipAddresses.filter(\"type:PRIVATE\").extract(\"ipAddress\"))"
-gcloud sql instances describe paneles-semantica \
-  --format="value(ipAddresses.filter(\"type:PRIVATE\").extract(\"ipAddress\"))"
-```
-
-Si preferís no pelear con el formato:
+Las vas a necesitar para armar los DSN. Filtrá por tipo: con IP pública y
+privada a la vez, el orden de la lista no está garantizado y la que necesitás
+es la **privada**.
 
 ```bash
-gcloud sql instances describe paneles-boveda --format=json | \
-  python3 -c "import json,sys; print([i['ipAddress'] for i in json.load(sys.stdin)['ipAddresses'] if i['type']=='PRIVATE'][0])"
+for instancia in paneles-boveda paneles-semantica; do
+  echo -n "$instancia: "
+  gcloud sql instances describe "$instancia" \
+    --flatten='ipAddresses[]' \
+    --filter='ipAddresses.type=PRIVATE' \
+    --format='value(ipAddresses.ipAddress)'
+done
 ```
 
 ---
@@ -235,7 +286,9 @@ gcloud compute networks vpc-access connectors create paneles-conn \
   --region=$REGION --network=default --range=10.8.0.0/28
 ```
 
-El `--range` es un /28 libre, que no se pise con nada de tu VPC.
+El `--range` es un /28 libre, que no se pise con nada de tu VPC. Y `$REGION`
+tiene que ser la misma del paso 4.2 **y la misma que declara el código**: un
+conector solo sirve a funciones de su propia región.
 
 > **Por qué este camino y no el socket `/cloudsql/...`:** la librería
 > `firebase-functions` para Python **no expone la opción
@@ -511,7 +564,7 @@ R-001,Fernet
 
 ```bash
 firebase functions:log --only api
-gcloud run services logs read api --region=us-central1 --limit=50
+gcloud run services logs read api --region=southamerica-east1 --limit=50
 ```
 
 ---
@@ -541,7 +594,7 @@ El secreto no existe. Creálo (paso 7), aunque sea con un valor de relleno.
 
 **La API devuelve 500 y en los logs hay timeout de conexión**
 Casi siempre es el conector: desplegaste sin `export VPC_CONNECTOR=...`.
-Comprobalo con `gcloud run services describe api --region=us-central1 --format='value(spec.template.metadata.annotations)'` y volvé a desplegar con la variable puesta.
+Comprobalo con `gcloud run services describe api --region=southamerica-east1 --format='value(spec.template.metadata.annotations)'` y volvé a desplegar con la variable puesta.
 
 **`DSN_BOVEDA y DSN_SEMANTICA apuntan a la misma base`**
 Es un chequeo a propósito. Los dos stores tienen que estar en instancias
@@ -598,11 +651,13 @@ Cloud SQL. Para que la función tenga bases, exportá `DSN_BOVEDA` y
 ```
 [ ] Plan Blaze activo
 [ ] APIs habilitadas (paso 3)
+[ ] Región decidida y declarada igual en functions/main.py y firebase.json
 [ ] Peering de servicios de red hecho
 [ ] paneles-boveda creada, con IP privada y sin redes autorizadas
 [ ] paneles-semantica creada, con IP privada y sin redes autorizadas
 [ ] Bases y usuario app_paneles en las dos
-[ ] Conector paneles-conn creado
+[ ] Conector paneles-conn creado, en la MISMA región que la función
+[ ] python3 scripts/verificar_region.py pasa en verde
 [ ] Migraciones aplicadas: 3 en la bóveda, 1 en la semántica
 [ ] create extension vector confirmado en la semántica
 [ ] DSN_BOVEDA, DSN_SEMANTICA y EMBEDDINGS_API_KEY en Secret Manager
