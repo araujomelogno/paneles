@@ -520,6 +520,18 @@ gcloud auth application-default login
 node scripts/alta_usuario.js ana@equipos.com.uy admin "Ana Pérez"
 ```
 
+> **Si ves `admin.auth is not a function`**, tenés una versión vieja del
+> script. Desde firebase-admin **v13** el export raíz del paquete dejó de
+> exponer `admin.auth` y `admin.firestore`: hay que importar por subpaths
+> (`firebase-admin/app`, `/auth`, `/firestore`). El script del repo ya lo
+> hace, y esa forma anda tanto en v12 como en v14.
+>
+> Para comprobar qué versión tenés:
+>
+> ```bash
+> node -e "console.log(require('firebase-admin').SDK_VERSION)"
+> ```
+
 | Rol | Puede |
 |---|---|
 | `admin` | Todo |
