@@ -30,17 +30,27 @@
       <ul><li>Crear · Agregar miembros · Dar de baja una membresía</li></ul></li>
     <li><a href="#s5"><span><span class="num">5</span> Encuestas</span></a>
       <ul><li>Crear una ola · Convocar · Ingestar respuestas · Verificar el cruce</li></ul></li>
-    <li><a href="#s6"><span><span class="num">6</span> Cumplimiento</span></a>
+    <li><a href="#s6"><span><span class="num">6</span> Consultas</span></a>
+      <ul><li>Buscar por significado · Leer el ranking y la evidencia ·
+      Quiénes quedaron afuera · Ver quiénes son · Estricto y laxo ·
+      Guardar una consulta</li></ul></li>
+    <li><a href="#s7"><span><span class="num">7</span> Composición</span></a>
+      <ul><li>Universo de referencia · Brecha · Cruce de dos dimensiones</li></ul></li>
+    <li><a href="#s8"><span><span class="num">8</span> Participación</span></a>
+      <ul><li>Tasa de respuesta · Último contacto · Fatiga</li></ul></li>
+    <li><a href="#s9"><span><span class="num">9</span> Cumplimiento</span></a>
       <ul><li>Retirar consentimiento · Baja total · Auditoría de privacidad</li></ul></li>
-    <li><a href="#s7"><span><span class="num">7</span> Preguntas frecuentes</span></a></li>
-    <li><a href="#s8"><span><span class="num">8</span> Glosario</span></a></li>
+    <li><a href="#s10"><span><span class="num">10</span> Configuración</span></a>
+      <ul><li>Dar de alta usuarios · Roles · Desactivar · Auditoría</li></ul></li>
+    <li><a href="#s11"><span><span class="num">11</span> Preguntas frecuentes</span></a></li>
+    <li><a href="#s12"><span><span class="num">12</span> Glosario</span></a></li>
   </ol>
 
   <div class="aviso info" style="margin-top:12mm">
     <div class="t">Sobre las imágenes</div>
     <p>Todas las capturas son de la aplicación real, con datos de ejemplo. Lo que
     veas en pantalla va a coincidir con lo que muestra este manual, salvo por
-    los nombres y los identificadores.</p>
+    los nombres, los identificadores y los números.</p>
   </div>
 </div>
 
@@ -104,25 +114,32 @@
     <thead><tr><th>Rol</th><th>Puede</th><th>No puede</th></tr></thead>
     <tr>
       <td class="destacado">Administración</td>
-      <td>Todo</td><td>—</td>
+      <td>Todo, incluida la gestión de usuarios de la aplicación</td><td>—</td>
     </tr>
     <tr>
       <td class="destacado">Responsable de panel</td>
       <td>Enrolar panelistas, armar paneles y membresías, crear encuestas,
-      convocar, ingestar</td>
-      <td>Retirar consentimientos y dar de baja</td>
+      convocar, ingestar, consultar, cargar el universo de referencia y ver a
+      quién corresponde cada identificador</td>
+      <td>Retirar consentimientos, dar de baja y gestionar usuarios</td>
     </tr>
     <tr>
       <td class="destacado">Analista</td>
-      <td>Crear encuestas, convocar, ingestar respuestas, consultar</td>
-      <td>Enrolar panelistas y gestionar paneles</td>
+      <td>Crear encuestas, convocar, ingestar respuestas y correr consultas</td>
+      <td>Enrolar panelistas, gestionar paneles, traducir identificadores a
+      personas y gestionar usuarios</td>
     </tr>
     <tr>
       <td class="destacado">Cumplimiento / DPO</td>
-      <td>Ver todo, retirar consentimientos, dar de baja</td>
-      <td>Enrolar y gestionar paneles</td>
+      <td>Ver todo, retirar consentimientos, dar de baja y leer el registro de
+      quién vio datos personales</td>
+      <td>Enrolar, gestionar paneles, correr consultas y gestionar usuarios</td>
     </tr>
   </table>
+
+  <p>Las solapas que tu rol no puede usar <strong>no aparecen</strong> en el menú
+  de la izquierda. Si alguien te dice «entrá a Configuración» y no la ves, es
+  porque no tenés rol de Administración.</p>
 </section>
 
 <!-- ════════════════ 2 ════════════════ -->
@@ -493,6 +510,475 @@
   <div class="cab">
     <div class="barra"></div>
     <div class="kicker">Sección 6</div>
+    <h2>Consultas</h2>
+    <p>Encontrar personas por lo que respondieron, no solo por sus datos.</p>
+  </div>
+
+  <p>Hasta acá el sistema te dejaba filtrar por lo que <em>sabés</em> de la gente:
+  sexo, edad, localidad. Esta pantalla contesta otra pregunta, que antes había
+  que resolver leyendo planillas: <strong>¿quiénes dijeron algo parecido a
+  esto?</strong></p>
+
+  <p>Escribís el criterio como se lo contarías a alguien —«gente a la que le
+  encanta el fernet»— y el sistema busca entre las respuestas de todas las
+  encuestas ingestadas. No busca esas palabras: busca respuestas que
+  <strong>signifiquen</strong> eso, aunque estén dichas de otra manera.</p>
+
+  <h3><span class="n">6.1</span> Los dos tipos de criterio</h3>
+
+  <table>
+    <thead><tr><th>Tipo</th><th>Qué es</th><th>Qué hace</th></tr></thead>
+    <tr>
+      <td class="destacado">Semántico</td>
+      <td>Una frase en lenguaje natural sobre lo que la gente respondió.</td>
+      <td><strong>Ordena.</strong> Nadie lo cumple del todo o nada: se parece
+      más o menos, y de eso sale el puntaje.</td>
+    </tr>
+    <tr>
+      <td class="destacado">Demográfico</td>
+      <td>Sexo, tramo etario, localidad o edad, elegidos de una lista.</td>
+      <td><strong>Filtra.</strong> Quien no lo cumple no aparece, y punto.</td>
+    </tr>
+  </table>
+
+  <p>Se pueden combinar todos los que quieras. Una consulta con los dos tipos es
+  una <strong>consulta mixta</strong>: el filtro demográfico recorta y el criterio
+  semántico ordena lo que quedó.</p>
+
+  <h3><span class="n">6.2</span> Armar y correr una consulta</h3>
+
+  <ol class="pasos">
+    <li>Entrá a <strong>Consultas</strong> y tocá
+    <strong>+ Criterio semántico</strong>.</li>
+    <li>Escribí la frase. Cuanto más se parezca a lo que la gente diría, mejor:
+    «gente a la que le encanta el fernet» funciona mejor que «fernet» solo,
+    porque «fernet» a secas también trae a quien dijo que no lo toma.</li>
+    <li>Tocá <strong>Consultar</strong>.</li>
+  </ol>
+
+  <figure>
+    <img class="recorte" src="capturas/24-consulta-criterio.jpg" alt="Alta de un criterio semántico" />
+    <figcaption><b>El criterio.</b> El <i>peso</i> sirve cuando hay varios
+    criterios: uno con peso 3 pesa el triple que uno con peso 1 en el puntaje
+    final. <i>Duro</i> lo convierte en filtro: quien no lo cumple queda
+    afuera.</figcaption>
+  </figure>
+
+  <figure>
+    <img src="capturas/25-consulta-resultado.jpg" alt="Resultado de una consulta" />
+    <figcaption><b>El resultado completo.</b> Arriba los criterios; después cómo
+    se resolvió la consulta; abajo el ranking, quiénes quedaron afuera y el
+    diagnóstico.</figcaption>
+  </figure>
+
+  <h3><span class="n">6.3</span> Leer el ranking</h3>
+
+  <figure>
+    <img class="recorte" src="capturas/26-consulta-ranking.jpg" alt="Ranking de la consulta" />
+    <figcaption><b>El ranking.</b> Una fila por persona, ordenada por
+    puntaje.</figcaption>
+  </figure>
+
+  <table>
+    <thead><tr><th>Columna</th><th>Qué te dice</th></tr></thead>
+    <tr><td class="destacado">Persona</td>
+      <td>El <code>id_persona</code>, no el nombre. El resultado de una consulta
+      son identificadores; ver quiénes son es un paso aparte (6.5).</td></tr>
+    <tr><td class="destacado">Puntaje</td>
+      <td>De 0 a 1. Sirve para <strong>comparar entre sí</strong> a los de esta
+      consulta, no para comparar entre consultas distintas.</td></tr>
+    <tr><td class="destacado">Confianza</td>
+      <td><span class="badge on">alta</span> o <span class="badge off">baja</span>.
+      Baja quiere decir que la mejor respuesta que se le encontró ya no se
+      parece mucho al criterio, o que le falta evidencia de alguno. No la
+      excluye: la señala.</td></tr>
+    <tr><td class="destacado">Criterios</td>
+      <td>El veredicto por cada criterio: <strong>Cumple</strong>,
+      <strong>Dudoso</strong> o <strong>Sin evidencia</strong>.</td></tr>
+    <tr><td class="destacado">Evidencia</td>
+      <td>La respuesta concreta que la puso ahí, con el estudio y la pregunta de
+      donde salió. Si no podés ver la evidencia, el resultado no
+      sirve.</td></tr>
+  </table>
+
+  <p>El botón <strong>Ver</strong> de cada fila abre el detalle: el puntaje de
+  cada criterio, por qué se decidió así, y la respuesta completa con su
+  procedencia.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/29-consulta-evidencia.jpg" alt="Detalle de la evidencia" />
+    <figcaption><b>El detalle.</b> La cita entre comillas es textual: sale del
+    registro de la respuesta, no la escribe el sistema.</figcaption>
+  </figure>
+
+  <h3><span class="n">6.4</span> Quiénes quedaron afuera, y por qué</h3>
+
+  <p>Debajo del ranking hay una tabla de <strong>excluidos</strong>. No es un
+  descarte: es la parte del resultado que más suele explicar el resto.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/27-consulta-excluidos.jpg" alt="Personas excluidas del ranking" />
+    <figcaption><b>Excluidos.</b> El caso típico: alguien que contestó «fernet» a
+    qué toma, y «no me gusta el fernet» a por qué. Habla del tema, y dice lo
+    contrario.</figcaption>
+  </figure>
+
+  <table>
+    <thead><tr><th>Motivo</th><th>Qué pasó</th></tr></thead>
+    <tr><td class="destacado">No cumple</td>
+      <td>Alguna respuesta suya <strong>dice lo contrario</strong> del criterio.
+      Queda afuera siempre, en los dos modos.</td></tr>
+    <tr><td class="destacado">Dudoso</td>
+      <td>Habla del tema pero no alcanza para decidir. Queda afuera en modo
+      estricto; en laxo entra penalizado.</td></tr>
+    <tr><td class="destacado">Sin evidencia</td>
+      <td>No tiene ninguna respuesta cerca de ese criterio. Igual que
+      arriba.</td></tr>
+  </table>
+
+  <div class="aviso info">
+    <div class="t">Por qué se mira más de una respuesta por persona</div>
+    <p>El sistema no juzga a cada persona por su mejor respuesta, sino por
+    <strong>todas las que quedaron cerca del criterio</strong>. Si lo hiciera por
+    la mejor, quien se contradice entraría al ranking con la respuesta que le
+    conviene y la contradicción quedaría tapada.</p>
+  </div>
+
+  <h3><span class="n">6.5</span> Ver quiénes son</h3>
+
+  <p>El ranking te da identificadores. Para convocar a esa gente hace falta el
+  nombre y el contacto, y eso es una operación aparte: <strong>Ver quiénes
+  son</strong>, arriba a la derecha del ranking.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/30-consulta-reidentificar.jpg" alt="Aviso antes de ver los nombres" />
+    <figcaption><b>Antes de traducir.</b> El sistema avisa que la operación queda
+    registrada, con tu usuario, la fecha y el motivo.</figcaption>
+  </figure>
+
+  <figure>
+    <img class="recorte" src="capturas/31-consulta-con-nombres.jpg" alt="Ranking con los nombres resueltos" />
+    <figcaption><b>Después.</b> El mismo ranking, ahora con nombre y apellido
+    arriba del identificador.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Queda registrado, y está bien que así sea</div>
+    <p>Traducir un identificador a una persona es lo que deshace la separación
+    entre las dos bases. Se puede hacer —para eso está el puente— pero queda
+    anotado quién lo hizo y cuándo. Es lo que permite demostrar, si alguien
+    pregunta, que el acceso a datos personales está controlado.</p>
+  </div>
+
+  <h4>Descargar el resultado</h4>
+  <p><strong>Descargar CSV</strong> baja el ranking en tres columnas:
+  <code>id_persona</code>, puntaje y evidencia con su procedencia.
+  <strong>No lleva nombres ni emails</strong>: es un archivo de identificadores,
+  pensado para pasarle a quien arma la muestra sin sacar datos personales del
+  sistema.</p>
+
+  <h3><span class="n">6.6</span> Estricto y laxo</h3>
+
+  <p>El desplegable <strong>Modo</strong> cambia qué hacer con la gente de la que
+  el sistema no está seguro.</p>
+
+  <table>
+    <thead><tr><th>Modo</th><th>Qué hace</th><th>Cuándo conviene</th></tr></thead>
+    <tr>
+      <td class="destacado">Estricto</td>
+      <td>Deja afuera a quien no tiene evidencia clara del criterio.</td>
+      <td>Cuando la lista se va a usar tal cual y preferís perder gente antes
+      que meter a alguien que no corresponde.</td>
+    </tr>
+    <tr>
+      <td class="destacado">Laxo</td>
+      <td>Los incluye, con 0 en ese criterio y marcados como
+      <i>penalizado</i>.</td>
+      <td>Cuando la lista la vas a revisar a mano y preferís ver de más.</td>
+    </tr>
+  </table>
+
+  <p>En los <strong>dos</strong> modos queda afuera quien dice lo contrario del
+  criterio. El modo laxo tolera la duda, no la contradicción.</p>
+
+  <h3><span class="n">6.7</span> Sumar un filtro demográfico</h3>
+
+  <ol class="pasos">
+    <li>Tocá <strong>+ Criterio demográfico</strong>.</li>
+    <li>Elegí la dimensión, el operador y el valor. Para «es alguno de», separá
+    los valores con coma.</li>
+  </ol>
+
+  <figure>
+    <img class="recorte" src="capturas/33-criterio-demografico.jpg" alt="Alta de un criterio demográfico" />
+    <figcaption><b>Criterio demográfico.</b> Se resuelve contra los datos de la
+    bóveda, que es donde viven el sexo, la localidad y la fecha de
+    nacimiento.</figcaption>
+  </figure>
+
+  <figure>
+    <img class="recorte" src="capturas/34-consulta-criterios.jpg" alt="Lista de criterios de una consulta mixta" />
+    <figcaption><b>Consulta mixta.</b> Los criterios se acumulan; cada uno se
+    puede quitar por separado.</figcaption>
+  </figure>
+
+  <p>Debajo de los criterios, el resultado te dice <strong>cómo</strong> resolvió
+  la consulta: si primero filtró por demografía y después buscó, o al revés. Lo
+  decide solo, según cuál de los dos lados recorta más.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/35-consulta-puente.jpg" alt="Estrategia de puente entre las dos bases" />
+    <figcaption><b>Cómo se resolvió.</b> También dice cuánta gente pasó el filtro
+    de consentimiento: son las únicas que pueden aparecer.</figcaption>
+  </figure>
+
+  <div class="aviso grave">
+    <div class="t">Solo aparece quien consintió el uso semántico</div>
+    <p>Una consulta semántica solo ve a las personas con la finalidad
+    <strong>uso semántico</strong> vigente. Quien no la tiene <strong>no aparece
+    nunca</strong>: ni en el ranking ni entre los excluidos, porque nunca llegó a
+    ser candidata.</p>
+    <p>Si una consulta te devuelve mucho menos de lo que esperabas, fijate en el
+    número de «personas habilitadas en el segmento». Si es bajo, el problema no
+    es la consulta: es que falta consentimiento.</p>
+  </div>
+
+  <h3><span class="n">6.8</span> Guardar una consulta</h3>
+
+  <p>Una consulta que vas a repetir se guarda con <strong>Guardar
+  consulta</strong> y después se recupera del desplegable
+  <i>Cargar una guardada…</i>.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/36-consulta-guardar.jpg" alt="Guardar una consulta" />
+    <figcaption><b>Se guarda la pregunta, no la respuesta.</b> Al volver a
+    correrla, la lista se arma de nuevo con el padrón de hoy.</figcaption>
+  </figure>
+
+  <p>Eso último importa: si guardara el resultado, dentro de un mes te daría una
+  lista de gente que quizás ya retiró su consentimiento. Guardando la definición,
+  cada corrida vuelve a pasar por el filtro.</p>
+
+  <h3><span class="n">6.9</span> Los parámetros, y el diagnóstico</h3>
+
+  <p>El botón <strong>Parámetros</strong> abre tres perillas. Los valores por
+  defecto sirven para casi todo; se tocan cuando una consulta trae poco o tarda
+  demasiado.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/32-consulta-parametros.jpg" alt="Parámetros de la consulta" />
+    <figcaption><b>Parámetros.</b> Se aplican solo a la consulta que estás
+    corriendo.</figcaption>
+  </figure>
+
+  <table>
+    <thead><tr><th>Parámetro</th><th>Subilo si…</th><th>Bajalo si…</th></tr></thead>
+    <tr><td class="destacado">Pool de recuperación</td>
+      <td>Sospechás que se está perdiendo gente que debería aparecer.</td>
+      <td>—</td></tr>
+    <tr><td class="destacado">A verificar</td>
+      <td>Querés un ranking más largo.</td>
+      <td>La consulta tarda demasiado: es el parámetro que más pesa.</td></tr>
+    <tr><td class="destacado">Umbral de confianza</td>
+      <td>Casi todo sale marcado en confianza baja y en realidad está bien.</td>
+      <td>Se está marcando como confiable algo que no lo es.</td></tr>
+  </table>
+
+  <p>Al pie de cada resultado está el <strong>diagnóstico</strong>: cuánto tardó
+  cada etapa y cuántos candidatos pasaron por ella. Sirve para entender por qué
+  una consulta devolvió lo que devolvió.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/28-consulta-diagnostico.jpg" alt="Diagnóstico de la consulta" />
+    <figcaption><b>Diagnóstico.</b> Si el ranking vino corto, acá se ve en qué
+    etapa se cayó la gente.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Si aparece un aviso ámbar</div>
+    <p>Quiere decir que una etapa no pudo correr —normalmente porque falta una
+    clave de un proveedor externo— y la consulta siguió sin ella. El resultado
+    <strong>se puede usar igual</strong>, pero está peor ordenado de lo normal.
+    Avisale a quien administra el sistema.</p>
+  </div>
+</section>
+
+<!-- ════════════════ 7 ════════════════ -->
+<section id="s7">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 7</div>
+    <h2>Composición</h2>
+    <p>Cuánto se parece el panel al universo que pretende representar.</p>
+  </div>
+
+  <p>Un panel de mil personas no sirve si son todas de Montevideo y menores de
+  treinta. Esta pantalla muestra <strong>cómo está compuesto</strong> el panel y,
+  si cargaste un universo de referencia, <strong>cuánto le falta</strong> para
+  parecerse a él.</p>
+
+  <figure>
+    <img src="capturas/37-composicion.jpg" alt="Composición del panel" />
+    <figcaption><b>Composición.</b> Una tarjeta por dimensión: sexo, tramo etario
+    y localidad.</figcaption>
+  </figure>
+
+  <h3><span class="n">7.1</span> Sin universo de referencia</h3>
+
+  <p>Si no cargaste el objetivo de una dimensión, esa tarjeta muestra la
+  distribución observada y marca la brecha como
+  <span class="badge off">brecha no disponible</span>.</p>
+
+  <div class="aviso info">
+    <div class="t">«No disponible» no es «cero»</div>
+    <p>La distinción es deliberada. Una columna de brecha vacía se leería como
+    «está todo bien»; lo que en realidad pasa es que no hay contra qué comparar.
+    Sin universo de referencia, la composición describe pero no evalúa.</p>
+  </div>
+
+  <h3><span class="n">7.2</span> Cargar el universo de referencia</h3>
+
+  <p>Es lo que dice cómo <em>debería</em> estar compuesto el panel: por ejemplo,
+  52 % de mujeres y 48 % de varones. Sale del censo, de una encuesta continua de
+  hogares o de lo que el estudio defina como su universo.</p>
+
+  <ol class="pasos">
+    <li>Tocá <strong>Cargar universo de referencia</strong>. Hace falta rol de
+    Administración o Responsable de panel.</li>
+    <li>Elegí la <strong>dimensión</strong>. Se carga de a una.</li>
+    <li>Completá las categorías y su proporción, <strong>en tanto por uno</strong>:
+    0,52 y no 52.</li>
+    <li>Mirá el total abajo: tiene que dar <strong>1,000</strong>. Si no, el
+    sistema no la va a aceptar.</li>
+  </ol>
+
+  <figure>
+    <img class="recorte" src="capturas/38-composicion-objetivo.jpg" alt="Carga del universo de referencia" />
+    <figcaption><b>Universo de referencia.</b> <i>Precargar con lo observado</i>
+    llena las categorías con la composición actual, para no tipearlas: después
+    hay que corregir los valores al universo real.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Por qué exige que sume 1</div>
+    <p>Una dimensión cargada a medias —que suma 0,8, por ejemplo— no da una
+    brecha incompleta: da <strong>todas las brechas mal</strong>, porque cada
+    proporción se compara contra un total que no cierra. Por eso se rechaza al
+    cargarla en vez de aceptarla y mostrar números equivocados.</p>
+  </div>
+
+  <h3><span class="n">7.3</span> Leer la brecha</h3>
+
+  <table>
+    <thead><tr><th>Columna</th><th>Qué te dice</th></tr></thead>
+    <tr><td class="destacado">% observado</td><td>Cómo está el panel hoy.</td></tr>
+    <tr><td class="destacado">% objetivo</td><td>Cómo debería estar.</td></tr>
+    <tr><td class="destacado">Brecha</td>
+      <td>La diferencia, en puntos porcentuales. En ámbar y negativa cuando falta
+      gente de esa categoría.</td></tr>
+    <tr><td class="destacado">Faltan / sobran</td>
+      <td>La misma brecha en personas: cuántas habría que sumar para
+      calzar.</td></tr>
+  </table>
+
+  <p>Arriba a la derecha de cada dimensión está la <strong>disimilitud</strong>:
+  qué parte del panel habría que mover de categoría para que calce con el
+  universo. 0 % es calce perfecto.</p>
+
+  <h3><span class="n">7.4</span> El cruce de dos dimensiones</h3>
+
+  <p>El desplegable de arriba arma una tabla cruzada, por ejemplo sexo × tramo
+  etario. Es donde aparecen los huecos que las dimensiones por separado
+  esconden.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/39-composicion-cruce.jpg" alt="Cruce de dos dimensiones" />
+    <figcaption><b>Sexo × tramo etario.</b> Las celdas con un punto están vacías:
+    ahí no hay nadie.</figcaption>
+  </figure>
+
+  <p>Un panel puede tener bien la proporción de mujeres y bien la de mayores de
+  65, y no tener <strong>ninguna mujer mayor de 65</strong>. Las marginales no lo
+  muestran; el cruce sí. El cruce es descriptivo: no lleva brecha, porque el
+  universo se carga por dimensión y no por celda.</p>
+</section>
+
+<!-- ════════════════ 8 ════════════════ -->
+<section id="s8">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 8</div>
+    <h2>Participación</h2>
+    <p>Quién responde, a quién hace que no se contacta y cómo se reparten las
+    convocatorias.</p>
+  </div>
+
+  <p>Un panel se gasta con el uso. La gente se cansa si la convocás siempre, y se
+  enfría si no la convocás nunca. Esta pantalla es para mirar eso antes de armar
+  la próxima ola.</p>
+
+  <figure>
+    <img src="capturas/40-participacion.jpg" alt="Tablero de participación" />
+    <figcaption><b>Participación.</b> Arriba los números gruesos; abajo las tres
+    distribuciones y las listas para actuar.</figcaption>
+  </figure>
+
+  <h3><span class="n">8.1</span> Las tres preguntas</h3>
+
+  <table>
+    <thead><tr><th>Pregunta</th><th>Dónde mirar</th><th>Qué significa</th></tr></thead>
+    <tr>
+      <td class="destacado">¿Responde?</td>
+      <td>Tasa de respuesta, arriba y por ola</td>
+      <td>Es la métrica de salud más directa. Un panel de mil personas con 15 %
+      de respuesta es, en los hechos, un panel de ciento cincuenta.</td>
+    </tr>
+    <tr>
+      <td class="destacado">¿Hace cuánto que no lo molesto?</td>
+      <td>Último contacto</td>
+      <td>Sirve para las dos puntas: no quemar a quien acaba de responder tres
+      olas, y no dejar dormido a quien no contactás hace un año.</td>
+    </tr>
+    <tr>
+      <td class="destacado">¿Reparto parejo?</td>
+      <td>Convocatorias por miembro</td>
+      <td>Si unos pocos se llevan la mayoría de las convocatorias, la muestra
+      dejó de ser del panel y pasó a ser de ese grupo.</td>
+    </tr>
+  </table>
+
+  <h3><span class="n">8.2</span> Las listas para actuar</h3>
+
+  <ul class="puntos">
+    <li><strong>Sin contacto hace más de 30 días</strong> — los que se están
+    enfriando. Cuando vuelve la convocatoria, ya no contestan.</li>
+    <li><strong>Nunca contactados</strong> — están en el panel y todavía no se los
+    usó nunca. Suele ser el mejor lugar para buscar gente nueva para una ola.</li>
+    <li><strong>Más convocados</strong> — los candidatos a fatiga. Conviene mirarla
+    antes de sumarlos a otra ola.</li>
+  </ul>
+
+  <p>Tocando cualquier fila se abre la ficha de esa persona.</p>
+
+  <div class="aviso info">
+    <div class="t">Cada panel cuenta lo suyo</div>
+    <p>Una persona puede estar en varios paneles. Las convocatorias que recibió
+    en <em>otro</em> panel no cuentan acá: el tablero mira solo las olas del panel
+    que elegiste arriba.</p>
+  </div>
+
+  <h3><span class="n">8.3</span> La tabla de olas</h3>
+
+  <p>Una fila por encuesta, con cuántos se convocaron, cuántos respondieron, la
+  tasa y el estado de calidad de las respuestas. Es la vista que conviene mirar
+  para comparar una ola con la anterior.</p>
+</section>
+
+<!-- ════════════════ 9 ════════════════ -->
+<section id="s9">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 9</div>
     <h2>Cumplimiento</h2>
     <p>Atender los derechos de los panelistas. Solo para los roles de
     Administración y Cumplimiento.</p>
@@ -503,7 +989,7 @@
   tres opciones están en su ficha, abajo a la derecha, en
   <strong>Derechos del titular</strong>.</p>
 
-  <h3><span class="n">6.1</span> Las tres opciones</h3>
+  <h3><span class="n">9.1</span> Las tres opciones</h3>
 
   <table>
     <thead><tr><th>Si la persona pide…</th><th>Elegí</th><th>Qué pasa</th></tr></thead>
@@ -527,7 +1013,7 @@
     </tr>
   </table>
 
-  <h3><span class="n">6.2</span> La baja total</h3>
+  <h3><span class="n">9.2</span> La baja total</h3>
 
   <figure>
     <img class="recorte" src="capturas/23-baja-total.jpg" alt="Confirmación de baja total" />
@@ -545,7 +1031,7 @@
     pregunta, que el pedido se atendió.</p>
   </div>
 
-  <h3><span class="n">6.3</span> La pantalla de Cumplimiento</h3>
+  <h3><span class="n">9.3</span> La pantalla de Cumplimiento</h3>
 
   <figure>
     <img src="capturas/22-cumplimiento.jpg" alt="Pantalla de cumplimiento" />
@@ -566,11 +1052,123 @@
   borrado que faltó. Si la lista está vacía, no hay nada pendiente.</p>
 </section>
 
-<!-- ════════════════ 7 ════════════════ -->
-<section id="s7">
+<!-- ════════════════ 10 ════════════════ -->
+<section id="s10">
   <div class="cab">
     <div class="barra"></div>
-    <div class="kicker">Sección 7</div>
+    <div class="kicker">Sección 10</div>
+    <h2>Configuración</h2>
+    <p>Quién entra al sistema y con qué rol. Solo para el rol de
+    Administración.</p>
+  </div>
+
+  <p>Esta solapa da y quita acceso al sistema. Dar de alta a alguien con rol de
+  Administración es darle acceso a <strong>toda la bóveda</strong>, incluidos los
+  datos personales de todos los panelistas. Por eso la solapa solo la ve
+  Administración, y por eso todo lo que se hace acá queda registrado.</p>
+
+  <figure>
+    <img src="capturas/41-configuracion.jpg" alt="Padrón de usuarios" />
+    <figcaption><b>El padrón.</b> Una fila por persona con acceso. El rol se
+    cambia desde el desplegable, sin pasar por ninguna otra
+    pantalla.</figcaption>
+  </figure>
+
+  <h3><span class="n">10.1</span> Dar de alta a alguien</h3>
+
+  <ol class="pasos">
+    <li>Tocá <strong>+ Dar de alta un usuario</strong>.</li>
+    <li>Poné el <strong>email de Equipos</strong>, el nombre y el rol. Debajo del
+    rol dice qué puede hacer cada uno.</li>
+    <li>Confirmá.</li>
+  </ol>
+
+  <figure>
+    <img class="recorte" src="capturas/42-usuario-alta.jpg" alt="Alta de un usuario" />
+    <figcaption><b>Alta.</b> Si ya existe una cuenta con ese correo, no se crea
+    otra ni se le toca la clave: se actualiza la ficha y el rol.</figcaption>
+  </figure>
+
+  <p>Al crear una cuenta nueva, el sistema te muestra un <strong>enlace para que
+  la persona fije su contraseña</strong>.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/43-usuario-acceso.jpg" alt="Enlace de acceso, una sola vez" />
+    <figcaption><b>Se muestra una sola vez.</b> Copialo antes de cerrar, o pedile
+    a la persona que entre con «¿Olvidaste tu contraseña?».</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">La clave inicial no queda guardada en ningún lado</div>
+    <p>La cuenta se crea con una clave aleatoria que el sistema no guarda y nadie
+    ve. La persona entra por ese enlace y elige la suya. Si cerrás el cartel sin
+    copiarlo, no se recupera: no es un error, es lo que hace que no haya una
+    contraseña dando vueltas en una pantalla.</p>
+    <p>Pasáselo por un canal privado. Si preferís no manejarlo, decile
+    directamente que use <strong>¿Olvidaste tu contraseña?</strong> en el login:
+    llega al mismo lugar.</p>
+  </div>
+
+  <h3><span class="n">10.2</span> Cambiar un rol</h3>
+
+  <p>Se elige otro rol en el desplegable de la fila. El cambio vale
+  <strong>desde la próxima operación</strong> de esa persona: no hace falta que
+  vuelva a entrar.</p>
+
+  <h3><span class="n">10.3</span> Desactivar a alguien</h3>
+
+  <p><strong>Desactivar</strong> le corta el acceso. No borra nada: su ficha, todo
+  lo que hizo y el registro de sus operaciones quedan. Borrarlo borraría
+  justamente el rastro que hay que conservar.</p>
+
+  <p>Para devolverle el acceso, <strong>Reactivar</strong> en la misma fila.</p>
+
+  <div class="aviso grave">
+    <div class="t">No podés degradarte ni desactivarte a vos mismo</div>
+    <p>En tu propia fila el desplegable de rol y el botón de desactivar están
+    apagados, y dice <span class="badge on">vos</span> al lado de tu nombre.</p>
+    <p>No es una molestia: si el último administrador se saca el rol o se
+    desactiva, no queda <strong>nadie</strong> que pueda dar de alta a nadie, y
+    recuperar el sistema pasa a ser una tarea técnica con credenciales del
+    servidor. Si necesitás cambiar tu propio rol, pedíselo a otro
+    administrador.</p>
+  </div>
+
+  <h3><span class="n">10.4</span> La auditoría</h3>
+
+  <figure>
+    <img class="recorte" src="capturas/44-usuarios-auditoria.jpg" alt="Auditoría de la gestión de usuarios" />
+    <figcaption><b>Auditoría.</b> Cada alta, cambio de rol, desactivación y
+    reactivación, con quién la hizo y cuándo.</figcaption>
+  </figure>
+
+  <p>El registro <strong>solo se agrega</strong>: no se puede editar ni borrar
+  desde la aplicación. Es lo que permite responder «quién le dio acceso a esta
+  persona, y cuándo» sin depender de la memoria de nadie.</p>
+
+  <h3><span class="n">10.5</span> Los cuatro roles</h3>
+
+  <table>
+    <thead><tr><th>Rol</th><th>Para quién es</th></tr></thead>
+    <tr><td class="destacado">Administración</td>
+      <td>Todo, incluida esta pantalla. Conviene que sean pocos.</td></tr>
+    <tr><td class="destacado">Responsable de panel</td>
+      <td>Quien mantiene el panel: enrola, arma paneles, convoca, consulta y
+      puede ver quién es quién.</td></tr>
+    <tr><td class="destacado">Analista</td>
+      <td>Quien trabaja con los datos: fieldea, ingesta y consulta. No enrola, no
+      da de baja y no traduce identificadores a personas.</td></tr>
+    <tr><td class="destacado">Cumplimiento / DPO</td>
+      <td>Quien responde por los datos personales: ve todo, atiende retiros y
+      bajas, y lee el registro de reidentificación.</td></tr>
+  </table>
+</section>
+
+<!-- ════════════════ 11 ════════════════ -->
+<section id="s11">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 11</div>
     <h2>Preguntas frecuentes</h2>
   </div>
 
@@ -597,9 +1195,14 @@
   <h4>Me equivoqué en el texto de una pregunta al ingestar</h4>
   <p>Corregilo y volvé a ingestar el mismo archivo. No se duplica nada.</p>
 
-  <h4>Quiero cambiar el documento o el email de una persona</h4>
-  <p>La ficha todavía no permite editar los datos. Si hay un dato mal cargado,
-  pedíselo a quien administra el sistema.</p>
+  <h4>Quiero corregir un dato de una persona</h4>
+  <p>Desde su ficha, con <strong>Editar</strong>. Casi todo se corrige ahí
+  mismo.</p>
+  <p>El <strong>documento</strong> y el <strong>email</strong> son la excepción:
+  si están vacíos se pueden completar, pero una vez cargados no se cambian. Son
+  las dos claves con las que el sistema reconoce a la persona, y cambiarlas
+  convertiría a alguien en otro. Si uno quedó mal cargado, avisale a quien
+  administra el sistema.</p>
 
   <h4>Di de baja a alguien por error</h4>
   <p>Si fue <strong>quitar del panel</strong> o <strong>retirar un
@@ -607,16 +1210,63 @@
   volvé a otorgarle la finalidad. Si fue <strong>baja total</strong>, no: hay que
   enrolarla de cero y el historial anterior se perdió.</p>
 
+  <h4>Corrí una consulta y no me trajo a nadie</h4>
+  <p>Mirá el número de <strong>personas habilitadas en el segmento</strong>, en
+  la tarjeta de arriba del ranking. Si es bajo o cero, el problema no es la
+  consulta: casi nadie tiene el consentimiento de <strong>uso semántico</strong>
+  vigente, que es el que habilita mirar las respuestas. Si el número es alto y
+  el ranking igual vino vacío, probá el <strong>modo laxo</strong> o escribí el
+  criterio de otra manera.</p>
+
+  <h4>En la consulta aparece alguien que dice justo lo contrario</h4>
+  <p>No debería. Abrí <strong>Ver</strong> en esa fila y leé la evidencia
+  completa; si el veredicto dice «Cumple» pero la respuesta es claramente
+  negativa, la fila trae un aviso. Avisale a quien administra el sistema, y
+  mientras tanto probá con un criterio más explícito: «gente a la que le encanta
+  el fernet» en vez de «fernet».</p>
+
+  <h4>¿Por qué la consulta me muestra códigos y no nombres?</h4>
+  <p>Porque el ranking se arma del lado de las respuestas, donde no hay datos
+  personales. <strong>Ver quiénes son</strong> los traduce, y esa traducción
+  queda registrada. No es un paso de más: es lo que hace que se pueda auditar
+  quién vio datos de quién.</p>
+
+  <h4>La composición dice «brecha no disponible»</h4>
+  <p>Falta cargar el universo de referencia de esa dimensión. No quiere decir que
+  la brecha sea cero: quiere decir que no hay contra qué comparar. Lo carga
+  Administración o el Responsable de panel, en la misma pantalla.</p>
+
+  <h4>No me deja guardar el universo de referencia</h4>
+  <p>Las proporciones de una dimensión tienen que sumar 1. Fijate el total que
+  muestra abajo del formulario: si está en rojo, no cierra. Y van en tanto por
+  uno: 0,52 y no 52.</p>
+
+  <h4>No veo la solapa Configuración</h4>
+  <p>Solo la ve el rol de Administración. Dar de alta usuarios es dar acceso a
+  todos los datos personales del sistema, así que es una capacidad
+  aparte.</p>
+
+  <h4>Quiero sacarme el rol de admin y no me deja</h4>
+  <p>Es a propósito: si el último administrador se degrada o se desactiva, no
+  queda nadie que pueda dar de alta a nadie. Pedíselo a otro
+  administrador.</p>
+
+  <h4>Arriba del ranking apareció un aviso ámbar</h4>
+  <p>Una de las etapas de la consulta no pudo correr y el sistema siguió sin
+  ella, avisando. El resultado sirve igual, pero está peor ordenado que de
+  costumbre. Avisale a quien administra el sistema: casi siempre es una clave de
+  un servicio externo que venció.</p>
+
   <h4>Veo un cartel celeste que dice «Modo demo»</h4>
   <p>Estás en una copia de prueba con datos inventados, no en el sistema real.
   Nada de lo que hagas se guarda. Pedí la dirección correcta.</p>
 </section>
 
-<!-- ════════════════ 8 ════════════════ -->
-<section id="s8">
+<!-- ════════════════ 12 ════════════════ -->
+<section id="s12">
   <div class="cab">
     <div class="barra"></div>
-    <div class="kicker">Sección 8</div>
+    <div class="kicker">Sección 12</div>
     <h2>Glosario</h2>
     <p>Los términos que aparecen en pantalla, en castellano.</p>
   </div>
@@ -671,11 +1321,52 @@
     <tr><td class="destacado">PII</td>
       <td>Sigla de <i>información personal identificable</i>: nombre, documento,
       email, teléfono, fecha de nacimiento.</td></tr>
+    <tr><td class="destacado">Criterio semántico</td>
+      <td>Una frase en lenguaje natural que describe lo que se busca en las
+      respuestas. Ordena el ranking; no filtra.</td></tr>
+    <tr><td class="destacado">Criterio demográfico</td>
+      <td>Un filtro sobre los datos de la bóveda: sexo, tramo etario, localidad o
+      edad. Filtra; no ordena.</td></tr>
+    <tr><td class="destacado">Consulta mixta</td>
+      <td>La que combina los dos tipos de criterio.</td></tr>
+    <tr><td class="destacado">Evidencia</td>
+      <td>La respuesta concreta, textual, que justifica que una persona esté en
+      el ranking. Siempre viene con el estudio y la pregunta de donde
+      salió.</td></tr>
+    <tr><td class="destacado">Procedencia</td>
+      <td>De qué estudio y de qué pregunta salió una respuesta.</td></tr>
+    <tr><td class="destacado">Veredicto</td>
+      <td>Lo que el sistema concluye sobre una persona para un criterio:
+      <i>cumple</i>, <i>no cumple</i> o <i>dudoso</i>.</td></tr>
+    <tr><td class="destacado">Modo estricto / laxo</td>
+      <td>Qué hacer con la gente de la que no hay evidencia clara: dejarla afuera
+      o incluirla penalizada. Quien dice lo contrario del criterio queda afuera
+      en los dos.</td></tr>
+    <tr><td class="destacado">Confianza</td>
+      <td>Marca de si la evidencia que sostiene a una persona en el ranking es
+      buena o floja. No la excluye: la señala.</td></tr>
+    <tr><td class="destacado">Reidentificación</td>
+      <td>Traducir un <code>id_persona</code> a nombre y datos de contacto.
+      Queda registrada con autor, fecha y motivo.</td></tr>
+    <tr><td class="destacado">Universo de referencia</td>
+      <td>Las proporciones que el panel debería tener para representar a la
+      población de interés. Se carga por dimensión y tiene que sumar 1.</td></tr>
+    <tr><td class="destacado">Brecha</td>
+      <td>La diferencia entre cómo está compuesto el panel y cómo debería estar,
+      en puntos porcentuales.</td></tr>
+    <tr><td class="destacado">Disimilitud</td>
+      <td>Qué parte del panel habría que mover de categoría para que calce con el
+      universo de referencia. 0 % es calce perfecto.</td></tr>
+    <tr><td class="destacado">Tasa de respuesta</td>
+      <td>Qué proporción de los convocados efectivamente respondió.</td></tr>
+    <tr><td class="destacado">Fatiga</td>
+      <td>El desgaste de convocar siempre a la misma gente. Se mira en la
+      distribución de convocatorias.</td></tr>
   </table>
 
   <div class="pie-pagina">
     Equipos Consultores · Sistema de gestión de paneles · Manual de usuario ·
-    Fase 1
+    Fases 1 y 2
   </div>
 </section>
 
