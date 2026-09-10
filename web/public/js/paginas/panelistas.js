@@ -287,9 +287,11 @@ async function renderFicha(main, idPersona) {
                   ? `<div class="alias-lista">${ficha.alias.map((a) => `
                       <span class="alias"><b>${esc(a.origen)}</b>
                       <code>${esc(a.id_en_origen)}</code></span>`).join('')}</div>
-                     <div class="field-hint">Con esto se enganchan sus respuestas al ingestar.</div>`
+                     <div class="field-hint">Con esto se enganchan sus respuestas al ingestar.
+                       <a id="alias-editar">Gestionar</a></div>`
                   : `—<div class="field-hint">Sin id de plataforma de campo: sus respuestas
-                     no se van a poder enganchar automáticamente al ingestar.</div>`}
+                     no se van a poder enganchar automáticamente al ingestar.
+                     <a id="alias-editar">Agregar uno</a></div>`}
               </dd>
               ${dato('Enrolado', fechaHora(ficha.creado_en))}
             </dl>
@@ -356,11 +358,15 @@ async function renderFicha(main, idPersona) {
       </div>
     </div>`;
 
-  $('#ph-acciones').innerHTML = `<button class="btn btn-outline" id="volver">‹ Volver al listado</button>`;
+  $('#ph-acciones').innerHTML = `
+    <button class="btn btn-outline" id="volver">‹ Volver al listado</button>
+    <button class="btn btn-orange" id="editar">Editar datos</button>`;
   $('#volver').onclick = () => contexto.irA('panelistas');
+  $('#editar').onclick = () => abrirEdicion(ficha);
   activarTokens(main);
 
   $('#otorgar').onclick = () => abrirOtorgar(idPersona);
+  $('#alias-editar').onclick = (e) => { e.preventDefault(); abrirAlias(ficha); };
   $$('[data-retiro]', main).forEach((boton) => {
     boton.onclick = () => retirar(idPersona, boton.dataset.retiro, p.nombre);
   });
@@ -391,6 +397,164 @@ function abrirOtorgar(idPersona) {
         } },
     ],
   });
+}
+
+/* ── Edición ─────────────────────────────────────────────────────── */
+
+/* `documento` y `email` no van: son las claves con las que el dedup
+   reconoce a la persona y tienen índice único. Se muestran, bloqueados y
+   con el motivo, para que quede claro que no es un olvido. */
+function abrirEdicion(ficha) {
+  const p = ficha.persona;
+  const v = (valor) => esc(valor ?? '');
+
+  modal({
+    titulo: `Editar — ${p.nombre || 'panelista'}`,
+    ancho: '620px',
+    cuerpo: `
+      <div id="edit-alerta"></div>
+
+      <div class="form-row">
+        <div class="form-group"><label>Nombre completo</label>
+          <input type="text" name="nombre" value="${v(p.nombre)}" /></div>
+        <div class="form-group"><label>Celular</label>
+          <input type="text" name="celular" value="${v(p.celular)}" /></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Sexo</label>
+          <select class="fselect" name="sexo">
+            ${['', 'F', 'M', 'X'].map((o) => `
+              <option value="${o}" ${(p.sexo || '') === o ? 'selected' : ''}>${o || '—'}</option>`).join('')}
+          </select></div>
+        <div class="form-group"><label>Fecha de nacimiento</label>
+          <input type="date" name="fecha_nacimiento" value="${v(p.fecha_nacimiento)}" /></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Localidad</label>
+          <input type="text" name="localidad" value="${v(p.localidad)}" /></div>
+        <div class="form-group"><label>Otros datos de contacto</label>
+          <input type="text" name="contacto" value="${v(p.contacto)}" /></div>
+      </div>
+      <div class="form-group"><label>Observaciones</label>
+        <textarea class="finput" name="observaciones">${v(p.observaciones)}</textarea></div>
+
+      <div class="form-row">
+        <div class="form-group"><label>Documento</label>
+          <input type="text" value="${v(p.documento)}" disabled /></div>
+        <div class="form-group"><label>Email</label>
+          <input type="text" value="${v(p.email)}" disabled /></div>
+      </div>
+      <div class="aviso" style="margin-top:0">
+        <div class="t">Por qué el documento y el email no se editan</div>
+        <p>Son las dos claves con las que el sistema reconoce si alguien ya
+        está enrolado. Cambiarlas no corrige un dato: cambia la identidad con
+        la que se lo reconoce, y puede partir o fusionar personas sin que se
+        note. Si están mal, avisale a quien administra el sistema.</p>
+      </div>
+
+      <div class="field-hint" style="margin-top:1rem">
+        Un campo que dejes vacío borra ese dato.
+      </div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Guardar', clase: 'btn-orange', onClick: (caja) => guardarEdicion(caja, ficha) },
+    ],
+  });
+}
+
+async function guardarEdicion(caja, ficha) {
+  const datos = leerFormulario(caja);
+  const alerta$ = $('#edit-alerta', caja);
+  alerta$.innerHTML = '';
+
+  // Solo se manda lo que cambió: el backend distingue "no vino" de "vino
+  // vacío", y vacío borra.
+  const cambios = {};
+  Object.entries(datos).forEach(([campo, valor]) => {
+    const antes = ficha.persona[campo] ?? null;
+    if ((valor ?? null) !== antes) cambios[campo] = valor;
+  });
+
+  if (!Object.keys(cambios).length) {
+    cerrarModal();
+    toast('No cambiaste nada.', '');
+    return;
+  }
+
+  try {
+    const resultado = await api.panelistas.editar(ficha.id_persona, cambios);
+    cerrarModal();
+    toast(`Guardado: ${resultado.campos_modificados.join(', ')}.`, 'ok');
+    contexto.irA('panelistas', { idPersona: ficha.id_persona });
+  } catch (error) {
+    alerta$.innerHTML = alerta(error.message);
+  }
+}
+
+/* ── Alias de origen ─────────────────────────────────────────────── */
+
+function abrirAlias(ficha) {
+  modal({
+    titulo: 'Ids de plataforma de campo',
+    cuerpo: `
+      <div id="alias-alerta"></div>
+      <p class="small muted">Así nombró a esta persona cada plataforma. Es lo que
+      engancha sus respuestas con ella al ingestar una encuesta.</p>
+
+      ${(ficha.alias || []).length ? `<div class="pick-list" style="margin:1rem 0">
+        ${ficha.alias.map((a) => `
+          <div class="pick">
+            <div style="flex:1">
+              <div class="pick-name">${esc(a.origen)}</div>
+              <div class="pick-email mono">${esc(a.id_en_origen)}</div>
+            </div>
+            <button class="btn btn-outline btn-del btn-sm"
+                    data-quitar-origen="${esc(a.origen)}"
+                    data-quitar-id="${esc(a.id_en_origen)}">Quitar</button>
+          </div>`).join('')}
+      </div>` : `<div class="empty-state" style="padding:1.2rem">Todavía no tiene ninguno.</div>`}
+
+      <div class="form-row" style="margin-top:1rem">
+        <div class="form-group" style="margin-bottom:0"><label>Origen</label>
+          <input type="text" name="origen" placeholder="dooblo" /></div>
+        <div class="form-group" style="margin-bottom:0"><label>Id en el origen</label>
+          <input type="text" name="id_en_origen" placeholder="R-0042" /></div>
+      </div>`,
+    acciones: [
+      { texto: 'Cerrar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Agregar', clase: 'btn-orange', onClick: (caja) => agregarAlias(caja, ficha) },
+    ],
+  });
+
+  $$('[data-quitar-origen]').forEach((boton) => {
+    boton.onclick = async () => {
+      try {
+        await api.panelistas.quitarAlias(
+          ficha.id_persona, boton.dataset.quitarOrigen, boton.dataset.quitarId);
+        cerrarModal();
+        toast('Id quitado.', 'ok');
+        contexto.irA('panelistas', { idPersona: ficha.id_persona });
+      } catch (error) { toast(error.message, 'err'); }
+    };
+  });
+}
+
+async function agregarAlias(caja, ficha) {
+  const datos = leerFormulario(caja);
+  const alerta$ = $('#alias-alerta', caja);
+  alerta$.innerHTML = '';
+  if (!datos.origen || !datos.id_en_origen) {
+    alerta$.innerHTML = alerta('Hacen falta el origen y el id.');
+    return;
+  }
+  try {
+    await api.panelistas.agregarAlias(ficha.id_persona, datos.origen, datos.id_en_origen);
+    cerrarModal();
+    toast('Id agregado.', 'ok');
+    contexto.irA('panelistas', { idPersona: ficha.id_persona });
+  } catch (error) {
+    alerta$.innerHTML = alerta(error.message);
+  }
 }
 
 const TEXTO_RETIRO = {

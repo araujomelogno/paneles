@@ -3,7 +3,7 @@
 import pytest
 
 from panel_api import db, dedup, personas
-from panel_api.errores import DatosInvalidos
+from panel_api.errores import Conflicto, DatosInvalidos, NoEncontrado
 
 from conftest import VERSION_TEXTO, consentimientos
 
@@ -177,3 +177,152 @@ def test_la_ficha_de_quien_no_tiene_alias_devuelve_lista_vacia(conn_boveda):
         },
     )
     assert personas.ficha(conn_boveda, resultado["id_persona"])["alias"] == []
+
+
+# ── Edición de una persona ya enrolada ───────────────────────────────
+
+def _enrolar(conn, **campos):
+    return personas.alta(
+        conn,
+        {"persona": campos, "consentimientos": consentimientos("contacto_participacion")},
+    )["id_persona"]
+
+
+def test_editar_cambia_solo_los_campos_que_vienen(conn_boveda):
+    id_persona = _enrolar(
+        conn_boveda, documento="1-1", nombre="Ana Peres", email="ana@ej.uy",
+        localidad="Montevideo",
+    )
+
+    resultado = personas.editar(conn_boveda, id_persona, {"nombre": "Ana Pérez"})
+
+    assert resultado["campos_modificados"] == ["nombre"]
+    ficha = personas.ficha(conn_boveda, id_persona)["persona"]
+    assert ficha["nombre"] == "Ana Pérez"
+    assert ficha["email"] == "ana@ej.uy"          # intacto
+    assert ficha["localidad"] == "Montevideo"     # intacto
+
+
+def test_editar_con_valor_vacio_borra_el_dato(conn_boveda):
+    # Es la forma de sacar un dato mal cargado.
+    id_persona = _enrolar(conn_boveda, documento="2-2", nombre="Beto",
+                          celular="099 000 000")
+
+    personas.editar(conn_boveda, id_persona, {"celular": "  "})
+
+    assert personas.ficha(conn_boveda, id_persona)["persona"]["celular"] is None
+
+
+def test_no_se_puede_editar_el_documento_desde_la_ficha(conn_boveda):
+    # Es clave de dedup y tiene índice único: cambiarla no es corregir un
+    # dato, es cambiar la identidad con la que el sistema reconoce a la
+    # persona.
+    id_persona = _enrolar(conn_boveda, documento="3-3", nombre="Carla")
+
+    with pytest.raises(DatosInvalidos) as excepcion:
+        personas.editar(conn_boveda, id_persona, {"documento": "3-4"})
+
+    assert excepcion.value.detalle["campos"] == ["documento"]
+    assert "documento" not in excepcion.value.detalle["editables"]
+    assert personas.ficha(conn_boveda, id_persona)["persona"]["documento"] == "3-3"
+
+
+def test_no_se_puede_editar_el_email_desde_la_ficha(conn_boveda):
+    id_persona = _enrolar(conn_boveda, documento="4-4", email="dora@ej.uy")
+
+    with pytest.raises(DatosInvalidos) as excepcion:
+        personas.editar(conn_boveda, id_persona, {"email": "otra@ej.uy"})
+
+    assert excepcion.value.detalle["campos"] == ["email"]
+    assert personas.ficha(conn_boveda, id_persona)["persona"]["email"] == "dora@ej.uy"
+
+
+def test_un_cambio_mixto_se_rechaza_entero_sin_escribir_nada(conn_boveda):
+    id_persona = _enrolar(conn_boveda, documento="5-5", nombre="Elena")
+
+    with pytest.raises(DatosInvalidos):
+        personas.editar(
+            conn_boveda, id_persona, {"nombre": "Elena Rodríguez", "email": "e@ej.uy"}
+        )
+
+    # El nombre no se tocó: o entra todo, o no entra nada.
+    assert personas.ficha(conn_boveda, id_persona)["persona"]["nombre"] == "Elena"
+
+
+def test_reescribir_el_mismo_valor_no_cuenta_como_cambio(conn_boveda):
+    id_persona = _enrolar(conn_boveda, documento="7-7", localidad="Salto")
+    resultado = personas.editar(conn_boveda, id_persona, {"localidad": "Salto"})
+    assert resultado["campos_modificados"] == []
+
+
+def test_editar_un_campo_que_no_existe_se_rechaza(conn_boveda):
+    id_persona = _enrolar(conn_boveda, documento="8-8")
+    with pytest.raises(DatosInvalidos) as excepcion:
+        personas.editar(conn_boveda, id_persona, {"puntos": 500})
+    assert excepcion.value.detalle["campos"] == ["puntos"]
+
+
+def test_editar_una_persona_inexistente_da_404(conn_boveda):
+    with pytest.raises(NoEncontrado):
+        personas.editar(
+            conn_boveda, "3f5b8a1e-0000-4000-8000-000000000099", {"nombre": "X"}
+        )
+
+
+def test_editar_no_toca_consentimientos_ni_membresias(conn_boveda):
+    from panel_api import paneles as mod_paneles
+
+    panel = mod_paneles.crear(conn_boveda, "Panel")
+    id_persona = _enrolar(conn_boveda, documento="9-9", nombre="Hugo")
+    mod_paneles.agregar_miembro(conn_boveda, panel["id"], id_persona)
+
+    personas.editar(conn_boveda, id_persona, {"nombre": "Hugo Ramírez"})
+
+    ficha = personas.ficha(conn_boveda, id_persona)
+    assert len(ficha["consentimientos"]) == 1
+    assert [p["panel_id"] for p in ficha["paneles"]] == [panel["id"]]
+
+
+# ── Alias de origen ──────────────────────────────────────────────────
+
+def test_agregar_un_alias_despues_del_alta(conn_boveda):
+    id_persona = _enrolar(conn_boveda, documento="10-10", nombre="Irene")
+
+    personas.agregar_alias(conn_boveda, id_persona, "dooblo", "R-500")
+
+    assert personas.ficha(conn_boveda, id_persona)["alias"] == [
+        {"origen": "dooblo", "id_en_origen": "R-500"}
+    ]
+
+
+def test_un_id_de_plataforma_no_puede_apuntar_a_dos_personas(conn_boveda):
+    # Si pudiera, la ingesta no sabría a quién asignarle la respuesta.
+    uno = _enrolar(conn_boveda, documento="11-11")
+    dos = _enrolar(conn_boveda, documento="12-12")
+    personas.agregar_alias(conn_boveda, uno, "dooblo", "R-600")
+
+    with pytest.raises(Conflicto) as excepcion:
+        personas.agregar_alias(conn_boveda, dos, "dooblo", "R-600")
+    assert excepcion.value.detalle["id_persona_en_conflicto"] == uno
+
+
+def test_agregar_el_mismo_alias_dos_veces_a_la_misma_persona_es_idempotente(conn_boveda):
+    id_persona = _enrolar(conn_boveda, documento="13-13")
+    personas.agregar_alias(conn_boveda, id_persona, "dooblo", "R-700")
+    personas.agregar_alias(conn_boveda, id_persona, "dooblo", "R-700")
+    assert len(personas.ficha(conn_boveda, id_persona)["alias"]) == 1
+
+
+def test_quitar_un_alias_mal_cargado(conn_boveda):
+    id_persona = _enrolar(conn_boveda, documento="14-14")
+    personas.agregar_alias(conn_boveda, id_persona, "dooblo", "R-800")
+
+    personas.quitar_alias(conn_boveda, id_persona, "dooblo", "R-800")
+
+    assert personas.ficha(conn_boveda, id_persona)["alias"] == []
+
+
+def test_quitar_un_alias_que_no_tiene_da_404(conn_boveda):
+    id_persona = _enrolar(conn_boveda, documento="15-15")
+    with pytest.raises(NoEncontrado):
+        personas.quitar_alias(conn_boveda, id_persona, "dooblo", "R-999")

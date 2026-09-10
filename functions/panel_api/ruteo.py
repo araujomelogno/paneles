@@ -88,6 +88,36 @@ def ficha_panelista(ctx, actor, params, cuerpo, consulta):
     return 200, personas.ficha(ctx.boveda, params["id_persona"])
 
 
+@ruta("PATCH", "/panelistas/<id_persona>", "enrolar")
+def editar_panelista(ctx, actor, params, cuerpo, consulta):
+    """Corrige los datos de una persona ya enrolada. Solo los campos que
+    vengan en el cuerpo; un valor vacío borra el dato."""
+    resultado = personas.editar(
+        ctx.boveda, params["id_persona"], cuerpo, actor=actor.uid
+    )
+    ctx.boveda.commit()
+    return 200, resultado
+
+
+@ruta("POST", "/panelistas/<id_persona>/alias", "enrolar")
+def agregar_alias_panelista(ctx, actor, params, cuerpo, consulta):
+    resultado = personas.agregar_alias(
+        ctx.boveda, params["id_persona"], cuerpo.get("origen"),
+        cuerpo.get("id_en_origen"),
+    )
+    ctx.boveda.commit()
+    return 201, resultado
+
+
+@ruta("DELETE", "/panelistas/<id_persona>/alias/<origen>/<id_en_origen>", "enrolar")
+def quitar_alias_panelista(ctx, actor, params, cuerpo, consulta):
+    resultado = personas.quitar_alias(
+        ctx.boveda, params["id_persona"], params["origen"], params["id_en_origen"]
+    )
+    ctx.boveda.commit()
+    return 200, resultado
+
+
 # ════════════════════════════════════════════════════════════════════
 #  Altas en revisión (dedup ambiguo)
 # ════════════════════════════════════════════════════════════════════
