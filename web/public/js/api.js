@@ -58,10 +58,11 @@ async function pedir(metodo, camino, { cuerpo, consulta } = {}) {
 
 const GET = (camino, consulta) => pedir('GET', camino, { consulta });
 const POST = (camino, cuerpo) => pedir('POST', camino, { cuerpo });
+const PUT = (camino, cuerpo) => pedir('PUT', camino, { cuerpo });
 const PATCH = (camino, cuerpo) => pedir('PATCH', camino, { cuerpo });
-const DELETE = (camino) => pedir('DELETE', camino);
+const DELETE = (camino, consulta) => pedir('DELETE', camino, { consulta });
 
-/* ── Superficie de la Fase 1 (misma que el HANDOFF) ─────────────── */
+/* ── Fase 1 (superficie del HANDOFF) ────────────────────────────── */
 
 export const yo = () => GET('/yo');
 
@@ -122,4 +123,53 @@ export const encuestas = {
       preguntas, filas, columna_id: columnaId || 'id_en_origen', origen,
     }),
   cruce: (id) => GET(`/encuestas/${id}/cruce`),
+};
+
+/* ── Fase 2 ─────────────────────────────────────────────────────── */
+
+/* El cuerpo de una consulta es la «definición»: criterios, modo y
+   parámetros. Se manda igual para correrla y para guardarla, así que una
+   consulta guardada se vuelve a correr sin traducir nada. */
+export const consultas = {
+  correr: (definicion) => POST('/consultas', definicion),
+  csv: (definicion) => POST('/consultas', { ...definicion, formato: 'csv' }),
+  guardadas: (panelId) => GET('/consultas/guardadas', panelId ? { panel_id: panelId } : {}),
+  guardar: (nombre, definicion, descripcion) =>
+    POST('/consultas/guardadas', { nombre, definicion, descripcion }),
+  verGuardada: (id) => GET(`/consultas/guardadas/${id}`),
+  borrarGuardada: (id) => DELETE(`/consultas/guardadas/${id}`),
+};
+
+/* Traducir id_persona → datos de contacto. Es la única llamada de la Fase 2
+   que devuelve PII, y el backend registra cada traducción. */
+export const reidentificacion = {
+  resolver: (idsPersona, motivo = 'consulta') =>
+    POST('/reidentificacion', { ids_persona: idsPersona, motivo }),
+  registro: (consulta) => GET('/reidentificacion', consulta),
+};
+
+export const composicion = {
+  ver: (panelId, { dimensiones, cruce, estado } = {}) =>
+    GET(`/paneles/${panelId}/composicion`, {
+      dimensiones: dimensiones?.join(','),
+      cruce: cruce?.join(','),
+      estado,
+    }),
+  objetivo: (panelId) => GET(`/paneles/${panelId}/objetivo`),
+  cargarObjetivo: (panelId, objetivos) => PUT(`/paneles/${panelId}/objetivo`, { objetivos }),
+  borrarObjetivo: (panelId, dimension) =>
+    DELETE(`/paneles/${panelId}/objetivo`, dimension ? { dimension } : {}),
+};
+
+export const participacion = {
+  tablero: (panelId, estadoMembresia) =>
+    GET(`/paneles/${panelId}/participacion`, { estado: estadoMembresia }),
+  olas: (panelId) => GET('/participacion/olas', panelId ? { panel_id: panelId } : {}),
+};
+
+export const usuarios = {
+  listar: () => GET('/usuarios'),
+  alta: (email, rol, nombre) => POST('/usuarios', { email, rol, nombre }),
+  cambiar: (uid, cambios) => PATCH(`/usuarios/${uid}`, cambios),
+  auditoria: (uid) => GET('/usuarios/auditoria', uid ? { uid } : {}),
 };

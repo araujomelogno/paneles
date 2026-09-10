@@ -35,6 +35,15 @@ SECRETOS = [
     "DSN_BOVEDA",         # bóveda: PII + módulo de paneles
     "DSN_SEMANTICA",      # store semántico: embeddings (instancia distinta)
     "EMBEDDINGS_API_KEY",
+    # ── Fase 2 ──
+    # Las dos etapas de la consulta semántica que llaman a un modelo ajeno.
+    # Si falta alguna, la consulta no se cae: degrada y lo dice en la
+    # respuesta (ver panel_api/reranker.py y panel_api/verificacion.py). Aun
+    # así los secretos tienen que existir en Secret Manager, porque el deploy
+    # falla si declara un secreto que no está; el manual de despliegue de la
+    # Fase 2 los crea, con valor vacío si todavía no hay clave.
+    "RERANKER_API_KEY",   # cross-encoder de reranking (R2.8)
+    "CLAUDE_API_KEY",     # verificación de evidencia (R2.9)
 ]
 
 PREFIJO = "/api"
@@ -64,7 +73,7 @@ def _camino_de(req):
     vpc_connector_egress_settings=(
         options.VpcEgressSetting.PRIVATE_RANGES_ONLY if VPC_CONNECTOR else None
     ),
-    cors=options.CorsOptions(cors_origins=["*"], cors_methods=["get", "post", "patch", "delete", "options"]),
+    cors=options.CorsOptions(cors_origins=["*"], cors_methods=["get", "post", "put", "patch", "delete", "options"]),
     memory=options.MemoryOption.MB_512,
     timeout_sec=300,
 )

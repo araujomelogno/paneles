@@ -9,6 +9,7 @@ cuestionario y de las preguntas, el texto de respuesta ya despersonalizado
 y su embedding.
 """
 
+import hashlib
 import json
 
 from . import db, pii
@@ -102,25 +103,79 @@ def upsert_preguntas(conn, cuestionario_id, preguntas):
     return {f["codigo"]: f["id"] for f in filas}
 
 
+def hash_texto(texto):
+    """Huella del texto exacto que se vectoriza.
+
+    Con el mismo proveedor y el mismo modelo, el mismo texto da el mismo
+    vector. Guardar la huella deja saltear el embedding en una re-ingesta
+    (P1), que es la parte que cuesta plata y tiempo.
+    """
+    return hashlib.sha256(str(texto).encode("utf-8")).hexdigest()
+
+
+def hashes_de_estudio(conn, ref_estudio):
+    """`{(individuo_id, pregunta_id): hash_texto}` de lo ya ingestado.
+
+    Se consulta antes de embeber: lo que venga con el mismo texto no se
+    manda al proveedor.
+    """
+    filas = db.todas(
+        conn,
+        """
+        select r.individuo_id, r.pregunta_id, r.hash_texto
+          from respuesta r
+          join pregunta p     on p.id = r.pregunta_id
+          join cuestionario c on c.id = p.cuestionario_id
+         where c.ref_estudio = %s and r.hash_texto is not null
+        """,
+        (str(ref_estudio),),
+    )
+    return {(f["individuo_id"], f["pregunta_id"]): f["hash_texto"] for f in filas}
+
+
 def upsert_respuestas(conn, respuestas):
     """`respuestas`: [{individuo_id, pregunta_id, valor_texto, texto_embebido,
-    embedding}]. Idempotente por (individuo, pregunta): re-ingestar no duplica."""
+    embedding}]. Idempotente por (individuo, pregunta): re-ingestar no duplica.
+
+    `embedding` puede venir en None cuando la ingesta salteó el embedding
+    porque el texto no cambió: en ese caso se actualiza todo menos el vector,
+    que sigue siendo el correcto.
+    """
     pii.validar_sin_pii(
         [{k: v for k, v in r.items() if k != "embedding"} for r in respuestas],
         contexto="respuesta",
     )
     escritas = 0
     for r in respuestas:
+        huella = r.get("hash_texto") or hash_texto(r["texto_embebido"])
+        if r.get("embedding") is None:
+            # Sin vector nuevo: solo puede ser un UPDATE de una fila que ya
+            # existe (si no existiera, no habría con qué comparar el hash).
+            escritas += db.ejecutar(
+                conn,
+                """
+                update respuesta
+                   set valor_texto = %s, texto_embebido = %s, hash_texto = %s
+                 where individuo_id = %s and pregunta_id = %s
+                """,
+                (
+                    r.get("valor_texto"), r["texto_embebido"], huella,
+                    r["individuo_id"], r["pregunta_id"],
+                ),
+            )
+            continue
         escritas += db.ejecutar(
             conn,
             """
             insert into respuesta
-                   (individuo_id, pregunta_id, valor_texto, texto_embebido, embedding)
-                 values (%s, %s, %s, %s, %s::vector)
+                   (individuo_id, pregunta_id, valor_texto, texto_embebido,
+                    embedding, hash_texto)
+                 values (%s, %s, %s, %s, %s::vector, %s)
             on conflict (individuo_id, pregunta_id) do update
                     set valor_texto = excluded.valor_texto,
                         texto_embebido = excluded.texto_embebido,
-                        embedding = excluded.embedding
+                        embedding = excluded.embedding,
+                        hash_texto = excluded.hash_texto
             """,
             (
                 r["individuo_id"],
@@ -128,9 +183,94 @@ def upsert_respuestas(conn, respuestas):
                 r.get("valor_texto"),
                 r["texto_embebido"],
                 _vector(r["embedding"]),
+                huella,
             ),
         )
     return escritas
+
+
+# ════════════════════════════════════════════════════════════════════
+#  R2.7 — Recuperación semántica (recall por vecino aproximado)
+# ════════════════════════════════════════════════════════════════════
+
+def recuperar(conn, vector, top_n, ids_persona=None):
+    """Las `top_n` respuestas más cercanas al vector del criterio.
+
+    Cada candidato vuelve con lo que el PRD pide para poder mostrarlo y
+    auditarlo: `id_persona`, la respuesta, su procedencia (estudio y
+    pregunta) y la distancia.
+
+    `ids_persona` restringe la búsqueda a un conjunto de personas: es el lado
+    semántico del puente entre stores, y el vehículo del gate de
+    consentimiento cuando la estrategia es «demográfico primero». Lista vacía
+    = nadie habilitado, y entonces no hay nada que buscar.
+
+    La búsqueda se hace en dos pasos a propósito. Primero el vecino más
+    cercano sobre `respuesta` sola, que es la tabla con el índice HNSW;
+    después la procedencia, con un join sobre las pocas filas que volvieron.
+    Poner el join arriba del ORDER BY del operador de distancia le complica
+    al planificador usar el índice, y el corpus es la parte grande.
+    """
+    if ids_persona is not None and not ids_persona:
+        return []
+
+    literal = _vector(vector)
+    ids_individuo = None
+    if ids_persona is not None:
+        filas = db.todas(
+            conn,
+            "select id from individuo where id_persona = any(%s::uuid[])",
+            ([str(i) for i in ids_persona],),
+        )
+        ids_individuo = [f["id"] for f in filas]
+        if not ids_individuo:
+            return []
+
+    cercanas = db.todas(
+        conn,
+        """
+        select r.id, r.embedding <=> %s::vector as distancia
+          from respuesta r
+         where (%s::bigint[] is null or r.individuo_id = any(%s::bigint[]))
+         order by r.embedding <=> %s::vector
+         limit %s
+        """,
+        (literal, ids_individuo, ids_individuo, literal, top_n),
+    )
+    if not cercanas:
+        return []
+
+    distancia_por_id = {f["id"]: float(f["distancia"]) for f in cercanas}
+    filas = db.todas(
+        conn,
+        """
+        select respuesta_id, id_persona, ref_estudio, estudio, fecha_campo,
+               pregunta_codigo, pregunta_texto, pregunta_tipo,
+               valor_texto, texto_embebido
+          from v_respuesta_estudio
+         where respuesta_id = any(%s::bigint[])
+        """,
+        (list(distancia_por_id),),
+    )
+
+    candidatos = [
+        {
+            "respuesta_id": f["respuesta_id"],
+            "id_persona": str(f["id_persona"]),
+            "ref_estudio": str(f["ref_estudio"]) if f["ref_estudio"] else None,
+            "estudio": f["estudio"],
+            "fecha_campo": f["fecha_campo"].isoformat() if f["fecha_campo"] else None,
+            "pregunta_codigo": f["pregunta_codigo"],
+            "pregunta_texto": f["pregunta_texto"],
+            "pregunta_tipo": f["pregunta_tipo"],
+            "valor_texto": f["valor_texto"],
+            "texto_embebido": f["texto_embebido"],
+            "distancia": distancia_por_id[f["respuesta_id"]],
+        }
+        for f in filas
+    ]
+    candidatos.sort(key=lambda c: (c["distancia"], c["respuesta_id"]))
+    return candidatos
 
 
 def borrar_persona(conn, id_persona):

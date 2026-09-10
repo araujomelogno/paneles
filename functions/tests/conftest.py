@@ -22,6 +22,8 @@ TABLAS_BOVEDA = [
     "alta_en_revision", "persona_borrada", "canje", "puntos_movimiento",
     "objetivo_composicion", "participacion", "encuesta", "consentimiento",
     "membresia", "alias_origen", "panel", "persona", "catalogo_premio",
+    # Fase 2
+    "consulta_guardada", "usuario_auditoria", "reidentificacion",
 ]
 TABLAS_SEMANTICA = ["respuesta", "pregunta", "individuo", "cuestionario"]
 
@@ -105,3 +107,110 @@ def alta_basica():
         return cuerpo
 
     return _alta
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Fase 2
+# ════════════════════════════════════════════════════════════════════
+
+class ContextoDePrueba:
+    """Un `Contexto` de mentira, con la misma superficie que el de verdad.
+
+    La conexión al store semántico se entrega perezosamente y se registra si
+    se entregó: eso es lo que deja comprobar la garantía de R2.4 —una
+    consulta puramente demográfica no abre el store semántico— sin tener que
+    espiar a psycopg.
+    """
+
+    def __init__(self, conn_boveda, conn_semantica, embeddings,
+                 reranker=None, verificador=None, padron=None):
+        self.boveda = conn_boveda
+        self.cfg = None
+        self.embeddings = embeddings
+        self._semantica = conn_semantica
+        self.abrio_semantica = False
+        self._reranker = reranker
+        self._verificador = verificador
+        self._padron = padron
+
+    @property
+    def semantica(self):
+        self.abrio_semantica = True
+        return self._semantica
+
+    @property
+    def reranker(self):
+        from panel_api import reranker as mod
+
+        if self._reranker is None:
+            self._reranker = mod.Lexico()
+        return self._reranker
+
+    @property
+    def verificador(self):
+        from panel_api import verificacion as mod
+
+        if self._verificador is None:
+            self._verificador = mod.Lexico()
+        return self._verificador
+
+    @property
+    def padron(self):
+        from panel_api import usuarios
+
+        if self._padron is None:
+            self._padron = usuarios.PadronEnMemoria()
+        return self._padron
+
+
+@pytest.fixture
+def ctx(conn_boveda, conn_semantica, proveedor):
+    """Contexto con los dos stores y los proveedores sin red.
+
+    Reranker y verificador son los léxicos: la Fase 2 se prueba sin llamar a
+    Voyage ni a la API de Claude, y con resultados determinísticos.
+    """
+    return ContextoDePrueba(conn_boveda, conn_semantica, proveedor)
+
+
+@pytest.fixture
+def ctx_solo_boveda(conn_boveda, proveedor):
+    """Contexto cuyo store semántico explota si alguien lo toca.
+
+    Es la prueba de R2.4 en su forma más directa: si la consulta demográfica
+    abriera el store semántico, el test falla con una excepción y no con una
+    aserción sutil.
+    """
+
+    class SinSemantica(ContextoDePrueba):
+        @property
+        def semantica(self):
+            raise AssertionError(
+                "Una consulta puramente demográfica no debe tocar el store "
+                "semántico (R2.4)."
+            )
+
+    return SinSemantica(conn_boveda, None, proveedor)
+
+
+@pytest.fixture
+def padron():
+    from panel_api import usuarios
+
+    return usuarios.PadronEnMemoria()
+
+
+@pytest.fixture
+def actor():
+    """Fabrica actores con un rol, para probar los permisos."""
+    from panel_api.auth import Actor
+
+    def _actor(rol="admin", uid=None, email=None, nombre=None):
+        return Actor(
+            uid=uid or f"uid-{rol}",
+            email=email or f"{rol}@equipos.com.uy",
+            rol=rol,
+            nombre=nombre or rol.capitalize(),
+        )
+
+    return _actor
