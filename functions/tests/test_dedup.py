@@ -125,3 +125,55 @@ def test_alta_sin_dato_identificatorio_se_rechaza(conn_boveda):
             {"persona": {"localidad": "Durazno"},
              "consentimientos": consentimientos("contacto_participacion")},
         )
+
+
+def test_la_ficha_muestra_los_alias_de_origen(conn_boveda):
+    # El alta guarda el alias y la ingesta lo necesita para enganchar las
+    # respuestas: hay que poder verlo en la ficha para verificarlo.
+    resultado = personas.alta(
+        conn_boveda,
+        {
+            "persona": {"documento": "7-7", "nombre": "Fabiana Rocha"},
+            "consentimientos": consentimientos("contacto_participacion"),
+            "origen": "dooblo",
+            "id_en_origen": "R-0042",
+        },
+    )
+    ficha = personas.ficha(conn_boveda, resultado["id_persona"])
+    assert ficha["alias"] == [{"origen": "dooblo", "id_en_origen": "R-0042"}]
+
+
+def test_la_ficha_lista_un_alias_por_plataforma(conn_boveda):
+    resultado = personas.alta(
+        conn_boveda,
+        {
+            "persona": {"documento": "8-8", "nombre": "Gonzalo Vera"},
+            "consentimientos": consentimientos("contacto_participacion"),
+            "origen": "dooblo", "id_en_origen": "R-100",
+        },
+    )
+    # La misma persona, enrolada después desde otra plataforma.
+    personas.alta(
+        conn_boveda,
+        {
+            "persona": {"documento": "8-8"},
+            "consentimientos": consentimientos("contacto_participacion"),
+            "origen": "alchemer", "id_en_origen": "A-900",
+        },
+    )
+    ficha = personas.ficha(conn_boveda, resultado["id_persona"])
+    assert ficha["alias"] == [
+        {"origen": "alchemer", "id_en_origen": "A-900"},
+        {"origen": "dooblo", "id_en_origen": "R-100"},
+    ]
+
+
+def test_la_ficha_de_quien_no_tiene_alias_devuelve_lista_vacia(conn_boveda):
+    resultado = personas.alta(
+        conn_boveda,
+        {
+            "persona": {"documento": "9-9", "nombre": "Sin Origen"},
+            "consentimientos": consentimientos("contacto_participacion"),
+        },
+    )
+    assert personas.ficha(conn_boveda, resultado["id_persona"])["alias"] == []

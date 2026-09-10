@@ -379,3 +379,12 @@ td .btn, th .btn { white-space: nowrap; }
 .pregunta-fila input, .pregunta-fila select { padding: 0.5rem 0.65rem; font-size: 0.8rem; }
 .pregunta-fila .p-quitar { justify-self: center; }
 @media (max-width: 620px) { .pregunta-fila { grid-template-columns: 1fr 1fr; } }
+
+/* ══ ALIAS DE ORIGEN (ficha del panelista) ══ */
+/* Cómo nombró a la persona cada plataforma de campo. Puede haber más de uno. */
+.alias-lista { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.alias { display: inline-flex; align-items: baseline; gap: 0.35rem; padding: 0.15rem 0.5rem;
+  background: var(--gray-xlight); border: 1px solid var(--border); border-radius: 3px; }
+.alias b { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--gray); }
+.alias code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.76rem; font-weight: 600; color: var(--dark); }

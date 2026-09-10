@@ -281,6 +281,16 @@ async function renderFicha(main, idPersona) {
               <dt>Identificador</dt>
               <dd>${token(ficha.id_persona, ficha.id_persona.slice(0, 13))}
                 <div class="field-hint">Token opaco. Es lo único que viaja al store de embeddings.</div></dd>
+              <dt>Id en el origen</dt>
+              <dd class="${(ficha.alias || []).length ? '' : 'vacio'}">
+                ${(ficha.alias || []).length
+                  ? `<div class="alias-lista">${ficha.alias.map((a) => `
+                      <span class="alias"><b>${esc(a.origen)}</b>
+                      <code>${esc(a.id_en_origen)}</code></span>`).join('')}</div>
+                     <div class="field-hint">Con esto se enganchan sus respuestas al ingestar.</div>`
+                  : `—<div class="field-hint">Sin id de plataforma de campo: sus respuestas
+                     no se van a poder enganchar automáticamente al ingestar.</div>`}
+              </dd>
               ${dato('Enrolado', fechaHora(ficha.creado_en))}
             </dl>
           </div>

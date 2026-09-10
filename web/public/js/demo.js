@@ -352,6 +352,9 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
         nombre: bd.paneles.find((p) => p.id === m.panel_id)?.nombre,
         estado: m.estado, fecha_alta: m.fecha_alta, fecha_baja: m.fecha_baja,
       })),
+      alias: bd.alias
+        .filter((a) => a.id_persona === persona.id_persona)
+        .map((a) => ({ origen: a.origen, id_en_origen: a.id_en_origen })),
       consentimientos: bd.consentimientos
         .filter((c) => c.id_persona === persona.id_persona)
         .sort((a, b) => b.otorgado_en.localeCompare(a.otorgado_en)),

@@ -231,6 +231,16 @@ def ficha(conn, id_persona):
         """,
         (id_persona,),
     )
+    alias = db.todas(
+        conn,
+        """
+        select origen, id_en_origen
+          from alias_origen
+         where id_persona = %s
+         order by origen, id_en_origen
+        """,
+        (id_persona,),
+    )
     convocatorias = db.una(
         conn,
         """
@@ -263,6 +273,11 @@ def ficha(conn, id_persona):
                 "fecha_baja": p["fecha_baja"].isoformat() if p["fecha_baja"] else None,
             }
             for p in paneles_de
+        ],
+        # Cómo la nombró cada plataforma de campo. Es lo que engancha sus
+        # respuestas al ingestar, así que hay que poder verlo y verificarlo.
+        "alias": [
+            {"origen": a["origen"], "id_en_origen": a["id_en_origen"]} for a in alias
         ],
         "consentimientos": consentimiento.listar(conn, id_persona),
         "participacion": {
