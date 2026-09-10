@@ -209,5 +209,126 @@ await p.waitForSelector('.modal-box');
 await esperar(400);
 await tomar('23-baja-total', '.modal-box');
 
+// ── 14 · Consultas ─────────────────────────────────────────────────
+await p.keyboard.press('Escape');            // cerrar la confirmación de baja
+await esperar(300);
+await p.click('[data-pagina="consultas"]');
+await p.waitForSelector('#agregar-semantico');
+await esperar(500);
+
+await p.click('#agregar-semantico');
+await p.waitForSelector('.modal-box');
+await p.fill('textarea[name="texto"]', 'gente a la que le encanta el fernet');
+await esperar(300);
+await tomar('24-consulta-criterio', '.modal-box');
+await p.locator('.modal-foot .btn-orange').click();
+await esperar(400);
+
+await p.click('#correr');
+await p.waitForSelector('#resultado table', { timeout: 20000 });
+await esperar(1000);
+await tomar('25-consulta-resultado');
+await tomar('26-consulta-ranking', '.card:has(#ver-nombres)');
+await tomar('27-consulta-excluidos', '.card:has(th:text-is("Motivo"))');
+await tomar('28-consulta-diagnostico', '.card:has(th:text-is("Etapa"))');
+
+// La evidencia de una persona del ranking, con su procedencia.
+await p.locator('#resultado [data-detalle]').first().click();
+await p.waitForSelector('.modal-box');
+await esperar(500);
+await tomar('29-consulta-evidencia', '.modal-box');
+await p.keyboard.press('Escape');
+await esperar(300);
+
+// Reidentificación: el aviso antes de traducir los identificadores.
+await p.click('#ver-nombres');
+await p.waitForSelector('.modal-box');
+await esperar(400);
+await tomar('30-consulta-reidentificar', '.modal-box');
+await p.locator('.modal-foot .btn-dark').click();
+await esperar(900);
+await tomar('31-consulta-con-nombres', '.card:has(#ver-nombres)');
+
+// Parámetros del oleoducto.
+await p.click('#parametros');
+await p.waitForSelector('.modal-box');
+await esperar(400);
+await tomar('32-consulta-parametros', '.modal-box');
+await p.keyboard.press('Escape');
+await esperar(300);
+
+// Consulta mixta: se le suma un criterio demográfico y el modo laxo.
+await p.click('#agregar-demografico');
+await p.waitForSelector('.modal-box');
+await p.selectOption('[name="dimension"]', 'localidad');
+await p.fill('[name="valor"]', 'Montevideo');
+await esperar(300);
+await tomar('33-criterio-demografico', '.modal-box');
+await p.locator('.modal-foot .btn-orange').click();
+await esperar(400);
+await p.selectOption('#modo', 'laxo');
+await esperar(300);
+await tomar('34-consulta-criterios', '.card:has(#criterios)');
+await p.click('#correr');
+await p.waitForSelector('#resultado table', { timeout: 20000 });
+await esperar(1000);
+await tomar('35-consulta-puente', '.card:has(dt:text-is("Puente entre stores"))');
+
+// Guardar la consulta para reusarla.
+await p.click('#guardar');
+await p.waitForSelector('.modal-box');
+await p.fill('[name="nombre"]', 'Fernet en Montevideo');
+await p.fill('[name="descripcion"]', 'Para la próxima ola de bebidas.');
+await esperar(300);
+await tomar('36-consulta-guardar', '.modal-box');
+await p.keyboard.press('Escape');
+await esperar(300);
+
+// ── 15 · Composición ───────────────────────────────────────────────
+await p.click('[data-pagina="composicion"]');
+await p.waitForSelector('#cargar-objetivo');
+await esperar(700);
+await tomar('37-composicion');
+
+await p.click('#cargar-objetivo');
+await p.waitForSelector('.modal-box');
+await p.selectOption('#obj-dimension', 'tramo_etario');
+await esperar(400);
+await tomar('38-composicion-objetivo', '.modal-box');
+await p.keyboard.press('Escape');
+await esperar(300);
+
+await p.selectOption('#cruce', 'sexo,tramo_etario');
+await p.waitForSelector('.badge-off:text-is("descriptivo")', { timeout: 8000 });
+await esperar(700);
+await tomar('39-composicion-cruce', '.card:has(.badge-off:text-is("descriptivo"))');
+
+// ── 16 · Participación ─────────────────────────────────────────────
+await p.click('[data-pagina="participacion"]');
+await p.waitForSelector('.stat-grid');
+await esperar(800);
+await tomar('40-participacion');
+
+// ── 17 · Configuración ─────────────────────────────────────────────
+await p.click('[data-pagina="configuracion"]');
+await p.waitForSelector('[data-rol]');
+await esperar(700);
+await tomar('41-configuracion');
+
+await p.click('#nuevo');
+await p.waitForSelector('.modal-box');
+await p.fill('[name="email"]', 'lucia.torres@equipos.com.uy');
+await p.fill('[name="nombre"]', 'Lucía Torres');
+await p.selectOption('[name="rol"]', 'analista');
+await esperar(400);
+await tomar('42-usuario-alta', '.modal-box');
+await p.locator('.modal-foot .btn-orange').click();
+await p.waitForSelector('.modal-title:has-text("Usuario creado")', { timeout: 8000 });
+await esperar(500);
+await tomar('43-usuario-acceso', '.modal-box');
+await p.keyboard.press('Escape');
+await esperar(600);
+await tomar('44-usuarios-auditoria', '.card:has(th:text-is("Acción"))');
+
 console.log(errores.length ? '\nERRORES:\n' + errores.join('\n') : '\nsin errores de consola');
 await nav.close();

@@ -1,7 +1,7 @@
 # Manual de usuario
 
-`Manual_de_usuario.pdf` es el entregable: 32 páginas, paso a paso de cada tarea,
-con capturas de la aplicación real.
+`Manual_de_usuario.pdf` es el entregable: 57 páginas, paso a paso de cada tarea,
+con capturas de la aplicación real. Cubre las **fases 1 y 2**.
 
 ## Cómo se rehace
 
@@ -14,16 +14,25 @@ npm install playwright-core pdf-lib
 pip install Pillow
 ```
 
-### 1 · Preparar una copia en modo demo
+### 1 · Preparar y servir la copia en modo demo
 
 ```bash
-cp -r web/public /tmp/demo
-# dejar apiKey en "TU_API_KEY" para que arranque en modo demo
-sed -i 's/apiKey: *"[^"]*"/apiKey: "TU_API_KEY"/' /tmp/demo/index.html
-# ocultar el banner de demo: el manual documenta la app de producción
-sed -i 's/const banner = api.estado.demo ?/const banner = false ?/' /tmp/demo/js/app.js
-cd /tmp/demo && python3 -m http.server 8099
+docs/manual/preparar_demo.sh          # prepara /tmp/demo-manual y lo sirve en :8099
 ```
+
+El script hace cinco retoques sobre la copia —ninguno sobre el repo— y los
+explica en su encabezado. Los dos que importan entender:
+
+* Se ocultan el banner y el aviso de degradación de **modo demo**. El manual
+  documenta la aplicación de producción, y esos dos carteles existen solo
+  porque la copia no tiene backend.
+* Se ponen los nombres de proveedor que informa producción (`voyage`,
+  `claude`) en el diagnóstico de la consulta, en vez de los de la copia.
+
+Los tiempos, los puntajes y los datos siguen siendo los de la copia: el manual
+lo dice en su primera página.
+
+Para apagarlo: `docs/manual/preparar_demo.sh detener`.
 
 ### 2 · Capturar
 
@@ -32,7 +41,9 @@ node docs/manual/capturar.mjs docs/manual/capturas
 ```
 
 Recorre login, alta, deduplicación, revisión de altas, paneles, encuestas,
-convocatoria, ingesta, cruce entre stores y cumplimiento. Son 23 capturas.
+convocatoria, ingesta, cruce entre stores, cumplimiento, **consultas
+semánticas, composición, participación y gestión de usuarios**. Son 44
+capturas.
 
 ### 3 · Optimizar
 
@@ -65,13 +76,22 @@ node docs/manual/generar_pdf.mjs
 |---|---|
 | `Manual_de_usuario.pdf` | El entregable |
 | `portada.html` | Portada, a sangre |
-| `manual.html` | Índice y las ocho secciones |
+| `manual.html` | Índice y las doce secciones |
 | `estilo.css` | Estilos, compartidos por los dos |
-| `capturas/` | Las 23 capturas |
+| `capturas/` | Las 44 capturas |
 | `tipografia/` | Montserrat local, para que el PDF salga igual sin red |
+| `preparar_demo.sh` | Arma y sirve la copia en modo demo |
 | `capturar.mjs` | Toma las capturas |
 | `generar_pdf.mjs` | Maqueta el PDF |
 
 Portada y cuerpo se imprimen por separado —la portada va a sangre, el cuerpo con
 márgenes y pie de página— y se pegan al final: Chromium aplica una sola
 configuración de página por impresión.
+
+## Una limitación conocida
+
+Los campos de fecha (`<input type="date">`) salen en formato de EE.UU. en las
+capturas. El Chromium headless ignora tanto el `locale` del contexto como
+`--lang`, y no hay forma de forzarlo desde el script. En un navegador normal, en
+Uruguay, se ven en dd/mm/aaaa. Está aclarado en el pie de la primera figura
+donde aparece un campo de fecha.
