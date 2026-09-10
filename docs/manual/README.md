@@ -88,10 +88,19 @@ Portada y cuerpo se imprimen por separado —la portada va a sangre, el cuerpo c
 márgenes y pie de página— y se pegan al final: Chromium aplica una sola
 configuración de página por impresión.
 
-## Una limitación conocida
+## Detalles que el script resuelve y conviene no deshacer
 
-Los campos de fecha (`<input type="date">`) salen en formato de EE.UU. en las
-capturas. El Chromium headless ignora tanto el `locale` del contexto como
-`--lang`, y no hay forma de forzarlo desde el script. En un navegador normal, en
-Uruguay, se ven en dd/mm/aaaa. Está aclarado en el pie de la primera figura
-donde aparece un campo de fecha.
+* **El idioma del navegador.** El formato de `<input type="date">` no lo decide
+  el `locale` del contexto de Playwright ni el flag `--lang`: lo decide el
+  idioma de la interfaz del navegador, que sale del entorno del proceso. Por eso
+  `capturar.mjs` lanza Chromium con `LANG=es_UY.UTF-8`. Sin eso las fechas salen
+  en formato de EE. UU.
+* **La ventana es alta (1280 × 1180).** Los modales se cortan solos en 88 vh y
+  con una ventana baja las capturas de los más largos —la ingesta, el universo
+  de referencia— salen truncadas.
+* **Los toasts se limpian antes de cada captura.** Duran casi cuatro segundos y
+  se apilan; en la captura del paso siguiente aparecen como un cartel colgado
+  que no viene al caso. Las dos capturas que sí son de un toast lo piden
+  expresamente.
+* **Se quita el foco antes de disparar.** Un campo enfocado sale con el borde
+  naranja y, si es de fecha, con un tramo seleccionado en azul.
