@@ -213,36 +213,104 @@ def test_editar_con_valor_vacio_borra_el_dato(conn_boveda):
     assert personas.ficha(conn_boveda, id_persona)["persona"]["celular"] is None
 
 
-def test_no_se_puede_editar_el_documento_desde_la_ficha(conn_boveda):
-    # Es clave de dedup y tiene índice único: cambiarla no es corregir un
-    # dato, es cambiar la identidad con la que el sistema reconoce a la
-    # persona.
-    id_persona = _enrolar(conn_boveda, documento="3-3", nombre="Carla")
+def test_completar_un_documento_vacio_esta_permitido(conn_boveda):
+    # Es lo que le saca a esa persona la ambigüedad permanente en el dedup.
+    id_persona = _enrolar(conn_boveda, nombre="Carla Bentos",
+                          fecha_nacimiento="1990-01-01")
+    assert personas.ficha(conn_boveda, id_persona)["persona"]["documento"] is None
 
-    with pytest.raises(DatosInvalidos) as excepcion:
-        personas.editar(conn_boveda, id_persona, {"documento": "3-4"})
+    resultado = personas.editar(conn_boveda, id_persona, {"documento": "3-3"})
 
-    assert excepcion.value.detalle["campos"] == ["documento"]
-    assert "documento" not in excepcion.value.detalle["editables"]
+    assert resultado["campos_modificados"] == ["documento"]
     assert personas.ficha(conn_boveda, id_persona)["persona"]["documento"] == "3-3"
 
 
-def test_no_se_puede_editar_el_email_desde_la_ficha(conn_boveda):
+def test_completar_un_email_vacio_esta_permitido(conn_boveda):
+    id_persona = _enrolar(conn_boveda, documento="3-9", nombre="Cora")
+    personas.editar(conn_boveda, id_persona, {"email": "cora@ej.uy"})
+    assert personas.ficha(conn_boveda, id_persona)["persona"]["email"] == "cora@ej.uy"
+
+
+def test_completar_y_despues_el_dedup_lo_reconoce_por_ese_documento(conn_boveda):
+    # La prueba de que completar sirve para algo: antes del completado el
+    # dedup no tenía con qué reconocerla.
+    id_persona = _enrolar(conn_boveda, nombre="Delia Sosa",
+                          fecha_nacimiento="1985-06-01")
+    personas.editar(conn_boveda, id_persona, {"documento": "4-1"})
+
+    otra_alta = personas.alta(
+        conn_boveda,
+        {"persona": {"documento": "4-1", "nombre": "D. Sosa"},
+         "consentimientos": consentimientos("contacto_participacion")},
+    )
+    assert otra_alta["estado"] == "reutilizada"
+    assert otra_alta["id_persona"] == id_persona
+
+
+def test_un_documento_ya_cargado_no_se_puede_cambiar(conn_boveda):
+    id_persona = _enrolar(conn_boveda, documento="3-3", nombre="Carla")
+
+    with pytest.raises(DatosInvalidos, match="no se puede cambiar"):
+        personas.editar(conn_boveda, id_persona, {"documento": "3-4"})
+
+    assert personas.ficha(conn_boveda, id_persona)["persona"]["documento"] == "3-3"
+
+
+def test_un_email_ya_cargado_no_se_puede_cambiar(conn_boveda):
     id_persona = _enrolar(conn_boveda, documento="4-4", email="dora@ej.uy")
 
-    with pytest.raises(DatosInvalidos) as excepcion:
+    with pytest.raises(DatosInvalidos, match="no se puede cambiar"):
         personas.editar(conn_boveda, id_persona, {"email": "otra@ej.uy"})
 
-    assert excepcion.value.detalle["campos"] == ["email"]
     assert personas.ficha(conn_boveda, id_persona)["persona"]["email"] == "dora@ej.uy"
 
 
-def test_un_cambio_mixto_se_rechaza_entero_sin_escribir_nada(conn_boveda):
+def test_una_clave_de_dedup_cargada_no_se_puede_borrar(conn_boveda):
+    id_persona = _enrolar(conn_boveda, documento="4-7", email="e@ej.uy")
+
+    with pytest.raises(DatosInvalidos, match="No se puede borrar"):
+        personas.editar(conn_boveda, id_persona, {"documento": "  "})
+
+    assert personas.ficha(conn_boveda, id_persona)["persona"]["documento"] == "4-7"
+
+
+def test_reenviar_la_misma_clave_de_dedup_no_es_un_cambio(conn_boveda):
+    id_persona = _enrolar(conn_boveda, documento="4-8", email="f@ej.uy")
+    resultado = personas.editar(
+        conn_boveda, id_persona, {"documento": "4-8", "email": "f@ej.uy"}
+    )
+    assert resultado["campos_modificados"] == []
+
+
+def test_completar_con_un_documento_que_ya_es_de_otro_da_conflicto(conn_boveda):
+    # El choque es información: probablemente sean la misma persona.
+    uno = _enrolar(conn_boveda, documento="5-1", nombre="Elena Rodríguez")
+    dos = _enrolar(conn_boveda, nombre="E. Rodríguez", fecha_nacimiento="1991-09-25")
+
+    with pytest.raises(Conflicto) as excepcion:
+        personas.editar(conn_boveda, dos, {"documento": "5-1"})
+
+    assert excepcion.value.detalle["campo"] == "documento"
+    assert excepcion.value.detalle["id_persona_en_conflicto"] == uno
+    assert excepcion.value.detalle["nombre_en_conflicto"] == "Elena Rodríguez"
+    assert personas.ficha(conn_boveda, dos)["persona"]["documento"] is None
+
+
+def test_completar_con_un_email_de_otro_da_conflicto_sin_importar_mayusculas(conn_boveda):
+    _enrolar(conn_boveda, documento="5-2", email="Fabio@Ej.UY")
+    otro = _enrolar(conn_boveda, documento="5-3", nombre="Fabio")
+
+    with pytest.raises(Conflicto):
+        personas.editar(conn_boveda, otro, {"email": "fabio@ej.uy"})
+
+
+def test_un_cambio_mixto_con_una_clave_rechazada_no_escribe_nada(conn_boveda):
     id_persona = _enrolar(conn_boveda, documento="5-5", nombre="Elena")
 
     with pytest.raises(DatosInvalidos):
         personas.editar(
-            conn_boveda, id_persona, {"nombre": "Elena Rodríguez", "email": "e@ej.uy"}
+            conn_boveda, id_persona,
+            {"nombre": "Elena Rodríguez", "documento": "5-6"},
         )
 
     # El nombre no se tocó: o entra todo, o no entra nada.

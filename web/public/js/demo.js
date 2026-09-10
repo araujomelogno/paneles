@@ -425,12 +425,36 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   if (metodo === 'PATCH' && partes[0] === 'panelistas' && partes.length === 2) {
     const persona = bd.personas.find((p) => p.id_persona === partes[1]);
     if (!persona) throw new ErrorDemo('No existe la persona.', 404);
-    const CLAVES = ['documento', 'email'];
-    const claves = Object.keys(cuerpo).filter((c) => CLAVES.includes(c));
-    if (claves.length) {
+    // Las claves de dedup solo se completan cuando están vacías.
+    for (const campo of ['documento', 'email']) {
+      if (!(campo in cuerpo)) continue;
+      const nuevo = typeof cuerpo[campo] === 'string'
+        ? (cuerpo[campo].trim() || null) : cuerpo[campo];
+      const antes = persona[campo] ?? null;
+      if (antes === null || nuevo === antes) continue;
+      if (nuevo === null) {
+        throw new ErrorDemo(
+          `No se puede borrar el ${campo}: es una de las claves con las que el ` +
+          'sistema reconoce a la persona.', 400);
+      }
       throw new ErrorDemo(
-        `No se pueden editar ${claves.join(' ni ')} desde la ficha: son las claves ` +
-        'con las que el sistema reconoce a la persona y tienen índice único.', 400);
+        `El ${campo} ya está cargado y no se puede cambiar: es una de las claves ` +
+        'con las que el sistema reconoce a la persona. Se puede completar cuando ' +
+        'está vacío, no reemplazar.', 400);
+    }
+    // Y completar con un valor que ya es de otro choca.
+    for (const campo of ['documento', 'email']) {
+      const nuevo = (cuerpo[campo] || '').trim();
+      if (!nuevo || (persona[campo] ?? null) !== null) continue;
+      const otro = bd.personas.find((x) => x.id_persona !== persona.id_persona
+        && (campo === 'email'
+            ? (x.email || '').toLowerCase() === nuevo.toLowerCase()
+            : x[campo] === nuevo));
+      if (otro) {
+        throw new ErrorDemo(
+          `Ya hay otro panelista con ese ${campo}. Si es la misma persona, hay ` +
+          'que unificar los dos registros.', 409);
+      }
     }
     const modificados = [];
     Object.entries(cuerpo).forEach(([campo, valor]) => {
