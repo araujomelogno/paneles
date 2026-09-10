@@ -17,12 +17,15 @@ CAMPOS_PERSONA = (
     "email", "celular", "contacto", "observaciones",
 )
 
-# Qué se puede corregir desde la ficha. `documento` y `email` quedan afuera a
-# propósito: tienen índice único y son las claves con las que el dedup
-# reconoce a una persona. Cambiarlos no es corregir un dato, es cambiar la
-# identidad con la que el sistema la reconoce, y eso pide un flujo aparte.
+# `documento` y `email` tienen índice único y son las claves con las que el
+# dedup reconoce a una persona, así que se tratan distinto del resto: se
+# pueden **completar** cuando están vacíos —eso es terminar de cargar la
+# identidad, y le saca a esa persona la ambigüedad permanente en el dedup—
+# pero no cambiar ni borrar una vez que tienen valor. Cambiar una clave de
+# dedup no corrige un dato: cambia la identidad con la que el sistema
+# reconoce a la persona, y puede partir o fusionar registros sin que se note.
 CLAVES_DE_DEDUP = ("documento", "email")
-CAMPOS_EDITABLES = tuple(c for c in CAMPOS_PERSONA if c not in CLAVES_DE_DEDUP)
+CAMPOS_EDITABLES = CAMPOS_PERSONA
 
 
 def _limpiar(datos):
@@ -212,6 +215,22 @@ def alta(conn, cuerpo, actor=None):
     }
 
 
+def _en_uso_por_otro(conn, campo, valor, id_persona):
+    """¿Otra persona ya tiene este `documento` o `email`?
+
+    Los dos tienen índice único, así que sin este chequeo el update
+    explotaría con un error de base en vez de un mensaje entendible. Y
+    además el choque es información: probablemente sean la misma persona.
+    """
+    sql = {
+        "documento": "select id_persona, nombre from persona "
+                     "where documento = %s and id_persona <> %s",
+        "email": "select id_persona, nombre from persona "
+                 "where lower(email) = lower(%s) and id_persona <> %s",
+    }[campo]
+    return db.una(conn, sql, (valor, id_persona))
+
+
 def editar(conn, id_persona, cambios, actor=None):
     """Corrige los datos de una persona ya enrolada.
 
@@ -219,8 +238,10 @@ def editar(conn, id_persona, cambios, actor=None):
     modifica. Un campo presente con valor vacío **borra** el dato (queda en
     null), que es la única forma de sacar un dato mal cargado.
 
-    `documento` y `email` no se editan desde acá (ver CAMPOS_EDITABLES). No
-    mueve consentimientos ni membresías: cada uno tiene su propio flujo.
+    `documento` y `email` solo se pueden **completar** cuando están vacíos;
+    una vez cargados no se cambian ni se borran (ver CLAVES_DE_DEDUP).
+
+    No mueve consentimientos ni membresías: cada uno tiene su propio flujo.
     """
     actual = db.una(
         conn,
@@ -230,20 +251,35 @@ def editar(conn, id_persona, cambios, actor=None):
     if not actual:
         raise NoEncontrado(f"No existe la persona {id_persona}.")
 
-    claves = sorted(set(cambios) & set(CLAVES_DE_DEDUP))
-    if claves:
-        raise DatosInvalidos(
-            f"No se pueden editar {' ni '.join(claves)} desde la ficha: son las "
-            f"claves con las que el sistema reconoce a la persona y tienen "
-            f"índice único.",
-            {"campos": claves, "editables": list(CAMPOS_EDITABLES)},
-        )
-
     desconocidos = sorted(set(cambios) - set(CAMPOS_EDITABLES))
     if desconocidos:
         raise DatosInvalidos(
             "Hay campos que no se pueden editar desde acá.",
             {"campos": desconocidos, "editables": list(CAMPOS_EDITABLES)},
+        )
+
+    # Las claves de dedup solo se pueden completar, no cambiar ni borrar.
+    for campo in CLAVES_DE_DEDUP:
+        if campo not in cambios:
+            continue
+        nuevo = cambios[campo]
+        if isinstance(nuevo, str):
+            nuevo = nuevo.strip() or None
+        if actual[campo] in (None, ""):
+            continue                      # está vacío: completar es válido
+        if nuevo == actual[campo]:
+            continue                      # el mismo valor: no es un cambio
+        if nuevo is None:
+            raise DatosInvalidos(
+                f"No se puede borrar el {campo}: es una de las claves con las "
+                f"que el sistema reconoce a la persona.",
+                {"campo": campo, "valor_actual": actual[campo]},
+            )
+        raise DatosInvalidos(
+            f"El {campo} ya está cargado y no se puede cambiar: es una de las "
+            f"claves con las que el sistema reconoce a la persona. Se puede "
+            f"completar cuando está vacío, no reemplazar.",
+            {"campo": campo, "valor_actual": actual[campo]},
         )
 
     a_guardar = {}
@@ -252,6 +288,23 @@ def editar(conn, id_persona, cambios, actor=None):
             valor = valor.strip() or None
         if valor != actual[campo]:
             a_guardar[campo] = valor
+
+    # Completar una clave con un valor que ya es de otra persona: se avisa
+    # antes de escribir, y se dice con quién choca, porque lo más probable es
+    # que sean la misma persona y haya que fusionarlas.
+    for campo in CLAVES_DE_DEDUP:
+        if a_guardar.get(campo):
+            otro = _en_uso_por_otro(conn, campo, a_guardar[campo], id_persona)
+            if otro:
+                raise Conflicto(
+                    f"Ya hay otro panelista con ese {campo}. Si es la misma "
+                    f"persona, hay que unificar los dos registros.",
+                    {
+                        "campo": campo,
+                        "id_persona_en_conflicto": str(otro["id_persona"]),
+                        "nombre_en_conflicto": otro["nombre"],
+                    },
+                )
 
     if not a_guardar:
         return {"id_persona": str(id_persona), "campos_modificados": []}

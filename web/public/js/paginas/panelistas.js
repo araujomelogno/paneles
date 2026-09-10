@@ -401,12 +401,25 @@ function abrirOtorgar(idPersona) {
 
 /* ── Edición ─────────────────────────────────────────────────────── */
 
-/* `documento` y `email` no van: son las claves con las que el dedup
-   reconoce a la persona y tienen índice único. Se muestran, bloqueados y
-   con el motivo, para que quede claro que no es un olvido. */
+/* `documento` y `email` se pueden completar cuando están vacíos, pero no
+   cambiar ni borrar una vez cargados: son las claves con las que el dedup
+   reconoce a la persona. El campo se habilita o no según eso, y el aviso
+   explica cuál de los dos casos aplica. */
 function abrirEdicion(ficha) {
   const p = ficha.persona;
   const v = (valor) => esc(valor ?? '');
+  const cargado = (campo) => !!p[campo];
+  const falta = !cargado('documento') || !cargado('email');
+
+  const claveDeDedup = (campo, etiqueta, marcador) => `
+    <div class="form-group">
+      <label>${etiqueta}</label>
+      <input type="text" name="${campo}" value="${v(p[campo])}"
+             placeholder="${marcador}" ${cargado(campo) ? 'disabled' : ''} />
+      <div class="field-hint">${cargado(campo)
+        ? 'Ya cargado: no se puede cambiar.'
+        : '<strong>Se puede completar.</strong> Después ya no se cambia.'}</div>
+    </div>`;
 
   modal({
     titulo: `Editar — ${p.nombre || 'panelista'}`,
@@ -439,21 +452,24 @@ function abrirEdicion(ficha) {
         <textarea class="finput" name="observaciones">${v(p.observaciones)}</textarea></div>
 
       <div class="form-row">
-        <div class="form-group"><label>Documento</label>
-          <input type="text" value="${v(p.documento)}" disabled /></div>
-        <div class="form-group"><label>Email</label>
-          <input type="text" value="${v(p.email)}" disabled /></div>
+        ${claveDeDedup('documento', 'Documento', '4.123.456-7')}
+        ${claveDeDedup('email', 'Email', 'nombre@correo.uy')}
       </div>
-      <div class="aviso" style="margin-top:0">
-        <div class="t">Por qué el documento y el email no se editan</div>
-        <p>Son las dos claves con las que el sistema reconoce si alguien ya
-        está enrolado. Cambiarlas no corrige un dato: cambia la identidad con
-        la que se lo reconoce, y puede partir o fusionar personas sin que se
-        note. Si están mal, avisale a quien administra el sistema.</p>
+      <div class="aviso ${falta ? 'info' : ''}" style="margin-top:0">
+        <div class="t">Documento y email: se completan, no se cambian</div>
+        <p>Son las dos claves con las que el sistema reconoce si alguien ya está
+        enrolado. ${falta
+          ? `Los que están vacíos se pueden <strong>completar</strong>, y conviene
+             hacerlo: sin ellos esta persona va a seguir apareciendo como
+             coincidencia ambigua cada vez que se enrole a alguien parecido.`
+          : `Los dos están cargados, así que quedan bloqueados.`}</p>
+        <p>Una vez cargados no se cambian: eso no corregiría un dato, cambiaría
+        la identidad con la que se reconoce a la persona. Si alguno está mal,
+        avisale a quien administra el sistema.</p>
       </div>
 
       <div class="field-hint" style="margin-top:1rem">
-        Un campo que dejes vacío borra ese dato.
+        Un campo que dejes vacío borra ese dato, salvo el documento y el email.
       </div>`,
     acciones: [
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
