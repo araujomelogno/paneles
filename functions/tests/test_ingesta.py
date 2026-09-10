@@ -326,3 +326,129 @@ def test_el_borrado_acotado_no_toca_a_otras_personas(
         (otra, "Ola 1 bebidas"),
         (dos_olas["id_persona"], "Ola 2 bebidas"),
     }
+
+
+# ════════════════════════════════════════════════════════════════════
+#  P1 (Fase 2) — saltear el re-embedding cuando el texto no cambió
+# ════════════════════════════════════════════════════════════════════
+
+class ProveedorQueCuenta:
+    """Envuelve un proveedor y cuenta cuántos textos le pidieron embeber.
+
+    Es la única forma de probar que el ahorro existe: el resultado de la
+    ingesta es el mismo se re-embeba o no, así que lo que hay que observar es
+    la llamada al proveedor.
+    """
+
+    def __init__(self, envuelto):
+        self.envuelto = envuelto
+        self.dims = envuelto.dims
+        self.textos = []
+
+    def embeber(self, textos):
+        self.textos.extend(textos)
+        return self.envuelto.embeber(textos)
+
+    def embeber_en_lotes(self, textos, tamano_lote=128):
+        self.textos.extend(textos)
+        return self.envuelto.embeber_en_lotes(textos, tamano_lote)
+
+
+def test_reingestar_el_mismo_texto_no_vuelve_a_embeber(
+    conn_boveda, conn_semantica, proveedor, ola
+):
+    """P1: «saltear el re-embedding por hash en re-ingestas».
+
+    Re-ingestar una ola es normal —una corrección de campo, una pregunta que
+    faltaba— y embeber es la parte que cuesta plata y tiempo. El mismo texto
+    con el mismo modelo da el mismo vector.
+    """
+    contador = ProveedorQueCuenta(proveedor)
+    primera = encuestas.ingestar(
+        conn_boveda, conn_semantica, ola["encuesta"]["id"], PREGUNTAS, FILAS,
+        proveedor=contador,
+    )
+    assert primera["embebidas"] == 3      # dos de Ana, una de Beto
+    assert primera["reutilizadas"] == 0
+    assert len(contador.textos) == 3
+
+    contador.textos.clear()
+    segunda = encuestas.ingestar(
+        conn_boveda, conn_semantica, ola["encuesta"]["id"], PREGUNTAS, FILAS,
+        proveedor=contador,
+    )
+    assert segunda["embebidas"] == 0
+    assert segunda["reutilizadas"] == 3
+    assert contador.textos == [], "no se le pidió nada al proveedor"
+
+
+def test_una_respuesta_corregida_si_se_vuelve_a_embeber(
+    conn_boveda, conn_semantica, proveedor, ola
+):
+    """El ahorro no puede convertirse en un dato viejo: si el texto cambió, el
+    vector se recalcula."""
+    encuestas.ingestar(
+        conn_boveda, conn_semantica, ola["encuesta"]["id"], PREGUNTAS, FILAS,
+        proveedor=proveedor,
+    )
+    corregidas = [
+        {"id_en_origen": "R-001", "P1": "1", "P2": "Porque me lo recomendaron"},
+        {"id_en_origen": "R-002", "P1": "3", "P2": ""},
+    ]
+    contador = ProveedorQueCuenta(proveedor)
+    resultado = encuestas.ingestar(
+        conn_boveda, conn_semantica, ola["encuesta"]["id"], PREGUNTAS, corregidas,
+        proveedor=contador,
+    )
+    assert resultado["embebidas"] == 1
+    assert resultado["reutilizadas"] == 2
+    assert contador.textos == ["¿Por qué la elige? → Porque me lo recomendaron"]
+
+    guardadas = {
+        (f["id_persona"], f["codigo"]): f["valor_texto"]
+        for f in _respuestas_semantica(conn_semantica, ola["encuesta"]["ref_estudio"])
+    }
+    import uuid
+
+    assert guardadas[(uuid.UUID(ola["ana"]), "P2")] == "Porque me lo recomendaron"
+
+
+def test_el_hash_guardado_es_del_texto_que_se_vectorizo(
+    conn_boveda, conn_semantica, proveedor, ola
+):
+    encuestas.ingestar(
+        conn_boveda, conn_semantica, ola["encuesta"]["id"], PREGUNTAS, FILAS,
+        proveedor=proveedor,
+    )
+    filas = db.todas(
+        conn_semantica, "select texto_embebido, hash_texto from respuesta"
+    )
+    assert filas
+    for fila in filas:
+        assert fila["hash_texto"] == semantica.hash_texto(fila["texto_embebido"])
+
+
+def test_una_fila_sin_hash_previo_se_re_embebe_una_vez(
+    conn_boveda, conn_semantica, proveedor, ola
+):
+    """Las respuestas ingestadas antes de la migración 0003 quedan con
+    `hash_texto` nulo. La ingesta las trata como «no sé qué había» y las
+    re-embebe una vez, que es el comportamiento anterior; no hay backfill
+    porque el hash se calcula solo en la próxima ingesta."""
+    encuestas.ingestar(
+        conn_boveda, conn_semantica, ola["encuesta"]["id"], PREGUNTAS, FILAS,
+        proveedor=proveedor,
+    )
+    db.ejecutar(conn_semantica, "update respuesta set hash_texto = null")
+
+    contador = ProveedorQueCuenta(proveedor)
+    resultado = encuestas.ingestar(
+        conn_boveda, conn_semantica, ola["encuesta"]["id"], PREGUNTAS, FILAS,
+        proveedor=contador,
+    )
+    assert resultado["embebidas"] == 3
+    assert len(contador.textos) == 3
+    assert all(
+        f["hash_texto"] is not None
+        for f in db.todas(conn_semantica, "select hash_texto from respuesta")
+    )

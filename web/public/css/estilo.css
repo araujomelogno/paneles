@@ -399,3 +399,33 @@ input:disabled, select.fselect:disabled, textarea.finput:disabled {
   background: var(--gray-xlight); color: var(--gray); cursor: not-allowed;
   border-color: var(--gray-light);
 }
+
+/* ══ FASE 2 ══ */
+/* Fila de etiqueta + control, con el control a la derecha y sin estirarse.
+   `.kv` no sirve acá: es una grilla de 170px + resto, pensada para pares
+   dt/dd, y mete el botón en la columna elástica. */
+.fila-criterio { display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem; padding: 0.6rem 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.fila-criterio:last-child { border-bottom: none; }
+.fila-criterio > :first-child { flex: 1 1 auto; min-width: 0; }
+.fila-criterio > :last-child { flex: 0 0 auto; }
+
+/* Filas de barra: etiqueta a la izquierda, barra elástica, cifra alineada. */
+.barras { display: grid; gap: 0.45rem; }
+.fila-barra { display: grid; grid-template-columns: minmax(96px, 34%) 1fr auto;
+  align-items: center; gap: 0.75rem; font-size: 0.82rem; }
+.fila-barra .cifra { font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.75rem; color: var(--gray); text-align: right; min-width: 74px; }
+
+/* La brecha se lee de un vistazo por el color: falta gente en ámbar, sobra
+   en gris. Sin `.corr-mark`, que es un marcador de corrección y no un valor. */
+.brecha-falta { color: var(--amber); font-weight: 700; }
+.brecha-sobra { color: var(--gray); font-weight: 600; }
+
+/* Cita de evidencia: la respuesta textual con su procedencia arriba. Va con
+   filete naranja porque es literal —lo que la persona contestó— y no una
+   interpretación del sistema. */
+.evidencia { background: var(--gray-xlight); border-left: 3px solid var(--orange);
+  border-radius: 3px; padding: 0.7rem 0.9rem; font-size: 0.86rem; color: var(--dark2); }
+.evidencia .procedencia { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em;
+  color: var(--gray); margin-bottom: 0.3rem; }

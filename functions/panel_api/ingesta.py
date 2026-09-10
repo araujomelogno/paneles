@@ -165,19 +165,34 @@ def ingestar(
     ids_persona = [mapa[r[0]] for r in largo]
     individuo_por_persona = semantica.asegurar_individuos(conn_semantica, ids_persona)
 
-    textos = [r[3] for r in largo]
-    vectores = proveedor.embeber_en_lotes(textos)
+    # ── Qué hace falta embeber (P1: saltear lo que no cambió) ──
+    # Re-ingestar una ola es normal (una corrección de campo, una pregunta
+    # que faltaba). Lo que llega con el mismo texto ya tiene su vector, y el
+    # mismo texto con el mismo modelo da el mismo vector: se saltea. Es la
+    # parte cara del pipeline.
+    ya_ingestado = semantica.hashes_de_estudio(conn_semantica, ref_estudio)
 
-    respuestas = [
-        {
-            "individuo_id": individuo_por_persona[mapa[id_origen]],
-            "pregunta_id": id_por_codigo[codigo],
+    respuestas, a_embeber = [], []
+    for id_origen, codigo, etiqueta, texto in largo:
+        clave = (individuo_por_persona[mapa[id_origen]], id_por_codigo[codigo])
+        huella = semantica.hash_texto(texto)
+        fila = {
+            "individuo_id": clave[0],
+            "pregunta_id": clave[1],
             "valor_texto": etiqueta,
             "texto_embebido": texto,
-            "embedding": vector,
+            "hash_texto": huella,
+            "embedding": None,
         }
-        for (id_origen, codigo, etiqueta, texto), vector in zip(largo, vectores)
-    ]
+        respuestas.append(fila)
+        if ya_ingestado.get(clave) != huella:
+            a_embeber.append(fila)
+
+    if a_embeber:
+        vectores = proveedor.embeber_en_lotes([f["texto_embebido"] for f in a_embeber])
+        for fila, vector in zip(a_embeber, vectores):
+            fila["embedding"] = vector
+
     escritas = semantica.upsert_respuestas(conn_semantica, respuestas)
 
     return {
@@ -185,6 +200,8 @@ def ingestar(
         "respuestas_escritas": escritas,
         "personas": len(individuo_por_persona),
         "preguntas": len(id_por_codigo),
+        "embebidas": len(a_embeber),
+        "reutilizadas": len(respuestas) - len(a_embeber),
         "sin_mapear": sin_mapear,
         "sin_consentimiento": bloqueadas,
     }

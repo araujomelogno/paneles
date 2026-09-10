@@ -45,11 +45,15 @@ for base in paneles_boveda paneles_semantica; do
     | grep -q 1 || createdb "$base"
 done
 
-psql -q -d paneles_boveda  -v ON_ERROR_STOP=1 -f "$RAIZ/db/boveda/0001_init.sql"       >/dev/null 2>&1 || true
-psql -q -d paneles_boveda  -v ON_ERROR_STOP=1 -f "$RAIZ/db/boveda/0002_revision_alta.sql" >/dev/null 2>&1 || true
-psql -q -d paneles_boveda  -v ON_ERROR_STOP=1 -f "$RAIZ/db/boveda/0003_baja_persona.sql"  >/dev/null 2>&1 || true
-psql -q -d paneles_semantica -v ON_ERROR_STOP=1 -f "$RAIZ/db/semantica/0001_init.sql"      >/dev/null 2>&1 || true
-psql -q -d paneles_semantica -v ON_ERROR_STOP=1 -f "$RAIZ/db/semantica/0002_vista_procedencia.sql" >/dev/null 2>&1 || true
+# Todas las migraciones, en orden de numero. Se recorren por glob y no por
+# una lista fija: una migracion nueva se aplica sola. Los errores se ignoran
+# porque re-aplicar un CREATE ya aplicado falla y no importa.
+for archivo in "$RAIZ"/db/boveda/*.sql; do
+  psql -q -d paneles_boveda -f "$archivo" >/dev/null 2>&1 || true
+done
+for archivo in "$RAIZ"/db/semantica/*.sql; do
+  psql -q -d paneles_semantica -f "$archivo" >/dev/null 2>&1 || true
+done
 
 export DSN_BOVEDA="postgresql://postgres@localhost:$PGPORT/paneles_boveda"
 export DSN_SEMANTICA="postgresql://postgres@localhost:$PGPORT/paneles_semantica"

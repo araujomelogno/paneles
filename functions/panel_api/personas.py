@@ -517,3 +517,66 @@ def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0):
             for f in filas
         ],
     }
+
+
+def reidentificar(conn, ids_persona):
+    """Traduce `id_persona` → datos de contacto, para una lista de ids.
+
+    Es la operación que deshace la seudonimización: el resultado de una
+    consulta semántica es una lista de tokens opacos, y para convocar a esa
+    gente hay que saber quién es. Está acá, en la bóveda, porque es el único
+    lugar donde puede estar.
+
+    Dos cosas que le corresponden a quien la llama, no a esta función:
+    exigir el permiso `reidentificar`, y registrar la traducción con
+    `auditoria.registrar_reidentificacion`. La ruta hace las dos (ver
+    `ruteo.py`); si alguien usa esto desde otro lado, le toca hacerlas.
+
+    Los ids que no existen no son un error: se devuelven aparte. Una persona
+    que se dio de baja después de la consulta desaparece de la bóveda, y eso
+    es el sistema funcionando bien.
+    """
+    ids = [str(i) for i in dict.fromkeys(ids_persona or []) if i]
+    if not ids:
+        return {"items": [], "no_encontrados": [], "total": 0}
+
+    filas = db.todas(
+        conn,
+        """
+        select p.id_persona, p.nombre, p.documento, p.email, p.celular,
+               p.contacto, d.sexo, d.localidad, d.tramo_etario,
+               exists (select 1 from consentimiento c
+                        where c.id_persona = p.id_persona
+                          and c.finalidad = 'contacto_participacion'
+                          and c.estado = 'vigente') as consiente_contacto,
+               exists (select 1 from consentimiento c
+                        where c.id_persona = p.id_persona
+                          and c.finalidad = 'uso_semantico'
+                          and c.estado = 'vigente') as consiente_semantico
+          from persona p left join v_demografia d on d.id_persona = p.id_persona
+         where p.id_persona = any(%s::uuid[])
+        """,
+        (ids,),
+    )
+    por_id = {
+        str(f["id_persona"]): {
+            "id_persona": str(f["id_persona"]),
+            "nombre": f["nombre"],
+            "documento": f["documento"],
+            "email": f["email"],
+            "celular": f["celular"],
+            "contacto": f["contacto"],
+            "sexo": f["sexo"],
+            "localidad": f["localidad"],
+            "tramo_etario": f["tramo_etario"],
+            "consiente_contacto": f["consiente_contacto"],
+            "consiente_semantico": f["consiente_semantico"],
+        }
+        for f in filas
+    }
+    return {
+        "total": len(por_id),
+        # Se respeta el orden en que llegaron los ids: es el del ranking.
+        "items": [por_id[i] for i in ids if i in por_id],
+        "no_encontrados": [i for i in ids if i not in por_id],
+    }

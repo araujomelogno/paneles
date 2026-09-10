@@ -24,6 +24,18 @@ PERMISOS = {
     "ingestar": {"admin", "operaciones", "analista"},
     "resolver_revision": {"admin", "operaciones"},
     "cumplimiento": {"admin", "dpo"},
+
+    # ── Fase 2 ──
+    # Correr consultas semánticas. Es el trabajo del analista, y es aparte de
+    # `leer`: consultar mueve el corpus entero por el reranker y por la API de
+    # Claude, y el dpo no tiene por qué hacerlo.
+    "consultar": {"admin", "operaciones", "analista"},
+    # Traducir `id_persona` a datos de contacto. Deshace la seudonimización,
+    # así que la tiene quien necesita convocar, y queda registrada (P1).
+    "reidentificar": {"admin", "operaciones"},
+    # R2.12 — gestión de usuarios de la app. Solo admin, y con permiso propio:
+    # es escalada de privilegios, no una tarea más de administrar paneles.
+    "gestionar_usuarios": {"admin"},
 }
 
 

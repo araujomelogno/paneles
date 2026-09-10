@@ -7,6 +7,7 @@ el resto del código solo conoce `embeber(textos) -> [[float]]`.
 
 import hashlib
 import os
+import re
 import struct
 
 VOYAGE_URL = "https://api.voyageai.com/v1/embeddings"
@@ -66,29 +67,54 @@ class Voyage(ProveedorEmbeddings):
         return vectores
 
 
-class Deterministico(ProveedorEmbeddings):
+class BolsaDePalabras(ProveedorEmbeddings):
     """Proveedor sin red, para pruebas y para el emulador.
 
-    Deriva el vector de un hash del texto: no tiene sentido semántico, pero
-    es estable y de la dimensión correcta, que es lo que necesitan las
-    pruebas de ingesta y de cruce entre stores.
+    A cada palabra le asigna una dirección fija, derivada de su hash, y
+    devuelve la suma normalizada de las palabras del texto. Es la técnica
+    vieja de *random indexing*: dos textos que comparten palabras salen
+    cerca, dos que no comparten ninguna salen casi ortogonales.
+
+    Eso importa para poder probar la Fase 2 sin red. La consulta semántica se
+    apoya en que la distancia signifique algo: si el vector saliera de un
+    hash del texto completo —estable, de la dimensión correcta, y sin ninguna
+    relación con el contenido— «me encanta el fernet» quedaría tan lejos de
+    «gente a la que le gusta el fernet» como cualquier otra frase, y las
+    pruebas de recall no estarían probando el recall.
+
+    No es un modelo de lenguaje: no sabe de sinónimos, ni de negación, ni de
+    orden de palabras. Es un piso, deliberadamente parecido a lo que hacía la
+    recuperación de información antes de los embeddings. En producción va
+    Voyage.
     """
 
     def __init__(self, dims=1024):
         self.dims = dims
 
+    def _direccion(self, palabra):
+        """La dirección fija de una palabra. Determinística y sin estado."""
+        semilla = hashlib.sha256(palabra.encode("utf-8")).digest()
+        crudo = (semilla * ((self.dims * 4) // len(semilla) + 1))[: self.dims * 4]
+        return [
+            struct.unpack_from(">I", crudo, i * 4)[0] / 2**32 - 0.5
+            for i in range(self.dims)
+        ]
+
     def embeber(self, textos):
         vectores = []
         for texto in textos:
-            semilla = hashlib.sha256(texto.encode("utf-8")).digest()
-            crudo = (semilla * ((self.dims * 4) // len(semilla) + 1))[: self.dims * 4]
-            valores = [
-                struct.unpack_from(">I", crudo, i * 4)[0] / 2**32 - 0.5
-                for i in range(self.dims)
-            ]
-            norma = sum(v * v for v in valores) ** 0.5 or 1.0
-            vectores.append([v / norma for v in valores])
+            palabras = re.findall(r"[\wñáéíóúü]+", (texto or "").lower(), re.UNICODE)
+            acumulado = [0.0] * self.dims
+            for palabra in palabras or [""]:
+                for i, valor in enumerate(self._direccion(palabra)):
+                    acumulado[i] += valor
+            norma = sum(v * v for v in acumulado) ** 0.5 or 1.0
+            vectores.append([v / norma for v in acumulado])
         return vectores
+
+
+# Nombre con el que se lo venía usando en las pruebas de la Fase 1.
+Deterministico = BolsaDePalabras
 
 
 def crear(cfg=None, entorno=None):
@@ -99,8 +125,8 @@ def crear(cfg=None, entorno=None):
     ).lower()
     dims = cfg.dims_embeddings if cfg else int(entorno.get("EMBEDDINGS_DIMS", "1024"))
 
-    if proveedor in ("deterministico", "fake", "test"):
-        return Deterministico(dims=dims)
+    if proveedor in ("deterministico", "bolsa", "fake", "test"):
+        return BolsaDePalabras(dims=dims)
     if proveedor == "voyage":
         return Voyage(
             api_key=cfg.api_key_embeddings if cfg else entorno.get("EMBEDDINGS_API_KEY", ""),
