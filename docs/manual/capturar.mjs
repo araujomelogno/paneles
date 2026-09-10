@@ -19,18 +19,44 @@ const errores = [];
 
 const nav = await chromium.launch({
   executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-  // --lang manda sobre el formato de <input type="date">: sin esto la fecha
-  // sale en formato de EE.UU. aunque el contexto sea es-UY.
   args: ['--no-sandbox', '--force-color-profile=srgb', '--lang=es-UY'],
+  // El formato de `<input type="date">` no lo decide el `locale` del contexto
+  // ni `--lang`: lo decide el idioma de la interfaz del navegador, que sale
+  // del entorno del proceso. Sin esto la fecha se dibuja mm/dd/aaaa aunque
+  // todo lo demás esté en es-UY.
+  env: { ...process.env, LANG: 'es_UY.UTF-8', LANGUAGE: 'es_UY:es' },
 });
 const ctx = await nav.newContext({
-  viewport: { width: 1280, height: 860 }, deviceScaleFactor: 2,
+  // Alto generoso: los modales se cortan solos en 88vh y con una ventana
+  // baja las capturas de los más largos (la ingesta, el universo de
+  // referencia) salen truncadas.
+  viewport: { width: 1280, height: 1180 }, deviceScaleFactor: 2,
   locale: 'es-UY', timezoneId: 'America/Montevideo',
 });
 const p = await ctx.newPage();
 p.on('pageerror', (e) => errores.push(e.message));
 
-const tomar = async (nombre, loc) => {
+/* Los toasts duran casi cuatro segundos y se apilan. En la captura del paso
+   siguiente aparecen como un cartel colgado que no viene al caso, así que se
+   limpian antes de cada toma, salvo cuando la captura es justamente del
+   toast. */
+const limpiarToastes = () => p.evaluate(() => {
+  const caja = document.getElementById('toast-wrap');
+  if (caja) caja.innerHTML = '';
+});
+
+/* Un campo con el foco sale con el borde naranja, y si es de fecha con un
+   tramo seleccionado en azul. No es el estado en que alguien mira la
+   pantalla. */
+const desenfocar = () => p.evaluate(() => {
+  document.activeElement?.blur();
+  window.getSelection()?.removeAllRanges();
+});
+
+const tomar = async (nombre, loc, { conToastes = false } = {}) => {
+  if (!conToastes) await limpiarToastes();
+  await desenfocar();
+  await p.waitForTimeout(120);
   const destino = path.join(SALIDA, `${nombre}.png`);
   if (loc) await p.locator(loc).screenshot({ path: destino });
   else await p.screenshot({ path: destino });
@@ -72,16 +98,17 @@ await tomar('04-alta-consentimiento', '.finalidades');
 
 await p.locator('.modal-foot .btn-orange').click();
 await esperar(700);
-await tomar('05-alta-confirmada', '#toast-wrap');
+await tomar('05-alta-confirmada', '#toast-wrap', { conToastes: true });
 
 // ── 4 · Dedup: misma cédula otra vez ───────────────────────────────
 await p.click('#nuevo');
 await p.waitForSelector('.modal-box');
 await p.fill('[name="nombre"]', 'M. F. Suárez');
 await p.fill('[name="documento"]', '4.567.890-1');
+await limpiarToastes();          // que quede solo el aviso de esta alta
 await p.locator('.modal-foot .btn-orange').click();
 await esperar(700);
-await tomar('06-dedup-reutiliza', '#toast-wrap');
+await tomar('06-dedup-reutiliza', '#toast-wrap', { conToastes: true });
 
 // ── 5 · Dedup ambiguo → revisión ───────────────────────────────────
 await p.click('#nuevo');
@@ -293,6 +320,14 @@ await tomar('37-composicion');
 await p.click('#cargar-objetivo');
 await p.waitForSelector('.modal-box');
 await p.selectOption('#obj-dimension', 'tramo_etario');
+await esperar(400);
+// El formulario arranca con las categorías sugeridas y las proporciones
+// vacías. Se completan con un universo verosímil —que suma 1— porque un
+// formulario en blanco, con la suma en cero y en rojo, no ilustra nada.
+const universo = ['0.09', '0.14', '0.19', '0.18', '0.17', '0.13', '0.10'];
+for (const [i, valor] of universo.entries()) {
+  await p.locator('[data-fila] [data-prop]').nth(i).fill(valor);
+}
 await esperar(400);
 await tomar('38-composicion-objetivo', '.modal-box');
 await p.keyboard.press('Escape');

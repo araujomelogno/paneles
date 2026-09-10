@@ -45,14 +45,18 @@
   .portada .pie span + span::before { content: '·'; margin-right: 4mm; }
 
   /* ══ ÍNDICE ══ */
+  /* Doce secciones más la nota tienen que entrar en una sola página: un índice
+     partido en dos obliga a dar vuelta la hoja para ver el final. */
   .indice { page-break-after: always; }
-  .indice ol { list-style: none; margin-top: 8mm; }
-  .indice > ol > li { border-bottom: 1px solid var(--border); padding: 3.5mm 0; }
+  .indice ol { list-style: none; margin-top: 4mm; }
+  .indice > ol > li { border-bottom: 1px solid var(--border); padding: 1.5mm 0; }
   .indice > ol > li > a { display: flex; justify-content: space-between; gap: 8mm;
-    text-decoration: none; color: var(--dark); font-weight: 700; font-size: 11.5pt; }
+    text-decoration: none; color: var(--dark); font-weight: 700; font-size: 11pt; }
   .indice .num { color: var(--orange); font-weight: 800; min-width: 9mm; }
-  .indice ul { list-style: none; margin: 1.5mm 0 0 9mm; }
-  .indice ul li { font-size: 9.5pt; color: var(--gray); font-weight: 500; padding: 0.6mm 0; }
+  .indice ul { list-style: none; margin: 1mm 0 0 9mm; }
+  .indice ul li { font-size: 8.8pt; line-height: 1.35; color: var(--gray);
+    font-weight: 500; padding: 0.2mm 0; }
+  .indice .aviso { margin: 5mm 0 6mm; }
 
   /* ══ SECCIONES ══ */
   section { page-break-before: always; }

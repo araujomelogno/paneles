@@ -198,7 +198,12 @@ tbody tr:hover td { background: #FAFAFA; }
 .est-en_curso { background: var(--orange-light); color: var(--orange-dark); }
 
 /* ══ ALERTS ══ */
-.alert { padding: 0.8rem 1rem; border-radius: 3px; font-size: 0.82rem; font-weight: 600; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; }
+/* Bloque, no flex: un `<strong>` o un `<code>` dentro del texto son parte de
+   la oración, y como items de flex se convertían en una columna aparte. */
+.alert { padding: 0.8rem 1rem; border-radius: 3px; font-size: 0.82rem;
+  font-weight: 600; margin-bottom: 1rem; line-height: 1.5; }
+.alert p { margin: 0 0 0.4rem; }
+.alert p:last-child { margin-bottom: 0; }
 .alert-error { background: var(--red-light); color: #8B1A0A; border-left: 3px solid var(--red); }
 .alert-success { background: var(--green-light); color: #14663A; border-left: 3px solid var(--green); }
 .alert-info { background: var(--blue-light); color: #2A527A; border-left: 3px solid var(--blue); }
