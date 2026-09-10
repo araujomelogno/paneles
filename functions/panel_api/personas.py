@@ -8,7 +8,7 @@ personas.
 import json
 
 from . import consentimiento, db, dedup
-from .errores import DatosInvalidos, NoEncontrado
+from .errores import Conflicto, DatosInvalidos, NoEncontrado
 
 # Columnas de PII que acepta el alta. Se listan explícitamente para que
 # nada entre por accidente y para que el orden de escritura sea evidente.
@@ -16,6 +16,13 @@ CAMPOS_PERSONA = (
     "documento", "nombre", "sexo", "fecha_nacimiento", "localidad",
     "email", "celular", "contacto", "observaciones",
 )
+
+# Qué se puede corregir desde la ficha. `documento` y `email` quedan afuera a
+# propósito: tienen índice único y son las claves con las que el dedup
+# reconoce a una persona. Cambiarlos no es corregir un dato, es cambiar la
+# identidad con la que el sistema la reconoce, y eso pide un flujo aparte.
+CLAVES_DE_DEDUP = ("documento", "email")
+CAMPOS_EDITABLES = tuple(c for c in CAMPOS_PERSONA if c not in CLAVES_DE_DEDUP)
 
 
 def _limpiar(datos):
@@ -203,6 +210,110 @@ def alta(conn, cuerpo, actor=None):
         "consentimientos": otorgados,
         "membresia": membresia,
     }
+
+
+def editar(conn, id_persona, cambios, actor=None):
+    """Corrige los datos de una persona ya enrolada.
+
+    Solo toca los campos presentes en `cambios`: lo que no viene, no se
+    modifica. Un campo presente con valor vacío **borra** el dato (queda en
+    null), que es la única forma de sacar un dato mal cargado.
+
+    `documento` y `email` no se editan desde acá (ver CAMPOS_EDITABLES). No
+    mueve consentimientos ni membresías: cada uno tiene su propio flujo.
+    """
+    actual = db.una(
+        conn,
+        f"select {', '.join(CAMPOS_PERSONA)} from persona where id_persona = %s",
+        (id_persona,),
+    )
+    if not actual:
+        raise NoEncontrado(f"No existe la persona {id_persona}.")
+
+    claves = sorted(set(cambios) & set(CLAVES_DE_DEDUP))
+    if claves:
+        raise DatosInvalidos(
+            f"No se pueden editar {' ni '.join(claves)} desde la ficha: son las "
+            f"claves con las que el sistema reconoce a la persona y tienen "
+            f"índice único.",
+            {"campos": claves, "editables": list(CAMPOS_EDITABLES)},
+        )
+
+    desconocidos = sorted(set(cambios) - set(CAMPOS_EDITABLES))
+    if desconocidos:
+        raise DatosInvalidos(
+            "Hay campos que no se pueden editar desde acá.",
+            {"campos": desconocidos, "editables": list(CAMPOS_EDITABLES)},
+        )
+
+    a_guardar = {}
+    for campo, valor in cambios.items():
+        if isinstance(valor, str):
+            valor = valor.strip() or None
+        if valor != actual[campo]:
+            a_guardar[campo] = valor
+
+    if not a_guardar:
+        return {"id_persona": str(id_persona), "campos_modificados": []}
+
+    asignaciones = ", ".join(f"{c} = %s" for c in a_guardar)
+    db.ejecutar(
+        conn,
+        f"update persona set {asignaciones} where id_persona = %s",
+        tuple(a_guardar.values()) + (id_persona,),
+    )
+    return {
+        "id_persona": str(id_persona),
+        "campos_modificados": sorted(a_guardar),
+    }
+
+
+def agregar_alias(conn, id_persona, origen, id_en_origen):
+    """Suma un alias de plataforma de campo a una persona ya enrolada.
+
+    Si ese par (origen, id) ya está apuntando a OTRA persona, se rechaza:
+    un mismo id de plataforma no puede referirse a dos panelistas, porque
+    entonces la ingesta no sabría a quién asignarle la respuesta.
+    """
+    origen = (origen or "").strip()
+    id_en_origen = (id_en_origen or "").strip()
+    if not origen or not id_en_origen:
+        raise DatosInvalidos("Hacen falta el origen y el id en el origen.")
+    if not db.una(conn, "select 1 from persona where id_persona = %s", (id_persona,)):
+        raise NoEncontrado(f"No existe la persona {id_persona}.")
+
+    duenio = db.una(
+        conn,
+        "select id_persona from alias_origen where origen = %s and id_en_origen = %s",
+        (origen, id_en_origen),
+    )
+    if duenio and str(duenio["id_persona"]) != str(id_persona):
+        raise Conflicto(
+            f"El id «{id_en_origen}» de {origen} ya está asignado a otro panelista.",
+            {"id_persona_en_conflicto": str(duenio["id_persona"])},
+        )
+
+    dedup.registrar_alias(conn, id_persona, origen, id_en_origen)
+    return {"origen": origen, "id_en_origen": id_en_origen}
+
+
+def quitar_alias(conn, id_persona, origen, id_en_origen):
+    """Saca un alias mal cargado.
+
+    Las respuestas ya ingestadas no se tocan: viven del lado semántico
+    referenciadas por `id_persona`, no por el alias.
+    """
+    borrados = db.ejecutar(
+        conn,
+        "delete from alias_origen "
+        "where id_persona = %s and origen = %s and id_en_origen = %s",
+        (id_persona, origen, id_en_origen),
+    )
+    if not borrados:
+        raise NoEncontrado(
+            f"La persona no tiene el alias {origen}/{id_en_origen}."
+        )
+    return {"origen": origen, "id_en_origen": id_en_origen, "estado": "borrado"}
 
 
 def ficha(conn, id_persona):

@@ -388,3 +388,14 @@ td .btn, th .btn { white-space: nowrap; }
 .alias b { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--gray); }
 .alias code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 0.76rem; font-weight: 600; color: var(--dark); }
+
+/* Enlace de acción dentro de una pista de campo. */
+.field-hint a { color: var(--orange); font-weight: 700; text-decoration: none; cursor: pointer; margin-left: 0.35rem; }
+.field-hint a:hover { text-decoration: underline; }
+
+/* Un campo deshabilitado tiene que verse deshabilitado antes de que alguien
+   intente escribir en él. */
+input:disabled, select.fselect:disabled, textarea.finput:disabled {
+  background: var(--gray-xlight); color: var(--gray); cursor: not-allowed;
+  border-color: var(--gray-light);
+}

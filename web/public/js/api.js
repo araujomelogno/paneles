@@ -69,6 +69,11 @@ export const panelistas = {
   listar: (consulta) => GET('/panelistas', consulta),
   ficha: (idPersona) => GET(`/panelistas/${idPersona}`),
   alta: (cuerpo) => POST('/panelistas', cuerpo),
+  editar: (idPersona, cambios) => PATCH(`/panelistas/${idPersona}`, cambios),
+  agregarAlias: (idPersona, origen, idEnOrigen) =>
+    POST(`/panelistas/${idPersona}/alias`, { origen, id_en_origen: idEnOrigen }),
+  quitarAlias: (idPersona, origen, idEnOrigen) =>
+    DELETE(`/panelistas/${idPersona}/alias/${encodeURIComponent(origen)}/${encodeURIComponent(idEnOrigen)}`),
 };
 
 export const revisiones = {

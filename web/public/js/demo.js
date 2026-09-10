@@ -422,6 +422,47 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     };
   }
 
+  if (metodo === 'PATCH' && partes[0] === 'panelistas' && partes.length === 2) {
+    const persona = bd.personas.find((p) => p.id_persona === partes[1]);
+    if (!persona) throw new ErrorDemo('No existe la persona.', 404);
+    const CLAVES = ['documento', 'email'];
+    const claves = Object.keys(cuerpo).filter((c) => CLAVES.includes(c));
+    if (claves.length) {
+      throw new ErrorDemo(
+        `No se pueden editar ${claves.join(' ni ')} desde la ficha: son las claves ` +
+        'con las que el sistema reconoce a la persona y tienen índice único.', 400);
+    }
+    const modificados = [];
+    Object.entries(cuerpo).forEach(([campo, valor]) => {
+      const limpio = typeof valor === 'string' ? (valor.trim() || null) : valor;
+      if (limpio !== (persona[campo] ?? null)) { persona[campo] = limpio; modificados.push(campo); }
+    });
+    return { id_persona: persona.id_persona, campos_modificados: modificados.sort() };
+  }
+
+  if (metodo === 'POST' && partes[0] === 'panelistas' && partes[2] === 'alias') {
+    const origen = (cuerpo.origen || '').trim();
+    const idEnOrigen = (cuerpo.id_en_origen || '').trim();
+    if (!origen || !idEnOrigen) throw new ErrorDemo('Hacen falta el origen y el id.', 400);
+    const duenio = bd.alias.find((a) => a.origen === origen && a.id_en_origen === idEnOrigen);
+    if (duenio && duenio.id_persona !== partes[1]) {
+      throw new ErrorDemo(
+        `El id «${idEnOrigen}» de ${origen} ya está asignado a otro panelista.`, 409);
+    }
+    if (!duenio) bd.alias.push({ id_persona: partes[1], origen, id_en_origen: idEnOrigen });
+    return { origen, id_en_origen: idEnOrigen };
+  }
+
+  if (metodo === 'DELETE' && partes[0] === 'panelistas' && partes[2] === 'alias') {
+    const origen = decodeURIComponent(partes[3] || '');
+    const idEnOrigen = decodeURIComponent(partes[4] || '');
+    const antes = bd.alias.length;
+    bd.alias = bd.alias.filter((a) => !(
+      a.id_persona === partes[1] && a.origen === origen && a.id_en_origen === idEnOrigen));
+    if (bd.alias.length === antes) throw new ErrorDemo('La persona no tiene ese alias.', 404);
+    return { origen, id_en_origen: idEnOrigen, estado: 'borrado' };
+  }
+
   if (clave === 'GET /revisiones') {
     const filtro = consulta.estado || 'pendiente';
     return { items: bd.revisiones.filter((r) => !filtro || r.estado === filtro) };
