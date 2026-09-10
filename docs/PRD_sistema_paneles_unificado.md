@@ -1,0 +1,166 @@
+# PRD — Sistema de gestión de paneles y consulta semántica
+
+**Contexto:** Equipos Consultores · investigación de mercado
+**Estado:** Borrador vivo · documento unificado (reemplaza a `PRD_gestion_de_paneles_detallado.md` y `PRD_consulta_semantica_cuestionarios.md`)
+**Última actualización:** 2026-09-10
+**Estado de implementación:** Fase 1 desplegada en producción (GCP). Fases 2–4 pendientes.
+
+---
+
+## 1. Marco
+
+### Problem Statement
+
+Equipos administra paneles de investigación de mercado —conjuntos estables de personas a las que se fieldan encuestas de forma repetida— y necesita dos cosas que hoy no tiene.
+
+**Mantener el panel sano.** Un panel es un activo que se degrada solo: pierde representatividad, sus panelistas se fatigan y abandonan, se sobre-encuesta a los mismos, y entra dato de baja calidad. Sin un sistema que mida y accione sobre eso, el panel se pudre y los datos se sesgan.
+
+**Consultar por concepto, no por columna.** Los microdatos son heterogéneos: cada cuestionario tiene sus propias variables. Cuando un analista quiere encontrar individuos que responden a un criterio conceptual —"consume tal bebida", "está descontento con el gobierno"—, hoy necesita saber de antemano qué preguntas y qué columnas lo contienen, algo que cambia estudio a estudio.
+
+A esto se suma que retener PII identificada de forma permanente, para contactar a las mismas personas una y otra vez, es una actividad de tratamiento regulada bajo URCDP: sin consentimiento, retención y baja como ciudadanos de primera clase, el sistema es un pasivo legal.
+
+### Goals
+
+- Mantener paneles **sanos**, no solo almacenarlos (representatividad, participación, fatiga, calidad).
+- **Un solo registro de personas**: el enrolamiento emite la identidad estable (`id_persona`) de toda la plataforma.
+- **Consulta por concepto sin conocer el esquema**: describir un criterio en lenguaje natural y obtener un ranking de individuos que se le aproximan.
+- **Criterios combinados a nivel persona**, incluso cuando cada criterio proviene de un estudio distinto.
+- **Muestreo que equilibra cuota y fatiga**.
+- **Cumplimiento como columna vertebral** (consentimiento, retención, baja en cascada, minimización).
+- **Participación como palanca**, no solo reporte.
+
+### Non-Goals
+
+- **No es segmentación exacta ni exhaustiva.** El resultado es un ranking por aproximación, no "todos los que cumplen"; no reemplaza un filtro booleano preciso.
+- **No hay capa de conceptos canónicos ni pre-clasificación de respuestas.** Descartado deliberadamente a favor de interpretación en tiempo de consulta (*schema-on-read*), para no congelar errores de canonización en el dato.
+- **No reemplaza la tabulación cuantitativa.** Ponderación, representatividad y significancia estadística siguen en las herramientas actuales.
+- **No espeja atributos demográficos al store semántico** (por ahora): los segmentadores quedan autoritativos en la bóveda y el store semántico se mantiene como contenido puro, para minimizar riesgo de reidentificación.
+- **No declara anonimización.** El dataset seudonimizado sigue siendo dato personal bajo URCDP; es una salvaguarda, no una exención.
+- **No es tiempo real.** La ingesta es por lotes, por estudio.
+- **No endurece el auto-registro en v1** (landing simple por ahora).
+- **No automatiza el tratamiento fiscal de premios.**
+- **Sin caché de interpretaciones recurrentes en v1.**
+
+### Personas
+
+- **Responsable de panel / operaciones** — mantiene la salud del panel, decide reclutamiento e invitaciones.
+- **Analista / investigador** — fieldea encuestas y consulta (demográfica / semántica / mixta / longitudinal).
+- **Panelista** — se registra, consiente, responde, gana y canjea puntos, ejerce derechos.
+- **DPO / cumplimiento** — consentimiento, retención, bajas.
+
+### Arquitectura
+
+Un sistema, dos módulos, dos stores. Ambos en **Cloud SQL for Postgres**, en instancias **separadas** (la separación es parte del diseño de privacidad, no preferencia de infra). App en Firebase (Auth + Cloud Functions Python + Hosting), región `southamerica-east1`.
+
+- **Store local (bóveda + paneles):** PII y atributos demográficos (autoritativos aquí), paneles, membresías, consentimiento, participación, muestreo, gamificación. Sirve la gestión de panel y la **consulta puramente demográfica** sin tocar embeddings.
+- **Store semántico:** solo embeddings + `id_persona`. Contenido puro.
+- **Regla dura:** la PII nunca se escribe en el store semántico. Al semántico solo viaja `id_persona`.
+- **Cruce entre stores:** por conjuntos de `id_persona`, y `ref_estudio` (uuid) para vincular `encuesta` (local) ↔ `cuestionario` (semántico). No hay FK cruzada.
+
+---
+
+## 2. Módulo de consulta semántica (mecánica interna)
+
+Cómo funciona el motor por dentro. Las tres formas de consulta como feature de producto están en la Fase 2 (§3).
+
+### Modelo de datos
+
+`cuestionario` (con `ref_estudio`), `individuo` (solo `id_persona` opaco), `pregunta` (con `codigo` externo, tipo, opciones), `respuesta` (formato largo, `embedding` obligatorio, `texto_embebido`, índice HNSW, unicidad por individuo+pregunta).
+
+### Ingesta
+
+Desde archivo de cuestionario + Excel ancho de respuestas:
+- Despivote ancho → largo; cada columna se une a su pregunta por `codigo` (= encabezado del Excel).
+- Resolución código/etiqueta por celda contra el mapa de opciones antes de embeber.
+- Composición del texto como "pregunta → respuesta" y vectorización en lotes.
+- Inserción idempotente (re-corridas no duplican).
+- Embeddings: Voyage `voyage-3.5` (1024 dims) por defecto, detrás de una interfaz para cambiar de proveedor.
+
+### Pipeline de consulta (tres etapas)
+
+1. **Recuperación (recall).** Criterio → embedding → ANN sobre `respuesta.embedding` → pool top-N. Rápido y aproximado.
+2. **Reranking (precisión).** Un cross-encoder evalúa consulta y candidato *en conjunto* y reordena, recortando a top-k. Mejora la discriminación de polaridad y valor ("a favor" vs "en contra", "fernet" vs "whisky"), donde la distancia coseno es débil, y baja el costo de la etapa siguiente. Reranker de Voyage por defecto, detrás de interfaz.
+3. **Verificación con Claude (decisión).** Sobre el top-k, Claude lee las respuestas con procedencia, confirma valor/polaridad, combina criterios y devuelve el ranking con la evidencia de por qué entró cada individuo.
+
+**Criterios combinados:** mejor puntaje por criterio y por individuo → regla de combinación → ranking único a nivel persona. Los criterios duros filtran; los difusos ordenan.
+
+### Consideraciones futuras del módulo
+
+Caché derivado de interpretaciones recurrentes (versionado por modelo, invalidable); capa de conceptos canónicos opcional; representación específica de respuesta múltiple y escalas; ponderadores/cuotas por estudio en el ranking.
+
+---
+
+## 3. Fases
+
+### Fase 1 — Núcleo de personas e identidad ✅ *implementada y desplegada*
+
+**Objetivo.** Sistema de registro de personas: enrolar panelistas con PII en la bóveda, emitir `id_persona` estable, gestionar paneles y membresías, registrar consentimiento por finalidad, y enganchar el fielding con la ingesta semántica.
+
+**Requisitos.** R1.1 alta de panelista · R1.2 dedup de identidad (con cola de revisión para casos ambiguos) · R1.3 consentimiento por finalidad y su retiro con cascada · R1.4 paneles y membresía N:M · R1.5 fielding, convocatoria, participación y vínculo de respuestas por `ref_estudio` · R1.6 guardrail de PII (ninguna escritura de PII al store semántico).
+
+**Estado.** Implementada. Del módulo semántico quedaron cubiertas las fundaciones: modelo de datos, bóveda e ingesta (incluida idempotencia y dedup de re-ingesta). **No** la consulta.
+
+**DoD.** Enrolar/deduplicar/consentir; membresías múltiples; ingesta que asocia respuestas al `id_persona` con `ref_estudio` compartido; baja en cascada; auditoría con 0 columnas de PII en el semántico; pruebas de dedup, gate de consentimiento y guardrail de PII.
+
+---
+
+### Fase 2 — Consulta y salud del panel *(siguiente; spec detallado aparte)*
+
+**Objetivo.** Hacer utilizable lo que la Fase 1 acumula: poder **interrogar** la base vectorial (hoy se escriben embeddings que no se pueden preguntar) y medir la salud del panel.
+
+**Alcance.** Motor de consulta de tres etapas (recuperación → reranker → verificación con Claude); criterios combinados; las tres formas de consulta (demográfica local, semántica, mixta por puente de `id_persona`); composición vs. objetivo de universo/cuotas; tablero de participación; y **gestión de usuarios del sistema** en una solapa de Configuración (hoy solo por línea de comandos).
+
+**Requisitos.** R2.1 registro de participación por ola · R2.2 carga de universo de referencia · R2.3 composición descriptiva y brecha · R2.4 consulta demográfica pura (sin tocar el semántico) · R2.5 consulta mixta (puente) · R2.6 tablero de participación · **R2.7 recuperación semántica** · **R2.8 reranking** · **R2.9 verificación con Claude** · **R2.10 criterios combinados** · R2.11 gate de consentimiento en consulta · **R2.12 gestión de usuarios del sistema (Configuración)**.
+
+*Detalle completo en `SPEC_fase2.md`.*
+
+---
+
+### Fase 3 — Palancas: muestreo, calidad y gamificación
+
+**Objetivo.** Pasar de observar a accionar.
+
+**Alcance.** Motor de muestreo por reglas (propone a quién invitar priorizando brechas de cuota y excluyendo sobre-convocados); chequeos de calidad (speeders, straightliners, duplicados); gamificación con ledger de puntos como moneda (auditable, saldo ≥ 0, vencimiento), catálogo y canje, ganando puntos **solo por participación de calidad**; bonos dirigidos a segmentos de cuota difíciles.
+
+**Requisitos.** R3.1 muestreo por reglas · R3.2 chequeos de calidad · R3.3 ledger de puntos · R3.4 earn por calidad · R3.5 catálogo y canje · R3.6 bono dirigido.
+
+**Bloqueante.** Tratamiento fiscal del canje de premios en Uruguay.
+
+---
+
+### Fase 4 — Profundización
+
+**Objetivo.** Optimizar y extender.
+
+**Alcance.** Análisis longitudinal por `id_persona` a través de olas; muestreo como optimización con restricciones (cuota sujeto a fatiga y equidad de rotación); espejo de segmentadores al store semántico **condicional** a que la consulta mixta se vuelva intensiva; endurecimiento del auto-registro (verificación y anti-fraude/dedup en la landing).
+
+**Requisitos.** R4.1 vista longitudinal · R4.2 optimizador de muestreo · R4.3 espejo de segmentadores (condicional) · R4.4 landing endurecida.
+
+---
+
+## 4. Métricas globales de éxito
+
+**Leading (días a semanas)**
+- Tiempo para responder "¿quiénes se aproximan a X?": de horas de cruce manual a minutos.
+- Cierre de brecha de representatividad por ola.
+- Tasa de respuesta por ola y su tendencia.
+- Incidencia de sobre-convocatoria (objetivo: bajar).
+- Precisión percibida: proporción de finalistas que la verificación confirma como correctos.
+
+**Lagging (semanas a meses)**
+- Reducción de pedidos de cruces manuales al equipo de datos.
+- Churn del panel y representatividad sostenida a lo largo de olas.
+- Tasa de canje y su relación con la participación.
+- Cumplimiento operativo: SLA de bajas y retiros de consentimiento.
+
+## 5. Preguntas abiertas
+
+- **[legal]** ¿El consentimiento del alta cubre el perfilado semántico entre estudios, o requiere base/consentimiento separado? *(bloqueante para el uso semántico)*
+- **[legal/finanzas]** Tratamiento fiscal del canje de premios en Uruguay. *(bloqueante — Fase 3)*
+- **[producto/ingeniería]** ¿Hasta dónde llega el motor de muestreo: reglas u optimización? (separa Fase 3 de Fase 4)
+- **[datos]** Fuente y vigencia del universo de referencia para composición.
+- **[legal/datos]** Plazos de retención por categoría de dato y purga por inactividad.
+- **[ingeniería]** Tamaños de las tres etapas (top-N → top-k → finalistas) y proveedor de reranker.
+- **[ingeniería]** Umbrales del puente para consulta mixta (qué lado filtra primero).
+- **[datos]** Validar que Voyage sigue siendo la mejor opción (calidad en español rioplatense, costo, residencia de datos).
+- **[producto]** Momento de invertir en anti-fraude/dedup de la landing.
