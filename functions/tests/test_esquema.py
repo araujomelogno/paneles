@@ -197,3 +197,46 @@ def test_la_ruta_devuelve_500_cuando_falta_una_migracion(
         assert cuerpo["como_aplicar"]
     finally:
         conn_semantica.rollback()
+
+
+# ── El script de línea de comandos ───────────────────────────────────
+
+def _consulta_sql(store):
+    """Importa el script de scripts/ sin ejecutarlo como programa."""
+    import importlib.util
+
+    ruta = RAIZ / "scripts" / "verificar_esquema.py"
+    spec = importlib.util.spec_from_file_location("verificar_esquema", ruta)
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+    return modulo.consulta_sql(store)
+
+
+@pytest.mark.parametrize("store", ["boveda", "semantica"])
+def test_la_consulta_sql_dice_lo_mismo_que_la_verificacion_en_python(
+    store, conn_boveda, conn_semantica
+):
+    """`scripts/verificar_esquema.py --sql` genera una consulta para pegar en
+    una sesión de psql, y es una segunda implementación de la misma
+    comprobación. Si las dos no coinciden, una de las dos miente."""
+    conn = conn_boveda if store == "boveda" else conn_semantica
+    por_sql = {f["objeto"] for f in db.todas(conn, _consulta_sql(store))}
+    por_python = {
+        f["objeto"] for f in esquema.verificar(conn, esquema.STORES[store])["faltantes"]
+    }
+    assert por_sql == por_python == set()
+
+
+def test_la_consulta_sql_encuentra_lo_mismo_cuando_falta_algo(conn_semantica):
+    with conn_semantica.cursor() as cur:
+        cur.execute("drop view if exists v_respuesta_estudio")
+        cur.execute("alter table respuesta drop column hash_texto")
+    try:
+        por_sql = {f["objeto"] for f in db.todas(conn_semantica, _consulta_sql("semantica"))}
+        por_python = {
+            f["objeto"]
+            for f in esquema.verificar(conn_semantica, esquema.MIGRACIONES_SEMANTICA)["faltantes"]
+        }
+        assert por_sql == por_python == {"v_respuesta_estudio", "respuesta.hash_texto"}
+    finally:
+        conn_semantica.rollback()

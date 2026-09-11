@@ -10,7 +10,8 @@ Empezá leyendo `CLAUDE.md`, después el PRD, y desarrollá por fases empezando 
 | `CLAUDE.md` | Contexto persistente: invariantes (dos stores, PII nunca al store semántico), identidad, reglas de negocio, stack. **Léelo primero y siempre.** | raíz `/` |
 | `PRD_gestion_de_paneles_detallado.md` | PRD del sistema: problema, objetivos, no-objetivos, arquitectura, y las 4 fases con requisitos (R1.x…R4.x), criterios de aceptación y DoD. Documento **autoritativo** de producto. | `docs/` |
 | `PRD_consulta_semantica_cuestionarios.md` | Spec del **módulo de consulta semántica** (mecánica interna del motor: modelo vectorial, ingesta, embeddings, ranking, verificación con Claude). Es un módulo de este sistema, no un producto aparte. | `docs/` |
-| `DESPLIEGUE.md` | Manual de despliegue: qué y cómo configurar cada pieza, verificación y problemas frecuentes. | `docs/` |
+| `DESPLIEGUE -  Fase 1 .md` | Manual de despliegue de la Fase 1: las dos instancias de Cloud SQL, el conector de VPC, los secretos, la ingesta, verificación y problemas frecuentes. | `docs/` |
+| `DESPLIEGUE - Fase 2.md` | Manual de despliegue de la Fase 2: migraciones nuevas, claves de reranking y de Claude, permisos de la cuenta de servicio, índice vectorial, calibración. | `docs/` |
 | `manual/Manual_de_usuario.pdf` | Manual de usuario: paso a paso de cada tarea, con capturas de la aplicación. | `docs/manual/` |
 | `HANDOFF_fase1.md` | Work order de la **Fase 1**: alcance, superficie de API mapeada a R1.x, lógica de dedup, máquina de estados de consentimiento, contrato de cruce entre stores, DoD. **Primer sprint.** | `docs/` |
 | `db/boveda/0001_init.sql` | DDL del **store de bóveda** (Cloud SQL): bóveda de identidad (PII + demográficos) + módulo de paneles. | `db/boveda/` |
@@ -40,7 +41,7 @@ Empezá leyendo `CLAUDE.md`, después el PRD, y desarrollá por fases empezando 
 │  ├─ main.py                 punto de entrada HTTP: /api/**
 │  ├─ panel_api/              el núcleo de dominio
 │  └─ tests/                  pruebas del DoD, contra Postgres real
-├─ scripts/                   cluster de pruebas y chequeo de sintaxis JS
+├─ scripts/                   cluster de pruebas, chequeos y verificación de esquema
 └─ web/public/                SPA de administración (HTML + módulos ES)
    ├─ index.html              configuración y shell
    ├─ css/estilo.css          identidad visual de Equipos
@@ -74,18 +75,32 @@ el gate de consentimiento y la cascada dependen de índices únicos y de
 ```bash
 pip install "psycopg[binary]" pytest
 source scripts/pg_pruebas.sh          # levanta el cluster y exporta los DSN
-cd functions && python3 -m pytest     # 88 pruebas
+cd functions && python3 -m pytest     # 275 pruebas
 scripts/pg_pruebas.sh detener         # al terminar
 ```
 
 `scripts/chequear_js.sh` chequea la sintaxis de los módulos del frontend (no hay
 paso de build).
 
+`scripts/verificar_esquema.py` compara las dos bases contra la lista de
+migraciones que el código espera y nombra las que falten, con el comando para
+aplicarlas. Es la misma verificación que la aplicación expone en Cumplimiento →
+Esquema de las dos bases, pero desde la terminal, de modo que sirve antes de
+desplegar:
+
+```bash
+export DSN_BOVEDA=... DSN_SEMANTICA=...
+python3 scripts/verificar_esquema.py    # sale con 0 si están al día
+python3 scripts/verificar_esquema.py --sql semantica   # la misma consulta, para pegar en psql
+```
+
 ### Puesta en marcha real
 
 El instructivo completo —las dos instancias de Cloud SQL, el conector de VPC,
 los secretos, Voyage, el padrón de usuarios y la verificación paso a paso—
-está en **[`docs/DESPLIEGUE.md`](DESPLIEGUE.md)**.
+está en **[`docs/DESPLIEGUE -  Fase 1 .md`](docs/DESPLIEGUE%20-%20%20Fase%201%20.md)**, y
+lo que agrega la Fase 2 en
+**[`docs/DESPLIEGUE - Fase 2.md`](docs/DESPLIEGUE%20-%20Fase%202.md)**.
 
 El resumen, para ubicarse:
 
