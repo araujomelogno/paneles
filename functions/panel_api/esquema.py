@@ -25,8 +25,6 @@ crean realmente, que es la forma de que no se desactualice.
 
 import re
 
-from . import db
-
 # Migración → objetos que crea. Un objeto con punto (`tabla.columna`) es una
 # columna; el resto son tablas o vistas, que a estos efectos son lo mismo:
 # algo que tiene que existir para que una consulta no falle.
@@ -68,6 +66,14 @@ PARA_QUE = {
 
 def _presentes(conn):
     """Tablas, vistas y columnas que existen hoy en el esquema `public`."""
+    # El import va acá adentro a propósito: la lista de migraciones de más
+    # arriba es la fuente de verdad de qué tiene que existir, y se consulta
+    # desde herramientas que no abren ninguna conexión (`verificar_esquema.py
+    # --sql`, y las pruebas que comparan la lista contra los `.sql`). Con el
+    # import arriba, esas herramientas exigirían tener psycopg instalado para
+    # no conectarse a nada.
+    from . import db
+
     filas = db.todas(
         conn,
         """

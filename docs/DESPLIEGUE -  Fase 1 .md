@@ -458,6 +458,8 @@ tendría que estar. Para no depender de eso, el repositorio trae un script que
 compara las dos bases contra la lista de migraciones que el código espera:
 
 ```bash
+pip install "psycopg[binary]"   # el driver, si no está
+
 # con el Auth Proxy abierto contra cada instancia
 cloud-sql-proxy gestion-paneles:$REGION:paneles-boveda    --port 5432 &
 cloud-sql-proxy gestion-paneles:$REGION:paneles-semantica --port 5433 &
@@ -485,8 +487,9 @@ código 1, de modo que puede encadenarse en un script de despliegue:
 
 Cuando no se puede correr Python contra la base pero sí se está adentro de una
 sesión de `psql` —el caso de `gcloud sql connect`—, `--sql` imprime la misma
-verificación como consulta suelta, sin conectarse a nada. Como cada sesión de
-`psql` está abierta contra una sola base, se pide la del store que corresponda:
+verificación como consulta suelta. No se conecta a nada, así que tampoco
+necesita el driver instalado. Como cada sesión de `psql` está abierta contra
+una sola base, se pide la del store que corresponda:
 
 ```bash
 python3 scripts/verificar_esquema.py --sql semantica   # pegar en la sesión de la semántica

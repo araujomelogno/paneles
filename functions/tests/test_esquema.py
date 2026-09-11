@@ -9,6 +9,7 @@ pruebas cubren las dos mitades: detectar lo que falta, y explicarlo.
 
 import pathlib
 import re
+import sys
 
 import pytest
 
@@ -240,3 +241,36 @@ def test_la_consulta_sql_encuentra_lo_mismo_cuando_falta_algo(conn_semantica):
         assert por_sql == por_python == {"v_respuesta_estudio", "respuesta.hash_texto"}
     finally:
         conn_semantica.rollback()
+
+
+def test_la_consulta_sql_se_genera_sin_el_driver_de_postgres():
+    """La lista de migraciones es la fuente de verdad de qué tiene que
+    existir, y se consulta desde máquinas donde no hay nada instalado: quien
+    corre las migraciones no es necesariamente quien desarrolla.
+
+    `--sql` no abre ninguna conexión, así que no puede exigir `psycopg`. Ya
+    pasó una vez: `esquema` importaba `db` arriba de todo y el script moría
+    con `ModuleNotFoundError` antes de imprimir nada.
+    """
+    import importlib
+    import subprocess
+
+    guion = (
+        "import sys, builtins;"
+        "real = builtins.__import__;"
+        "builtins.__import__ = lambda n, *a, **k: ("
+        "  (_ for _ in ()).throw(ModuleNotFoundError(n))"
+        "  if n.split('.')[0] == 'psycopg' else real(n, *a, **k));"
+        f"sys.path.insert(0, {str(RAIZ / 'functions')!r});"
+        "from panel_api import esquema;"
+        "print(len(esquema.STORES))"
+    )
+    completado = subprocess.run(
+        [sys.executable, "-c", guion], capture_output=True, text=True
+    )
+    assert completado.returncode == 0, completado.stderr
+    assert completado.stdout.strip() == "2"
+
+    # Y la consulta se arma igual, sin tocar la base.
+    assert "information_schema.columns" in _consulta_sql("semantica")
+    importlib.invalidate_caches()

@@ -91,8 +91,13 @@ desplegar:
 ```bash
 export DSN_BOVEDA=... DSN_SEMANTICA=...
 python3 scripts/verificar_esquema.py    # sale con 0 si están al día
-python3 scripts/verificar_esquema.py --sql semantica   # la misma consulta, para pegar en psql
+
+# --sql no se conecta a nada, así que no necesita psycopg instalado:
+python3 scripts/verificar_esquema.py --sql semantica | psql "$DSN_SEMANTICA"
 ```
+
+Conectarse sí necesita el driver (`pip install "psycopg[binary]"`); el script lo
+dice si falta, y ofrece la vía `--sql`.
 
 ### Puesta en marcha real
 
