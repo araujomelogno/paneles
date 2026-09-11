@@ -453,10 +453,53 @@ select extversion from pg_extension where extname = 'vector';
 La bóveda tiene que mostrar 13 tablas; la semántica, 4 tablas más la
 vista `v_respuesta_estudio`.
 
-Con la Fase 2 desplegada hay además una comprobación desde la propia
-aplicación, que no exige abrir `psql`: **Cumplimiento → Esquema de las dos
-bases**, o `GET /api/diagnostico/esquema`. Compara lo que hay en cada base con
-lo que el código espera y nombra la migración que falte.
+Esa comprobación a ojo tiene el problema de que hay que acordarse de qué
+tendría que estar. Para no depender de eso, el repositorio trae un script que
+compara las dos bases contra la lista de migraciones que el código espera:
+
+```bash
+# con el Auth Proxy abierto contra cada instancia
+cloud-sql-proxy gestion-paneles:$REGION:paneles-boveda    --port 5432 &
+cloud-sql-proxy gestion-paneles:$REGION:paneles-semantica --port 5433 &
+
+export DSN_BOVEDA="postgresql://app_paneles:CLAVE@127.0.0.1:5432/paneles_boveda"
+export DSN_SEMANTICA="postgresql://app_paneles:CLAVE@127.0.0.1:5433/paneles_semantica"
+python3 scripts/verificar_esquema.py
+```
+
+Si las dos bases están al día, el script lista las siete migraciones con un
+tilde y sale con código 0. Si falta alguna, nombra la migración, explica para
+qué sirve lo que crea e imprime el comando exacto que la aplica; sale con
+código 1, de modo que puede encadenarse en un script de despliegue:
+
+```
+✗ semantica — falta 1 migración
+    0002_vista_procedencia.sql
+      v_respuesta_estudio — la procedencia de las respuestas en las
+      consultas semánticas
+
+  Aplicar:
+    psql -h 127.0.0.1 -p 5433 -U app_paneles -d paneles_semantica \
+      -v ON_ERROR_STOP=1 -f db/semantica/0002_vista_procedencia.sql
+```
+
+Cuando no se puede correr Python contra la base pero sí se está adentro de una
+sesión de `psql` —el caso de `gcloud sql connect`—, `--sql` imprime la misma
+verificación como consulta suelta, sin conectarse a nada. Como cada sesión de
+`psql` está abierta contra una sola base, se pide la del store que corresponda:
+
+```bash
+python3 scripts/verificar_esquema.py --sql semantica   # pegar en la sesión de la semántica
+python3 scripts/verificar_esquema.py --sql boveda      # pegar en la de la bóveda
+```
+
+Devuelve una fila por migración faltante y ninguna fila si la base está al
+día. La consulta se genera de la misma lista que usa la aplicación, así que no
+queda desactualizada cuando se agrega una migración nueva.
+
+Con la Fase 2 desplegada hay además la misma comprobación desde la propia
+aplicación, que no exige ni `psql` ni terminal: **Cumplimiento → Esquema de las
+dos bases**, o `GET /api/diagnostico/esquema`.
 
 ---
 

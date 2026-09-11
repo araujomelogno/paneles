@@ -193,6 +193,27 @@ psql -h 127.0.0.1 -p 5433 -U app_paneles -d paneles_semantica -c "
 
 Tienen que salir las tres tablas y `hash_texto` al final de `respuesta`.
 
+Para no depender de que uno se acuerde de qué tendría que estar —y para cubrir
+de paso las migraciones de la Fase 1—, conviene correr el verificador del
+repositorio, que compara las dos bases contra la lista completa de migraciones
+que el código espera:
+
+```bash
+export DSN_BOVEDA="postgresql://app_paneles:CLAVE@127.0.0.1:5432/paneles_boveda"
+export DSN_SEMANTICA="postgresql://app_paneles:CLAVE@127.0.0.1:5433/paneles_semantica"
+python3 scripts/verificar_esquema.py
+```
+
+Sale con código 0 si las dos bases están al día. Si falta alguna migración, la
+nombra, explica qué depende de ella e imprime el comando que la aplica. Con
+`--sql semantica` (o `--sql boveda`) imprime la misma verificación como
+consulta suelta, para pegar dentro de una sesión de `psql` ya abierta, sin
+conectarse a nada.
+
+Es la misma verificación que hace la aplicación en Cumplimiento → **Esquema de
+las dos bases**; la diferencia es que el script sirve **antes** de desplegar,
+cuando la función todavía no está arriba.
+
 ---
 
 ## 3 · La clave de reranking
@@ -499,7 +520,8 @@ usuario de rol `admin`.
    ```
 
    Devuelve `200` con `"completo": true` cuando está todo, y `500` con la lista
-   de lo que falta y los comandos para aplicarlo cuando no.
+   de lo que falta y los comandos para aplicarlo cuando no. Sin desplegar nada,
+   la misma comprobación es `python3 scripts/verificar_esquema.py` (§2.3).
 
 1. **Consulta demográfica.** Consultas → *+ Criterio demográfico* → `Sexo es F`
    → Consultar. Tiene que aparecer el aviso celeste *«se resolvió entera en la
@@ -787,7 +809,9 @@ psql -h 127.0.0.1 -p 5433 -U app_paneles -d paneles_semantica \
 ```
 
 No hace falta redesplegar la función: la vista se crea y la consulta siguiente
-ya funciona.
+ya funciona. Después de aplicarla conviene correr
+`python3 scripts/verificar_esquema.py`, que revisa las dos bases enteras: si
+una migración se salteó, es probable que se haya salteado más de una.
 
 **«El diagnóstico dice `reranker: ninguno`.»**
 El secreto `RERANKER_API_KEY` está vacío o no llegó. El aviso ámbar arriba del
@@ -875,9 +899,11 @@ Infraestructura y datos:
 - [ ] `db/boveda/0004_fase2.sql` aplicada; las tres tablas existen.
 - [ ] `db/semantica/0003_hash_texto.sql` aplicada; `hash_texto` existe.
 - [ ] El `explain` de la consulta vectorial usa el índice HNSW.
-- [ ] `GET /api/diagnostico/esquema` responde `200` con `"completo": true`. Es
-      la comprobación que cubre de una sola vez las migraciones de las dos
-      bases, incluidas las de la Fase 1.
+- [ ] `python3 scripts/verificar_esquema.py` sale con código 0. Es la
+      comprobación que cubre de una sola vez las migraciones de las dos bases,
+      incluidas las de la Fase 1, y se puede correr **antes** del deploy.
+- [ ] `GET /api/diagnostico/esquema` responde `200` con `"completo": true`
+      (lo mismo, ya con la función arriba).
 
 Secretos y permisos:
 
