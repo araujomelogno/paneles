@@ -9,7 +9,8 @@ instancias de Cloud SQL, el conector de VPC, Auth, Firestore y Voyage. Si eso
 todavía no está, la Fase 2 no tiene dónde apoyarse.
 
 Los comandos son para macOS/Linux, con el mismo toolchain del manual anterior
-(`gcloud`, `cloud-sql-proxy`, `psql`, `firebase`).
+(`gcloud`, `cloud-sql-proxy`, `psql`, `firebase`; y para las verificaciones
+de la sección 8, `curl` y `python3`, que vienen con macOS).
 
 ---
 
@@ -93,12 +94,15 @@ Una consulta semántica solo puede ver a las personas con la finalidad
 padrón se armó pidiendo solo el consentimiento de contacto, **las consultas van
 a devolver vacío y el sistema va a estar funcionando bien**.
 
-```sql
--- ¿Cuánta gente puede aparecer en una consulta semántica?
+En la **bóveda** (`cloud-sql-proxy --port 5432 …:paneles-boveda` en otra
+terminal):
+
+```bash
+psql -h 127.0.0.1 -p 5432 -U app_paneles -d paneles_boveda -c "
 select finalidad, count(distinct id_persona) as personas
   from consentimiento
  where estado = 'vigente'
- group by finalidad;
+ group by finalidad;"
 ```
 
 Si `uso_semantico` da mucho menos que `contacto_participacion`, hay que hacer
@@ -336,6 +340,23 @@ node scripts/alta_usuario.js jefa@equipos.com.uy admin "Nombre Apellido"
 En la Fase 1 el índice HNSW se creó con la tabla vacía, y con la tabla vacía
 cualquier índice anda. Con corpus real hay dos cosas para mirar.
 
+> **Dónde se corre todo lo de esta sección.** Dentro de una sesión de `psql`
+> contra la **instancia semántica** (es donde vive `respuesta`):
+>
+> ```bash
+> # Terminal 1 — el proxy contra la semántica (dejalo corriendo).
+> cloud-sql-proxy --port 5433 \
+>   gestion-paneles:southamerica-east1:paneles-semantica
+>
+> # Terminal 2 — la sesión interactiva.
+> psql -h 127.0.0.1 -p 5433 -U app_paneles -d paneles_semantica
+> ```
+>
+> En el prompt `paneles_semantica=>` pegás el SQL de abajo, terminado en `;`.
+> Antes de sacar conclusiones, mirá cuántas filas tenés: `select count(*) from
+> respuesta;`. Con un corpus chico, varios de estos chequeos dan «mal» sin que
+> haya nada roto (ver la causa 2 de 6.1).
+
 ### 6.1 · ¿Está usando el índice?
 
 ```sql
@@ -490,7 +511,13 @@ usuario de rol `admin`.
 
 ### 8.2 · Que las claves estén enganchadas
 
-Sin abrir la app, con un ID token de Firebase Auth:
+Sin abrir la app, con un ID token de Firebase Auth.
+
+> **Cómo se saca el token.** Entrá a `https://gestion-paneles.web.app`,
+> logueate, abrí la consola del navegador (F12 → Console) y pegá:
+> `await firebase.auth().currentUser.getIdToken()` —o, según cómo esté
+> inicializado el SDK, `await getAuth().currentUser.getIdToken()`—. Copiá la
+> cadena que devuelve. Dura una hora; pasado ese rato, repetí.
 
 ```bash
 TOKEN="...el ID token..."
@@ -644,14 +671,17 @@ Se registra en dos lugares:
 No se registra listar el padrón: eso ya se venía mostrando en pantalla, y
 anotarlo llenaría el registro de ruido hasta volverlo inútil para auditar.
 
-```sql
+En la **bóveda** (o desde la app, ver abajo):
+
+```bash
+psql -h 127.0.0.1 -p 5432 -U app_paneles -d paneles_boveda -c "
 -- Quién reidentificó, a cuánta gente, en la última semana.
 select actor_email, motivo, count(*) as veces,
        count(distinct id_persona) as personas
   from reidentificacion
  where creado_en > now() - interval '7 days'
  group by 1, 2
- order by veces desc;
+ order by veces desc;"
 ```
 
 Desde la app lo lee cumplimiento (`admin` o `dpo`) en `GET /reidentificacion`.
@@ -696,15 +726,21 @@ desplegar la Fase 2 están puestas.
 
 ### Si igual hay que revertir el esquema
 
-```sql
--- Bóveda. Ojo: se lleva la auditoría de usuarios y el registro de
--- reidentificación, que son justamente lo que hay que conservar.
+**Son dos stores distintos: cada bloque va a su instancia.** Correr el de
+bóveda contra la semántica (o al revés) falla a mitad de camino.
+
+```bash
+# Bóveda (puerto 5432). Ojo: se lleva la auditoría de usuarios y el registro
+# de reidentificación, que son justamente lo que hay que conservar.
+psql -h 127.0.0.1 -p 5432 -U app_paneles -d paneles_boveda -v ON_ERROR_STOP=1 -c "
 drop table if exists consulta_guardada;
 drop table if exists usuario_auditoria;
-drop table if exists reidentificacion;
+drop table if exists reidentificacion;"
 
--- Semántica. Perder el hash solo cuesta un re-embedding la próxima ingesta.
-alter table respuesta drop column if exists hash_texto;
+# Semántica (puerto 5433). Perder el hash solo cuesta un re-embedding en la
+# próxima ingesta.
+psql -h 127.0.0.1 -p 5433 -U app_paneles -d paneles_semantica -v ON_ERROR_STOP=1 -c "
+alter table respuesta drop column if exists hash_texto;"
 ```
 
 ---
