@@ -15,6 +15,7 @@ from . import (
     consentimiento,
     consultas,
     encuestas,
+    esquema,
     paneles,
     participacion,
     personas,
@@ -552,6 +553,18 @@ def auditoria_usuarios(ctx, actor, params, cuerpo, consulta):
         ctx.boveda, consulta.get("uid"),
         min(_entero(consulta.get("limite"), 200) or 200, 1000),
     )
+
+
+@ruta("GET", "/diagnostico/esquema", "leer")
+def diagnostico_esquema(ctx, actor, params, cuerpo, consulta):
+    """Qué migraciones están aplicadas en cada store y cuáles faltan.
+
+    Las migraciones se aplican a mano contra cada instancia de Cloud SQL, así
+    que una que no se aplicó no se nota hasta que alguien usa la pantalla que
+    la necesitaba. Esta ruta lo hace visible antes de eso.
+    """
+    estado = esquema.revisar_stores(ctx.boveda, ctx.semantica)
+    return (200 if estado["completo"] else 500), estado
 
 
 @ruta("GET", "/yo", None)

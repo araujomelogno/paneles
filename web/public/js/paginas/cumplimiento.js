@@ -1,8 +1,14 @@
 /* Cumplimiento — el invariante de privacidad, visible.
 
-   Tres cosas: la auditoría de que el store semántico no tiene columnas de PII,
-   las bajas cuyo borrado semántico quedó pendiente de confirmar, y el detalle
-   de qué implica cada retiro de consentimiento. */
+   Cuatro cosas: la auditoría de que el store semántico no tiene columnas de
+   PII, el estado de las migraciones de las dos bases, las bajas cuyo borrado
+   semántico quedó pendiente de confirmar, y el detalle de qué implica cada
+   retiro de consentimiento.
+
+   El estado del esquema está acá y no en Configuración porque es la pantalla
+   que ya se usa para verificar que el sistema está sano, y porque una
+   migración sin aplicar es exactamente eso: una parte del sistema que no está
+   donde se cree que está. */
 
 import * as api from '../api.js';
 import {
@@ -22,6 +28,12 @@ export async function render(main, ctx) {
           <div class="card-header"><span class="card-header-title">Auditoría del store semántico</span>
             <button class="btn btn-outline btn-sm" id="auditar">Auditar ahora</button></div>
           <div class="card-body"><div id="auditoria">${cargando('12vh')}</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><span class="card-header-title">Esquema de las dos bases</span>
+            <button class="btn btn-outline btn-sm" id="ver-esquema">Revisar</button></div>
+          <div class="card-body"><div id="esquema">${cargando('12vh')}</div></div>
         </div>
 
         <div class="card">
@@ -71,8 +83,58 @@ export async function render(main, ctx) {
     </div>`;
 
   $('#auditar').onclick = cargarAuditoria;
+  $('#ver-esquema').onclick = cargarEsquema;
   $('#reintentar').onclick = reintentar;
-  await Promise.all([cargarAuditoria(), cargarPendientes()]);
+  await Promise.all([cargarAuditoria(), cargarEsquema(), cargarPendientes()]);
+}
+
+/* Las migraciones se aplican a mano contra cada instancia de Cloud SQL. Una
+   que no se aplicó no se nota hasta que alguien entra a la pantalla que la
+   necesitaba, y ahí falla con un error del servidor que no dice nada. Este
+   panel lo adelanta. */
+async function cargarEsquema() {
+  const contenedor = $('#esquema');
+  if (!contenedor) return;
+  contenedor.innerHTML = cargando('12vh');
+  let estado;
+  try {
+    estado = await api.cumplimiento.esquema();
+  } catch (error) {
+    // La ruta devuelve 500 cuando falta algo: el cuerpo trae el detalle.
+    estado = error.cuerpo?.migraciones ? error.cuerpo : null;
+    if (!estado) { contenedor.innerHTML = alerta(error.message); return; }
+  }
+
+  if (estado.completo) {
+    contenedor.innerHTML = `
+      <div class="alert alert-success">
+        Las dos bases tienen aplicadas todas las migraciones que el sistema espera.
+      </div>
+      <p class="small muted">${['boveda', 'semantica'].map((s) =>
+        `${s}: ${estado[s].migraciones.length} migración(es)`).join(' · ')}</p>`;
+    return;
+  }
+
+  contenedor.innerHTML = `
+    <div class="alert alert-error">
+      Faltan migraciones por aplicar. Las pantallas que dependan de lo que falta
+      van a fallar hasta que se apliquen.
+    </div>
+    ${['boveda', 'semantica'].map((store) => {
+      const faltan = estado[store].migraciones.filter((m) => !m.aplicada);
+      if (!faltan.length) return '';
+      return `<div style="margin-bottom:.7rem">
+        <div class="small td-strong">Store ${esc(store)}</div>
+        <ul style="margin-left:1.1rem;font-size:0.82rem">
+          ${faltan.map((m) => `<li><code>${esc(m.migracion)}</code>
+            <span class="muted">— falta ${m.faltantes.map((f) => `<code>${esc(f)}</code>`).join(', ')}</span>
+          </li>`).join('')}
+        </ul>
+      </div>`;
+    }).join('')}
+    <p class="small muted">Se aplican con <code>psql</code> contra la instancia
+    correspondiente; los comandos exactos están en el manual de despliegue de
+    cada fase.</p>`;
 }
 
 async function cargarAuditoria() {

@@ -13,7 +13,7 @@ import os
 import firebase_admin
 from firebase_functions import https_fn, options
 
-from panel_api import auth, config, contexto, ruteo
+from panel_api import auth, config, contexto, esquema, ruteo
 from panel_api.errores import ErrorApi
 
 # Idempotente: el descubrimiento de funciones y el emulador pueden cargar
@@ -104,6 +104,16 @@ def api(req: https_fn.Request) -> https_fn.Response:
     except config.ErrorConfig as error:
         return _json(500, {"error": "config", "mensaje": str(error)})
     except Exception as error:  # noqa: BLE001
-        # No se filtra el detalle al cliente: puede traer fragmentos de PII.
         print(f"[api] error no manejado: {error!r}")
+        # Un objeto que no existe casi siempre es una migración sin aplicar, y
+        # eso el usuario lo puede resolver. Se le dice cuál es: el mensaje solo
+        # nombra el objeto y el archivo, así que no filtra ningún dato.
+        falta = esquema.explicar_error(error)
+        if falta:
+            return _json(500, {
+                "error": "esquema_desactualizado",
+                "mensaje": falta,
+                "detalle": {"ruta_de_diagnostico": "GET /api/diagnostico/esquema"},
+            })
+        # Para el resto no se filtra el detalle: puede traer fragmentos de PII.
         return _json(500, {"error": "interno", "mensaje": "Error interno del servidor."})

@@ -737,6 +737,26 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   if (clave === 'POST /cumplimiento/reintentar') return { resultados: [] };
   if (clave === 'GET /auditoria/pii') return { limpio: true, hallazgos: [] };
 
+  /* El demo no tiene esquema que verificar: se responde «al día» para que la
+     pantalla de Cumplimiento se pueda recorrer entera. */
+  if (clave === 'GET /diagnostico/esquema') {
+    const migraciones = {
+      boveda: ['0001_init.sql', '0002_revision_alta.sql', '0003_baja_persona.sql', '0004_fase2.sql'],
+      semantica: ['0001_init.sql', '0002_vista_procedencia.sql', '0003_hash_texto.sql'],
+    };
+    const armar = (archivos) => ({
+      completo: true, faltantes: [],
+      migraciones: archivos.map((m) => ({
+        migracion: m, aplicada: true, objetos: [], faltantes: [],
+      })),
+    });
+    return {
+      completo: true, como_aplicar: [],
+      boveda: armar(migraciones.boveda),
+      semantica: armar(migraciones.semantica),
+    };
+  }
+
   /* ══════════════════════════════════════════════════════════════
      Fase 2
      ══════════════════════════════════════════════════════════════ */

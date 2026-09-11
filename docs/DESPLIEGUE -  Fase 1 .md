@@ -356,10 +356,15 @@ paso 4.2 tienen IP pública con la lista vacía.
 > así que `gcloud auth application-default login` (paso 1) tiene que estar hecho,
 > o corta con `could not find default credentials`.
 
+> **Correr `psql` desde la raíz del repo.** Los `\i` de abajo usan rutas
+> relativas. Si la sesión se abrió desde otro directorio, el archivo no se
+> encuentra —y ese es justamente el caso peligroso: ver el aviso que sigue.
+
 ```bash
 gcloud sql connect paneles-boveda --user=app_paneles --database=paneles_boveda
 ```
 ```
+\set ON_ERROR_STOP on
 \i db/boveda/0001_init.sql
 \i db/boveda/0002_revision_alta.sql
 \i db/boveda/0003_baja_persona.sql
@@ -370,12 +375,26 @@ gcloud sql connect paneles-boveda --user=app_paneles --database=paneles_boveda
 gcloud sql connect paneles-semantica --user=app_paneles --database=paneles_semantica
 ```
 ```
+\set ON_ERROR_STOP on
 \i db/semantica/0001_init.sql
 \i db/semantica/0002_vista_procedencia.sql
 \q
 ```
 
 El orden importa: `0002` y `0003` referencian tablas que crea `0001`.
+
+> **El `\set ON_ERROR_STOP on` de la primera línea no es decorativo.** Sin él,
+> `psql` sigue adelante después de un error: si un `\i` no encuentra el archivo
+> o un DDL falla, imprime el error, ejecuta igual los `\i` siguientes y termina
+> con el `\q`. La sesión se ve normal y la base queda a medio migrar. Con
+> `ON_ERROR_STOP` la sesión aborta en el primer problema, que es lo que se
+> quiere.
+>
+> Esto ya pasó en producción: la semántica quedó con `0001` aplicada y sin
+> `0002`, y el sistema arrancó bien. La falla apareció semanas después, la
+> primera vez que alguien corrió una consulta semántica, con un error genérico
+> en pantalla. El paso «Verificar» de más abajo existe para detectarlo antes; a
+> partir de la Fase 2 la propia aplicación lo comprueba y lo informa.
 
 **Si `gcloud sql connect` sigue fallando en macOS** (a veces no encuentra el
 proxy pese al PATH), levantá el Auth Proxy a mano y conectá con `psql` directo
@@ -433,6 +452,11 @@ select extversion from pg_extension where extname = 'vector';
 
 La bóveda tiene que mostrar 13 tablas; la semántica, 4 tablas más la
 vista `v_respuesta_estudio`.
+
+Con la Fase 2 desplegada hay además una comprobación desde la propia
+aplicación, que no exige abrir `psql`: **Cumplimiento → Esquema de las dos
+bases**, o `GET /api/diagnostico/esquema`. Compara lo que hay en cada base con
+lo que el código espera y nombra la migración que falte.
 
 ---
 

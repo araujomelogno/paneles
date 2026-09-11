@@ -488,6 +488,19 @@ archivo hace falta solo para apartarse de eso.
 En orden, porque cada paso depende del anterior. Todo desde la app, con un
 usuario de rol `admin`.
 
+0. **El esquema, antes que nada.** Cumplimiento → **Esquema de las dos bases**
+   tiene que decir que están aplicadas todas las migraciones. Si falta alguna,
+   la nombra, y no tiene sentido seguir: las pantallas que dependan de lo que
+   falta van a fallar. Lo mismo por API:
+
+   ```bash
+   curl -s https://gestion-paneles.web.app/api/diagnostico/esquema \
+     -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
+   ```
+
+   Devuelve `200` con `"completo": true` cuando está todo, y `500` con la lista
+   de lo que falta y los comandos para aplicarlo cuando no.
+
 1. **Consulta demográfica.** Consultas → *+ Criterio demográfico* → `Sexo es F`
    → Consultar. Tiene que aparecer el aviso celeste *«se resolvió entera en la
    bóveda y no se abrió conexión al store semántico»*. Eso prueba que R2.4
@@ -754,6 +767,28 @@ tiene `uso_semantico` vigente (ver paso 1). Si da un número razonable y el
 ranking igual está vacío, probá el **modo laxo**: en estricto queda afuera
 quien no tiene evidencia del criterio.
 
+**«Una pantalla falla con “Error interno del servidor” y en los logs aparece
+`relation "…" does not exist`.»**
+Es una migración sin aplicar. A partir de la Fase 2 la aplicación lo traduce y
+la respuesta trae el nombre del archivo que falta en lugar del error genérico;
+si el mensaje que se ve es el genérico, la función es anterior a ese cambio y
+hay que redesplegar. El estado completo está en Cumplimiento → Esquema de las
+dos bases, o en `GET /api/diagnostico/esquema`.
+
+El caso que ya ocurrió: `v_respuesta_estudio` no existía porque la semántica
+tenía aplicada la migración `0001` pero no la `0002`. El síntoma fue que toda
+la sección de Consultas fallaba mientras el resto del sistema funcionaba
+normalmente. Se corrige aplicando la migración que falte:
+
+```bash
+cloud-sql-proxy gestion-paneles:southamerica-east1:paneles-semantica --port 5433
+psql -h 127.0.0.1 -p 5433 -U app_paneles -d paneles_semantica \
+  -v ON_ERROR_STOP=1 -f db/semantica/0002_vista_procedencia.sql
+```
+
+No hace falta redesplegar la función: la vista se crea y la consulta siguiente
+ya funciona.
+
 **«El diagnóstico dice `reranker: ninguno`.»**
 El secreto `RERANKER_API_KEY` está vacío o no llegó. El aviso ámbar arriba del
 ranking trae el motivo exacto. Acordate de que un cambio de secreto necesita un
@@ -840,6 +875,9 @@ Infraestructura y datos:
 - [ ] `db/boveda/0004_fase2.sql` aplicada; las tres tablas existen.
 - [ ] `db/semantica/0003_hash_texto.sql` aplicada; `hash_texto` existe.
 - [ ] El `explain` de la consulta vectorial usa el índice HNSW.
+- [ ] `GET /api/diagnostico/esquema` responde `200` con `"completo": true`. Es
+      la comprobación que cubre de una sola vez las migraciones de las dos
+      bases, incluidas las de la Fase 1.
 
 Secretos y permisos:
 
