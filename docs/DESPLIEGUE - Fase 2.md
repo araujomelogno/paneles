@@ -199,6 +199,7 @@ repositorio, que compara las dos bases contra la lista completa de migraciones
 que el código espera:
 
 ```bash
+pip install "psycopg[binary]"   # el driver, si no está
 export DSN_BOVEDA="postgresql://app_paneles:CLAVE@127.0.0.1:5432/paneles_boveda"
 export DSN_SEMANTICA="postgresql://app_paneles:CLAVE@127.0.0.1:5433/paneles_semantica"
 python3 scripts/verificar_esquema.py
@@ -207,8 +208,8 @@ python3 scripts/verificar_esquema.py
 Sale con código 0 si las dos bases están al día. Si falta alguna migración, la
 nombra, explica qué depende de ella e imprime el comando que la aplica. Con
 `--sql semantica` (o `--sql boveda`) imprime la misma verificación como
-consulta suelta, para pegar dentro de una sesión de `psql` ya abierta, sin
-conectarse a nada.
+consulta suelta, para pegar dentro de una sesión de `psql` ya abierta. Esa vía
+no se conecta a ninguna base y no necesita el driver instalado.
 
 Es la misma verificación que hace la aplicación en Cumplimiento → **Esquema de
 las dos bases**; la diferencia es que el script sirve **antes** de desplegar,

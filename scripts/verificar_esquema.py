@@ -23,9 +23,10 @@ puede encadenar en un script de despliegue.
 Con `--sql` no se conecta a ninguna base: imprime una consulta para pegar
 dentro de una sesión de `psql` ya abierta (por ejemplo la de
 `gcloud sql connect`). Sirve cuando no se puede correr Python contra la base
-pero sí se está adentro de la sesión. Como cada sesión de `psql` está abierta
-contra una sola base, `--sql boveda` y `--sql semantica` imprimen la consulta
-de ese store solo:
+pero sí se está adentro de la sesión —o cuando no hay `psycopg` instalado, ya
+que `--sql` no se conecta a ninguna base y no necesita el driver—. Como cada
+sesión de `psql` está abierta contra una sola base, `--sql boveda` y
+`--sql semantica` imprimen la consulta de ese store solo:
 
     python3 scripts/verificar_esquema.py --sql semantica | psql "$DSN_SEMANTICA"
 
@@ -124,6 +125,18 @@ def main():
         print(f"{ROJO}Falta {' y '.join(faltan_dsn)} en el entorno.{FIN}")
         print("Ver el encabezado de este archivo, o usar --sql para revisarlo "
               "desde una sesión de psql ya abierta.")
+        return 2
+
+    try:
+        import psycopg  # noqa: F401
+    except ModuleNotFoundError:
+        print(f"{ROJO}Falta el driver de Postgres para conectarse.{FIN}")
+        print('  pip install "psycopg[binary]"')
+        print(f"\n{AMARILLO}O, sin instalar nada:{FIN} --sql imprime la misma "
+              "verificación como\nconsulta suelta, para pegar en una sesión de "
+              "psql ya abierta.\n")
+        print("  python3 scripts/verificar_esquema.py --sql semantica")
+        print("  python3 scripts/verificar_esquema.py --sql boveda")
         return 2
 
     print("Esquema de las dos bases")
