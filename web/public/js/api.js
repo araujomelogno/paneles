@@ -105,6 +105,9 @@ export const cumplimiento = {
   pendientes: () => GET('/cumplimiento/pendientes'),
   reintentar: () => POST('/cumplimiento/reintentar', {}),
   auditoriaPii: () => GET('/auditoria/pii'),
+  /* Qué migraciones están aplicadas en cada base. Devuelve 500 cuando falta
+     alguna, con el detalle en el cuerpo: la página lo lee de ahí. */
+  esquema: () => GET('/diagnostico/esquema'),
 };
 
 export const encuestas = {
