@@ -23,6 +23,7 @@ A esto se suma que retener PII identificada de forma permanente, para contactar 
 
 - Mantener paneles **sanos**, no solo almacenarlos (representatividad, participación, fatiga, calidad).
 - **Un solo registro de personas**: el enrolamiento emite la identidad estable (`id_persona`) de toda la plataforma.
+- **La persona es la unidad, y cruza estudios**: un mismo individuo puede responder varios cuestionarios y acumula un perfil a través de todos ellos, de modo que criterios provenientes de estudios distintos pueden identificar a una persona real. El cuestionario es procedencia del dato, no frontera.
 - **Consulta por concepto sin conocer el esquema**: describir un criterio en lenguaje natural y obtener un ranking de individuos que se le aproximan.
 - **Criterios combinados a nivel persona**, incluso cuando cada criterio proviene de un estudio distinto.
 - **Muestreo que equilibra cuota y fatiga**.
@@ -34,10 +35,10 @@ A esto se suma que retener PII identificada de forma permanente, para contactar 
 - **No es segmentación exacta ni exhaustiva.** El resultado es un ranking por aproximación, no "todos los que cumplen"; no reemplaza un filtro booleano preciso.
 - **No hay capa de conceptos canónicos ni pre-clasificación de respuestas.** Descartado deliberadamente a favor de interpretación en tiempo de consulta (*schema-on-read*), para no congelar errores de canonización en el dato.
 - **No reemplaza la tabulación cuantitativa.** Ponderación, representatividad y significancia estadística siguen en las herramientas actuales.
-- **No espeja atributos demográficos al store semántico** (por ahora): los segmentadores quedan autoritativos en la bóveda y el store semántico se mantiene como contenido puro, para minimizar riesgo de reidentificación.
+- **No espeja atributos demográficos al store semántico** (por ahora): los segmentadores quedan autoritativos en la bóveda y el store semántico se mantiene como contenido puro. Además de simplificar, reduce el **riesgo mosaico**: cuantos menos cuasi-identificadores hay del lado semántico, menos reidentificable es ese dataset por combinación de respuestas.
 - **No declara anonimización.** El dataset seudonimizado sigue siendo dato personal bajo URCDP; es una salvaguarda, no una exención.
 - **No es tiempo real.** La ingesta es por lotes, por estudio.
-- **No endurece el auto-registro en v1** (landing simple por ahora).
+- **No endurece el auto-registro en v1**: la landing se construye en Fase 3 en su forma simple; la verificación de contacto y el anti-fraude son Fase 4.
 - **No automatiza el tratamiento fiscal de premios.**
 - **Sin caché de interpretaciones recurrentes en v1.**
 
@@ -52,10 +53,11 @@ A esto se suma que retener PII identificada de forma permanente, para contactar 
 
 Un sistema, dos módulos, dos stores. Ambos en **Cloud SQL for Postgres**, en instancias **separadas** (la separación es parte del diseño de privacidad, no preferencia de infra). App en Firebase (Auth + Cloud Functions Python + Hosting), región `southamerica-east1`.
 
-- **Store local (bóveda + paneles):** PII y atributos demográficos (autoritativos aquí), paneles, membresías, consentimiento, participación, muestreo, gamificación. Sirve la gestión de panel y la **consulta puramente demográfica** sin tocar embeddings.
+- **Store local (bóveda + paneles):** PII y atributos demográficos, autoritativos aquí — `persona` con sexo, fecha de nacimiento, localidad, nombre, email, celular, contacto y observaciones, más atributos derivados (tramo etario) —; paneles, membresías, consentimiento, participación, muestreo, gamificación. Sirve la gestión de panel y la **consulta puramente demográfica** sin tocar embeddings.
 - **Store semántico:** solo embeddings + `id_persona`. Contenido puro.
 - **Regla dura:** la PII nunca se escribe en el store semántico. Al semántico solo viaja `id_persona`.
 - **Cruce entre stores:** por conjuntos de `id_persona`, y `ref_estudio` (uuid) para vincular `encuesta` (local) ↔ `cuestionario` (semántico). No hay FK cruzada.
+- **Consentimiento por finalidad, con dos finalidades independientes:** `contacto_participacion` (convocar y participar) y `uso_semantico` (perfilado semántico entre estudios). Sin la finalidad vigente correspondiente, la operación se rechaza: no se convoca sin la primera, y no se ingesta ni se devuelve en consultas semánticas sin la segunda.
 
 ---
 
@@ -63,13 +65,17 @@ Un sistema, dos módulos, dos stores. Ambos en **Cloud SQL for Postgres**, en in
 
 Cómo funciona el motor por dentro. Las tres formas de consulta como feature de producto están en la Fase 2 (§3).
 
+### Principio: todo se evalúa semánticamente
+
+**Toda respuesta se embebe y toda aproximación es por similitud, incluidas las preguntas cerradas.** No hay match exacto sobre códigos ni valores: una cerrada se trata igual que una abierta (su etiqueta se resuelve y se embebe junto al texto de su pregunta). Esto es lo que permite consultar sin saber en qué variable vive un concepto ni cómo se codificó en cada estudio. El tipo de pregunta se conserva como metadato informativo, pero no cambia el camino de consulta.
+
 ### Modelo de datos
 
 `cuestionario` (con `ref_estudio`), `individuo` (solo `id_persona` opaco), `pregunta` (con `codigo` externo, tipo, opciones), `respuesta` (formato largo, `embedding` obligatorio, `texto_embebido`, índice HNSW, unicidad por individuo+pregunta).
 
 ### Ingesta
 
-Desde archivo de cuestionario + Excel ancho de respuestas:
+Desde archivo de cuestionario + Excel ancho de respuestas (exports de las plataformas de campo, p. ej. Dooblo o Alchemer; el identificador de cada plataforma se guarda como alias de origen para resolver ingestas futuras a la misma persona):
 - Despivote ancho → largo; cada columna se une a su pregunta por `codigo` (= encabezado del Excel).
 - Resolución código/etiqueta por celda contra el mapa de opciones antes de embeber.
 - Composición del texto como "pregunta → respuesta" y vectorización en lotes.
@@ -83,6 +89,14 @@ Desde archivo de cuestionario + Excel ancho de respuestas:
 3. **Verificación con Claude (decisión).** Sobre el top-k, Claude lee las respuestas con procedencia, confirma valor/polaridad, combina criterios y devuelve el ranking con la evidencia de por qué entró cada individuo.
 
 **Criterios combinados:** mejor puntaje por criterio y por individuo → regla de combinación → ranking único a nivel persona. Los criterios duros filtran; los difusos ordenan.
+
+### Mejoras previstas del módulo (no bloquean el P0)
+
+- **Salto de re-embedding por hash:** guardar hash del `texto_embebido` y no re-vectorizar respuestas sin cambios en re-ingestas.
+- **Dedup de re-ingesta:** reingestar el mismo estudio sin duplicar `cuestionario` / `pregunta` *(ya implementado en Fase 1)*.
+- **Políticas RLS** según el modelo de auth sobre las tablas del store semántico (hoy deny-all de base).
+- **Logging de reidentificación:** registrar cada acceso deliberado que traduce `id_persona` a PII en la bóveda.
+- **Regla de combinación configurable:** "Y" estricto (exige aproximación en todos los criterios) vs. laxo (suma lo disponible).
 
 ### Consideraciones futuras del módulo
 
@@ -108,9 +122,9 @@ Caché derivado de interpretaciones recurrentes (versionado por modelo, invalida
 
 **Objetivo.** Hacer utilizable lo que la Fase 1 acumula: poder **interrogar** la base vectorial (hoy se escriben embeddings que no se pueden preguntar) y medir la salud del panel.
 
-**Alcance.** Motor de consulta de tres etapas (recuperación → reranker → verificación con Claude); criterios combinados; las tres formas de consulta (demográfica local, semántica, mixta por puente de `id_persona`); composición vs. objetivo de universo/cuotas; tablero de participación; y **gestión de usuarios del sistema** en una solapa de Configuración (hoy solo por línea de comandos).
+**Alcance.** Motor de consulta de tres etapas (recuperación → reranker → verificación con Claude); criterios combinados; las tres formas de consulta (demográfica local, semántica, mixta por puente de `id_persona`); composición vs. objetivo de universo/cuotas; tablero de participación.
 
-**Requisitos.** R2.1 registro de participación por ola · R2.2 carga de universo de referencia · R2.3 composición descriptiva y brecha · R2.4 consulta demográfica pura (sin tocar el semántico) · R2.5 consulta mixta (puente) · R2.6 tablero de participación · **R2.7 recuperación semántica** · **R2.8 reranking** · **R2.9 verificación con Claude** · **R2.10 criterios combinados** · R2.11 gate de consentimiento en consulta · **R2.12 gestión de usuarios del sistema (Configuración)**.
+**Requisitos.** R2.1 registro de participación por ola · R2.2 carga de universo de referencia · R2.3 composición descriptiva y brecha · R2.4 consulta demográfica pura (sin tocar el semántico) · R2.5 consulta mixta (puente) · R2.6 tablero de participación · **R2.7 recuperación semántica** · **R2.8 reranking** · **R2.9 verificación con Claude** · **R2.10 criterios combinados** · R2.11 gate de consentimiento en consulta.
 
 *Detalle completo en `SPEC_fase2.md`.*
 
@@ -120,9 +134,17 @@ Caché derivado de interpretaciones recurrentes (versionado por modelo, invalida
 
 **Objetivo.** Pasar de observar a accionar.
 
-**Alcance.** Motor de muestreo por reglas (propone a quién invitar priorizando brechas de cuota y excluyendo sobre-convocados); chequeos de calidad (speeders, straightliners, duplicados); gamificación con ledger de puntos como moneda (auditable, saldo ≥ 0, vencimiento), catálogo y canje, ganando puntos **solo por participación de calidad**; bonos dirigidos a segmentos de cuota difíciles.
+**Alcance.** Motor de muestreo por reglas (propone a quién invitar priorizando brechas de cuota y excluyendo sobre-convocados); chequeos de calidad (speeders, straightliners, duplicados); gamificación con ledger de puntos como moneda (auditable, saldo ≥ 0, vencimiento), catálogo y canje, ganando puntos **solo por participación de calidad**; bonos dirigidos a segmentos de cuota difíciles; y **landing pública de auto-registro** de panelistas.
 
-**Requisitos.** R3.1 muestreo por reglas · R3.2 chequeos de calidad · R3.3 ledger de puntos · R3.4 earn por calidad · R3.5 catálogo y canje · R3.6 bono dirigido.
+**Requisitos.** R3.1 muestreo por reglas · R3.2 chequeos de calidad · R3.3 ledger de puntos · R3.4 earn por calidad · R3.5 catálogo y canje · R3.6 bono dirigido · **R3.7 landing de auto-registro** · **R3.8 gestión de usuarios del sistema**.
+
+**R3.7 — Landing de auto-registro.** Formulario público donde una persona se inscribe al panel y **da su propio consentimiento** (más fuerte legalmente que un operador registrándolo por ella). Incluye: captura de datos patronímicos y de contacto, texto de consentimiento versionado por finalidad, dedup contra panelistas existentes al enviar, y estado de alta pendiente de aprobación por Equipos antes de entrar al panel. Emite `id_persona` por la misma vía que el alta interna (R1.1–R1.3), reutilizando identidad si la persona ya existe.
+
+> **Nota de secuencia.** La Fase 1 implementó el alta **interna** (un operador enrola desde la app admin). El auto-registro es la vía pública y se construye acá; su **endurecimiento** (verificación de email/celular, anti-fraude) es R4.4 en la Fase 4, que asume esta landing ya existente.
+
+**R3.8 — Gestión de usuarios del sistema (solapa Configuración).** Padrón de **personal de Equipos** (Firebase Auth + ficha en Firestore `usuarios/{uid}`), **no** panelistas: alta desde la app con email y rol, cambio de rol y desactivación, sin depender de `scripts/alta_usuario.js`. Alta idempotente por email (si la cuenta ya existe en Auth, solo actualiza ficha y rol). Permiso propio (`gestionar_usuarios`, solo `admin`); un admin no puede quitarse su propio rol ni desactivarse; toda alta, cambio y desactivación queda auditada. La clave inicial no se muestra de forma persistente (correo de establecer contraseña). El script de línea de comandos se conserva para el **bootstrap del primer admin**, que no puede crearse desde la app.
+
+> **Alcance.** Son los cuatro roles ya existentes (`admin`, `operaciones`, `analista`, `dpo`) aplicados a todo el sistema: no incluye SSO, MFA ni permisos por panel. Es escalada de privilegios por diseño (un admin puede crear otros admins), de ahí el permiso acotado y la auditoría.
 
 **Bloqueante.** Tratamiento fiscal del canje de premios en Uruguay.
 
