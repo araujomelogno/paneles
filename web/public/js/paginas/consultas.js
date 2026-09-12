@@ -372,6 +372,13 @@ function pintarResultado(resultado) {
         <div class="toolbar">
           <button class="btn btn-outline btn-sm" id="ver-nombres">Ver quiénes son</button>
           <button class="btn btn-outline btn-sm" id="bajar-csv">Descargar CSV</button>
+          <button class="btn btn-outline btn-sm" id="bajar-csv-pii"
+            ${hayReidentificacion(resultado) ? '' : 'disabled'}
+            title="${hayReidentificacion(resultado)
+              ? 'CSV con nombre, documento y contacto. Queda registrado.'
+              : 'Primero hay que reidentificar: exportar con datos no puede ser un segundo camino para sacar PII.'}"
+            >CSV con datos</button>
+          <button class="btn btn-outline btn-sm" id="crear-panel">Crear panel</button>
         </div>
       </div>
       <div class="card-body tight">
@@ -392,6 +399,8 @@ function pintarResultado(resultado) {
   activarTokens(caja);
   $('#ver-nombres').onclick = verNombres;
   $('#bajar-csv').onclick = bajarCsv;
+  $('#bajar-csv-pii').onclick = bajarCsvIdentificado;
+  $('#crear-panel').onclick = crearPanelDesdeConsulta;
   $$('[data-detalle]', caja).forEach((b) => {
     b.onclick = () => abrirDetalle(resultado.items[Number(b.dataset.detalle)]);
   });
@@ -600,6 +609,95 @@ async function bajarCsv() {
   } catch (error) {
     toast(error.message, 'err');
   }
+}
+
+/* R3.10 — el CSV con datos personales.
+
+   Solo está disponible después de reidentificar, y no porque la interfaz sea
+   prolija: si exportar pudiera resolver la PII por su cuenta, habría dos
+   caminos para sacarla de la bóveda y uno solo quedaría auditado. Acá se
+   manda el resultado ya resuelto, y el backend registra la exportación con
+   su propio motivo, distinto de haberla mirado en pantalla. */
+
+function hayReidentificacion(resultado) {
+  return (resultado?.items || []).some((i) => nombresResueltos[i.id_persona]);
+}
+
+async function bajarCsvIdentificado() {
+  const items = (ultimoResultado?.items || [])
+    .map((i) => nombresResueltos[i.id_persona])
+    .filter(Boolean);
+  if (!items.length) {
+    toast('Primero usá «Ver quiénes son»: la exportación con datos parte de esa resolución.', 'err');
+    return;
+  }
+  const ok = await confirmar({
+    titulo: 'Exportar con datos personales',
+    textoOk: 'Descargar el archivo',
+    claseOk: 'btn-dark',
+    cuerpo: `<p>El archivo va a tener <strong>nombre, documento, correo y
+      celular</strong> de ${items.length} persona(s). Llevárselo a un archivo
+      no es lo mismo que verlo en pantalla, así que se registra como un evento
+      aparte, con tu usuario y la fecha.</p>
+      <p class="small muted">No incluye fecha de nacimiento exacta ni
+      observaciones.</p>`,
+  });
+  if (!ok) return;
+  try {
+    const salida = await api.exportacion.csvIdentificado(
+      { items, total: items.length, no_encontrados: [] }, ultimoResultado);
+    const blob = new Blob([salida.csv], { type: 'text/csv;charset=utf-8' });
+    const enlace = document.createElement('a');
+    enlace.href = URL.createObjectURL(blob);
+    enlace.download = salida.nombre_archivo;
+    enlace.click();
+    URL.revokeObjectURL(enlace.href);
+    toast(`${salida.personas} persona(s). La exportación quedó registrada.`, 'ok');
+  } catch (error) {
+    toast(error.message, 'err');
+  }
+}
+
+/* R3.11 — el resultado como panel de trabajo.
+
+   El panel es una foto: guarda la definición que lo originó para poder
+   rastrear de dónde salió su composición, pero no se actualiza solo si la
+   consulta cambia. */
+
+async function crearPanelDesdeConsulta() {
+  if (!ultimoResultado?.items?.length) {
+    toast('El resultado está vacío: no hay panel que crear.', 'err');
+    return;
+  }
+  modal({
+    titulo: `Crear un panel con estas ${ultimoResultado.items.length} personas`,
+    cuerpo: `
+      <p class="small muted">Se va a dar de alta una membresía por cada
+      individuo del resultado. Quien ya sea miembro no se duplica. El panel
+      queda con la definición de esta consulta anotada, como una foto: no se
+      actualiza solo.</p>
+      <div class="form-group"><label>Nombre del panel</label>
+        <input class="finput" name="nombre" placeholder="Tomadores de fernet — set A"></div>
+      <div class="form-group"><label>Descripción</label>
+        <textarea class="finput" name="descripcion" rows="2"></textarea></div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn', onClick: cerrarModal },
+      {
+        texto: 'Crear el panel', clase: 'btn-primary',
+        onClick: async (contenedor) => {
+          const datos = leerFormulario(contenedor);
+          if (!datos.nombre?.trim()) { toast('El panel necesita un nombre.', 'err'); return; }
+          try {
+            const panel = await api.panelDesdeConsulta(
+              datos.nombre.trim(), ultimoResultado, definicion, datos.descripcion);
+            cerrarModal();
+            toast(`Panel «${panel.nombre}» creado con ${panel.miembros} miembros.`, 'ok');
+            if (panel.aviso) toast(panel.aviso.mensaje, 'aviso');
+          } catch (error) { toast(error.message, 'err'); }
+        },
+      },
+    ],
+  });
 }
 
 /* ── Consultas guardadas ────────────────────────────────────────── */

@@ -310,11 +310,12 @@ function abrirIngesta(encuesta) {
         <label>1 · Archivo de respuestas (formato ancho)</label>
         <div class="dropzone" id="dz">
           <span class="dz-icon">📄</span>
-          <span class="dz-texto">Elegí el .xlsx o .csv del export de campo</span>
+          <span class="dz-texto">Elegí el .sav, .xlsx o .csv del export de campo</span>
           <span class="dz-hint">Una fila por individuo, una columna por pregunta.
-            El encabezado de cada columna es el código de su pregunta.</span>
+            Con un <strong>.sav</strong> de SPSS, los textos de las preguntas y las
+            etiquetas de respuesta se precargan solas desde el archivo.</span>
         </div>
-        <input type="file" id="archivo" accept=".xlsx,.xls,.csv,.tsv,.txt" class="hidden" />
+        <input type="file" id="archivo" accept=".sav,.xlsx,.xls,.csv,.tsv,.txt" class="hidden" />
         <div id="resumen-archivo" class="field-hint"></div>
       </div>
 
@@ -340,20 +341,22 @@ function abrirIngesta(encuesta) {
 
   /* Editor de preguntas. */
   const preguntas$ = $('#preguntas', caja);
-  const filaPregunta = (codigo = '', texto = '') => `
+  const TIPOS = ['cerrada', 'abierta', 'escala', 'numerica'];
+  const filaPregunta = (codigo = '', texto = '', tipo = 'cerrada', opciones = null) => `
     <div class="pregunta-fila">
       <input type="text" class="p-codigo" placeholder="P1" value="${esc(codigo)}" />
       <input type="text" class="p-texto" placeholder="Texto de la pregunta" value="${esc(texto)}" />
       <select class="fselect p-tipo">
-        <option value="cerrada">cerrada</option><option value="abierta">abierta</option>
-        <option value="escala">escala</option><option value="numerica">numérica</option>
+        ${TIPOS.map((valor) => `<option value="${valor}" ${valor === tipo ? 'selected' : ''}>
+          ${valor === 'numerica' ? 'numérica' : valor}</option>`).join('')}
       </select>
-      <input type="text" class="p-opciones" placeholder="1=Fernet; 2=Whisky" />
+      <input type="text" class="p-opciones" placeholder="1=Fernet; 2=Whisky"
+             value="${esc(opciones ? Object.entries(opciones).map(([c, e]) => `${c}=${e}`).join('; ') : '')}" />
       <button class="modal-close p-quitar" title="Quitar">×</button>
     </div>`;
 
-  const agregarFila = (codigo, texto) => {
-    preguntas$.insertAdjacentHTML('beforeend', filaPregunta(codigo, texto));
+  const agregarFila = (codigo, texto, tipo, opciones) => {
+    preguntas$.insertAdjacentHTML('beforeend', filaPregunta(codigo, texto, tipo, opciones));
     preguntas$.lastElementChild.querySelector('.p-quitar').onclick = (e) => {
       e.preventDefault();
       e.target.closest('.pregunta-fila').remove();
@@ -377,6 +380,8 @@ function abrirIngesta(encuesta) {
 
   async function cargarArchivo(archivo) {
     try {
+      if (/\.sav$/i.test(archivo.name)) return cargarSav(archivo);
+      datosArchivo.savBase64 = null;
       datosArchivo = await leerArchivo(archivo);
       $('#resumen-archivo', caja).textContent =
         `${archivo.name} — ${datosArchivo.filas.length} filas, ${datosArchivo.encabezados.length} columnas.`;
@@ -398,11 +403,51 @@ function abrirIngesta(encuesta) {
     }
   }
 
+  /* R3.9 — el .sav lo parsea el backend: no hay librería cliente confiable
+     para SPSS y los exports de campo pesan. Lo que vuelve es una propuesta
+     editable, no un hecho: la metadata de SPSS suele venir truncada o
+     críptica, y el texto de la pregunta es justamente lo que se vectoriza. */
+  async function cargarSav(archivo) {
+    const alerta$ = $('#ing-alerta', caja);
+    alerta$.innerHTML = alerta('Analizando el archivo en el servidor…', 'info');
+    const bytes = new Uint8Array(await archivo.arrayBuffer());
+    let binario = '';
+    for (let i = 0; i < bytes.length; i += 8192) {
+      binario += String.fromCharCode(...bytes.subarray(i, i + 8192));
+    }
+    const base64 = btoa(binario);
+
+    const analisis = await api.sav.analizar(encuesta.id, base64);
+    datosArchivo = { encabezados: analisis.variables.map((v) => v.codigo),
+                     filas: [], savBase64: base64 };
+
+    const select = $('#columna-id', caja);
+    select.disabled = false;
+    const probable = analisis.candidatas_a_id[0] || analisis.variables[0]?.codigo;
+    select.innerHTML = analisis.variables
+      .map((v) => `<option value="${esc(v.codigo)}" ${v.codigo === probable ? 'selected' : ''}>
+        ${esc(v.codigo)}${analisis.candidatas_a_id.includes(v.codigo) ? ' (valores únicos)' : ''}
+      </option>`).join('');
+
+    preguntas$.innerHTML = '';
+    analisis.variables
+      .filter((v) => v.codigo !== probable)
+      .forEach((v) => agregarFila(v.codigo, v.texto, v.tipo, v.opciones));
+    if (!preguntas$.children.length) agregarFila();
+
+    $('#resumen-archivo', caja).textContent =
+      `${archivo.name} — ${analisis.filas} filas, ${analisis.variables.length} variables. `
+      + 'Revisá los textos antes de confirmar: es lo que se vectoriza.';
+    alerta$.innerHTML = analisis.avisos.length
+      ? alerta(analisis.avisos.map((a) => a.mensaje).join(' '), 'warn')
+      : '';
+  }
+
   async function correr() {
     const alerta$ = $('#ing-alerta', caja);
     alerta$.innerHTML = '';
     const columnaId = $('#columna-id', caja).value;
-    if (!datosArchivo.filas.length) {
+    if (!datosArchivo.filas.length && !datosArchivo.savBase64) {
       alerta$.innerHTML = alerta('Cargá primero el archivo de respuestas.');
       return;
     }
@@ -424,9 +469,14 @@ function abrirIngesta(encuesta) {
     }
 
     try {
-      const resultado = await api.encuestas.ingestar(encuesta.id, {
-        preguntas, filas: datosArchivo.filas, columnaId,
-      });
+      const resultado = datosArchivo.savBase64
+        ? await api.sav.ingestar(encuesta.id, {
+            archivo_base64: datosArchivo.savBase64,
+            preguntas, columna_id: columnaId, origen: 'sav',
+          })
+        : await api.encuestas.ingestar(encuesta.id, {
+            preguntas, filas: datosArchivo.filas, columnaId,
+          });
       cerrarModal();
       mostrarResultado('Ingesta terminada', [
         ['Respuestas escritas', resultado.respuestas_escritas],

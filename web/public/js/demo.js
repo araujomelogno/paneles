@@ -22,6 +22,21 @@ const diasAtras = (n) => new Date(Date.now() - n * 86400000).toISOString();
 
 /* ── Estado ─────────────────────────────────────────────────────── */
 
+const UMBRALES_DEFAULT = {
+  max_convocatorias_ventana: 3, ventana_dias: 90,
+  max_convocatorias_total: null, dias_minimos_entre: 14,
+};
+
+const EXPLICACIONES_MUESTREO = {
+  sin_consentimiento: 'no tiene consentimiento vigente de contacto_participacion',
+  pendiente_de_consentimiento: 'fue creada por una ingesta sin base legal registrada',
+  ya_convocado_a_esta_encuesta: 'ya está convocada a esta encuesta',
+  demasiadas_convocatorias_recientes: 'superó el tope de convocatorias de la ventana',
+  demasiadas_convocatorias_acumuladas: 'superó el tope de convocatorias acumuladas',
+  convocado_hace_muy_poco: 'fue convocada hace menos de los días mínimos entre olas',
+  cuota_del_segmento_ya_cubierta: 'su segmento no tiene brecha que cerrar',
+};
+
 const bd = {
   // Store de bóveda: PII + paneles.
   personas: [],
@@ -41,6 +56,14 @@ const bd = {
   usuarios: [],           // padrón de personal de Equipos (nunca panelistas)
   auditoriaUsuarios: [],
   reidentificaciones: [],
+  // Fase 3
+  umbralesFatiga: {},      // por panel; vacío = rigen los defaults
+  movimientos: [],         // el ledger de puntos: el saldo es su suma
+  premios: [],
+  canjes: [],
+  bonos: [],
+  inscripciones: [],       // solicitudes de la landing, todavía no personas
+  textosConsentimiento: [],
   secuencias: {
     panel: 1, encuesta: 1, revision: 1, consentimiento: 1, semantica: 1,
     guardada: 1, auditoria: 1, reident: 1,
@@ -120,6 +143,22 @@ function sembrar() {
   // Una ola en campo, para poder convocar desde la interfaz.
   crearEncuesta(joven.id, 'Ola 2 — Hábitos digitales', '2026-09-20');
 
+  // Y una sin convocar en el panel que sí tiene universo de referencia: es
+  // la que deja ver el muestreo de la Fase 3 haciendo lo suyo, priorizando
+  // la brecha contra un objetivo cargado.
+  crearEncuesta(nacional.id, 'Ola 3 — Movilidad urbana', '2026-10-10');
+
+  // La calidad de la ola ya fieldeada: la mayoría bien, un par marcados. Sin
+  // esto la liquidación de puntos no tendría nada que mostrar, y la revisión
+  // de una marca tampoco.
+  bd.participaciones
+    .filter((p) => p.encuesta_id === ola.id && p.respondio)
+    .forEach((p, i) => {
+      p.calidad_estado = i % 7 === 3 ? 'sospechoso' : 'ok';
+      p.motivo_calidad = i % 7 === 3 ? 'speeder' : null;
+      p.duracion_segundos = i % 7 === 3 ? 41 : 300 + i * 17;
+    });
+
   // Un universo de referencia cargado en un panel y no en el otro: así se ve
   // la diferencia entre «no hay brecha» y «no se puede calcular la brecha».
   [['F', 0.52], ['M', 0.48]].forEach(([categoria, proporcion]) => {
@@ -155,6 +194,75 @@ function sembrar() {
     },
     candidatos: [{ id_persona: homonimo.id_persona, nombre: homonimo.nombre, localidad: homonimo.localidad }],
   });
+
+  /* ── Fase 3 ─────────────────────────────────────────────────────
+     Lo justo para que las pantallas nuevas tengan de qué hablar: un
+     catálogo con un premio agotado (para que se vea el estado), saldo
+     para que un canje sea posible, un bono vigente y otro vencido, un
+     texto de consentimiento publicado —sin él la landing no recibe— y
+     dos inscripciones esperando, una de ellas de alguien que ya está
+     en el panel. */
+
+  bd.premios.push(
+    { id: 1, nombre: 'Orden de compra $1.000', descripcion: 'Canjeable en comercios adheridos.',
+      costo_puntos: 500, stock: null, activo: true },
+    { id: 2, nombre: 'Auriculares inalámbricos', descripcion: 'Stock limitado.',
+      costo_puntos: 1200, stock: 3, activo: true },
+    { id: 3, nombre: 'Entradas de cine (par)', descripcion: 'Válidas de lunes a jueves.',
+      costo_puntos: 300, stock: 0, activo: true },
+  );
+
+  bd.personas.slice(0, 6).forEach((persona, i) => {
+    bd.movimientos.push({
+      id: bd.movimientos.length + 1, id_persona: persona.id_persona, tipo: 'earn',
+      puntos: 100 + i * 50, encuesta_id: bd.encuestas[0]?.id ?? null,
+      motivo: `participación de calidad · ${bd.encuestas[0]?.nombre ?? 'Ola 1'}`,
+      creado_en: diasAtras(20 - i),
+    });
+  });
+
+  bd.canjes.push({
+    id: 1, id_persona: bd.personas[0].id_persona, premio_id: 3, costo_puntos: 300,
+    estado: 'solicitado', creado_en: diasAtras(3),
+  });
+  bd.movimientos.push({
+    id: bd.movimientos.length + 1, id_persona: bd.personas[0].id_persona,
+    tipo: 'canje', puntos: -300, motivo: 'canje · Entradas de cine (par)',
+    creado_en: diasAtras(3),
+  });
+
+  bd.bonos.push(
+    { id: 1, panel_id: nacional.id, dimension: 'sexo', categoria: 'M', puntos_extra: 50,
+      desde: diasAtras(10), hasta: null },
+    { id: 2, panel_id: nacional.id, dimension: 'localidad', categoria: 'Salto',
+      puntos_extra: 80, desde: diasAtras(60), hasta: diasAtras(5) },
+  );
+
+  bd.textosConsentimiento.push({
+    id: 1, finalidad: 'contacto_participacion', version: VERSION,
+    cuerpo: 'Texto de ejemplo del modo demo. El consentimiento real lo redacta y '
+          + 'revisa el DPO antes de publicar la landing.',
+    activo: true, creado_por: 'demo', creado_en: diasAtras(30),
+  });
+
+  const yaEsPanelista = bd.personas[1];
+  bd.inscripciones.push(
+    { id: 1, nombre: 'Lucía Fernández', email: 'lucia.fernandez@ejemplo.uy',
+      celular: '099 123 456', documento: '4.567.890-1', fecha_nacimiento: '1994-07-12',
+      sexo: 'F', localidad: 'Montevideo', finalidades: ['contacto_participacion'],
+      version_texto: VERSION, acepto_en: diasAtras(1), resolucion: 'crea',
+      id_persona_previa: null, estado: 'pendiente', id_persona: null, panel_id: null,
+      resuelto_por: null, resuelto_en: null, motivo_rechazo: null, origen: 'landing',
+      creado_en: diasAtras(1) },
+    { id: 2, nombre: yaEsPanelista.nombre, email: yaEsPanelista.email,
+      celular: yaEsPanelista.celular, documento: yaEsPanelista.documento,
+      fecha_nacimiento: yaEsPanelista.fecha_nacimiento, sexo: yaEsPanelista.sexo,
+      localidad: yaEsPanelista.localidad, finalidades: ['contacto_participacion'],
+      version_texto: VERSION, acepto_en: diasAtras(2), resolucion: 'reutiliza',
+      id_persona_previa: yaEsPanelista.id_persona, estado: 'pendiente', id_persona: null,
+      panel_id: null, resuelto_por: null, resuelto_en: null, motivo_rechazo: null,
+      origen: 'landing', creado_en: diasAtras(2) },
+  );
 }
 
 /* ── Operaciones del store de bóveda ────────────────────────────────── */
@@ -988,6 +1096,458 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
 
   if (clave === 'GET /usuarios/auditoria') {
     return { items: [...bd.auditoriaUsuarios].reverse() };
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     Fase 3
+     ══════════════════════════════════════════════════════════════ */
+
+  // ── R3.1 · Muestreo ──────────────────────────────────────────
+  if (metodo === 'POST' && partes[0] === 'encuestas' && partes[2] === 'muestreo') {
+    const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
+    if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
+    const dimension = cuerpo.dimension || 'sexo';
+    const cantidad = Number(cuerpo.cantidad) || 100;
+    const umbrales = bd.umbralesFatiga[encuesta.panel_id] || { ...UMBRALES_DEFAULT };
+
+    const categoriaDe = (persona) => (dimension === 'sexo' ? persona.sexo
+      : dimension === 'tramo_etario' ? tramoEtario(persona.fecha_nacimiento)
+      : persona.localidad) || '(sin dato)';
+
+    const miembros = bd.membresias
+      .filter((m) => m.panel_id === encuesta.panel_id && m.estado === 'activo')
+      .map((m) => bd.personas.find((p) => p.id_persona === m.id_persona))
+      .filter(Boolean);
+
+    const objetivo = bd.objetivos.filter((o) => o.panel_id === encuesta.panel_id
+      && o.dimension === dimension);
+    const hayObjetivo = objetivo.length > 0;
+    const total = miembros.length;
+    const faltan = {};
+    for (const o of objetivo) {
+      const observados = miembros.filter((p) => categoriaDe(p) === o.categoria).length;
+      faltan[o.categoria] = Math.max(0, Math.round(o.proporcion_objetivo * total) - observados);
+    }
+
+    const propuesta = [];
+    const excluidos = [];
+    const elegibles = {};
+    for (const persona of miembros) {
+      const convocatorias = bd.participaciones.filter((pa) =>
+        pa.id_persona === persona.id_persona && pa.encuesta_id !== encuesta.id);
+      const yaEnEsta = bd.participaciones.some((pa) =>
+        pa.id_persona === persona.id_persona && pa.encuesta_id === encuesta.id);
+      const consiente = bd.consentimientos.some((c) =>
+        c.id_persona === persona.id_persona
+        && c.finalidad === 'contacto_participacion' && c.estado === 'vigente');
+
+      let motivo = null;
+      if (!consiente) motivo = 'sin_consentimiento';
+      else if (yaEnEsta) motivo = 'ya_convocado_a_esta_encuesta';
+      else if (convocatorias.length >= umbrales.max_convocatorias_ventana) {
+        motivo = 'demasiadas_convocatorias_recientes';
+      }
+      const fila = {
+        id_persona: persona.id_persona,
+        categoria: categoriaDe(persona),
+        convocatorias_recientes: convocatorias.length,
+        convocatorias_totales: convocatorias.length,
+        respondidas: convocatorias.filter((c) => c.respondio).length,
+        ultima_convocatoria: convocatorias.at(-1)?.convocado_en ?? null,
+      };
+      if (motivo) {
+        excluidos.push({ ...fila, motivo, explicacion: EXPLICACIONES_MUESTREO[motivo] });
+      } else {
+        (elegibles[fila.categoria] ||= []).push(fila);
+      }
+    }
+
+    const orden = Object.keys(hayObjetivo ? faltan : elegibles)
+      .sort((a, b) => (faltan[b] || 0) - (faltan[a] || 0) || a.localeCompare(b));
+    const avisos = [];
+    if (!hayObjetivo) {
+      avisos.push({
+        tipo: 'sin_objetivo',
+        mensaje: `El panel no tiene universo de referencia cargado para «${dimension}», `
+          + 'así que no hay brecha que priorizar. La propuesta reparte parejo entre las '
+          + 'categorías; para que priorice, cargá el objetivo de composición.',
+      });
+    }
+    const totalFaltante = Object.values(faltan).reduce((a, b) => a + b, 0);
+    if (hayObjetivo && !totalFaltante) {
+      avisos.push({
+        tipo: 'sin_brecha',
+        mensaje: `El panel ya calza con su universo de referencia en «${dimension}»: `
+          + 'no hay brecha que priorizar. La propuesta reparte parejo entre las '
+          + 'categorías para no desbalancearlo.',
+      });
+    }
+    for (const categoria of orden) {
+      const cupo = hayObjetivo && totalFaltante
+        ? Math.round((cantidad * (faltan[categoria] || 0)) / totalFaltante)
+        : Math.floor(cantidad / Math.max(1, orden.length));
+      const disponibles = (elegibles[categoria] || [])
+        .sort((a, b) => a.convocatorias_recientes - b.convocatorias_recientes);
+      const tomados = disponibles.slice(0, cupo);
+      for (const c of tomados) {
+        propuesta.push({ ...c, motivo_prioridad: hayObjetivo
+          ? `faltan ${faltan[categoria] || 0} en «${categoria}»`
+          : 'reparto parejo (sin objetivo cargado)' });
+      }
+      if (cupo > 0 && tomados.length < cupo && (faltan[categoria] || 0) > 0) {
+        avisos.push({
+          tipo: tomados.length ? 'segmento_con_elegibles_insuficientes' : 'segmento_sin_elegibles',
+          dimension, categoria,
+          faltan_en_el_panel: faltan[categoria] || 0,
+          cupo_pedido: cupo, elegibles_encontrados: tomados.length,
+          mensaje: `«${categoria}» tiene brecha (${faltan[categoria] || 0} personas) y `
+            + (tomados.length
+              ? `solo hay ${tomados.length} elegibles para los ${cupo} que harían falta.`
+              : 'no hay ningún miembro elegible: todos están excluidos por fatiga, '
+                + 'consentimiento o ya convocados.')
+            + ' La brecha no se cierra con esta propuesta.',
+        });
+      }
+      for (const sobrante of disponibles.slice(cupo)) {
+        excluidos.push({ ...sobrante, motivo: 'cuota_del_segmento_ya_cubierta',
+          explicacion: EXPLICACIONES_MUESTREO.cuota_del_segmento_ya_cubierta });
+      }
+    }
+    if (propuesta.length < cantidad) {
+      avisos.push({
+        tipo: 'propuesta_mas_corta_que_lo_pedido',
+        pedidas: cantidad, propuestas: propuesta.length,
+        mensaje: `Se pidieron ${cantidad} y la propuesta trae ${propuesta.length}. `
+          + (hayObjetivo && totalFaltante
+            ? 'No se completó con gente de segmentos sin brecha a propósito: sumarlos '
+              + 'alejaría al panel de su universo de referencia.'
+            : 'No hay más miembros elegibles: mirá las exclusiones.'),
+      });
+    }
+
+    const conteo = {};
+    for (const e of excluidos) conteo[e.motivo] = (conteo[e.motivo] || 0) + 1;
+    return {
+      encuesta: { id: encuesta.id, nombre: encuesta.nombre, panel_id: encuesta.panel_id,
+                  estado: encuesta.estado },
+      dimension, cantidad_pedida: cantidad,
+      umbrales: { ...umbrales, son_defaults: !bd.umbralesFatiga[encuesta.panel_id] },
+      brecha_disponible: hayObjetivo,
+      propuesta, avisos, excluidos,
+      resumen_exclusiones: Object.entries(conteo)
+        .sort((a, b) => b[1] - a[1])
+        .map(([motivo, personas]) => ({ motivo, personas,
+          explicacion: EXPLICACIONES_MUESTREO[motivo] })),
+      convoca: false,
+      nota: 'Es una sugerencia: nadie fue convocado.',
+    };
+  }
+
+  if (metodo === 'GET' && partes[0] === 'paneles' && partes[2] === 'umbrales-fatiga') {
+    const guardados = bd.umbralesFatiga[Number(partes[1])];
+    return { ...(guardados || UMBRALES_DEFAULT), son_defaults: !guardados };
+  }
+
+  if (metodo === 'PUT' && partes[0] === 'paneles' && partes[2] === 'umbrales-fatiga') {
+    const panelId = Number(partes[1]);
+    const previos = bd.umbralesFatiga[panelId] || { ...UMBRALES_DEFAULT };
+    bd.umbralesFatiga[panelId] = {
+      max_convocatorias_ventana: Number(cuerpo.max_convocatorias_ventana ?? previos.max_convocatorias_ventana),
+      ventana_dias: Number(cuerpo.ventana_dias ?? previos.ventana_dias),
+      dias_minimos_entre: Number(cuerpo.dias_minimos_entre ?? previos.dias_minimos_entre),
+      max_convocatorias_total: cuerpo.max_convocatorias_total == null || cuerpo.max_convocatorias_total === ''
+        ? null : Number(cuerpo.max_convocatorias_total),
+    };
+    return { ...bd.umbralesFatiga[panelId], son_defaults: false };
+  }
+
+  // ── R3.3-R3.6 · Puntos, premios, canjes, bonos ───────────────
+  if (metodo === 'GET' && partes[0] === 'panelistas' && partes[2] === 'puntos') {
+    const idPersona = partes[1];
+    const movimientos = bd.movimientos.filter((m) => m.id_persona === idPersona);
+    return {
+      id_persona: idPersona,
+      saldo: movimientos.reduce((a, m) => a + m.puntos, 0),
+      movimientos: [...movimientos].reverse(),
+      por_vencer: [],
+    };
+  }
+
+  if (clave === 'GET /premios') {
+    const items = bd.premios.map((p) => ({
+      ...p, disponible: p.activo && (p.stock === null || p.stock > 0),
+    }));
+    return { items: consulta.disponibles ? items.filter((p) => p.disponible) : items };
+  }
+
+  if (clave === 'POST /premios') {
+    const premio = {
+      id: bd.premios.length + 1,
+      nombre: cuerpo.nombre, descripcion: cuerpo.descripcion || null,
+      costo_puntos: Number(cuerpo.costo_puntos),
+      stock: cuerpo.stock === null || cuerpo.stock === '' ? null : Number(cuerpo.stock),
+      activo: true,
+    };
+    if (!premio.nombre) throw new ErrorDemo('El premio necesita un nombre.', 400);
+    bd.premios.push(premio);
+    return { ...premio, disponible: true };
+  }
+
+  if (metodo === 'PATCH' && partes[0] === 'premios') {
+    const premio = bd.premios.find((p) => p.id === Number(partes[1]));
+    if (!premio) throw new ErrorDemo('No existe el premio.', 404);
+    for (const campo of ['nombre', 'descripcion', 'costo_puntos', 'stock', 'activo']) {
+      if (campo in cuerpo) premio[campo] = cuerpo[campo];
+    }
+    if (premio.costo_puntos != null) premio.costo_puntos = Number(premio.costo_puntos);
+    if (premio.stock === '' ) premio.stock = null;
+    if (premio.stock !== null) premio.stock = Number(premio.stock);
+    return { ...premio, disponible: premio.activo && (premio.stock === null || premio.stock > 0) };
+  }
+
+  if (clave === 'GET /canjes') {
+    return { items: [...bd.canjes].reverse().map((c) => ({
+      ...c, premio: bd.premios.find((p) => p.id === c.premio_id)?.nombre,
+    })) };
+  }
+
+  if (clave === 'POST /canjes') {
+    const premio = bd.premios.find((p) => p.id === Number(cuerpo.premio_id));
+    if (!premio) throw new ErrorDemo('No existe el premio.', 404);
+    const saldo = bd.movimientos
+      .filter((m) => m.id_persona === cuerpo.id_persona)
+      .reduce((a, m) => a + m.puntos, 0);
+    if (saldo < premio.costo_puntos) {
+      throw new ErrorDemo(
+        `Saldo insuficiente: hay ${saldo} puntos y «${premio.nombre}» cuesta ${premio.costo_puntos}.`,
+        400, { saldo, costo: premio.costo_puntos });
+    }
+    bd.movimientos.push({ id: bd.movimientos.length + 1, id_persona: cuerpo.id_persona,
+      tipo: 'canje', puntos: -premio.costo_puntos, motivo: `canje · ${premio.nombre}`,
+      creado_en: new Date().toISOString() });
+    if (premio.stock !== null) premio.stock -= 1;
+    const canje = { id: bd.canjes.length + 1, id_persona: cuerpo.id_persona,
+      premio_id: premio.id, costo_puntos: premio.costo_puntos, estado: 'solicitado',
+      creado_en: new Date().toISOString() };
+    bd.canjes.push(canje);
+    return { ...canje, premio: premio.nombre, saldo_restante: saldo - premio.costo_puntos };
+  }
+
+  if (metodo === 'PATCH' && partes[0] === 'canjes') {
+    const canje = bd.canjes.find((c) => c.id === Number(partes[1]));
+    if (!canje) throw new ErrorDemo('No existe el canje.', 404);
+    if (canje.estado !== 'solicitado') {
+      throw new ErrorDemo(`Un canje «${canje.estado}» no puede pasar a «${cuerpo.estado}».`, 400);
+    }
+    canje.estado = cuerpo.estado;
+    canje.resuelto_en = new Date().toISOString();
+    if (cuerpo.estado === 'cancelado') {
+      bd.movimientos.push({ id: bd.movimientos.length + 1, id_persona: canje.id_persona,
+        tipo: 'ajuste', puntos: canje.costo_puntos,
+        motivo: `devolución por cancelación del canje ${canje.id}`,
+        creado_en: new Date().toISOString() });
+      const premio = bd.premios.find((p) => p.id === canje.premio_id);
+      if (premio && premio.stock !== null) premio.stock += 1;
+    }
+    return { ...canje, premio: bd.premios.find((p) => p.id === canje.premio_id)?.nombre };
+  }
+
+  if (clave === 'POST /puntos/liquidar') {
+    const encuestaId = Number(cuerpo.encuesta_id);
+    const encuesta = bd.encuestas.find((e) => e.id === encuestaId);
+    if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
+    const base = 100;
+    const bonos = bd.bonos.filter((b) => b.panel_id === encuesta.panel_id
+      && (!b.hasta || new Date(b.hasta) > new Date()));
+    const liquidados = [];
+    for (const pa of bd.participaciones.filter((p) => p.encuesta_id === encuestaId)) {
+      if (!pa.respondio || pa.calidad_estado !== 'ok') continue;
+      if (bd.movimientos.some((m) => m.id_persona === pa.id_persona
+          && m.encuesta_id === encuestaId && m.tipo === 'earn')) continue;
+      const persona = bd.personas.find((p) => p.id_persona === pa.id_persona);
+      const extra = bonos.filter((b) =>
+        (b.dimension === 'sexo' && persona?.sexo === b.categoria)
+        || (b.dimension === 'localidad' && persona?.localidad === b.categoria)
+        || (b.dimension === 'tramo_etario' && tramoEtario(persona?.fecha_nacimiento) === b.categoria)
+      ).reduce((a, b) => a + b.puntos_extra, 0);
+      bd.movimientos.push({ id: bd.movimientos.length + 1, id_persona: pa.id_persona,
+        tipo: 'earn', puntos: base + extra, encuesta_id: encuestaId,
+        motivo: `participación de calidad · ${encuesta.nombre}`,
+        creado_en: new Date().toISOString() });
+      liquidados.push({ id_persona: pa.id_persona, puntos: base + extra, base, bono: extra });
+    }
+    return { encuesta: { id: encuesta.id, nombre: encuesta.nombre }, puntos_base: base,
+      liquidados, saltados: [], total_puntos: liquidados.reduce((a, l) => a + l.puntos, 0) };
+  }
+
+  if (metodo === 'GET' && partes[0] === 'paneles' && partes[2] === 'bonos') {
+    const panelId = Number(partes[1]);
+    return { items: bd.bonos.filter((b) => b.panel_id === panelId).map((b) => ({
+      ...b, vigente: !b.hasta || new Date(b.hasta) > new Date(),
+    })) };
+  }
+
+  if (metodo === 'POST' && partes[0] === 'paneles' && partes[2] === 'bonos') {
+    const bono = { id: bd.bonos.length + 1, panel_id: Number(partes[1]),
+      dimension: cuerpo.dimension, categoria: cuerpo.categoria,
+      puntos_extra: Number(cuerpo.puntos_extra),
+      desde: new Date().toISOString(), hasta: cuerpo.hasta || null };
+    if (!bono.categoria) throw new ErrorDemo('El bono necesita una categoría.', 400);
+    bd.bonos.push(bono);
+    return { ...bono, vigente: true };
+  }
+
+  // ── R3.7 · Inscripciones ─────────────────────────────────────
+  if (clave === 'GET /inscripciones/formulario') {
+    const textos = bd.textosConsentimiento.filter((t) => t.activo
+      && t.finalidad === 'contacto_participacion').slice(-1);
+    return { campos: ['nombre', 'documento', 'email', 'celular', 'fecha_nacimiento',
+                      'sexo', 'localidad'],
+             obligatorios: ['nombre', 'email'], textos, puede_recibir: textos.length > 0 };
+  }
+
+  if (clave === 'POST /inscripciones') {
+    if (cuerpo.acepto_consentimiento !== true) {
+      throw new ErrorDemo('Para inscribirte necesitás aceptar el consentimiento.', 400);
+    }
+    const datos = cuerpo.persona || {};
+    const previa = bd.personas.find((p) =>
+      (datos.documento && p.documento === datos.documento)
+      || (datos.email && (p.email || '').toLowerCase() === datos.email.toLowerCase()));
+    bd.inscripciones.push({
+      id: bd.inscripciones.length + 1, ...datos,
+      finalidades: ['contacto_participacion'],
+      version_texto: bd.textosConsentimiento.at(-1)?.version || 'demo',
+      acepto_en: new Date().toISOString(),
+      resolucion: previa ? 'reutiliza' : 'crea',
+      id_persona_previa: previa?.id_persona ?? null,
+      estado: 'pendiente', id_persona: null, panel_id: null,
+      resuelto_por: null, resuelto_en: null, motivo_rechazo: null,
+      origen: 'landing', creado_en: new Date().toISOString(),
+    });
+    return { estado: 'recibida',
+      mensaje: 'Recibimos tu inscripción. Vamos a revisarla y te vamos a contactar. '
+             + 'No hace falta que la envíes de nuevo.' };
+  }
+
+  if (clave === 'GET /inscripciones') {
+    const pedido = consulta.estado || 'pendiente';
+    return { items: bd.inscripciones.filter((i) => i.estado === pedido).reverse() };
+  }
+
+  if (metodo === 'POST' && partes[0] === 'inscripciones' && partes[2] === 'aprobar') {
+    const inscripcion = bd.inscripciones.find((i) => i.id === Number(partes[1]));
+    if (!inscripcion) throw new ErrorDemo('No existe la inscripción.', 404);
+    if (inscripcion.estado !== 'pendiente') {
+      throw new ErrorDemo(`La inscripción ya está «${inscripcion.estado}».`, 400);
+    }
+    let idPersona = inscripcion.id_persona_previa;
+    if (!idPersona) {
+      idPersona = `demo-${bd.personas.length + 1}-${Date.now().toString(36)}`;
+      bd.personas.push({ id_persona: idPersona, nombre: inscripcion.nombre,
+        documento: inscripcion.documento, email: inscripcion.email,
+        celular: inscripcion.celular, fecha_nacimiento: inscripcion.fecha_nacimiento,
+        sexo: inscripcion.sexo, localidad: inscripcion.localidad,
+        creado_en: new Date().toISOString() });
+    }
+    bd.consentimientos.push({ id_persona: idPersona, finalidad: 'contacto_participacion',
+      estado: 'vigente', version_texto: inscripcion.version_texto,
+      otorgado_en: new Date().toISOString() });
+    if (cuerpo.panel_id) {
+      bd.membresias.push({ panel_id: Number(cuerpo.panel_id), id_persona: idPersona,
+        estado: 'activo', fecha_alta: new Date().toISOString() });
+    }
+    inscripcion.estado = 'aprobada';
+    inscripcion.id_persona = idPersona;
+    inscripcion.resuelto_en = new Date().toISOString();
+    return { estado: 'aprobada', inscripcion_id: inscripcion.id, id_persona: idPersona,
+      persona: inscripcion.id_persona_previa ? 'reutilizada' : 'creada',
+      panel_id: cuerpo.panel_id ?? null };
+  }
+
+  if (metodo === 'POST' && partes[0] === 'inscripciones' && partes[2] === 'rechazar') {
+    const inscripcion = bd.inscripciones.find((i) => i.id === Number(partes[1]));
+    if (!inscripcion) throw new ErrorDemo('No existe la inscripción.', 404);
+    inscripcion.estado = 'rechazada';
+    inscripcion.motivo_rechazo = cuerpo.motivo || null;
+    inscripcion.resuelto_en = new Date().toISOString();
+    return { estado: 'rechazada', inscripcion_id: inscripcion.id };
+  }
+
+  if (clave === 'GET /textos-consentimiento') {
+    return { items: [...bd.textosConsentimiento].reverse() };
+  }
+
+  if (clave === 'POST /textos-consentimiento') {
+    const version = (cuerpo.version || '').trim();
+    const finalidad = cuerpo.finalidad || 'contacto_participacion';
+    if (!version) throw new ErrorDemo('La versión necesita un identificador.', 400);
+    if (!(cuerpo.cuerpo || '').trim()) {
+      throw new ErrorDemo('El texto de consentimiento no puede estar vacío.', 400);
+    }
+    if (bd.textosConsentimiento.some((t) => t.finalidad === finalidad && t.version === version)) {
+      throw new ErrorDemo(
+        `La versión «${version}» de ${finalidad} ya existe y no se puede reescribir: `
+        + 'quien la consintió aceptó ese texto. Publicá una versión nueva.', 400);
+    }
+    const texto = { id: bd.textosConsentimiento.length + 1, finalidad, version,
+      cuerpo: cuerpo.cuerpo.trim(), activo: true, creado_por: 'demo',
+      creado_en: new Date().toISOString() };
+    bd.textosConsentimiento.push(texto);
+    return texto;
+  }
+
+  // ── R3.11 · Panel desde una consulta ─────────────────────────
+  if (clave === 'POST /paneles/desde-consulta') {
+    const ids = (cuerpo.resultado?.items || []).map((i) => i.id_persona);
+    if (!ids.length) throw new ErrorDemo('El resultado no tiene ningún individuo.', 400);
+    const panel = { id: bd.paneles.length + 1, nombre: cuerpo.nombre,
+      descripcion: cuerpo.descripcion || null, estado: 'activo',
+      origen: 'consulta', creado_en: new Date().toISOString() };
+    bd.paneles.push(panel);
+    let altas = 0;
+    for (const idPersona of ids) {
+      if (bd.membresias.some((m) => m.panel_id === panel.id && m.id_persona === idPersona)) continue;
+      bd.membresias.push({ panel_id: panel.id, id_persona: idPersona, estado: 'activo',
+        fecha_alta: new Date().toISOString() });
+      altas += 1;
+    }
+    const noConvocables = ids.filter((idPersona) => !bd.consentimientos.some((c) =>
+      c.id_persona === idPersona && c.finalidad === 'contacto_participacion'
+      && c.estado === 'vigente'));
+    return { ...panel, miembros: ids.length, altas, ya_eran_miembros: ids.length - altas,
+      no_encontrados: [], no_convocables: noConvocables,
+      aviso: noConvocables.length ? { personas: noConvocables.length,
+        mensaje: `${noConvocables.length} de los ${ids.length} integrantes no tienen `
+               + 'consentimiento vigente de contacto. Son miembros del panel, pero no '
+               + 'pueden ser convocados hasta regularizarlo.' } : null,
+      registrado_como_reidentificacion: true };
+  }
+
+  // ── R3.10 · Exportación identificada ─────────────────────────
+  if (clave === 'POST /consultas/csv-identificado') {
+    const items = cuerpo.reidentificacion?.items || [];
+    if (!items.length) {
+      throw new ErrorDemo(
+        'La exportación con datos necesita un resultado ya reidentificado. '
+        + 'Pedí primero la reidentificación y mandá su respuesta acá.', 400);
+    }
+    const campos = ['id_persona', 'nombre', 'documento', 'email', 'celular', 'contacto',
+                    'sexo', 'localidad', 'tramo_etario'];
+    const puntajes = Object.fromEntries(
+      (cuerpo.resultado?.items || []).map((i) => [i.id_persona, i.puntaje]));
+    const filas = items.map((p) => [...campos.map((c) => p[c] ?? ''),
+                                    puntajes[p.id_persona] ?? '', ''].join(','));
+    const ahora = new Date();
+    const sello = `${ahora.getFullYear()}${String(ahora.getMonth() + 1).padStart(2, '0')}`
+      + `${String(ahora.getDate()).padStart(2, '0')}-`
+      + `${String(ahora.getHours()).padStart(2, '0')}${String(ahora.getMinutes()).padStart(2, '0')}`;
+    return {
+      csv: ['# ATENCIÓN: este archivo contiene datos personales de panelistas.',
+            [...campos, 'puntaje', 'evidencia'].join(','), ...filas].join('\n'),
+      nombre_archivo: `consulta-CON-DATOS-PERSONALES-${sello}.csv`,
+      personas: items.length, contiene_datos_personales: true,
+    };
   }
 
   throw new ErrorDemo(`El modo demo no implementa ${clave}.`, 404);

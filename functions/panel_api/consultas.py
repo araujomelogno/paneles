@@ -814,6 +814,73 @@ def a_csv(resultado):
     return salida.getvalue()
 
 
+# R3.10 — los campos que salen en el CSV identificado. Son exactamente los
+# que devuelve la reidentificación, **menos** la fecha de nacimiento exacta y
+# las observaciones. No es una omisión: la fecha exacta es un identificador
+# fino y las observaciones son texto libre donde suele terminar cayendo dato
+# sensible. El tramo etario da la información demográfica sin el identificador.
+CAMPOS_IDENTIFICADOS = (
+    "id_persona", "nombre", "documento", "email", "celular", "contacto",
+    "sexo", "localidad", "tramo_etario",
+)
+
+ENCABEZADO_PII = (
+    "# ATENCIÓN: este archivo contiene datos personales de panelistas. "
+    "Tratarlo según la política de protección de datos: no reenviarlo fuera "
+    "del equipo de campo, no subirlo a servicios de terceros y borrarlo "
+    "cuando termine el trabajo para el que se pidió."
+)
+
+
+def a_csv_identificado(reidentificacion, resultado=None):
+    """R3.10 — el ranking con datos de contacto, para pasarle al equipo de campo.
+
+    Toma la reidentificación **ya resuelta** y no vuelve a consultar la
+    bóveda: exportar no puede ser una segunda reidentificación encubierta,
+    porque entonces habría dos caminos para sacar PII y solo uno auditado.
+
+    El archivo se marca en su primera línea. Un CSV con nombres y documentos
+    que viaja por correo sin decir lo que es termina, tarde o temprano, en un
+    escritorio compartido.
+    """
+    salida = io.StringIO()
+    salida.write(ENCABEZADO_PII + "\n")
+    escritor = csv.writer(salida, lineterminator="\n")
+
+    puntajes, evidencias = {}, {}
+    for item in (resultado or {}).get("items", []) or []:
+        puntajes[str(item["id_persona"])] = item.get("puntaje")
+        partes = []
+        for evidencia in item.get("evidencias") or []:
+            if not evidencia:
+                continue
+            procedencia = " · ".join(
+                p for p in (evidencia.get("estudio"),
+                            evidencia.get("pregunta_codigo")) if p
+            )
+            texto = evidencia.get("valor_texto") or evidencia.get("texto_embebido") or ""
+            partes.append(f"[{procedencia}] {texto}" if procedencia else texto)
+        evidencias[str(item["id_persona"])] = " | ".join(partes)
+
+    columnas = list(CAMPOS_IDENTIFICADOS) + ["puntaje", "evidencia"]
+    escritor.writerow(columnas)
+    for persona in reidentificacion.get("items", []):
+        id_persona = str(persona["id_persona"])
+        escritor.writerow(
+            [persona.get(campo) for campo in CAMPOS_IDENTIFICADOS]
+            + [puntajes.get(id_persona), evidencias.get(id_persona, "")]
+        )
+    return salida.getvalue()
+
+
+def nombre_archivo_identificado(cuando=None):
+    """El nombre lleva la marca también: se ve antes de abrirlo."""
+    import datetime
+
+    momento = cuando or datetime.datetime.now()
+    return f"consulta-CON-DATOS-PERSONALES-{momento:%Y%m%d-%H%M}.csv"
+
+
 # ════════════════════════════════════════════════════════════════════
 #  P1 — consultas guardadas (la definición, nunca el resultado)
 # ════════════════════════════════════════════════════════════════════

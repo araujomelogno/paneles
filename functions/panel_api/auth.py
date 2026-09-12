@@ -36,6 +36,30 @@ PERMISOS = {
     # R2.12 — gestión de usuarios de la app. Solo admin, y con permiso propio:
     # es escalada de privilegios, no una tarea más de administrar paneles.
     "gestionar_usuarios": {"admin"},
+
+    # ── Fase 3 ──
+    # R3.1 — pedir una propuesta de muestreo y configurar los umbrales de
+    # fatiga. Es la decisión de a quién invitar: el trabajo del responsable
+    # de panel. El analista consulta, pero no decide la muestra.
+    "muestrear": {"admin", "operaciones"},
+    # R3.2 — revertir una marca de calidad. Aparte de `ingestar` porque el
+    # chequeo lo corre la ingesta y la revisión la hace una persona que se
+    # hace cargo: un `sospechoso` revertido son puntos que se pagan.
+    "revisar_calidad": {"admin", "operaciones", "analista"},
+    # R3.3-R3.6 — mover puntos, administrar el catálogo y resolver canjes.
+    # Es dinero para el panelista, así que no lo tiene el analista.
+    "gamificacion": {"admin", "operaciones"},
+    # R3.7 — aprobar o rechazar inscripciones de la landing. Es un alta de
+    # persona, así que va con quien ya podía enrolar.
+    "aprobar_inscripciones": {"admin", "operaciones"},
+    # R3.7 — publicar el texto de consentimiento. Es una decisión de
+    # cumplimiento antes que de operación: la comparten admin y dpo.
+    "publicar_consentimiento": {"admin", "dpo"},
+    # R3.10 — exportar el resultado con datos personales. Se separa de
+    # `reidentificar` a propósito: ver una lista en pantalla y llevarse un
+    # archivo con nombres y documentos no son el mismo riesgo, y la spec
+    # pide registrarlos como eventos distintos.
+    "exportar_identificado": {"admin", "operaciones"},
 }
 
 

@@ -15,6 +15,10 @@
         }
       },
       {
+        "source": "/inscribirse",
+        "destination": "/inscribirse.html"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

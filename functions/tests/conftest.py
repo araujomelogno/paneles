@@ -24,6 +24,8 @@ TABLAS_BOVEDA = [
     "membresia", "alias_origen", "panel", "persona", "catalogo_premio",
     # Fase 2
     "consulta_guardada", "usuario_auditoria", "reidentificacion",
+    # Fase 3
+    "umbral_fatiga", "bono_puntos", "texto_consentimiento", "inscripcion",
 ]
 TABLAS_SEMANTICA = ["respuesta", "pregunta", "individuo", "cuestionario"]
 
