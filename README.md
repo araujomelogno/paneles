@@ -41,7 +41,7 @@ Empezá leyendo `CLAUDE.md`, después el PRD, y desarrollá por fases empezando 
 │  ├─ main.py                 punto de entrada HTTP: /api/**
 │  ├─ panel_api/              el núcleo de dominio
 │  └─ tests/                  pruebas del DoD, contra Postgres real
-├─ scripts/                   cluster de pruebas, chequeos y verificación de esquema
+├─ scripts/                   cluster de pruebas, chequeos, DSN y verificación de esquema
 └─ web/public/                SPA de administración (HTML + módulos ES)
    ├─ index.html              configuración y shell
    ├─ css/estilo.css          identidad visual de Equipos
@@ -89,7 +89,10 @@ Esquema de las dos bases, pero desde la terminal, de modo que sirve antes de
 desplegar:
 
 ```bash
-export DSN_BOVEDA=... DSN_SEMANTICA=...
+# scripts/dsn_local.sh trae la clave de Secret Manager y apunta el DSN al
+# Auth Proxy, así no hay que escribirla ni dejarla en el historial.
+export DSN_BOVEDA="$(scripts/dsn_local.sh boveda)"
+export DSN_SEMANTICA="$(scripts/dsn_local.sh semantica)"
 python3 scripts/verificar_esquema.py    # sale con 0 si están al día
 
 # --sql no se conecta a nada, así que no necesita psycopg instalado.
