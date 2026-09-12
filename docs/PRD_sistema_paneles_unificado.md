@@ -134,9 +134,9 @@ Caché derivado de interpretaciones recurrentes (versionado por modelo, invalida
 
 **Objetivo.** Pasar de observar a accionar.
 
-**Alcance.** Motor de muestreo por reglas (propone a quién invitar priorizando brechas de cuota y excluyendo sobre-convocados); chequeos de calidad (speeders, straightliners, duplicados); gamificación con ledger de puntos como moneda (auditable, saldo ≥ 0, vencimiento), catálogo y canje, ganando puntos **solo por participación de calidad**; bonos dirigidos a segmentos de cuota difíciles; y **landing pública de auto-registro** de panelistas.
+**Alcance.** Motor de muestreo por reglas (propone a quién invitar priorizando brechas de cuota y excluyendo sobre-convocados); chequeos de calidad (speeders, straightliners, duplicados); gamificación con ledger de puntos como moneda (auditable, saldo ≥ 0, vencimiento), catálogo y canje, ganando puntos **solo por participación de calidad**; bonos dirigidos a segmentos de cuota difíciles; **landing pública de auto-registro** de panelistas; **ingesta desde archivos SAV de SPSS** (con alta opcional de individuos en la misma carga); y dos mejoras operativas sobre la consulta: **exportar el resultado reidentificado** y **crear un panel a partir de un resultado**.
 
-**Requisitos.** R3.1 muestreo por reglas · R3.2 chequeos de calidad · R3.3 ledger de puntos · R3.4 earn por calidad · R3.5 catálogo y canje · R3.6 bono dirigido · **R3.7 landing de auto-registro** · **R3.8 gestión de usuarios del sistema**.
+**Requisitos.** R3.1 muestreo por reglas · R3.2 chequeos de calidad · R3.3 ledger de puntos · R3.4 earn por calidad · R3.5 catálogo y canje · R3.6 bono dirigido · **R3.7 landing de auto-registro** · **R3.8 gestión de usuarios del sistema** · **R3.9 ingesta desde archivo SAV (SPSS)** · **R3.10 exportar el resultado reidentificado** · **R3.11 crear panel desde el resultado de una consulta**.
 
 **R3.7 — Landing de auto-registro.** Formulario público donde una persona se inscribe al panel y **da su propio consentimiento** (más fuerte legalmente que un operador registrándolo por ella). Incluye: captura de datos patronímicos y de contacto, texto de consentimiento versionado por finalidad, dedup contra panelistas existentes al enviar, y estado de alta pendiente de aprobación por Equipos antes de entrar al panel. Emite `id_persona` por la misma vía que el alta interna (R1.1–R1.3), reutilizando identidad si la persona ya existe.
 
@@ -145,6 +145,43 @@ Caché derivado de interpretaciones recurrentes (versionado por modelo, invalida
 **R3.8 — Gestión de usuarios del sistema (solapa Configuración).** Padrón de **personal de Equipos** (Firebase Auth + ficha en Firestore `usuarios/{uid}`), **no** panelistas: alta desde la app con email y rol, cambio de rol y desactivación, sin depender de `scripts/alta_usuario.js`. Alta idempotente por email (si la cuenta ya existe en Auth, solo actualiza ficha y rol). Permiso propio (`gestionar_usuarios`, solo `admin`); un admin no puede quitarse su propio rol ni desactivarse; toda alta, cambio y desactivación queda auditada. La clave inicial no se muestra de forma persistente (correo de establecer contraseña). El script de línea de comandos se conserva para el **bootstrap del primer admin**, que no puede crearse desde la app.
 
 > **Alcance.** Son los cuatro roles ya existentes (`admin`, `operaciones`, `analista`, `dpo`) aplicados a todo el sistema: no incluye SSO, MFA ni permisos por panel. Es escalada de privilegios por diseño (un admin puede crear otros admins), de ahí el permiso acotado y la auditoría.
+
+**R3.9 — Ingesta desde archivo SAV (SPSS).** Alternativa al Excel ancho: se sube un `.sav` y el sistema lo analiza para precargar solo, sin tipeo manual, las **variables** (código), el **texto de la pregunta** (variable labels), el **tipo** (inferido de measure/tipo de dato) y las **etiquetas de las cerradas** (value labels). El usuario revisa y corrige antes de confirmar; el resto del flujo de ingesta no cambia.
+
+En la misma carga se elige cómo se resuelven los individuos, con dos modos:
+
+- **Los panelistas ya existen:** se indica qué variable vincula cada fila con el individuo del sistema (el id de la plataforma de campo guardado en `alias_origen`). Es el comportamiento actual.
+- **Crear los individuos en esta carga:** se indica qué variables contienen los datos patronímicos y cuál se toma como identificador del individuo. El sistema los da de alta en la bóveda durante la ingesta.
+
+Criterios de aceptación:
+- Dado un `.sav`, cuando se carga, entonces se precargan códigos, textos, tipos y mapeos de etiquetas, y quedan editables antes de confirmar.
+- Dada una variable con value labels, entonces se trata como cerrada y sus códigos se resuelven a etiqueta antes de embeber.
+- Dado el modo «crear individuos», entonces cada alta pasa por la **misma resolución de identidad que R1.2** (documento → email → nombre+fecha de nacimiento → nuevo), reutilizando `id_persona` si la persona ya existe y mandando a revisión los casos ambiguos: la ingesta no puede crear duplicados que el alta manual evitaría.
+- Dado el modo «crear individuos», entonces los datos patronímicos se escriben **solo en la bóveda**; el guardrail de PII (R1.6) sigue aplicando sobre el store semántico.
+- Dado que el archivo trae variables no declaradas o sin mapear, entonces el resultado de la ingesta las informa explícitamente (no se descartan en silencio).
+
+> **Tensión a resolver: consentimiento.** El alta manual (R1.1) **rechaza** crear una persona sin consentimiento registrado. Crear individuos desde un SAV entra por otra puerta, así que hay que decidir con qué base legal se dan de alta: que el archivo traiga la evidencia de consentimiento (variable con fecha/versión), o que queden en un estado **pendiente de consentimiento** —contables y consultables solo cuando corresponda, y excluidos de convocatoria y de uso semántico hasta regularizarse—. Sin esta definición, R3.9 abre un camino para poblar la bóveda salteando la columna vertebral de cumplimiento. *(Decisión requerida antes de implementar el modo «crear individuos»; el modo «ya existen» no está afectado.)*
+
+**R3.10 — Exportar el resultado reidentificado.** Hoy «Descargar CSV» re-ejecuta la consulta y exporta el ranking **seudonimizado** (`id_persona`, puntaje, evidencia), y la interfaz lo aclara. Reidentificar muestra los datos en pantalla y queda registrado. Falta el caso operativo intermedio: quien ya reidentificó necesita esa lista como archivo (para convocar, para pasarla al equipo de campo) y hoy la transcribe a mano. Se agrega una **acción distinta**, sin modificar el CSV actual: un botón «Descargar CSV con datos», visible solo después de reidentificar, que exporta el resultado ya resuelto en pantalla con los datos de bóveda de esos individuos.
+
+Criterios de aceptación:
+- Dado un ranking sin reidentificar, entonces la opción de exportar con datos no está disponible.
+- Dado un resultado reidentificado, cuando se exporta con datos, entonces el CSV trae los mismos campos que la reidentificación devuelve (nombre, documento, email, celular, contacto, sexo, localidad, tramo etario), **sin** fecha de nacimiento exacta ni observaciones.
+- Dada la exportación, entonces se registra en `reidentificacion` con motivo propio (`exportacion`), con actor, fecha y cantidad de personas: exportar es un evento auditable distinto de ver en pantalla.
+- Dada la exportación, entonces se usa el resultado ya resuelto, sin volver a consultar ni re-reidentificar.
+- El CSV seudonimizado actual se mantiene sin cambios y sigue siendo la opción por defecto.
+
+> **Por qué dos botones y no uno.** Un archivo con PII sale del sistema y deja de estar bajo control: se copia, se reenvía, queda en una carpeta de descargas. Mantenerlo como acción separada y explícita evita que el botón de uso cotidiano se vuelva una fuga por defecto. Se excluyen los mismos dos campos que la reidentificación: la fecha exacta es un identificador fino que el tramo etario reemplaza para uso operativo, y `observaciones` es texto libre que puede contener datos sensibles con exigencias propias bajo URCDP. Conviene que el archivo lleve una marca visible de que contiene datos personales.
+
+**R3.11 — Crear un panel desde el resultado de una consulta.** Desde un resultado de consulta (semántica, demográfica o mixta) se puede crear un panel nuevo con los individuos de ese resultado ya incorporados como miembros, sin pasar por el alta manual de membresías una por una.
+
+Criterios de aceptación:
+- Dado un resultado de consulta con al menos un individuo, cuando se crea un panel desde él, entonces se crea el panel y se da de alta una membresía por cada individuo del resultado.
+- Dado un individuo que ya es miembro de ese panel, entonces la operación es idempotente (no duplica membresías).
+- Dada la creación, entonces el panel registra que se originó en una consulta y con qué definición, para poder rastrear de dónde salió su composición.
+- Dado un individuo sin `contacto_participacion` vigente, entonces no puede ser convocado desde ese panel (el gate de R1.3 sigue aplicando aunque la membresía exista).
+
+> **Es una foto, no una vista viva.** El panel se crea con los individuos que el resultado tenía en ese momento; si después cambia el corpus o los parámetros, el panel no se actualiza solo. Re-ejecutar la consulta y volver a aplicarla sobre el mismo panel es una operación distinta (agregar miembros), y conviene decidir si se ofrece. Vale además que la creación deje registro equivalente al de reidentificación cuando el resultado venía de una consulta semántica: materializar un ranking en un panel es, en los hechos, fijar una lista de personas.
 
 **Bloqueante.** Tratamiento fiscal del canje de premios en Uruguay.
 
@@ -179,6 +216,7 @@ Caché derivado de interpretaciones recurrentes (versionado por modelo, invalida
 
 - **[legal]** ¿El consentimiento del alta cubre el perfilado semántico entre estudios, o requiere base/consentimiento separado? *(bloqueante para el uso semántico)*
 - **[legal/finanzas]** Tratamiento fiscal del canje de premios en Uruguay. *(bloqueante — Fase 3)*
+- **[legal]** Con qué base legal se dan de alta los individuos creados desde un archivo SAV (R3.9): evidencia de consentimiento en el propio archivo, o alta en estado pendiente de consentimiento. *(bloqueante para el modo «crear individuos»)*
 - **[producto/ingeniería]** ¿Hasta dónde llega el motor de muestreo: reglas u optimización? (separa Fase 3 de Fase 4)
 - **[datos]** Fuente y vigencia del universo de referencia para composición.
 - **[legal/datos]** Plazos de retención por categoría de dato y purga por inactividad.
