@@ -13,6 +13,7 @@ Empezá leyendo `CLAUDE.md`, después el PRD, y desarrollá por fases empezando 
 | `DESPLIEGUE -  Fase 1 .md` | Manual de despliegue de la Fase 1: las dos instancias de Cloud SQL, el conector de VPC, los secretos, la ingesta, verificación y problemas frecuentes. | `docs/` |
 | `DESPLIEGUE - Fase 2.md` | Manual de despliegue de la Fase 2: migraciones nuevas, claves de reranking y de Claude, permisos de la cuenta de servicio, índice vectorial, calibración. | `docs/` |
 | `DESPLIEGUE - Fase 3.md` | Manual de despliegue de la Fase 3: migración de la bóveda, dependencia de `pyreadstat`, la landing pública y las tres definiciones legales pendientes. | `docs/` |
+| `decisiones.md` | **Por qué el sistema está hecho así.** Las 31 decisiones de diseño que no son obvias, con lo que se descartó, lo que cuestan y la prueba que impide revertirlas sin querer. Léelo antes de cambiar algo que parezca raro. | `docs/` |
 | `manual/Manual_de_usuario.pdf` | Manual de usuario: paso a paso de cada tarea, con capturas de la aplicación. | `docs/manual/` |
 | `HANDOFF_fase1.md` | Work order de la **Fase 1**: alcance, superficie de API mapeada a R1.x, lógica de dedup, máquina de estados de consentimiento, contrato de cruce entre stores, DoD. **Primer sprint.** | `docs/` |
 | `db/boveda/0001_init.sql` | DDL del **store de bóveda** (Cloud SQL): bóveda de identidad (PII + demográficos) + módulo de paneles. | `db/boveda/` |
