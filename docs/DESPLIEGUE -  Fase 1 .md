@@ -463,9 +463,41 @@ pip install "psycopg[binary]"   # el driver, si no está
 # con el Auth Proxy abierto contra cada instancia
 cloud-sql-proxy gestion-paneles:$REGION:paneles-boveda    --port 5432 &
 cloud-sql-proxy gestion-paneles:$REGION:paneles-semantica --port 5433 &
+```
 
-export DSN_BOVEDA="postgresql://app_paneles:CLAVE@127.0.0.1:5432/paneles_boveda"
-export DSN_SEMANTICA="postgresql://app_paneles:CLAVE@127.0.0.1:5433/paneles_semantica"
+#### Armar el DSN sin escribir la clave
+
+```bash
+# La clave real está en Secret Manager. Esto la trae y arma el DSN apuntado
+# al proxy, sin que nadie tenga que escribirla ni verla:
+dsn_local() {
+  gcloud secrets versions access latest --secret="DSN_$1" | python3 -c "
+import sys, urllib.parse as u
+d = u.urlsplit(sys.stdin.read().strip())
+print(u.urlunsplit((d.scheme, f'{d.username}:{d.password}@127.0.0.1:$2', d.path, '', '')))"
+}
+
+export DSN_BOVEDA="$(dsn_local BOVEDA 5432)"
+export DSN_SEMANTICA="$(dsn_local SEMANTICA 5433)"
+```
+
+> El secreto guarda el DSN de producción, que apunta a la IP privada. La
+> función le cambia host y puerto por los del Auth Proxy y deja el resto —
+> usuario, clave y nombre de base — tal cual. La clave viaja percent-encoded
+> y se reinserta sin decodificar, así que sobrevive intacta aunque tenga
+> `@`, `/`, `#` o `?`.
+
+Si preferís armarlo a mano, `TU_CLAVE` es un marcador de posición: hay que
+reemplazarlo por la clave de verdad, no pegarlo literal.
+
+```bash
+export DSN_BOVEDA="postgresql://app_paneles:TU_CLAVE@127.0.0.1:5432/paneles_boveda"
+export DSN_SEMANTICA="postgresql://app_paneles:TU_CLAVE@127.0.0.1:5433/paneles_semantica"
+```
+
+Con los dos DSN exportados:
+
+```bash
 python3 scripts/verificar_esquema.py
 ```
 
@@ -501,7 +533,7 @@ el script: hace falta el Auth Proxy abierto y el DSN exportado.
 
 ```bash
 cloud-sql-proxy gestion-paneles:$REGION:paneles-semantica --port 5433 &
-export DSN_SEMANTICA="postgresql://app_paneles:CLAVE@127.0.0.1:5433/paneles_semantica"
+export DSN_SEMANTICA="$(dsn_local SEMANTICA 5433)"   # ver más arriba
 python3 scripts/verificar_esquema.py --sql semantica | psql "$DSN_SEMANTICA"
 ```
 

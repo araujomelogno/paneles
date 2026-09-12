@@ -200,8 +200,10 @@ que el código espera:
 
 ```bash
 pip install "psycopg[binary]"   # el driver, si no está
-export DSN_BOVEDA="postgresql://app_paneles:CLAVE@127.0.0.1:5432/paneles_boveda"
-export DSN_SEMANTICA="postgresql://app_paneles:CLAVE@127.0.0.1:5433/paneles_semantica"
+# Los DSN, sin escribir la clave: ver «Armar el DSN sin escribir la clave»
+# en el despliegue de la Fase 1.
+export DSN_BOVEDA="$(dsn_local BOVEDA 5432)"
+export DSN_SEMANTICA="$(dsn_local SEMANTICA 5433)"
 python3 scripts/verificar_esquema.py
 ```
 

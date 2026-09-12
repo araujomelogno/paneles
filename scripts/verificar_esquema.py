@@ -13,8 +13,11 @@ semanas después. Este script existe para que eso se vea el día que pasa.
     cloud-sql-proxy gestion-paneles:southamerica-east1:paneles-boveda   --port 5432 &
     cloud-sql-proxy gestion-paneles:southamerica-east1:paneles-semantica --port 5433 &
 
-    export DSN_BOVEDA="postgresql://app_paneles:CLAVE@127.0.0.1:5432/paneles_boveda"
-    export DSN_SEMANTICA="postgresql://app_paneles:CLAVE@127.0.0.1:5433/paneles_semantica"
+    # TU_CLAVE es un marcador de posición. Para no escribirla, ver «Armar el
+    # DSN sin escribir la clave» en el despliegue de la Fase 1: la trae de
+    # Secret Manager y le cambia host y puerto por los del proxy.
+    export DSN_BOVEDA="postgresql://app_paneles:TU_CLAVE@127.0.0.1:5432/paneles_boveda"
+    export DSN_SEMANTICA="postgresql://app_paneles:TU_CLAVE@127.0.0.1:5433/paneles_semantica"
     python3 scripts/verificar_esquema.py
 
 Sale con 0 si las dos bases están al día y con 1 si falta algo, así que se
@@ -86,10 +89,19 @@ with esperado (migracion, objeto, relacion, columna) as (values
 select current_database() as base, e.migracion, e.objeto
   from esperado e
  where not exists (
-         select 1 from information_schema.columns c
-          where c.table_schema = 'public'
-            and c.table_name = e.relacion
-            and (e.columna is null or c.column_name = e.columna))
+         -- pg_catalog y no information_schema: este último filtra por
+         -- privilegios, y un usuario sin permisos sobre las tablas no vería
+         -- ninguna, con lo que la consulta diría que faltan todas.
+         select 1
+           from pg_catalog.pg_class c
+           join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+           join pg_catalog.pg_attribute a on a.attrelid = c.oid
+          where n.nspname = 'public'
+            and c.relkind in ('r', 'v', 'm', 'p', 'f')
+            and a.attnum > 0
+            and not a.attisdropped
+            and c.relname = e.relacion
+            and (e.columna is null or a.attname = e.columna))
  order by e.migracion, e.objeto;"""
 
 
@@ -98,11 +110,52 @@ def revisar(store, dsn):
     from psycopg.rows import dict_row
 
     with psycopg.connect(dsn, row_factory=dict_row) as conn:
-        return esquema.verificar(conn, esquema.STORES[store])
+        estado = esquema.verificar(conn, esquema.STORES[store])
+        with conn.cursor() as cur:
+            cur.execute("select current_database() as base, current_user as quien")
+            estado["donde"] = cur.fetchone()
+        return estado
+
+
+PISTAS = (
+    ("password authentication failed",
+     "La clave del DSN no es la que espera la base.\n"
+     "    La verdadera está en Secret Manager; no hace falta escribirla:\n"
+     "      export DSN_{STORE}=\"$(gcloud secrets versions access latest \\\n"
+     "        --secret=DSN_{STORE} | python3 -c 'import sys, urllib.parse as u; "
+     "d = u.urlsplit(sys.stdin.read().strip()); print(u.urlunsplit((d.scheme, "
+     "f\"{{d.username}}:{{d.password}}@127.0.0.1:{puerto}\", d.path, \"\", \"\")))')\"\n"
+     "    (Si copiaste un ejemplo, «CLAVE» era un marcador de posición.)"),
+    ("connection refused",
+     "No hay nada escuchando en ese puerto: falta levantar el Auth Proxy.\n"
+     "      cloud-sql-proxy TU_PROYECTO:TU_REGION:paneles-{store} --port {puerto}"),
+    ("no such file or directory",
+     "El DSN está vacío, así que psql/psycopg buscó un socket local.\n"
+     "    Comprobalo con: echo $DSN_{STORE}"),
+    ("does not exist",
+     "El servidor respondió, pero no tiene esa base o ese usuario.\n"
+     "    Revisá el final del DSN (el nombre de la base) y el usuario."),
+)
+
+
+def _pista(store, error):
+    """El error crudo del driver dice qué pasó, no qué hacer al respecto."""
+    texto = str(error).lower()
+    for marca, consejo in PISTAS:
+        if marca in texto:
+            return consejo.format(
+                store=store, STORE=store.upper(), puerto=PUERTOS[store]
+            )
+    return None
 
 
 def informar(store, estado):
     print(f"\n  {store}")
+    donde = estado.get("donde")
+    if donde:
+        # Contra qué base se corrió, dicho por la base misma. Un DSN mal
+        # armado no falla necesariamente: puede llevar a otro lado.
+        print(f"    {GRIS}{donde['base']} · {donde['quien']}{FIN}")
     for migracion in estado["migraciones"]:
         if migracion["aplicada"]:
             print(f"    {VERDE}✓{FIN} {migracion['migracion']}")
@@ -160,6 +213,9 @@ def main():
             estado = revisar(store, os.environ[f"DSN_{store.upper()}"])
         except Exception as error:  # noqa: BLE001
             print(f"\n  {store}\n    {ROJO}no se pudo conectar:{FIN} {error}")
+            consejo = _pista(store, error)
+            if consejo:
+                print(f"    {AMARILLO}{consejo}{FIN}")
             return 2
         informar(store, estado)
         pendientes += [
