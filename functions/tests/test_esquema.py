@@ -202,7 +202,7 @@ def test_la_ruta_devuelve_500_cuando_falta_una_migracion(
 
 # ── El script de línea de comandos ───────────────────────────────────
 
-def _consulta_sql(store):
+def _modulo_del_script():
     """Importa el script de scripts/ sin ejecutarlo como programa."""
     import importlib.util
 
@@ -210,7 +210,11 @@ def _consulta_sql(store):
     spec = importlib.util.spec_from_file_location("verificar_esquema", ruta)
     modulo = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(modulo)
-    return modulo.consulta_sql(store)
+    return modulo
+
+
+def _consulta_sql(store):
+    return _modulo_del_script().consulta_sql(store)
 
 
 @pytest.mark.parametrize("store", ["boveda", "semantica"])
@@ -272,7 +276,7 @@ def test_la_consulta_sql_se_genera_sin_el_driver_de_postgres():
     assert completado.stdout.strip() == "2"
 
     # Y la consulta se arma igual, sin tocar la base.
-    assert "information_schema.columns" in _consulta_sql("semantica")
+    assert "pg_catalog.pg_class" in _consulta_sql("semantica")
     importlib.invalidate_caches()
 
 
@@ -323,3 +327,60 @@ def test_la_consulta_sql_dice_contra_que_base_corrio(conn_semantica):
         assert {f["base"] for f in filas} == {"paneles_semantica"}
     finally:
         conn_semantica.rollback()
+
+
+def test_no_confunde_falta_de_permisos_con_falta_de_migraciones(conn_semantica):
+    """`information_schema` filtra por privilegios: un usuario sin permisos
+    sobre las tablas no ve ninguna fila ahí.
+
+    Consultándolo, este módulo concluía que el esquema estaba vacío y el
+    informe decía que faltaban todas las migraciones —con el comando para
+    re-correrlas sobre una base que ya las tiene—. Un error de permisos
+    disfrazado de diagnóstico, que es la peor forma de equivocarse para una
+    herramienta cuyo trabajo es decir si la base está bien.
+
+    `pg_catalog` no filtra: dice qué existe, que es la pregunta.
+    """
+    with conn_semantica.cursor() as cur:
+        cur.execute("create role rol_sin_permisos_de_prueba")
+        cur.execute("set local role rol_sin_permisos_de_prueba")
+        cur.execute(
+            "select count(*) as n from information_schema.columns"
+            " where table_schema = 'public'"
+        )
+        assert cur.fetchone()["n"] == 0, "el rol tendría que estar a ciegas"
+    try:
+        estado = esquema.verificar(conn_semantica, esquema.MIGRACIONES_SEMANTICA)
+        assert estado["completo"], estado["faltantes"]
+        assert db.todas(conn_semantica, _consulta_sql("semantica")) == []
+    finally:
+        conn_semantica.rollback()
+
+
+@pytest.mark.parametrize(
+    "error, esperado",
+    [
+        # El de un DSN con la clave de ejemplo pegada literal.
+        ('connection to server at "127.0.0.1", port 5433 failed: FATAL: '
+         ' password authentication failed for user "app_paneles"',
+         "Secret Manager"),
+        # El Auth Proxy sin levantar.
+        ('connection to server at "127.0.0.1", port 5433 failed: Connection '
+         'refused', "cloud-sql-proxy"),
+        # El DSN vacío: psycopg va al socket local.
+        ('connection to server on socket "/tmp/.s.PGSQL.5432" failed: '
+         'No such file or directory', "echo $DSN_SEMANTICA"),
+        ('FATAL:  database "paneles_semantico" does not exist',
+         "el nombre de la base"),
+    ],
+)
+def test_el_error_de_conexion_viene_con_que_hacer(error, esperado):
+    """El mensaje crudo del driver dice qué pasó, no qué hacer. Los cuatro
+    casos son los que aparecieron usando la herramienta de verdad."""
+    guion = _modulo_del_script()
+    assert esperado in guion._pista("semantica", Exception(error))
+
+
+def test_un_error_desconocido_no_inventa_una_pista():
+    guion = _modulo_del_script()
+    assert guion._pista("semantica", Exception("se cayó el mundo")) is None

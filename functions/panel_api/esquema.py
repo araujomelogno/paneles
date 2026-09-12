@@ -74,12 +74,25 @@ def _presentes(conn):
     # no conectarse a nada.
     from . import db
 
+    # Se consulta pg_catalog y no information_schema, que es lo natural, por
+    # un motivo que cuesta caro: information_schema filtra por privilegios. Un
+    # usuario que se conectó a la base correcta pero sin permisos sobre las
+    # tablas no ve ninguna fila, y este módulo concluiría que el esquema está
+    # vacío —o sea, que faltan todas las migraciones—. La consecuencia no es
+    # un mensaje molesto: es un informe que manda a re-correr migraciones
+    # sobre una base que ya las tiene. pg_catalog no filtra: dice qué existe,
+    # que es exactamente la pregunta.
     filas = db.todas(
         conn,
         """
-        select table_name, column_name
-          from information_schema.columns
-         where table_schema = 'public'
+        select c.relname as table_name, a.attname as column_name
+          from pg_catalog.pg_class c
+          join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+          join pg_catalog.pg_attribute a on a.attrelid = c.oid
+         where n.nspname = 'public'
+           and c.relkind in ('r', 'v', 'm', 'p', 'f')
+           and a.attnum > 0
+           and not a.attisdropped
         """,
     )
     relaciones = {f["table_name"].lower() for f in filas}
