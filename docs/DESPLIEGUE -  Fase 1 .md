@@ -496,6 +496,21 @@ python3 scripts/verificar_esquema.py --sql semantica   # pegar en la sesión de 
 python3 scripts/verificar_esquema.py --sql boveda      # pegar en la de la bóveda
 ```
 
+También se puede encadenar directo, pero ahí el que se conecta es `psql`, no
+el script: hace falta el Auth Proxy abierto y el DSN exportado.
+
+```bash
+cloud-sql-proxy gestion-paneles:$REGION:paneles-semantica --port 5433 &
+export DSN_SEMANTICA="postgresql://app_paneles:CLAVE@127.0.0.1:5433/paneles_semantica"
+python3 scripts/verificar_esquema.py --sql semantica | psql "$DSN_SEMANTICA"
+```
+
+> Si el DSN quedó vacío, `psql` no falla diciéndolo: cae en sus valores por
+> omisión y trata de abrir el socket local, con un
+> `connection to server on socket "/tmp/.s.PGSQL.5432" failed`. Ese mensaje no
+> dice nada de la base remota —nunca se la llamó—. Comprobalo con
+> `echo $DSN_SEMANTICA` antes de sacar conclusiones.
+
 Devuelve una fila por migración faltante y ninguna fila si la base está al
 día. La consulta se genera de la misma lista que usa la aplicación, así que no
 queda desactualizada cuando se agrega una migración nueva.

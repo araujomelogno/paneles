@@ -31,6 +31,18 @@ sesión de `psql` está abierta contra una sola base, `--sql boveda` y
     python3 scripts/verificar_esquema.py --sql semantica | psql "$DSN_SEMANTICA"
 
 Devuelve una fila por migración faltante, y ninguna fila si está al día.
+
+Ojo con esa tubería: es `psql` quien se conecta, no este script, así que el
+DSN tiene que estar en el entorno y el Auth Proxy abierto. Si `$DSN_SEMANTICA`
+está vacío, `psql` cae en sus valores por omisión —el socket local— y falla
+con «connection to server on socket "/tmp/.s.PGSQL.5432" failed». Eso no es la
+base remota diciendo nada: es que nunca se la llamó.
+
+Y en una máquina que sí tenga un Postgres local, el DSN vacío es peor que un
+error: `psql` entra a la base `postgres`, que no tiene ninguna de estas
+tablas, y la consulta contesta que faltan todas las migraciones. Por eso el
+resultado trae una columna `base` con `current_database()`: si no dice
+`paneles_boveda` o `paneles_semantica`, no hay que leer las otras columnas.
 """
 
 import argparse
@@ -66,10 +78,12 @@ def consulta_sql(store):
     valores = ",\n".join(filas).replace("'None'", "NULL")
     return f"""-- Migraciones que faltan en el store «{store}».
 -- Sin filas = está al día.
+-- La columna «base» dice contra qué base se corrió: si no es
+-- paneles_{store}, el resultado no significa nada.
 with esperado (migracion, objeto, relacion, columna) as (values
 {valores}
 )
-select e.migracion, e.objeto
+select current_database() as base, e.migracion, e.objeto
   from esperado e
  where not exists (
          select 1 from information_schema.columns c
@@ -167,4 +181,16 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        codigo = main()
+        sys.stdout.flush()
+    except BrokenPipeError:
+        # El otro extremo de la tubería cerró antes de tiempo: `| psql` que no
+        # pudo conectarse, o un `| head` que ya tuvo suficiente. No es una
+        # falla de este script, y el traceback que Python imprime al cerrar
+        # tapa el error de verdad —el del otro comando—, que es el que hay que
+        # leer. Se redirige el descriptor a /dev/null para que el flush del
+        # intérprete no vuelva a fallar.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        codigo = 1
+    sys.exit(codigo)
