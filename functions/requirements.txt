@@ -5,3 +5,5 @@ cloud-sql-python-connector[pg8000]~=1.9
 pgvector~=0.2.5
 requests~=2.32
 openpyxl~=3.1
+# R3.9 — lectura de archivos .sav (SPSS) en el backend.
+pyreadstat~=1.3

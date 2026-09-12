@@ -28,11 +28,18 @@ def _objetos_del_ddl(sql):
         r"([a-z_][a-z0-9_]*)", sql, re.I,
     ):
         objetos.add(nombre.lower())
-    for tabla, columna in re.findall(
-        r"alter\s+table\s+([a-z_][a-z0-9_]*)\s+add\s+column\s+"
-        r"(?:if\s+not\s+exists\s+)?([a-z_][a-z0-9_]*)", sql, re.I,
+    # Un `alter table` puede agregar varias columnas en una sentencia —que es
+    # la forma buena de escribirlo, porque reescribe la tabla una sola vez—,
+    # así que hay que leer la sentencia entera y no solo su primer add.
+    for sentencia in re.findall(
+        r"alter\s+table\s+(?:only\s+)?([a-z_][a-z0-9_]*)(.*?);", sql, re.I | re.S,
     ):
-        objetos.add(f"{tabla.lower()}.{columna.lower()}")
+        tabla, cuerpo = sentencia
+        for columna in re.findall(
+            r"add\s+column\s+(?:if\s+not\s+exists\s+)?([a-z_][a-z0-9_]*)",
+            cuerpo, re.I,
+        ):
+            objetos.add(f"{tabla.lower()}.{columna.lower()}")
     return objetos
 
 

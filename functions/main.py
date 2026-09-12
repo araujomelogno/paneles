@@ -81,10 +81,17 @@ def api(req: https_fn.Request) -> https_fn.Response:
     if req.method == "OPTIONS":
         return https_fn.Response("", status=204)
 
-    try:
-        actor = auth.actor_de_request(req.headers)
-    except ErrorApi as error:
-        return _json(error.status, error.como_dict())
+    # R3.7 — la landing de inscripción es pública y no puede exigir token.
+    # La lista es de rutas concretas y no de un prefijo: un prefijo abierto
+    # se convierte, la primera vez que alguien agrega una ruta debajo, en un
+    # agujero que nadie eligió abrir.
+    if ruteo.es_publica(req.method, _camino_de(req)):
+        actor = auth.Actor(uid=None, email=None, rol=None, nombre="público")
+    else:
+        try:
+            actor = auth.actor_de_request(req.headers)
+        except ErrorApi as error:
+            return _json(error.status, error.como_dict())
 
     try:
         cuerpo = req.get_json(silent=True) or {}

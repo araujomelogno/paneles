@@ -176,3 +176,68 @@ export const usuarios = {
   cambiar: (uid, cambios) => PATCH(`/usuarios/${uid}`, cambios),
   auditoria: (uid) => GET('/usuarios/auditoria', uid ? { uid } : {}),
 };
+
+/* ── Fase 3 ─────────────────────────────────────────────────────── */
+
+export const muestreo = {
+  proponer: (encuestaId, { dimension = 'sexo', cantidad = 100 } = {}) =>
+    POST(`/encuestas/${encuestaId}/muestreo`, { dimension, cantidad }),
+  umbrales: (panelId) => GET(`/paneles/${panelId}/umbrales-fatiga`),
+  guardarUmbrales: (panelId, umbrales) =>
+    PUT(`/paneles/${panelId}/umbrales-fatiga`, umbrales),
+};
+
+export const calidad = {
+  correr: (encuestaId) => POST(`/encuestas/${encuestaId}/calidad`, {}),
+  revisar: (participacionId, calidadEstado, motivo) =>
+    PATCH(`/participacion/${participacionId}/calidad`, { calidad_estado: calidadEstado, motivo }),
+};
+
+export const puntos = {
+  cuenta: (idPersona) => GET(`/panelistas/${idPersona}/puntos`),
+  liquidar: (encuestaId, idsPersona) =>
+    POST('/puntos/liquidar', { encuesta_id: encuestaId, ids_persona: idsPersona }),
+  ajustar: (idPersona, cantidad, motivo) =>
+    POST('/puntos/ajustar', { id_persona: idPersona, puntos: cantidad, motivo }),
+  vencer: (idPersona) => POST('/puntos/vencer', idPersona ? { id_persona: idPersona } : {}),
+  bonos: (panelId, vigentes) =>
+    GET(`/paneles/${panelId}/bonos`, vigentes ? { vigentes: '1' } : {}),
+  crearBono: (panelId, cuerpo) => POST(`/paneles/${panelId}/bonos`, cuerpo),
+};
+
+export const premios = {
+  listar: (soloDisponibles) => GET('/premios', soloDisponibles ? { disponibles: '1' } : {}),
+  crear: (cuerpo) => POST('/premios', cuerpo),
+  editar: (id, cambios) => PATCH(`/premios/${id}`, cambios),
+};
+
+export const canjes = {
+  listar: (consulta) => GET('/canjes', consulta),
+  crear: (idPersona, premioId) => POST('/canjes', { id_persona: idPersona, premio_id: premioId }),
+  resolver: (id, estadoCanje, nota) => PATCH(`/canjes/${id}`, { estado: estadoCanje, nota }),
+};
+
+export const inscripciones = {
+  listar: (estadoInscripcion = 'pendiente') => GET('/inscripciones', { estado: estadoInscripcion }),
+  aprobar: (id, panelId) => POST(`/inscripciones/${id}/aprobar`, { panel_id: panelId }),
+  rechazar: (id, motivo) => POST(`/inscripciones/${id}/rechazar`, { motivo }),
+  textos: (finalidad) => GET('/textos-consentimiento', finalidad ? { finalidad } : {}),
+  publicarTexto: (finalidad, version, cuerpo) =>
+    POST('/textos-consentimiento', { finalidad, version, cuerpo }),
+};
+
+export const sav = {
+  analizar: (encuestaId, archivoBase64) =>
+    POST(`/encuestas/${encuestaId}/sav/analizar`, { archivo_base64: archivoBase64 }),
+  ingestar: (encuestaId, cuerpo) => POST(`/encuestas/${encuestaId}/sav/ingesta`, cuerpo),
+};
+
+export const exportacion = {
+  csvIdentificado: (reidentificacionResuelta, resultado) =>
+    POST('/consultas/csv-identificado', {
+      reidentificacion: reidentificacionResuelta, resultado,
+    }),
+};
+
+export const panelDesdeConsulta = (nombre, resultado, definicion, descripcion) =>
+  POST('/paneles/desde-consulta', { nombre, resultado, definicion, descripcion });

@@ -160,3 +160,142 @@ def listar_miembros(conn, panel_id, estado="activo", limite=200, desplazamiento=
         }
         for f in filas
     ]
+
+
+# ════════════════════════════════════════════════════════════════════
+#  R3.11 — un panel a partir del resultado de una consulta
+# ════════════════════════════════════════════════════════════════════
+
+def desde_consulta(conn, nombre, resultado, definicion=None, descripcion=None,
+                   actor=None, consulta_id=None):
+    """Crea un panel con los individuos que salieron de una consulta.
+
+    Materializar un ranking en un panel es, en los hechos, fijar una lista de
+    personas: por eso la operación deja el mismo tipo de rastro que una
+    reidentificación cuando el resultado venía de una consulta semántica
+    (R3.11). No es la misma acción —acá nadie ve un nombre— pero sí es un
+    momento en que una consulta deja de ser una pregunta y pasa a ser un
+    grupo de gente sobre el que se va a trabajar.
+
+    El panel es **una foto**. Se guarda la definición que lo originó para
+    poder rastrear de dónde salió su composición, no para recalcularla: un
+    panel que se actualizara solo con la consulta es un no-goal explícito de
+    la fase.
+
+    Idempotente en las membresías: quien ya era miembro no se duplica ni se
+    reactiva silenciosamente si estaba de baja.
+    """
+    import json
+
+    from . import auditoria, db
+    from .errores import DatosInvalidos
+
+    nombre = (nombre or "").strip()
+    if not nombre:
+        raise DatosInvalidos("El panel necesita un nombre.")
+
+    ids = [
+        str(item["id_persona"])
+        for item in (resultado or {}).get("items", []) or []
+        if item.get("id_persona")
+    ]
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        raise DatosInvalidos(
+            "El resultado no tiene ningún individuo, así que no hay panel que "
+            "crear."
+        )
+
+    fila = db.una(
+        conn,
+        """
+        insert into panel (nombre, descripcion, origen, origen_definicion,
+                           origen_consulta_id, creado_por)
+        values (%s, %s, 'consulta', %s::jsonb, %s, %s)
+        returning id, nombre, descripcion, estado, creado_en
+        """,
+        (nombre, (descripcion or "").strip() or None,
+         json.dumps(definicion or (resultado or {}).get("definicion") or {},
+                    default=str),
+         consulta_id, getattr(actor, "uid", None)),
+    )
+    panel_id = fila["id"]
+
+    # Los ids que ya no existen en la bóveda no son un error: alguien pudo
+    # darse de baja entre la consulta y esta operación, y eso es la baja
+    # funcionando. Se informan aparte.
+    existentes = {
+        str(f["id_persona"])
+        for f in db.todas(
+            conn,
+            "select id_persona from persona where id_persona = any(%s::uuid[])",
+            (ids,),
+        )
+    }
+    altas, ya_estaban = [], []
+    for id_persona in ids:
+        if id_persona not in existentes:
+            continue
+        agregado = db.ejecutar(
+            conn,
+            "insert into membresia (panel_id, id_persona) values (%s, %s) "
+            "on conflict (panel_id, id_persona) do nothing",
+            (panel_id, id_persona),
+        )
+        (altas if agregado else ya_estaban).append(id_persona)
+
+    # Quién puede ser convocado y quién no. El gate de R1.3 sigue aplicando:
+    # la membresía puede existir sin consentimiento, la convocatoria no.
+    sin_consentimiento = [
+        str(f["id_persona"])
+        for f in db.todas(
+            conn,
+            """
+            select p.id_persona from persona p
+             where p.id_persona = any(%s::uuid[])
+               and (p.estado <> 'activa'
+                 or not exists (select 1 from consentimiento c
+                                 where c.id_persona = p.id_persona
+                                   and c.finalidad = 'contacto_participacion'
+                                   and c.estado = 'vigente'))
+            """,
+            (ids,),
+        )
+    ]
+
+    fue_semantica = bool(
+        (definicion or (resultado or {}).get("definicion") or {}).get("criterios")
+    ) or bool((resultado or {}).get("diagnostico"))
+    if fue_semantica:
+        auditoria.registrar_reidentificacion(
+            conn, ids, actor=actor, motivo="panel_desde_consulta",
+            contexto={"panel_id": panel_id, "nombre": nombre,
+                      "personas": len(ids)},
+        )
+
+    conn.commit()
+    return {
+        "id": panel_id,
+        "nombre": fila["nombre"],
+        "descripcion": fila["descripcion"],
+        "estado": fila["estado"],
+        "creado_en": fila["creado_en"].isoformat(),
+        "origen": "consulta",
+        "miembros": len(altas) + len(ya_estaban),
+        "altas": len(altas),
+        "ya_eran_miembros": len(ya_estaban),
+        "no_encontrados": [i for i in ids if i not in existentes],
+        "no_convocables": sin_consentimiento,
+        "aviso": (
+            {
+                "personas": len(sin_consentimiento),
+                "mensaje": (
+                    f"{len(sin_consentimiento)} de los {len(ids)} integrantes "
+                    f"no tienen consentimiento vigente de contacto o están "
+                    f"pendientes de consentimiento. Son miembros del panel, "
+                    f"pero no pueden ser convocados hasta regularizarlo."
+                ),
+            } if sin_consentimiento else None
+        ),
+        "registrado_como_reidentificacion": fue_semantica,
+    }

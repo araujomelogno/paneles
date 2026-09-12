@@ -16,6 +16,9 @@ import * as pagParticipacion from './paginas/participacion.js';
 import * as pagRevisiones from './paginas/revisiones.js';
 import * as pagCumplimiento from './paginas/cumplimiento.js';
 import * as pagConfiguracion from './paginas/configuracion.js';
+import * as pagMuestreo from './paginas/muestreo.js';
+import * as pagGamificacion from './paginas/gamificacion.js';
+import * as pagInscripciones from './paginas/inscripciones.js';
 
 const CDN = 'https://www.gstatic.com/firebasejs/10.7.0';
 const cfg = window.firebaseConfig || {};
@@ -33,6 +36,10 @@ const PERMISOS = {
   leer: ['admin', 'operaciones', 'analista', 'dpo'],
   consultar: ['admin', 'operaciones', 'analista'],
   gestionar_usuarios: ['admin'],
+  // Fase 3
+  muestrear: ['admin', 'operaciones'],
+  gamificacion: ['admin', 'operaciones'],
+  aprobar_inscripciones: ['admin', 'operaciones'],
 };
 
 const puede = (rol, permiso) => (PERMISOS[permiso] || []).includes(rol);
@@ -44,6 +51,9 @@ const PAGINAS = [
   { id: 'consultas',     icono: '🔎', etiqueta: 'Consultas',    modulo: pagConsultas,    permiso: 'consultar' },
   { id: 'composicion',   icono: '📐', etiqueta: 'Composición',  modulo: pagComposicion,  permiso: 'leer' },
   { id: 'participacion', icono: '📈', etiqueta: 'Participación', modulo: pagParticipacion, permiso: 'leer' },
+  { id: 'muestreo',      icono: '🎯', etiqueta: 'Muestreo',      modulo: pagMuestreo,     permiso: 'muestrear' },
+  { id: 'gamificacion',  icono: '🎁', etiqueta: 'Puntos y premios', modulo: pagGamificacion, permiso: 'gamificacion' },
+  { id: 'inscripciones', icono: '📥', etiqueta: 'Inscripciones', modulo: pagInscripciones, permiso: 'aprobar_inscripciones' },
   { id: 'revisiones',    icono: '🔀', etiqueta: 'Revisión de altas', modulo: pagRevisiones, permiso: 'leer' },
   { id: 'cumplimiento',  icono: '🛡️', etiqueta: 'Cumplimiento', modulo: pagCumplimiento, permiso: 'leer' },
   { id: 'configuracion', icono: '⚙️', etiqueta: 'Configuración', modulo: pagConfiguracion, permiso: 'gestionar_usuarios' },

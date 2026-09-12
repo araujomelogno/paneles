@@ -12,6 +12,7 @@ Empezá leyendo `CLAUDE.md`, después el PRD, y desarrollá por fases empezando 
 | `PRD_consulta_semantica_cuestionarios.md` | Spec del **módulo de consulta semántica** (mecánica interna del motor: modelo vectorial, ingesta, embeddings, ranking, verificación con Claude). Es un módulo de este sistema, no un producto aparte. | `docs/` |
 | `DESPLIEGUE -  Fase 1 .md` | Manual de despliegue de la Fase 1: las dos instancias de Cloud SQL, el conector de VPC, los secretos, la ingesta, verificación y problemas frecuentes. | `docs/` |
 | `DESPLIEGUE - Fase 2.md` | Manual de despliegue de la Fase 2: migraciones nuevas, claves de reranking y de Claude, permisos de la cuenta de servicio, índice vectorial, calibración. | `docs/` |
+| `DESPLIEGUE - Fase 3.md` | Manual de despliegue de la Fase 3: migración de la bóveda, dependencia de `pyreadstat`, la landing pública y las tres definiciones legales pendientes. | `docs/` |
 | `manual/Manual_de_usuario.pdf` | Manual de usuario: paso a paso de cada tarea, con capturas de la aplicación. | `docs/manual/` |
 | `HANDOFF_fase1.md` | Work order de la **Fase 1**: alcance, superficie de API mapeada a R1.x, lógica de dedup, máquina de estados de consentimiento, contrato de cruce entre stores, DoD. **Primer sprint.** | `docs/` |
 | `db/boveda/0001_init.sql` | DDL del **store de bóveda** (Cloud SQL): bóveda de identidad (PII + demográficos) + módulo de paneles. | `db/boveda/` |
@@ -43,7 +44,8 @@ Empezá leyendo `CLAUDE.md`, después el PRD, y desarrollá por fases empezando 
 │  └─ tests/                  pruebas del DoD, contra Postgres real
 ├─ scripts/                   cluster de pruebas, chequeos, DSN y verificación de esquema
 └─ web/public/                SPA de administración (HTML + módulos ES)
-   ├─ index.html              configuración y shell
+   ├─ index.html              configuración y shell (app de administración)
+   ├─ inscribirse.html        landing pública de inscripción, sin login (R3.7)
    ├─ css/estilo.css          identidad visual de Equipos
    └─ js/                     app.js, api.js, demo.js, ui.js, paginas/
 ```
@@ -75,7 +77,7 @@ el gate de consentimiento y la cascada dependen de índices únicos y de
 ```bash
 pip install "psycopg[binary]" pytest
 source scripts/pg_pruebas.sh          # levanta el cluster y exporta los DSN
-cd functions && python3 -m pytest     # 275 pruebas
+cd functions && python3 -m pytest     # 409 pruebas
 scripts/pg_pruebas.sh detener         # al terminar
 ```
 

@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sumate al panel — Equipos Consultores</title>
+  <meta name="description" content="Formulario de inscripción al panel de investigación de Equipos Consultores." />
+  <link rel="icon" href="assets/logo-equipos-vertical.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/estilo.css" />
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       LANDING PÚBLICA (R3.7)
+
+       Esta página NO carga Firebase Auth y no tiene sesión: es la única
+       superficie del sistema sin login. Habla con dos rutas, las dos
+       públicas y las dos declaradas en `ruteo.PUBLICAS`:
+
+         GET  /api/inscripciones/formulario   qué pedir y qué texto mostrar
+         POST /api/inscripciones              el envío
+
+       Ninguna de las dos lee ni devuelve datos de otros panelistas, y el
+       acuse de recibo es siempre el mismo: decir «ya estás inscripto»
+       convertiría el formulario en un oráculo para averiguar quién
+       pertenece al panel probando documentos.
+  ═══════════════════════════════════════════════════════════════════ -->
+  <script>window.API_BASE = "/api";</script>
+  <style>
+    .landing { max-width: 640px; margin: 0 auto; padding: 32px 20px 64px; }
+    .landing header { text-align: center; margin-bottom: 28px; }
+    .landing header img { height: 56px; margin-bottom: 16px; }
+    .landing h1 { font-size: 28px; margin: 0 0 8px; }
+    .landing .bajada { color: var(--tenue, #667); margin: 0; }
+    .consentimiento {
+      max-height: 220px; overflow-y: auto; border: 1px solid var(--borde, #dde);
+      border-radius: 8px; padding: 14px 16px; background: var(--fondo-suave, #fafbfc);
+      font-size: 14px; line-height: 1.6; white-space: pre-wrap;
+    }
+    .obligatorio::after { content: " *"; color: #c0392b; }
+    .landing .btn { width: 100%; justify-content: center; padding: 12px; font-size: 16px; }
+    .gracias { text-align: center; padding: 48px 16px; }
+    .gracias .icono { font-size: 48px; display: block; margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <main class="landing" id="landing">
+    <div class="center-screen"><div class="spinner"></div></div>
+  </main>
+  <div id="toast-wrap"></div>
+
+<script type="module">
+const $ = (sel) => document.querySelector(sel);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+));
+
+const CAMPOS = [
+  { nombre: 'nombre',           etiqueta: 'Nombre y apellido', tipo: 'text',  obligatorio: true },
+  { nombre: 'email',            etiqueta: 'Correo electrónico', tipo: 'email', obligatorio: true },
+  { nombre: 'celular',          etiqueta: 'Celular',            tipo: 'tel' },
+  { nombre: 'documento',        etiqueta: 'Documento',          tipo: 'text' },
+  { nombre: 'fecha_nacimiento', etiqueta: 'Fecha de nacimiento', tipo: 'date' },
+  { nombre: 'localidad',        etiqueta: 'Localidad',          tipo: 'text' },
+];
+
+async function pedir(ruta, opciones) {
+  const respuesta = await fetch(`${window.API_BASE}${ruta}`, {
+    headers: { 'Content-Type': 'application/json' }, ...opciones,
+  });
+  const cuerpo = await respuesta.json().catch(() => ({}));
+  if (!respuesta.ok) throw new Error(cuerpo.mensaje || cuerpo.error || 'No se pudo procesar el envío.');
+  return cuerpo;
+}
+
+function cabecera() {
+  return `<header>
+      <img src="assets/logo-equipos-vertical.png" alt="Equipos Consultores" />
+      <h1>Sumate al panel</h1>
+      <p class="bajada">Participá de nuestros estudios de opinión y ganá puntos
+        que podés canjear por premios.</p>
+    </header>`;
+}
+
+function cerrado(mensaje) {
+  $('#landing').innerHTML = cabecera() + `
+    <div class="alert alert-warn">${esc(mensaje)}</div>`;
+}
+
+function pintar(formulario) {
+  const texto = formulario.textos[0];
+  $('#landing').innerHTML = cabecera() + `
+    <form id="form" novalidate>
+      <div class="card"><div class="card-body">
+        ${CAMPOS.map((c) => `
+          <div class="form-group">
+            <label class="${c.obligatorio ? 'obligatorio' : ''}" for="${c.nombre}">${c.etiqueta}</label>
+            <input class="finput" id="${c.nombre}" name="${c.nombre}" type="${c.tipo}"
+                   ${c.obligatorio ? 'required' : ''} autocomplete="${c.nombre === 'email' ? 'email' : 'on'}">
+          </div>`).join('')}
+
+        <div class="form-group">
+          <label>Consentimiento informado
+            <span class="tenue">(versión ${esc(texto.version)})</span></label>
+          <div class="consentimiento" id="texto">${esc(texto.cuerpo)}</div>
+        </div>
+
+        <label class="check">
+          <input type="checkbox" id="acepto" name="acepto" required>
+          Leí y acepto el consentimiento informado.
+        </label>
+
+        <div id="error"></div>
+        <button class="btn btn-primary" type="submit" id="enviar">Enviar mi inscripción</button>
+        <p class="tenue" style="margin-top:12px; font-size:13px">
+          Tus datos se guardan solamente para contactarte por los estudios del
+          panel. Podés pedir que los borremos cuando quieras.</p>
+      </div></div>
+    </form>`;
+
+  $('#form').onsubmit = (evento) => enviar(evento, texto.version);
+}
+
+async function enviar(evento, version) {
+  evento.preventDefault();
+  const boton = $('#enviar');
+  const error = $('#error');
+  error.innerHTML = '';
+
+  const persona = {};
+  for (const campo of CAMPOS) {
+    const valor = $(`#${campo.nombre}`).value.trim();
+    if (valor) persona[campo.nombre] = valor;
+  }
+  if (!persona.nombre || !persona.email) {
+    error.innerHTML = '<div class="alert alert-error">Necesitamos tu nombre y tu correo.</div>';
+    return;
+  }
+  if (!$('#acepto').checked) {
+    error.innerHTML = '<div class="alert alert-error">Para inscribirte necesitás aceptar el consentimiento.</div>';
+    return;
+  }
+
+  boton.disabled = true;
+  boton.textContent = 'Enviando…';
+  try {
+    const respuesta = await pedir('/inscripciones', {
+      method: 'POST',
+      body: JSON.stringify({
+        persona, acepto_consentimiento: true, version_texto: version,
+      }),
+    });
+    $('#landing').innerHTML = `<div class="gracias">
+        <span class="icono">✅</span>
+        <h1>¡Gracias!</h1>
+        <p class="bajada">${esc(respuesta.mensaje)}</p>
+      </div>`;
+  } catch (falla) {
+    error.innerHTML = `<div class="alert alert-error">${esc(falla.message)}</div>`;
+    boton.disabled = false;
+    boton.textContent = 'Enviar mi inscripción';
+  }
+}
+
+try {
+  const formulario = await pedir('/inscripciones/formulario');
+  if (!formulario.puede_recibir) {
+    cerrado('El formulario de inscripción no está disponible en este momento. '
+          + 'Volvé a intentar más tarde.');
+  } else {
+    pintar(formulario);
+  }
+} catch (falla) {
+  cerrado('No pudimos cargar el formulario. Volvé a intentar en unos minutos.');
+}
+</script>
+</body>
+</html>

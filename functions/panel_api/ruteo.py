@@ -1,7 +1,7 @@
-"""Ruteo de la API: Fase 1 y Fase 2.
+"""Ruteo de la API: Fases 1, 2 y 3.
 
 Las rutas son las del HANDOFF y las del contrato propuesto en
-`specs/SPEC_fase2.md`, con su requisito al lado. El router no sabe nada de
+`specs/SPEC_fase2.md` y `specs/SPEC_fase3.md`, con su requisito al lado. El router no sabe nada de
 Firebase: recibe método, ruta, cuerpo y actor, y devuelve `(status, dict)`.
 Eso lo hace probable sin desplegar nada.
 """
@@ -11,15 +11,21 @@ import re
 from . import (
     auditoria,
     bajas,
+    calidad,
     composicion,
     consentimiento,
     consultas,
     encuestas,
     esquema,
+    inscripciones,
+    muestreo,
     paneles,
     participacion,
     personas,
+    premios,
+    puntos,
     revision,
+    sav,
     semantica,
     usuarios,
 )
@@ -59,6 +65,20 @@ def resolver(metodo, camino):
             {"metodos": sorted(set(rutas_del_camino))},
         )
     raise NoEncontrado(f"No existe la ruta {camino}.")
+
+
+# R3.7 — las únicas rutas sin autenticación. Se enumeran acá, una por una,
+# y `main.py` consulta esta lista: así el conjunto de lo público es un dato
+# que se puede leer de un vistazo y probar, en vez de una condición
+# repartida entre el ruteo y el punto de entrada.
+PUBLICAS = frozenset({
+    ("GET", "/inscripciones/formulario"),
+    ("POST", "/inscripciones"),
+})
+
+
+def es_publica(metodo, camino):
+    return (metodo.upper(), "/" + (camino or "").strip("/")) in PUBLICAS
 
 
 def despachar(metodo, camino, cuerpo, consulta, actor, ctx):
@@ -565,6 +585,322 @@ def diagnostico_esquema(ctx, actor, params, cuerpo, consulta):
     """
     estado = esquema.revisar_stores(ctx.boveda, ctx.semantica)
     return (200 if estado["completo"] else 500), estado
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Fase 3 · 3A — Salud del panel accionable
+# ════════════════════════════════════════════════════════════════════
+
+@ruta("POST", "/encuestas/<encuesta_id>/muestreo", "muestrear", requisito="R3.1")
+def proponer_muestreo(ctx, actor, params, cuerpo, consulta):
+    """Propone a quién invitar. No convoca: la propuesta se confirma aparte."""
+    return 200, muestreo.proponer(
+        ctx.boveda, int(params["encuesta_id"]),
+        dimension=(cuerpo.get("dimension") or "sexo"),
+        cantidad=cuerpo.get("cantidad", 100),
+        estado=cuerpo.get("estado_membresia", "activo"),
+    )
+
+
+@ruta("GET", "/paneles/<panel_id>/umbrales-fatiga", "leer", requisito="R3.1")
+def ver_umbrales(ctx, actor, params, cuerpo, consulta):
+    return 200, muestreo.obtener_umbrales(ctx.boveda, int(params["panel_id"]))
+
+
+@ruta("PUT", "/paneles/<panel_id>/umbrales-fatiga", "muestrear", requisito="R3.1")
+def guardar_umbrales(ctx, actor, params, cuerpo, consulta):
+    return 200, muestreo.guardar_umbrales(
+        ctx.boveda, int(params["panel_id"]), cuerpo, actor
+    )
+
+
+@ruta("POST", "/encuestas/<encuesta_id>/calidad", "ingestar", requisito="R3.2")
+def correr_calidad(ctx, actor, params, cuerpo, consulta):
+    return 200, calidad.correr(
+        ctx.boveda, ctx.semantica, int(params["encuesta_id"]), actor=actor
+    )
+
+
+@ruta("PATCH", "/participacion/<participacion_id>/calidad", "revisar_calidad",
+      requisito="R3.2")
+def revisar_calidad(ctx, actor, params, cuerpo, consulta):
+    """Revierte o confirma una marca automática, con registro de quién."""
+    return 200, calidad.revisar(
+        ctx.boveda, int(params["participacion_id"]),
+        (cuerpo.get("calidad_estado") or "").strip(), actor,
+        motivo=cuerpo.get("motivo"),
+    )
+
+
+@ruta("GET", "/panelistas/<id_persona>/puntos", "leer", requisito="R3.3")
+def ver_puntos(ctx, actor, params, cuerpo, consulta):
+    return 200, puntos.estado_de_cuenta(ctx.boveda, params["id_persona"])
+
+
+@ruta("POST", "/puntos/liquidar", "gamificacion", requisito="R3.4")
+def liquidar_puntos(ctx, actor, params, cuerpo, consulta):
+    encuesta_id = cuerpo.get("encuesta_id")
+    if not encuesta_id:
+        raise DatosInvalidos("Hace falta el id de la encuesta a liquidar.")
+    return 200, puntos.liquidar(
+        ctx.boveda, int(encuesta_id), cuerpo.get("ids_persona"), actor
+    )
+
+
+@ruta("POST", "/puntos/ajustar", "gamificacion", requisito="R3.3")
+def ajustar_puntos(ctx, actor, params, cuerpo, consulta):
+    return 200, puntos.ajustar(
+        ctx.boveda, cuerpo.get("id_persona"), cuerpo.get("puntos"),
+        cuerpo.get("motivo"), actor,
+    )
+
+
+@ruta("POST", "/puntos/vencer", "gamificacion", requisito="R3.3")
+def vencer_puntos(ctx, actor, params, cuerpo, consulta):
+    """Descuenta los lotes vencidos. Es idempotente: correrlo dos veces no
+    descuenta dos veces, porque el lote queda marcado."""
+    return 200, puntos.vencer(ctx.boveda, cuerpo.get("id_persona"))
+
+
+@ruta("GET", "/premios", "leer", requisito="R3.5")
+def listar_premios(ctx, actor, params, cuerpo, consulta):
+    return 200, {"items": premios.listar_premios(
+        ctx.boveda, consulta.get("disponibles") in ("1", "true", "si")
+    )}
+
+
+@ruta("POST", "/premios", "gamificacion", requisito="R3.5")
+def crear_premio(ctx, actor, params, cuerpo, consulta):
+    return 201, premios.crear_premio(ctx.boveda, cuerpo)
+
+
+@ruta("PATCH", "/premios/<premio_id>", "gamificacion", requisito="R3.5")
+def editar_premio(ctx, actor, params, cuerpo, consulta):
+    return 200, premios.editar_premio(ctx.boveda, int(params["premio_id"]), cuerpo)
+
+
+@ruta("GET", "/canjes", "leer", requisito="R3.5")
+def listar_canjes(ctx, actor, params, cuerpo, consulta):
+    return 200, {"items": premios.listar_canjes(
+        ctx.boveda, consulta.get("id_persona"), consulta.get("estado")
+    )}
+
+
+@ruta("POST", "/canjes", "gamificacion", requisito="R3.5")
+def crear_canje(ctx, actor, params, cuerpo, consulta):
+    id_persona = cuerpo.get("id_persona")
+    premio_id = cuerpo.get("premio_id")
+    if not id_persona or not premio_id:
+        raise DatosInvalidos("El canje necesita id_persona y premio_id.")
+    return 201, premios.canjear(ctx.boveda, id_persona, int(premio_id), actor)
+
+
+@ruta("PATCH", "/canjes/<canje_id>", "gamificacion", requisito="R3.5")
+def resolver_canje(ctx, actor, params, cuerpo, consulta):
+    return 200, premios.resolver(
+        ctx.boveda, int(params["canje_id"]), (cuerpo.get("estado") or "").strip(),
+        actor, nota=cuerpo.get("nota"),
+    )
+
+
+@ruta("GET", "/paneles/<panel_id>/bonos", "leer", requisito="R3.6")
+def listar_bonos(ctx, actor, params, cuerpo, consulta):
+    return 200, {"items": puntos.listar_bonos(
+        ctx.boveda, int(params["panel_id"]),
+        consulta.get("vigentes") in ("1", "true", "si"),
+    )}
+
+
+@ruta("POST", "/paneles/<panel_id>/bonos", "gamificacion", requisito="R3.6")
+def crear_bono(ctx, actor, params, cuerpo, consulta):
+    return 201, puntos.crear_bono(
+        ctx.boveda, int(params["panel_id"]), (cuerpo.get("dimension") or "").strip(),
+        cuerpo.get("categoria"), cuerpo.get("puntos_extra"),
+        hasta=cuerpo.get("hasta"), actor=actor,
+    )
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Fase 3 · 3B — Crecimiento
+# ════════════════════════════════════════════════════════════════════
+
+# `permiso=None` significa que la ruta no exige rol. En estas dos es
+# deliberado y es lo que pide R3.7: la landing es pública. `main.py` las
+# deja pasar sin token; ninguna de las dos lee ni devuelve datos de otros
+# panelistas.
+@ruta("GET", "/inscripciones/formulario", None, requisito="R3.7")
+def formulario_inscripcion(ctx, actor, params, cuerpo, consulta):
+    return 200, inscripciones.formulario(ctx.boveda)
+
+
+@ruta("POST", "/inscripciones", None, requisito="R3.7")
+def inscribirse(ctx, actor, params, cuerpo, consulta):
+    """Recibe una inscripción del formulario público.
+
+    Responde siempre lo mismo ante un envío válido: decir «ya estás
+    inscripto» convertiría el formulario en un oráculo para averiguar quién
+    es panelista probando documentos.
+    """
+    return 201, inscripciones.inscribir(ctx.boveda, cuerpo)
+
+
+@ruta("GET", "/inscripciones", "aprobar_inscripciones", requisito="R3.7")
+def listar_inscripciones(ctx, actor, params, cuerpo, consulta):
+    return 200, {"items": inscripciones.listar(
+        ctx.boveda, consulta.get("estado", "pendiente")
+    )}
+
+
+@ruta("POST", "/inscripciones/<inscripcion_id>/aprobar", "aprobar_inscripciones",
+      requisito="R3.7")
+def aprobar_inscripcion(ctx, actor, params, cuerpo, consulta):
+    return 200, inscripciones.aprobar(
+        ctx.boveda, int(params["inscripcion_id"]), actor,
+        panel_id=cuerpo.get("panel_id"),
+    )
+
+
+@ruta("POST", "/inscripciones/<inscripcion_id>/rechazar", "aprobar_inscripciones",
+      requisito="R3.7")
+def rechazar_inscripcion(ctx, actor, params, cuerpo, consulta):
+    return 200, inscripciones.rechazar(
+        ctx.boveda, int(params["inscripcion_id"]), actor, cuerpo.get("motivo")
+    )
+
+
+@ruta("GET", "/textos-consentimiento", "leer", requisito="R3.7")
+def listar_textos(ctx, actor, params, cuerpo, consulta):
+    return 200, {"items": inscripciones.listar_textos(
+        ctx.boveda, consulta.get("finalidad")
+    )}
+
+
+@ruta("POST", "/textos-consentimiento", "publicar_consentimiento", requisito="R3.7")
+def publicar_texto(ctx, actor, params, cuerpo, consulta):
+    return 201, inscripciones.publicar_texto(
+        ctx.boveda, (cuerpo.get("finalidad") or "contacto_participacion"),
+        cuerpo.get("version"), cuerpo.get("cuerpo"), actor,
+    )
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Fase 3 · 3C — Fricción operativa
+# ════════════════════════════════════════════════════════════════════
+
+@ruta("POST", "/encuestas/<encuesta_id>/sav/analizar", "ingestar", requisito="R3.9")
+def analizar_sav(ctx, actor, params, cuerpo, consulta):
+    """Devuelve la metadata precargada del `.sav`. No ingesta nada."""
+    contenido = _archivo_de(cuerpo)
+    return 200, sav.analizar(contenido)
+
+
+@ruta("POST", "/encuestas/<encuesta_id>/sav/ingesta", "ingestar", requisito="R3.9")
+def ingestar_sav(ctx, actor, params, cuerpo, consulta):
+    """Ingesta el `.sav` con la metadata ya confirmada por el analista."""
+    encuesta_id = int(params["encuesta_id"])
+    contenido = _archivo_de(cuerpo)
+    preguntas = cuerpo.get("preguntas") or []
+    if not preguntas:
+        raise DatosInvalidos(
+            "Hace falta la lista de preguntas confirmada. Pedila primero a "
+            "POST /encuestas/{id}/sav/analizar y mandala editada."
+        )
+    columna_id = (cuerpo.get("columna_id") or "").strip()
+    if not columna_id:
+        raise DatosInvalidos("Falta indicar qué variable identifica al individuo.")
+
+    filas = sav.filas_de(contenido)
+    creacion = None
+    if cuerpo.get("modo") == "crear_individuos":
+        creacion = sav.crear_individuos(
+            ctx.boveda, filas, cuerpo.get("mapeo_patronimico") or {},
+            origen=(cuerpo.get("origen") or "sav"), columna_id=columna_id,
+            actor=actor, panel_id=cuerpo.get("panel_id"),
+        )
+
+    resultado = encuestas.ingestar(
+        ctx.boveda, ctx.semantica, encuesta_id, preguntas, filas,
+        (cuerpo.get("origen") or "sav"), columna_id, ctx.embeddings,
+    )
+    resultado["duplicados_en_el_archivo"] = calidad.detectar_duplicados_en_filas(
+        filas, columna_id
+    )
+    if creacion is not None:
+        resultado["creacion_de_individuos"] = creacion
+    return 200, resultado
+
+
+def _archivo_de(cuerpo):
+    """El `.sav` llega en base64 dentro del JSON. Es un archivo binario y la
+    API es JSON: subirlo aparte pediría multipart en la Cloud Function, que
+    complica más de lo que ahorra para los tamaños de un export de campo."""
+    import base64
+
+    crudo = cuerpo.get("archivo_base64") or cuerpo.get("archivo")
+    if not crudo:
+        raise DatosInvalidos("Falta el archivo .sav (campo «archivo_base64»).")
+    try:
+        return base64.b64decode(crudo, validate=True)
+    except Exception:
+        raise DatosInvalidos("El archivo no viene en base64 válido.")
+
+
+@ruta("POST", "/panelistas/regularizar", "enrolar", requisito="R3.9")
+def regularizar_consentimiento(ctx, actor, params, cuerpo, consulta):
+    """Saca de `pendiente_consentimiento` a quien ya tiene base legal.
+
+    Es la contraparte del alta por SAV: esas personas se crean sin
+    consentimiento registrado y no se las puede convocar hasta pasar por acá.
+    """
+    ids = cuerpo.get("ids_persona") or []
+    if not ids:
+        raise DatosInvalidos("Hace falta al menos un id_persona.")
+    return 200, sav.regularizar(
+        ctx.boveda, ids,
+        (cuerpo.get("finalidad") or "contacto_participacion"),
+        cuerpo.get("version_texto"), actor,
+    )
+
+
+@ruta("POST", "/consultas/csv-identificado", "exportar_identificado",
+      requisito="R3.10")
+def exportar_identificado(ctx, actor, params, cuerpo, consulta):
+    """CSV con datos de contacto, a partir de un resultado ya reidentificado.
+
+    Exige la reidentificación hecha: exportar no puede ser un segundo camino
+    para sacar PII, porque entonces habría uno auditado y otro no. Y se
+    registra con motivo propio, distinto de haberla visto en pantalla.
+    """
+    reidentificacion = cuerpo.get("reidentificacion")
+    if not reidentificacion or not reidentificacion.get("items"):
+        raise DatosInvalidos(
+            "La exportación con datos necesita un resultado ya reidentificado. "
+            "Pedí primero POST /reidentificacion y mandá su respuesta acá.",
+            {"ruta_previa": "POST /reidentificacion"},
+        )
+    ids = [i["id_persona"] for i in reidentificacion["items"]]
+    auditoria.registrar_reidentificacion(
+        ctx.boveda, ids, actor=actor, motivo="exportacion",
+        contexto={"ruta": "POST /consultas/csv-identificado",
+                  "personas": len(ids)},
+    )
+    ctx.boveda.commit()
+    return 200, {
+        "csv": consultas.a_csv_identificado(reidentificacion, cuerpo.get("resultado")),
+        "nombre_archivo": consultas.nombre_archivo_identificado(),
+        "personas": len(ids),
+        "contiene_datos_personales": True,
+    }
+
+
+@ruta("POST", "/paneles/desde-consulta", "gestionar_paneles", requisito="R3.11")
+def panel_desde_consulta(ctx, actor, params, cuerpo, consulta):
+    return 201, paneles.desde_consulta(
+        ctx.boveda, cuerpo.get("nombre"), cuerpo.get("resultado") or {},
+        definicion=cuerpo.get("definicion"),
+        descripcion=cuerpo.get("descripcion"),
+        actor=actor, consulta_id=cuerpo.get("consulta_id"),
+    )
 
 
 @ruta("GET", "/yo", None)

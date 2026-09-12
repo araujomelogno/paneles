@@ -37,6 +37,18 @@ MIGRACIONES_BOVEDA = (
     ("0002_revision_alta.sql", ("alta_en_revision",)),
     ("0003_baja_persona.sql", ("persona_borrada",)),
     ("0004_fase2.sql", ("consulta_guardada", "usuario_auditoria", "reidentificacion")),
+    ("0005_fase3.sql", (
+        "umbral_fatiga", "bono_puntos", "texto_consentimiento", "inscripcion",
+        "persona.estado", "participacion.duracion_segundos",
+        "participacion.calidad_detalle", "participacion.calidad_revisada_por",
+        "encuesta.umbral_speeder_segundos", "encuesta.umbral_straightliner",
+        "encuesta.puntos_participacion", "puntos_movimiento.origen_movimiento_id",
+        "puntos_movimiento.vencido", "canje.movimiento_id", "canje.resuelto_en",
+        "canje.resuelto_por", "canje.nota", "panel.origen",
+        "panel.origen_definicion", "panel.origen_consulta_id", "panel.creado_por",
+        "participacion.calidad_evaluada_en", "participacion.calidad_revisada_en",
+        "participacion.calidad_motivo_revision",
+    )),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -61,6 +73,17 @@ PARA_QUE = {
     "alta_en_revision": "las altas que quedan esperando decisión humana",
     "persona_borrada": "el rastro de las bajas ya atendidas",
     "objetivo_composicion": "el universo de referencia de la composición",
+    # ── Fase 3 ──
+    "umbral_fatiga": "los topes de convocatoria que usa el muestreo",
+    "bono_puntos": "los bonos de puntos dirigidos a un segmento",
+    "texto_consentimiento": "los textos de consentimiento versionados de la landing",
+    "inscripcion": "las inscripciones públicas pendientes de aprobación",
+    "persona.estado": "marcar a quien todavía no tiene base legal para ser convocado",
+    "participacion.duracion_segundos": "detectar speeders",
+    "participacion.calidad_detalle": "qué chequeo de calidad dio qué, y cuál no se pudo correr",
+    "encuesta.umbral_speeder_segundos": "el umbral de speeder propio de ese estudio",
+    "encuesta.puntos_participacion": "los puntos que otorga ese estudio",
+    "panel.origen": "distinguir un panel armado a mano de uno creado desde una consulta",
 }
 
 
