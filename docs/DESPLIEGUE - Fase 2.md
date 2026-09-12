@@ -202,8 +202,8 @@ que el código espera:
 pip install "psycopg[binary]"   # el driver, si no está
 # Los DSN, sin escribir la clave: ver «Armar el DSN sin escribir la clave»
 # en el despliegue de la Fase 1.
-export DSN_BOVEDA="$(dsn_local BOVEDA 5432)"
-export DSN_SEMANTICA="$(dsn_local SEMANTICA 5433)"
+export DSN_BOVEDA="$(scripts/dsn_local.sh boveda)"
+export DSN_SEMANTICA="$(scripts/dsn_local.sh semantica)"
 python3 scripts/verificar_esquema.py
 ```
 

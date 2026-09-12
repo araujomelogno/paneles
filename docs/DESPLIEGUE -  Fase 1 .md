@@ -467,25 +467,26 @@ cloud-sql-proxy gestion-paneles:$REGION:paneles-semantica --port 5433 &
 
 #### Armar el DSN sin escribir la clave
 
-```bash
-# La clave real está en Secret Manager. Esto la trae y arma el DSN apuntado
-# al proxy, sin que nadie tenga que escribirla ni verla:
-dsn_local() {
-  gcloud secrets versions access latest --secret="DSN_$1" | python3 -c "
-import sys, urllib.parse as u
-d = u.urlsplit(sys.stdin.read().strip())
-print(u.urlunsplit((d.scheme, f'{d.username}:{d.password}@127.0.0.1:$2', d.path, '', '')))"
-}
+La clave vive en Secret Manager y no tiene por qué salir de ahí. El script
+trae el DSN de producción, le cambia host y puerto por los del proxy y deja
+intacto el resto —usuario, clave y nombre de base—:
 
-export DSN_BOVEDA="$(dsn_local BOVEDA 5432)"
-export DSN_SEMANTICA="$(dsn_local SEMANTICA 5433)"
+```bash
+export DSN_BOVEDA="$(scripts/dsn_local.sh boveda)"
+export DSN_SEMANTICA="$(scripts/dsn_local.sh semantica)"
 ```
 
-> El secreto guarda el DSN de producción, que apunta a la IP privada. La
-> función le cambia host y puerto por los del Auth Proxy y deja el resto —
-> usuario, clave y nombre de base — tal cual. La clave viaja percent-encoded
-> y se reinserta sin decodificar, así que sobrevive intacta aunque tenga
-> `@`, `/`, `#` o `?`.
+Los puertos por omisión son 5432 para la bóveda y 5433 para la semántica, los
+mismos de los ejemplos de acá; si abriste el proxy en otro, va como segundo
+argumento: `scripts/dsn_local.sh semantica 6543`.
+
+> **Por qué un script y no una función para pegar en la terminal.** La primera
+> versión de esto era una función con el código Python entre comillas dobles y
+> el puerto interpolado por la shell. Al copiarla, un `$2` se pegó literal y
+> `psql` terminó con
+> `invalid integer value "$2" for connection option "port"`. En el script el
+> puerto viaja como argumento de Python y el código va entre comillas simples,
+> así que no hay nada que se pueda escapar mal.
 
 Si preferís armarlo a mano, `TU_CLAVE` es un marcador de posición: hay que
 reemplazarlo por la clave de verdad, no pegarlo literal.
@@ -533,7 +534,7 @@ el script: hace falta el Auth Proxy abierto y el DSN exportado.
 
 ```bash
 cloud-sql-proxy gestion-paneles:$REGION:paneles-semantica --port 5433 &
-export DSN_SEMANTICA="$(dsn_local SEMANTICA 5433)"   # ver más arriba
+export DSN_SEMANTICA="$(scripts/dsn_local.sh semantica)"
 python3 scripts/verificar_esquema.py --sql semantica | psql "$DSN_SEMANTICA"
 ```
 

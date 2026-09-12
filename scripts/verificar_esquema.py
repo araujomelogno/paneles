@@ -13,11 +13,9 @@ semanas después. Este script existe para que eso se vea el día que pasa.
     cloud-sql-proxy gestion-paneles:southamerica-east1:paneles-boveda   --port 5432 &
     cloud-sql-proxy gestion-paneles:southamerica-east1:paneles-semantica --port 5433 &
 
-    # TU_CLAVE es un marcador de posición. Para no escribirla, ver «Armar el
-    # DSN sin escribir la clave» en el despliegue de la Fase 1: la trae de
-    # Secret Manager y le cambia host y puerto por los del proxy.
-    export DSN_BOVEDA="postgresql://app_paneles:TU_CLAVE@127.0.0.1:5432/paneles_boveda"
-    export DSN_SEMANTICA="postgresql://app_paneles:TU_CLAVE@127.0.0.1:5433/paneles_semantica"
+    # Los DSN, con la clave que ya está en Secret Manager:
+    export DSN_BOVEDA="$(scripts/dsn_local.sh boveda)"
+    export DSN_SEMANTICA="$(scripts/dsn_local.sh semantica)"
     python3 scripts/verificar_esquema.py
 
 Sale con 0 si las dos bases están al día y con 1 si falta algo, así que se
@@ -120,12 +118,9 @@ def revisar(store, dsn):
 PISTAS = (
     ("password authentication failed",
      "La clave del DSN no es la que espera la base.\n"
-     "    La verdadera está en Secret Manager; no hace falta escribirla:\n"
-     "      export DSN_{STORE}=\"$(gcloud secrets versions access latest \\\n"
-     "        --secret=DSN_{STORE} | python3 -c 'import sys, urllib.parse as u; "
-     "d = u.urlsplit(sys.stdin.read().strip()); print(u.urlunsplit((d.scheme, "
-     "f\"{{d.username}}:{{d.password}}@127.0.0.1:{puerto}\", d.path, \"\", \"\")))')\"\n"
-     "    (Si copiaste un ejemplo, «CLAVE» era un marcador de posición.)"),
+     "    No hace falta escribirla: está en Secret Manager.\n"
+     "      export DSN_{STORE}=\"$(scripts/dsn_local.sh {store})\"\n"
+     "    (Si copiaste un ejemplo, «TU_CLAVE» es un marcador de posición.)"),
     ("connection refused",
      "No hay nada escuchando en ese puerto: falta levantar el Auth Proxy.\n"
      "      cloud-sql-proxy TU_PROYECTO:TU_REGION:paneles-{store} --port {puerto}"),
