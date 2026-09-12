@@ -92,7 +92,8 @@ desplegar:
 export DSN_BOVEDA=... DSN_SEMANTICA=...
 python3 scripts/verificar_esquema.py    # sale con 0 si están al día
 
-# --sql no se conecta a nada, así que no necesita psycopg instalado:
+# --sql no se conecta a nada, así que no necesita psycopg instalado.
+# En esa tubería el que se conecta es psql: el DSN tiene que estar exportado.
 python3 scripts/verificar_esquema.py --sql semantica | psql "$DSN_SEMANTICA"
 ```
 

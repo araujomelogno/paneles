@@ -274,3 +274,52 @@ def test_la_consulta_sql_se_genera_sin_el_driver_de_postgres():
     # Y la consulta se arma igual, sin tocar la base.
     assert "information_schema.columns" in _consulta_sql("semantica")
     importlib.invalidate_caches()
+
+
+def test_la_consulta_sql_no_escupe_un_traceback_si_se_corta_la_tuberia():
+    """La forma de usar `--sql` es con una tubería: `... | psql "$DSN"`.
+
+    Si el `psql` del otro extremo no llega a conectarse, cierra la tubería y
+    Python imprime un `BrokenPipeError` al salir. Eso no es una falla de este
+    script, y lo peor es que tapa el error del `psql`, que es el único que hay
+    que leer.
+
+    La tubería se arma a mano en vez de encadenar un `head`: la salida entra
+    entera en el buffer del pipe, así que con un consumidor real la escritura
+    llega a completarse y la carrera se gana casi siempre. Cerrando el extremo
+    de lectura antes de que el proceso escriba, el EPIPE es seguro.
+    """
+    import os
+    import subprocess
+
+    ruta = str(RAIZ / "scripts" / "verificar_esquema.py")
+    lectura, escritura = os.pipe()
+    proceso = subprocess.Popen(
+        [sys.executable, ruta, "--sql", "semantica"],
+        stdout=escritura,
+        stderr=subprocess.PIPE,
+    )
+    os.close(escritura)  # el hijo se quedó con su copia
+    os.close(lectura)    # ya no hay lector: el próximo write da EPIPE
+    _, error = proceso.communicate()
+
+    assert b"BrokenPipeError" not in error, error.decode()
+    assert b"Traceback" not in error, error.decode()
+
+
+def test_la_consulta_sql_dice_contra_que_base_corrio(conn_semantica):
+    """Un DSN vacío no hace fallar a `psql`: lo manda a sus valores por
+    omisión, o sea a la base `postgres`, que no tiene ninguna de estas tablas.
+    La consulta contesta entonces que faltan todas las migraciones —una
+    respuesta segura y equivocada, que es peor que un error—.
+
+    Por eso cada fila trae la base contra la que se corrió.
+    """
+    with conn_semantica.cursor() as cur:
+        cur.execute("drop view if exists v_respuesta_estudio")
+    try:
+        filas = db.todas(conn_semantica, _consulta_sql("semantica"))
+        assert filas, "la vista se borró, tiene que faltar algo"
+        assert {f["base"] for f in filas} == {"paneles_semantica"}
+    finally:
+        conn_semantica.rollback()
