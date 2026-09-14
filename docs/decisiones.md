@@ -2,7 +2,7 @@
 
 **Sistema:** Gestión de paneles y consulta semántica · Equipos Consultores
 **Alcance:** Fases 1, 2 y 3
-**Última actualización:** 2026-09-12
+**Última actualización:** 2026-09-14
 
 ---
 
@@ -58,7 +58,7 @@ restricción real del sistema.
 | [D22](#d22) | La landing responde siempre lo mismo | 3 |
 | [D23](#d23) | El texto de consentimiento se versiona y no se reescribe | 3 |
 | [D24](#d24) | El repositorio no trae ningún texto legal | 3 |
-| [D25](#d25) | Las altas por SAV quedan pendientes de consentimiento | 3 |
+| [D25](#d25) | La base legal del alta por SAV viaja en el archivo | 3 |
 | [D26](#d26) | El `.sav` se parsea en el backend y su metadata es una propuesta | 3 |
 | [D27](#d27) | Exportar con datos exige haber reidentificado | 3 |
 | [D28](#d28) | Un panel creado desde una consulta es una foto | 3 |
@@ -839,39 +839,89 @@ despliegue lo documenta como paso obligatorio antes de anunciarla.
 # Bloque G · Fricción operativa
 
 <a id="d25"></a>
-## D25 · Las altas por SAV quedan pendientes de consentimiento
+## D25 · La base legal del alta por SAV viaja en el archivo
 
-**El problema.** El alta manual rechaza crear una persona sin consentimiento
-registrado: es la columna vertebral de cumplimiento. La ingesta por SAV en
-modo «crear los individuos en esta carga» entra por otra puerta, y la spec
-deja **abierto** con qué base legal. Sin una definición, esa puerta permite
-poblar la bóveda salteando la regla.
+> **Reemplaza a la versión anterior de esta decisión**, que creaba esas
+> personas en estado `pendiente_consentimiento`. Aquella era la opción
+> conservadora mientras la definición legal estuviera abierta; ya no lo está.
 
-**La decisión.** De las dos opciones que plantea la spec, se implementó la
-conservadora: esas personas se crean en estado `pendiente_consentimiento`.
-Existen en la bóveda —hacen falta para vincular las respuestas— pero:
+**El problema.** El alta manual (R1.1) rechaza crear una persona sin
+consentimiento registrado: es la columna vertebral de cumplimiento. La
+ingesta por SAV en modo «crear los individuos en esta carga» entra por otra
+puerta, y sin una definición esa puerta permite poblar la bóveda salteando la
+regla.
 
-- el muestreo las excluye, con su propio motivo;
-- no pueden ser convocadas;
-- el resultado de la ingesta lo avisa explícitamente, con el conteo.
+La spec planteaba dos salidas: que el archivo traiga la evidencia de
+consentimiento, o que las personas queden en un estado pendiente hasta
+regularizarse.
 
-Hay una operación para regularizarlas: registra el consentimiento y activa a
-la persona en un solo paso, porque separarlas dejaría el estado y el
-consentimiento en desacuerdo.
+**La decisión.** La primera. Al importar hay que declarar, de forma
+obligatoria y para **cada** finalidad, tres cosas:
 
-**Por qué esta y no la otra.** La alternativa —que el archivo traiga
-evidencia de consentimiento en una variable— requiere confiar en la calidad
-de un dato que viene de afuera para una decisión legal. Es viable, pero es
-una decisión de Equipos y su DPO, no del código. La conservadora no cierra
-esa puerta: la deja cerrada hasta que alguien la abra a propósito.
+| Qué se declara | Por qué hace falta |
+|---|---|
+| **Variable** del archivo que contiene la respuesta de consentimiento | Es dónde está la evidencia |
+| **Valor** que cuenta como afirmativo | Un `1`, un `Sí`: sin esto no se sabe qué respuesta es un sí |
+| **Versión del texto** consentido en campo | Es lo que hace demostrable *qué* aceptó la persona |
 
-**Cómo se verifica.** Que el estado exista no alcanza: tiene que tener
-consecuencias. Hay una prueba que crea individuos por SAV, pide una propuesta
-de muestreo y exige que la propuesta venga **vacía** y que todos los
-excluidos tengan el motivo `pendiente_de_consentimiento`.
+Las dos finalidades —`contacto_participacion` y `uso_semantico`— pueden
+apuntar a la **misma variable**: un cuestionario con una sola pregunta de
+consentimiento es el caso normal, y declararla dos veces es decir
+explícitamente que esa pregunta cubre las dos cosas.
 
-**Dónde vive.** `functions/panel_api/sav.py`, `muestreo.py`,
-`db/boveda/0005_fase3.sql`, `docs/DESPLIEGUE - Fase 3.md` §1.1.
+De ahí salen tres reglas:
+
+1. **Sin declaración, no se importa.** La importación se rechaza antes de
+   leer una sola fila. No es un default que se pueda omitir.
+2. **Sin evidencia en la fila, no se crea la persona.** Quien no consintió el
+   contacto no entra a la bóveda: no queda pendiente, no queda a medias, no
+   entra. Se informa cuántas filas quedaron afuera y con qué valor.
+3. **Cada finalidad se evalúa por separado.** Quien consiente el contacto y
+   no el uso semántico entra al panel con un solo consentimiento, y el gate
+   de R1.3 deja sus respuestas fuera del store semántico.
+
+**Por qué esta y no la otra.** La opción del estado pendiente funciona, pero
+deja una deuda que alguien tiene que acordarse de pagar: personas en la
+bóveda esperando una regularización que nadie tiene agendada. La evidencia en
+el archivo, en cambio, hace que la puerta del SAV exija **lo mismo** que la
+del alta manual, y no deja ningún estado intermedio.
+
+El costo es real y hay que decirlo: **si el cuestionario de campo no incluye
+la pregunta de consentimiento, no se puede dar de alta a nadie desde ese
+archivo.** Eso mueve un requisito del software al diseño del cuestionario, que
+es donde corresponde: el consentimiento se pide a la persona, no se deduce
+después.
+
+**Consecuencias.**
+
+- El estado `pendiente_consentimiento` y la operación de regularizar quedan
+  como **transitorios**, para las personas creadas con la versión anterior.
+  Cuando no quede ninguna, se pueden retirar.
+- El consentimiento evidenciado **también se registra a quien ya existe**: es
+  evidencia nueva sobre una persona conocida.
+- Re-importar el mismo archivo no duplica consentimientos idénticos.
+  `consentimiento.otorgar` agrega una fila cada vez a propósito —el historial
+  no se pisa— pero el mismo dato dos veces no es un consentimiento nuevo, y
+  llenar la tabla de filas idénticas haría ilegible el registro que tiene que
+  servir de prueba.
+- El caso ambiguo del dedup se lleva el consentimiento a la cola de revisión,
+  para que quien la resuelva no tenga que volver al archivo.
+- La comparación no distingue mayúsculas ni espacios sobrantes. En un export
+  de campo conviven «Si», «SI » y «sí»; rechazar a alguien por eso sería un
+  error de importación disfrazado de falta de consentimiento.
+
+**Cómo se verifica.** Ocho pruebas, entre ellas las tres que sostienen las
+reglas de arriba: que sin declaración la importación se rechaza y no crea
+nada; que quien no evidencia el contacto no se crea *ni se le registra
+alias*; y que quien evidencia el contacto pero no el uso semántico entra al
+panel **y sus respuestas no llegan al store semántico** —esa última no se
+conforma con el aviso: comprueba la consecuencia real—.
+
+**Dónde vive.** `functions/panel_api/sav.py` (`normalizar_evidencia`,
+`crear_individuos`), `functions/panel_api/ruteo.py`,
+`web/public/js/paginas/encuestas.js`,
+`functions/tests/test_fase3_operacion.py`,
+`docs/DESPLIEGUE - Fase 3.md` §1.1.
 
 ---
 
@@ -1087,7 +1137,7 @@ Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 
 | Tema | Estado | Dónde está anotado |
 |---|---|---|
-| Base legal del alta por SAV | Implementada la opción conservadora; la definitiva la decide Equipos con su DPO | [D25](#d25), `SPEC_fase3.md` §11 |
+| Base legal del alta por SAV | **Resuelta:** la evidencia viaja en el archivo y declararla es obligatorio. Lo que queda es de campo: que el cuestionario incluya la pregunta | [D25](#d25) |
 | Texto de consentimiento de la landing | Pendiente del DPO; el sistema lo trata como dato | [D24](#d24) |
 | Tratamiento fiscal del canje | No-goal explícito de la Fase 3 | `SPEC_fase3.md` §3 |
 | Calibración de todos los umbrales | Pendiente, contra datos de Equipos | [D31](#d31) |

@@ -279,6 +279,18 @@ async function leerArchivo(archivo) {
   return aObjetos(parsearCSV(await archivo.text()));
 }
 
+/* Qué datos patronímicos puede traer un .sav, con el patrón que se usa para
+   sugerir la variable. Van a la bóveda y solo a la bóveda. */
+const PATRONIMICOS = [
+  ['nombre', 'Nombre', /^(nom|nombre|name)/i],
+  ['documento', 'Documento', /^(doc|ci|cedula|documento)/i],
+  ['email', 'Correo', /^(mail|email|correo)/i],
+  ['celular', 'Celular', /^(cel|tel|movil|phone)/i],
+  ['fecha_nacimiento', 'Fecha de nacimiento', /^(fnac|fecha_nac|nacim|birth)/i],
+  ['sexo', 'Sexo', /^(sexo|sex|genero)/i],
+  ['localidad', 'Localidad', /^(loc|localidad|depto|ciudad)/i],
+];
+
 /* Las opciones de una cerrada se escriben "1=Fernet; 2=Whisky". */
 function parsearOpciones(texto) {
   if (!texto) return null;
@@ -332,6 +344,61 @@ function abrirIngesta(encuesta) {
         <label>3 · Preguntas del cuestionario</label>
         <div id="preguntas"></div>
         <button class="btn btn-outline btn-sm" id="add-pregunta" style="margin-top:0.6rem">+ Agregar pregunta</button>
+      </div>
+
+      <!-- R3.9 — Solo para .sav: dar de alta a la gente en la misma carga.
+           Se muestra recién cuando el archivo es un .sav porque es el único
+           formato del que el backend puede leer la metadata; con un Excel
+           el alta sigue siendo por la pantalla de Panelistas. -->
+      <div id="bloque-sav" class="hidden">
+        <div class="form-group">
+          <label>4 · ¿Los panelistas ya están en el sistema?</label>
+          <select class="fselect" id="modo-sav">
+            <option value="existen">Sí, ya existen: solo vincular las respuestas</option>
+            <option value="crear_individuos">No: darlos de alta en esta carga</option>
+          </select>
+        </div>
+
+        <div id="alta-sav" class="hidden">
+          <div class="aviso">
+            <h4>Base legal del alta</h4>
+            <p>Para crear personas desde el archivo hay que indicar
+            <strong>qué variable evidencia el consentimiento y qué valor cuenta
+            como afirmativo</strong>, para las dos finalidades. Puede ser la
+            misma variable.</p>
+            <p>Quien no evidencie el consentimiento de contacto
+            <strong>no se crea</strong>: sus respuestas no se van a poder
+            vincular a nadie.</p>
+          </div>
+
+          <div class="form-group">
+            <label>Datos patronímicos: qué variable trae cada dato</label>
+            <div id="patronimicos"></div>
+          </div>
+
+          <div class="form-group">
+            <label>Consentimiento de contacto y participación</label>
+            <div class="grid-3">
+              <select class="fselect" id="cons-contacto-var"></select>
+              <input class="finput" id="cons-contacto-valor" placeholder="Valor afirmativo (1, Sí…)" />
+              <input class="finput" id="cons-contacto-version" placeholder="Versión del texto consentido" />
+            </div>
+          </div>
+
+          <label class="check" style="margin:0.2rem 0 0.8rem">
+            <input type="checkbox" id="cons-misma" checked />
+            La misma variable y el mismo valor cubren el uso semántico
+          </label>
+
+          <div class="form-group hidden" id="grupo-cons-semantico">
+            <label>Consentimiento de uso semántico</label>
+            <div class="grid-3">
+              <select class="fselect" id="cons-semantico-var"></select>
+              <input class="finput" id="cons-semantico-valor" placeholder="Valor afirmativo" />
+              <input class="finput" id="cons-semantico-version" placeholder="Versión del texto consentido" />
+            </div>
+          </div>
+        </div>
       </div>`,
     acciones: [
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
@@ -364,6 +431,13 @@ function abrirIngesta(encuesta) {
   };
   agregarFila();
   $('#add-pregunta', caja).onclick = (e) => { e.preventDefault(); agregarFila(); };
+
+  $('#modo-sav', caja).onchange = (e) => {
+    $('#alta-sav', caja).classList.toggle('hidden', e.target.value !== 'crear_individuos');
+  };
+  $('#cons-misma', caja).onchange = (e) => {
+    $('#grupo-cons-semantico', caja).classList.toggle('hidden', e.target.checked);
+  };
 
   /* Carga del archivo. */
   const zona = $('#dz', caja);
@@ -441,6 +515,86 @@ function abrirIngesta(encuesta) {
     alerta$.innerHTML = analisis.avisos.length
       ? alerta(analisis.avisos.map((a) => a.mensaje).join(' '), 'warn')
       : '';
+
+    prepararAltaSav(analisis.variables.map((v) => v.codigo));
+  }
+
+  /* R3.9 — el modo «crear los individuos en esta carga». Solo aparece con un
+     .sav, y solo deja confirmar si se declaró de dónde sale la evidencia de
+     consentimiento: es la base legal del alta, no un campo más. */
+  function prepararAltaSav(codigos) {
+    $('#bloque-sav', caja).classList.remove('hidden');
+
+    const opciones = (vacia) =>
+      (vacia ? '<option value="">— ninguna —</option>' : '')
+      + codigos.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+
+    // Un desplegable por dato patronímico. Ninguno es obligatorio salvo que
+    // sin documento, email ni nombre no hay con qué identificar a nadie.
+    $('#patronimicos', caja).innerHTML = PATRONIMICOS.map(([campo, etiqueta]) => `
+      <div class="fila-mapeo">
+        <span class="small">${etiqueta}</span>
+        <select class="fselect p-map" data-campo="${campo}">${opciones(true)}</select>
+      </div>`).join('');
+
+    $('#cons-contacto-var', caja).innerHTML = opciones(true);
+    $('#cons-semantico-var', caja).innerHTML = opciones(true);
+
+    // Precarga: las variables que parecen de consentimiento suelen llamarse
+    // así. Es una sugerencia y se cambia con el desplegable.
+    const probable = codigos.find((c) => /^(cons|consent|autoriz|acepta)/i.test(c));
+    if (probable) {
+      $('#cons-contacto-var', caja).value = probable;
+      $('#cons-semantico-var', caja).value = probable;
+    }
+    PATRONIMICOS.forEach(([campo, , patron]) => {
+      const encontrada = codigos.find((c) => patron.test(c));
+      if (encontrada) $(`.p-map[data-campo="${campo}"]`, caja).value = encontrada;
+    });
+  }
+
+  /* Arma el cuerpo del modo «crear individuos». Valida acá lo que el
+     backend también valida: no para reemplazarlo —la autoridad es el
+     backend— sino para no hacerle subir el archivo entero a alguien que se
+     olvidó de completar un campo. */
+  function cuerpoDeAltaSav() {
+    const mapeo = {};
+    $$('.p-map', caja).forEach((select) => {
+      if (select.value) mapeo[select.dataset.campo] = select.value;
+    });
+    if (!['documento', 'email', 'nombre'].some((c) => mapeo[c])) {
+      throw new Error('Para crear personas hace falta al menos documento, '
+        + 'correo o nombre: sin eso no hay con qué identificarlas.');
+    }
+
+    const contacto = {
+      variable: $('#cons-contacto-var', caja).value,
+      valor_afirmativo: $('#cons-contacto-valor', caja).value.trim(),
+      version_texto: $('#cons-contacto-version', caja).value.trim(),
+    };
+    const misma = $('#cons-misma', caja).checked;
+    const semantico = misma ? { ...contacto } : {
+      variable: $('#cons-semantico-var', caja).value,
+      valor_afirmativo: $('#cons-semantico-valor', caja).value.trim(),
+      version_texto: $('#cons-semantico-version', caja).value.trim(),
+    };
+
+    for (const [etiqueta, regla] of [['contacto', contacto], ['uso semántico', semantico]]) {
+      if (!regla.variable || !regla.valor_afirmativo || !regla.version_texto) {
+        throw new Error(`Falta declarar la evidencia de consentimiento de `
+          + `${etiqueta}: variable, valor afirmativo y versión del texto.`);
+      }
+    }
+
+    return {
+      modo: 'crear_individuos',
+      mapeo_patronimico: mapeo,
+      panel_id: encuesta.panel_id,
+      evidencia_consentimiento: {
+        contacto_participacion: contacto,
+        uso_semantico: semantico,
+      },
+    };
   }
 
   async function correr() {
@@ -468,11 +622,21 @@ function abrirIngesta(encuesta) {
       return;
     }
 
+    let extraSav = {};
+    if (datosArchivo.savBase64 && $('#modo-sav', caja).value === 'crear_individuos') {
+      try {
+        extraSav = cuerpoDeAltaSav();
+      } catch (error) {
+        alerta$.innerHTML = alerta(error.message);
+        return;
+      }
+    }
+
     try {
       const resultado = datosArchivo.savBase64
         ? await api.sav.ingestar(encuesta.id, {
             archivo_base64: datosArchivo.savBase64,
-            preguntas, columna_id: columnaId, origen: 'sav',
+            preguntas, columna_id: columnaId, origen: 'sav', ...extraSav,
           })
         : await api.encuestas.ingestar(encuesta.id, {
             preguntas, filas: datosArchivo.filas, columnaId,
@@ -483,7 +647,14 @@ function abrirIngesta(encuesta) {
         ['Personas', resultado.personas],
         ['Sin mapear', (resultado.sin_mapear || []).length, true],
         ['Sin consentimiento', (resultado.sin_consentimiento || []).length, true],
+        ...(resultado.creacion_de_individuos ? [
+          ['Personas creadas', resultado.creacion_de_individuos.resumen.creados],
+          ['Sin consentimiento',
+           resultado.creacion_de_individuos.resumen.sin_consentimiento, true],
+        ] : []),
       ], [
+        resultado.creacion_de_individuos?.aviso_sin_consentimiento?.mensaje,
+        resultado.creacion_de_individuos?.aviso_sin_uso_semantico?.mensaje,
         (resultado.sin_mapear || []).length
           ? `${resultado.sin_mapear.length} fila(s) traían un id que no corresponde a ningún panelista convocado.`
           : null,

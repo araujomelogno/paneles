@@ -20,14 +20,24 @@ Dos cosas que la precarga hace y que son el punto del requisito:
    enumerado en el resultado. Una ingesta que procesa 900 de 1000 filas y
    dice «listo» es peor que una que falla.
 
-> **Pendiente legal (spec §11).** El modo «crear los individuos en esta
-> carga» entra por una puerta distinta de la del alta manual, que exige
-> consentimiento (R1.1). Mientras no haya una definición de base legal, este
-> módulo crea esas personas en estado `pendiente_consentimiento`: existen en
-> la bóveda, pero el muestreo las excluye y no pueden ser convocadas. Es la
-> opción conservadora de las dos que plantea la spec. Si más adelante se
-> decide que el archivo puede traer evidencia de consentimiento, el cambio
-> es acá y en `personas.alta`.
+**La base legal viaja en el archivo.** El modo «crear los individuos en esta
+carga» entraba por una puerta distinta de la del alta manual, que exige
+consentimiento (R1.1). Esa puerta ya no está abierta: para crear a alguien
+hay que declarar, en el momento de importar, **qué variable del `.sav`
+evidencia el consentimiento y qué valor cuenta como afirmativo**, para las
+dos finalidades —pertenecer al panel y uso semántico—. Pueden ser la misma
+variable; lo que no puede es faltar.
+
+De ahí salen las tres reglas del modo:
+
+1. **Sin evidencia declarada, no se importa.** No es un default que se pueda
+   omitir: la ingesta se rechaza antes de leer una sola fila.
+2. **Sin evidencia en la fila, no se crea la persona.** Quien no consintió
+   el contacto no entra a la bóveda. No queda «pendiente», no queda a medias:
+   no entra, y se informa cuántos y por qué.
+3. **Cada finalidad se evalúa por separado.** Alguien puede consentir el
+   contacto y no el uso semántico. Se le registra lo que consintió y nada
+   más; el gate de la ingesta semántica hace el resto.
 """
 
 import io
@@ -221,17 +231,155 @@ CAMPOS_PATRONIMICOS = (
     "sexo", "localidad",
 )
 
+# Las dos finalidades que hay que evidenciar para crear a alguien desde un
+# archivo. No hay una tercera y ninguna es opcional: sin contacto la persona
+# no puede estar en el panel, y sin uso semántico sus respuestas no pueden
+# ingestarse. Declarar las dos obliga a mirar el cuestionario de campo y
+# decir dónde está cada una, que es exactamente lo que faltaba.
+FINALIDADES_EVIDENCIABLES = ("contacto_participacion", "uso_semantico")
 
-def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id, actor=None,
-                     panel_id=None):
-    """Da de alta a la gente del archivo, con el dedup de R1.2.
+
+def _texto_comparable(valor):
+    """Cómo se comparan los valores del archivo con lo declarado.
+
+    Sin distinguir mayúsculas ni espacios sobrantes: en un export de campo
+    conviven «Si», «SI » y «sí» para la misma respuesta, y rechazar a alguien
+    por eso sería un error de importación disfrazado de falta de
+    consentimiento. Los códigos numéricos ya vienen normalizados por
+    `filas_de` («1.0» → «1»).
+    """
+    return str(valor).strip().lower() if valor is not None else ""
+
+
+def normalizar_evidencia(evidencia):
+    """Valida la declaración de evidencia de consentimiento y la deja canónica.
+
+    Forma esperada, una entrada por finalidad:
+
+        {"contacto_participacion": {"variable": "CONS1",
+                                    "valor_afirmativo": "1",
+                                    "version_texto": "campo-2026-09"},
+         "uso_semantico":          {"variable": "CONS1", ...}}
+
+    `valor_afirmativo` acepta un valor o una lista, porque un cuestionario
+    puede codificar el sí de más de una forma. `variable` puede repetirse
+    entre finalidades: una sola pregunta que cubre las dos es un caso
+    normal, no un error.
+    """
+    if not isinstance(evidencia, dict) or not evidencia:
+        raise DatosInvalidos(
+            "Para crear individuos desde el archivo hay que declarar la "
+            "evidencia de consentimiento: qué variable la contiene y qué "
+            "valor cuenta como afirmativo, para cada finalidad.",
+            {"finalidades_requeridas": list(FINALIDADES_EVIDENCIABLES),
+             "ejemplo": {
+                 "contacto_participacion": {
+                     "variable": "CONS1", "valor_afirmativo": "1",
+                     "version_texto": "consentimiento-campo-2026-09"},
+                 "uso_semantico": {
+                     "variable": "CONS1", "valor_afirmativo": "1",
+                     "version_texto": "consentimiento-campo-2026-09"}}},
+        )
+
+    desconocidas = set(evidencia) - set(FINALIDADES_EVIDENCIABLES)
+    if desconocidas:
+        raise DatosInvalidos(
+            f"Finalidad desconocida en la evidencia: {sorted(desconocidas)}.",
+            {"finalidades_validas": list(FINALIDADES_EVIDENCIABLES)},
+        )
+    faltantes = [f for f in FINALIDADES_EVIDENCIABLES if f not in evidencia]
+    if faltantes:
+        raise DatosInvalidos(
+            f"Falta declarar la evidencia de consentimiento para "
+            f"{faltantes}. Si una misma variable cubre las dos finalidades, "
+            f"declarala en las dos: lo que no puede es quedar sin declarar.",
+            {"faltantes": faltantes},
+        )
+
+    normalizada = {}
+    for finalidad in FINALIDADES_EVIDENCIABLES:
+        regla = evidencia[finalidad] or {}
+        variable = str(regla.get("variable") or "").strip()
+        version = str(regla.get("version_texto") or "").strip()
+        crudos = regla.get("valor_afirmativo")
+        if isinstance(crudos, (str, int, float)) or crudos is None:
+            crudos = [crudos]
+        valores = {_texto_comparable(v) for v in crudos if v is not None
+                   and str(v).strip() != ""}
+
+        if not variable:
+            raise DatosInvalidos(
+                f"Falta la variable que evidencia «{finalidad}» en el archivo."
+            )
+        if not valores:
+            raise DatosInvalidos(
+                f"Falta el valor afirmativo de «{finalidad}»: sin él no se "
+                f"puede saber qué respuesta cuenta como consentimiento."
+            )
+        if not version:
+            raise DatosInvalidos(
+                f"Falta la versión del texto consentido para «{finalidad}». "
+                f"Es lo que hace demostrable qué aceptó la persona: tiene que "
+                f"identificar el consentimiento que se leyó en campo."
+            )
+        normalizada[finalidad] = {
+            "variable": variable,
+            "valores_afirmativos": sorted(valores),
+            "version_texto": version,
+        }
+    return normalizada
+
+
+def _consintio(fila, regla):
+    return _texto_comparable(fila.get(regla["variable"])) in set(
+        regla["valores_afirmativos"]
+    )
+
+
+def _otorgar_si_falta(conn, id_persona, finalidad, version):
+    """Registra el consentimiento salvo que ya esté el mismo, vigente.
+
+    `consentimiento.otorgar` agrega una fila cada vez a propósito: el
+    historial no se pisa. Pero re-ingestar el mismo archivo no es un
+    consentimiento nuevo, es el mismo dato otra vez, y llenar la tabla de
+    filas idénticas haría ilegible justamente el registro que tiene que
+    servir de prueba.
+    """
+    from . import consentimiento as consent
+
+    ya = db.una(
+        conn,
+        """
+        select 1 from consentimiento
+         where id_persona = %s and finalidad = %s and estado = 'vigente'
+           and version_texto = %s
+        """,
+        (str(id_persona), finalidad, version),
+    )
+    if ya:
+        return False
+    consent.otorgar(conn, str(id_persona), finalidad, version)
+    return True
+
+
+def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
+                     evidencia_consentimiento, actor=None, panel_id=None):
+    """Da de alta a la gente del archivo, con el dedup de R1.2 y con la
+    evidencia de consentimiento que trae el propio archivo.
 
     `mapeo`: `{"nombre": "V1", "documento": "V2", ...}` — qué columna del
     archivo trae cada dato patronímico.
 
-    La ingesta no puede crear duplicados que el alta manual habría evitado
-    (R3.9), así que pasa por el mismo `dedup.resolver`. Un caso ambiguo va a
-    la cola de revisión: no se fusiona, igual que en R1.2.
+    `evidencia_consentimiento`: ver `normalizar_evidencia`. Es obligatorio.
+    Quien no evidencia el consentimiento de contacto **no se crea**: la
+    ingesta no puede ser una puerta lateral para poblar la bóveda sin base
+    legal, que es justo lo que el alta manual (R1.1) impide.
+
+    La ingesta tampoco puede crear duplicados que el alta manual habría
+    evitado (R3.9), así que pasa por el mismo `dedup.resolver`. Un caso
+    ambiguo va a la cola de revisión: no se fusiona, igual que en R1.2, y se
+    lleva consigo el consentimiento evidenciado para que quien resuelva la
+    revisión no tenga que volver al archivo.
     """
     import json
 
@@ -248,11 +396,51 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id, actor=None,
             "archivo: sin eso no se pueden vincular las respuestas."
         )
 
-    creados, reutilizados, en_revision, sin_datos = [], [], [], []
+    evidencia = normalizar_evidencia(evidencia_consentimiento)
+
+    # Que la variable declarada exista en el archivo. Un typo acá haría que
+    # ninguna fila evidencie consentimiento y que la importación termine con
+    # cero altas y sin explicar por qué: se detecta antes de escribir nada.
+    columnas = set()
+    for fila in filas:
+        columnas.update(fila)
+    ausentes = sorted({
+        r["variable"] for r in evidencia.values() if r["variable"] not in columnas
+    })
+    if ausentes and columnas:
+        raise DatosInvalidos(
+            f"La(s) variable(s) de consentimiento {ausentes} no están en el "
+            f"archivo. Revisá el código exacto en el análisis del `.sav`.",
+            {"variables_del_archivo": sorted(columnas)[:50]},
+        )
+
+    creados, reutilizados, en_revision = [], [], []
+    sin_datos, sin_consentimiento = [], []
+    otorgados = {finalidad: 0 for finalidad in FINALIDADES_EVIDENCIABLES}
+
     for fila in filas:
         id_en_origen = str(fila.get(columna_id) or "").strip()
         if not id_en_origen:
             continue
+
+        consintio = {
+            finalidad: _consintio(fila, regla)
+            for finalidad, regla in evidencia.items()
+        }
+
+        # Sin consentimiento de contacto no hay persona. Es la regla que
+        # cierra el agujero legal: no se crea, no se registra alias, no
+        # queda nada a medias.
+        if not consintio["contacto_participacion"]:
+            regla = evidencia["contacto_participacion"]
+            sin_consentimiento.append({
+                "id_en_origen": id_en_origen,
+                "variable": regla["variable"],
+                "valor_en_el_archivo": fila.get(regla["variable"]),
+                "valores_afirmativos": regla["valores_afirmativos"],
+            })
+            continue
+
         datos = {}
         for campo, columna in mapeo.items():
             valor = fila.get(columna)
@@ -262,13 +450,26 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id, actor=None,
             sin_datos.append(id_en_origen)
             continue
 
-        # Si ya conocemos ese id en esta plataforma, no hay nada que resolver.
+        consentimientos = [
+            {"finalidad": finalidad,
+             "version_texto": evidencia[finalidad]["version_texto"]}
+            for finalidad in FINALIDADES_EVIDENCIABLES if consintio[finalidad]
+        ]
+
+        # Si ya conocemos ese id en esta plataforma, no hay nada que
+        # resolver: pero el consentimiento que trae el archivo es evidencia
+        # nueva y se registra igual.
         id_persona = dedup.buscar_por_alias(conn_boveda, origen, id_en_origen)
         if id_persona:
-            reutilizados.append(
-                {"id_en_origen": id_en_origen, "id_persona": str(id_persona),
-                 "motivo": "alias_origen"}
-            )
+            for entrada in consentimientos:
+                if _otorgar_si_falta(conn_boveda, id_persona,
+                                     entrada["finalidad"], entrada["version_texto"]):
+                    otorgados[entrada["finalidad"]] += 1
+            reutilizados.append({
+                "id_en_origen": id_en_origen, "id_persona": str(id_persona),
+                "motivo": "alias_origen",
+                "consintio": consintio,
+            })
             continue
 
         resolucion = dedup.resolver(conn_boveda, datos)
@@ -282,13 +483,18 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id, actor=None,
                 """,
                 (
                     json.dumps({
-                        "persona": datos, "consentimientos": [],
+                        "persona": datos,
+                        # El consentimiento evidenciado viaja con la revisión:
+                        # al resolverla, la persona se crea con lo que el
+                        # archivo probó, sin volver a abrirlo.
+                        "consentimientos": consentimientos,
                         "origen": origen, "id_en_origen": id_en_origen,
                         "panel_id": panel_id,
                         "nota": (
-                            "Alta por ingesta SAV. Sin consentimiento "
-                            "registrado: al resolverla, la persona queda "
-                            "pendiente de consentimiento."
+                            f"Alta por ingesta SAV. Consentimiento evidenciado "
+                            f"en la variable "
+                            f"«{evidencia['contacto_participacion']['variable']}» "
+                            f"del archivo."
                         ),
                     }, default=str),
                     json.dumps(resolucion.candidatos),
@@ -300,32 +506,42 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id, actor=None,
                 "revision_id": fila_revision["id"],
                 "motivo": resolucion.motivo,
                 "candidatos": resolucion.candidatos,
+                "consintio": consintio,
             })
             continue
 
         if resolucion.accion == dedup.REUTILIZA:
             id_persona = str(resolucion.id_persona)
             dedup.registrar_alias(conn_boveda, id_persona, origen, id_en_origen)
+            for entrada in consentimientos:
+                if _otorgar_si_falta(conn_boveda, id_persona,
+                                     entrada["finalidad"], entrada["version_texto"]):
+                    otorgados[entrada["finalidad"]] += 1
             reutilizados.append({
                 "id_en_origen": id_en_origen, "id_persona": id_persona,
                 "motivo": resolucion.motivo,
+                "consintio": consintio,
             })
             continue
 
-        # Alta nueva, en estado pendiente de consentimiento: la base legal de
-        # esta puerta es lo que la spec deja abierto (§11).
-        columnas = [c for c in CAMPOS_PATRONIMICOS if c in datos]
+        # Alta nueva. La persona nace `activa`: el archivo probó su base
+        # legal, así que no hay nada pendiente que regularizar.
+        campos = [c for c in CAMPOS_PATRONIMICOS if c in datos]
         nueva = db.una(
             conn_boveda,
             f"""
-            insert into persona ({', '.join(columnas)}, estado)
-            values ({', '.join(['%s'] * len(columnas))}, 'pendiente_consentimiento')
+            insert into persona ({', '.join(campos)})
+            values ({', '.join(['%s'] * len(campos))})
             returning id_persona
             """,
-            tuple(datos[c] for c in columnas),
+            tuple(datos[c] for c in campos),
         )
         id_persona = str(nueva["id_persona"])
         dedup.registrar_alias(conn_boveda, id_persona, origen, id_en_origen)
+        for entrada in consentimientos:
+            if _otorgar_si_falta(conn_boveda, id_persona,
+                                 entrada["finalidad"], entrada["version_texto"]):
+                otorgados[entrada["finalidad"]] += 1
         if panel_id:
             db.ejecutar(
                 conn_boveda,
@@ -333,32 +549,58 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id, actor=None,
                 "on conflict do nothing",
                 (panel_id, id_persona),
             )
-        creados.append({"id_en_origen": id_en_origen, "id_persona": id_persona})
+        creados.append({
+            "id_en_origen": id_en_origen, "id_persona": id_persona,
+            "consintio": consintio,
+        })
 
     conn_boveda.commit()
+
+    solo_contacto = [
+        c for c in creados + reutilizados if not c["consintio"]["uso_semantico"]
+    ]
     return {
         "creados": creados,
         "reutilizados": reutilizados,
         "en_revision": en_revision,
         "sin_datos_suficientes": sin_datos,
+        "sin_consentimiento": sin_consentimiento,
+        "evidencia_declarada": evidencia,
+        "consentimientos_registrados": otorgados,
         "resumen": {
             "creados": len(creados),
             "reutilizados": len(reutilizados),
             "en_revision": len(en_revision),
             "sin_datos_suficientes": len(sin_datos),
+            "sin_consentimiento": len(sin_consentimiento),
         },
-        "aviso_consentimiento": (
+        "aviso_sin_consentimiento": (
             {
-                "personas": len(creados),
-                "estado": "pendiente_consentimiento",
+                "personas": len(sin_consentimiento),
+                "variable": evidencia["contacto_participacion"]["variable"],
+                "valores_afirmativos":
+                    evidencia["contacto_participacion"]["valores_afirmativos"],
                 "mensaje": (
-                    f"Se crearon {len(creados)} personas sin consentimiento "
-                    f"registrado. Quedan en «pendiente_consentimiento»: el "
-                    f"muestreo las excluye y no pueden ser convocadas hasta "
-                    f"que se registre una base legal. Regularizarlas es "
-                    f"registrarles el consentimiento como en un alta normal."
+                    f"{len(sin_consentimiento)} fila(s) no evidencian el "
+                    f"consentimiento de contacto en la variable "
+                    f"«{evidencia['contacto_participacion']['variable']}»: "
+                    f"no se creó ninguna persona con ellas y sus respuestas "
+                    f"no se van a poder vincular a nadie. Si eso es un error "
+                    f"de codificación del archivo, corregí el valor "
+                    f"afirmativo declarado y volvé a importar."
                 ),
-            } if creados else None
+            } if sin_consentimiento else None
+        ),
+        "aviso_sin_uso_semantico": (
+            {
+                "personas": len(solo_contacto),
+                "mensaje": (
+                    f"{len(solo_contacto)} persona(s) consintieron el contacto "
+                    f"pero no el uso semántico. Están en el panel y se las "
+                    f"puede convocar; sus respuestas no se ingestan al store "
+                    f"semántico, que es el gate de R1.3 haciendo su trabajo."
+                ),
+            } if solo_contacto else None
         ),
     }
 
@@ -368,6 +610,13 @@ def regularizar(conn, ids_persona, finalidad, version_texto, actor=None):
 
     Registra el consentimiento y activa a la persona, en una sola operación,
     porque separarlas dejaría el estado y el consentimiento en desacuerdo.
+
+    **Es transitoria.** Desde que la evidencia de consentimiento es
+    obligatoria en la importación, la ingesta por SAV ya no produce personas
+    en `pendiente_consentimiento`: o el archivo prueba el consentimiento y la
+    persona nace activa, o no se crea. Esta función queda para las que se
+    hayan creado con la versión anterior; cuando no quede ninguna, se puede
+    retirar junto con el estado.
     """
     from . import consentimiento as consent
 

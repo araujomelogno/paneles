@@ -31,17 +31,22 @@ def archivo_sav(tmp_path):
     pandas = pytest.importorskip("pandas")
 
     datos = pandas.DataFrame({
-        "ID":   ["a1", "a2", "a3"],
-        "NOM":  ["Ana Pérez", "Beto Díaz", "Ana Pérez"],
-        "DOC":  ["111", "222", ""],
-        "FNAC": ["1990-01-01", "1985-05-05", "1990-01-01"],
-        "MAIL": ["ana@x.uy", "beto@x.uy", ""],
-        "P1":   [1.0, 2.0, 1.0],
-        "P2":   ["me encanta el fernet", "lo detesto", "ni fu ni fa"],
-        "P5_1": [3.0, 3.0, 1.0],
-        "P5_2": [3.0, 1.0, 2.0],
-        "P5_3": [3.0, 2.0, 3.0],
-        "P5_4": [3.0, 3.0, 1.0],
+        "ID":   ["a1", "a2", "a3", "a4"],
+        "NOM":  ["Ana Pérez", "Beto Díaz", "Ana Pérez", "Zoe Sin"],
+        "DOC":  ["111", "222", "", "444"],
+        "FNAC": ["1990-01-01", "1985-05-05", "1990-01-01", "1975-03-03"],
+        "MAIL": ["ana@x.uy", "beto@x.uy", "", "zoe@x.uy"],
+        # R3.9 — la evidencia de consentimiento que trae el propio archivo.
+        # CONS1 cubre el contacto; CONS2, el uso semántico. Beto consiente el
+        # contacto y no el uso semántico; Zoe no consiente nada.
+        "CONS1": [1.0, 1.0, 1.0, 2.0],
+        "CONS2": [1.0, 2.0, 1.0, 2.0],
+        "P1":   [1.0, 2.0, 1.0, 1.0],
+        "P2":   ["me encanta el fernet", "lo detesto", "ni fu ni fa", "no sé"],
+        "P5_1": [3.0, 3.0, 1.0, 2.0],
+        "P5_2": [3.0, 1.0, 2.0, 2.0],
+        "P5_3": [3.0, 2.0, 3.0, 2.0],
+        "P5_4": [3.0, 3.0, 1.0, 2.0],
     })
     ruta = tmp_path / "campo.sav"
     pyreadstat.write_sav(
@@ -52,16 +57,21 @@ def archivo_sav(tmp_path):
             "Documento de identidad",
             "Fecha de nacimiento",
             "Correo electrónico",
+            "¿Autoriza que lo contactemos para participar del panel?",
+            "¿Autoriza el uso de sus respuestas en otros estudios?",
             "¿Qué bebida preferís tomar con amigos?",
             None,                       # sin variable label: el caso feo
             "Acuerdo 1", "Acuerdo 2", "Acuerdo 3", "Acuerdo 4",
         ],
         variable_value_labels={
             "P1": {1.0: "Fernet", 2.0: "Whisky"},
+            "CONS1": {1.0: "Sí", 2.0: "No"},
+            "CONS2": {1.0: "Sí", 2.0: "No"},
             **{f"P5_{i}": dict(ESCALA) for i in range(1, 5)},
         },
         variable_measure={
-            **{c: "nominal" for c in ("ID", "NOM", "DOC", "FNAC", "MAIL", "P1", "P2")},
+            **{c: "nominal" for c in ("ID", "NOM", "DOC", "FNAC", "MAIL",
+                                      "CONS1", "CONS2", "P1", "P2")},
             **{f"P5_{i}": "scale" for i in range(1, 5)},
         },
     )
@@ -74,7 +84,7 @@ def test_precarga_codigos_textos_tipos_y_etiquetas(archivo_sav):
     analisis = sav.analizar(archivo_sav)
 
     por_codigo = {v["codigo"]: v for v in analisis["variables"]}
-    assert analisis["filas"] == 3
+    assert analisis["filas"] == 4
     assert por_codigo["P1"]["texto"] == "¿Qué bebida preferís tomar con amigos?"
     assert por_codigo["P1"]["tipo"] == "cerrada"
     assert por_codigo["P1"]["opciones"] == {"1": "Fernet", "2": "Whisky"}
@@ -131,6 +141,18 @@ def test_analizar_no_escribe_nada(archivo_sav, conn_boveda):
 MAPEO = {"nombre": "NOM", "documento": "DOC", "fecha_nacimiento": "FNAC",
          "email": "MAIL"}
 
+VERSION_CAMPO = "consentimiento-campo-2026-09"
+EVIDENCIA = {
+    "contacto_participacion": {
+        "variable": "CONS1", "valor_afirmativo": "1",
+        "version_texto": VERSION_CAMPO,
+    },
+    "uso_semantico": {
+        "variable": "CONS2", "valor_afirmativo": "1",
+        "version_texto": VERSION_CAMPO,
+    },
+}
+
 
 def test_el_dedup_de_r12_se_aplica_y_los_ambiguos_van_a_revision(
     conn_boveda, archivo_sav
@@ -143,7 +165,7 @@ def test_el_dedup_de_r12_se_aplica_y_los_ambiguos_van_a_revision(
 
     resultado = sav.crear_individuos(
         conn_boveda, filas, MAPEO, origen="dooblo", columna_id="ID",
-        panel_id=panel["id"],
+        evidencia_consentimiento=EVIDENCIA, panel_id=panel["id"],
     )
 
     assert resultado["resumen"]["creados"] == 2
@@ -169,7 +191,8 @@ def test_quien_ya_existe_se_reutiliza(conn_boveda, archivo_sav):
 
     resultado = sav.crear_individuos(
         conn_boveda, sav.filas_de(archivo_sav), MAPEO, origen="dooblo",
-        columna_id="ID", panel_id=panel["id"],
+        columna_id="ID", evidencia_consentimiento=EVIDENCIA,
+        panel_id=panel["id"],
     )
 
     reutilizado = next(r for r in resultado["reutilizados"])
@@ -177,77 +200,332 @@ def test_quien_ya_existe_se_reutiliza(conn_boveda, archivo_sav):
     assert reutilizado["motivo"] == "documento"
 
 
-def test_las_altas_por_sav_quedan_pendientes_de_consentimiento(
-    conn_boveda, archivo_sav
-):
-    """La base legal de esta puerta es lo que la spec deja abierto (§11).
-    Hasta que se defina, estas personas existen pero no se pueden convocar.
+def test_sin_declarar_la_evidencia_no_se_importa(conn_boveda, archivo_sav):
+    """R3.9 — la base legal viaja en el archivo, y declararla es obligatorio.
+
+    No es un default que se pueda omitir: sin la declaración la importación
+    se rechaza antes de leer una sola fila.
     """
-    panel = paneles.crear(conn_boveda, "SAV")
-    conn_boveda.commit()
+    filas = sav.filas_de(archivo_sav)
 
-    resultado = sav.crear_individuos(
-        conn_boveda, sav.filas_de(archivo_sav), MAPEO, origen="dooblo",
-        columna_id="ID", panel_id=panel["id"],
-    )
+    with pytest.raises(DatosInvalidos, match="evidencia de consentimiento"):
+        sav.crear_individuos(conn_boveda, filas, MAPEO, origen="dooblo",
+                             columna_id="ID", evidencia_consentimiento=None)
 
-    estados = db.todas(conn_boveda, "select estado from persona")
-    assert {e["estado"] for e in estados} == {"pendiente_consentimiento"}
-    assert resultado["aviso_consentimiento"]["personas"] == 2
-    assert "no pueden ser convocadas" in resultado["aviso_consentimiento"]["mensaje"]
+    assert db.una(conn_boveda, "select count(*)::int as n from persona")["n"] == 0
 
 
-def test_el_muestreo_excluye_a_quien_esta_pendiente_de_consentimiento(
+@pytest.mark.parametrize("evidencia, falla", [
+    ({"contacto_participacion": {"variable": "CONS1", "valor_afirmativo": "1",
+                                 "version_texto": "v"}},
+     "Falta declarar"),                                    # falta una finalidad
+    ({**{f: {"variable": "", "valor_afirmativo": "1", "version_texto": "v"}
+         for f in sav.FINALIDADES_EVIDENCIABLES}},
+     "Falta la variable"),
+    ({**{f: {"variable": "CONS1", "valor_afirmativo": "", "version_texto": "v"}
+         for f in sav.FINALIDADES_EVIDENCIABLES}},
+     "valor afirmativo"),
+    ({**{f: {"variable": "CONS1", "valor_afirmativo": "1", "version_texto": ""}
+         for f in sav.FINALIDADES_EVIDENCIABLES}},
+     "versión del texto"),
+])
+def test_una_declaracion_incompleta_se_rechaza(evidencia, falla):
+    with pytest.raises(DatosInvalidos, match=falla):
+        sav.normalizar_evidencia(evidencia)
+
+
+def test_una_variable_de_consentimiento_que_no_esta_en_el_archivo_se_detecta(
     conn_boveda, archivo_sav
 ):
-    """Que el estado exista no alcanza: tiene que tener consecuencias."""
-    from panel_api import muestreo
+    """Un typo en el código de la variable haría que ninguna fila evidencie
+    consentimiento y que la importación termine con cero altas sin explicar
+    por qué. Se detecta antes de escribir nada."""
+    evidencia = {
+        **EVIDENCIA,
+        "contacto_participacion": {**EVIDENCIA["contacto_participacion"],
+                                   "variable": "CONS_QUE_NO_EXISTE"},
+    }
+    with pytest.raises(DatosInvalidos, match="no están en el archivo"):
+        sav.crear_individuos(
+            conn_boveda, sav.filas_de(archivo_sav), MAPEO, origen="dooblo",
+            columna_id="ID", evidencia_consentimiento=evidencia,
+        )
 
+
+def test_una_misma_variable_puede_cubrir_las_dos_finalidades(conn_boveda,
+                                                             archivo_sav):
+    """El caso normal: una sola pregunta de consentimiento en el
+    cuestionario. Declararla dos veces no es redundancia, es decir
+    explícitamente que esa pregunta cubre las dos finalidades."""
     panel = paneles.crear(conn_boveda, "SAV")
     conn_boveda.commit()
-    sav.crear_individuos(
-        conn_boveda, sav.filas_de(archivo_sav), MAPEO, origen="dooblo",
-        columna_id="ID", panel_id=panel["id"],
-    )
-    encuesta = encuestas.crear(conn_boveda, panel["id"], "Ola")
-    conn_boveda.commit()
+    una_sola = {
+        finalidad: {"variable": "CONS1", "valor_afirmativo": "1",
+                    "version_texto": VERSION_CAMPO}
+        for finalidad in sav.FINALIDADES_EVIDENCIABLES
+    }
 
-    propuesta = muestreo.proponer(conn_boveda, encuesta["id"], "sexo", cantidad=10)
-
-    assert propuesta["propuesta"] == []
-    assert {e["motivo"] for e in propuesta["excluidos"]} == {muestreo.PENDIENTE}
-
-
-def test_regularizar_los_saca_de_pendiente(conn_boveda, archivo_sav):
-    panel = paneles.crear(conn_boveda, "SAV")
-    conn_boveda.commit()
     resultado = sav.crear_individuos(
         conn_boveda, sav.filas_de(archivo_sav), MAPEO, origen="dooblo",
-        columna_id="ID", panel_id=panel["id"],
+        columna_id="ID", evidencia_consentimiento=una_sola,
+        panel_id=panel["id"],
     )
-    ids = [c["id_persona"] for c in resultado["creados"]]
 
-    sav.regularizar(conn_boveda, ids, "contacto_participacion", VERSION)
+    assert resultado["resumen"]["creados"] == 2      # Ana y Beto
+    assert resultado["aviso_sin_uso_semantico"] is None, (
+        "con una sola variable, quien consiente el contacto consiente las dos"
+    )
+    finalidades = {
+        f["finalidad"] for f in db.todas(
+            conn_boveda, "select distinct finalidad from consentimiento")
+    }
+    assert finalidades == set(sav.FINALIDADES_EVIDENCIABLES)
 
-    estados = db.todas(
+
+def test_la_persona_creada_nace_activa_y_con_su_consentimiento(conn_boveda,
+                                                               archivo_sav):
+    """El cambio de fondo: el archivo prueba la base legal, así que no queda
+    nada pendiente de regularizar."""
+    panel = paneles.crear(conn_boveda, "SAV")
+    conn_boveda.commit()
+
+    resultado = sav.crear_individuos(
+        conn_boveda, sav.filas_de(archivo_sav), MAPEO, origen="dooblo",
+        columna_id="ID", evidencia_consentimiento=EVIDENCIA,
+        panel_id=panel["id"],
+    )
+
+    estados = {e["estado"] for e in db.todas(conn_boveda,
+                                             "select estado from persona")}
+    assert estados == {"activa"}, "ya no se crea nadie pendiente"
+
+    ana = next(c for c in resultado["creados"] if c["id_en_origen"] == "a1")
+    consentimientos = db.todas(
         conn_boveda,
-        "select estado from persona where id_persona = any(%s::uuid[])", (ids,),
+        "select finalidad, version_texto, estado from consentimiento "
+        " where id_persona = %s order by finalidad",
+        (ana["id_persona"],),
     )
-    assert {e["estado"] for e in estados} == {"activa"}
+    assert [c["finalidad"] for c in consentimientos] == [
+        "contacto_participacion", "uso_semantico"]
+    assert {c["version_texto"] for c in consentimientos} == {VERSION_CAMPO}
+    assert {c["estado"] for c in consentimientos} == {"vigente"}
+
+
+def test_quien_no_consiente_el_contacto_no_se_crea(conn_boveda, archivo_sav):
+    """La regla que cierra el agujero legal. Zoe (a4) dice que no: no entra a
+    la bóveda, no se le registra alias, no queda nada a medias."""
+    panel = paneles.crear(conn_boveda, "SAV")
+    conn_boveda.commit()
+
+    resultado = sav.crear_individuos(
+        conn_boveda, sav.filas_de(archivo_sav), MAPEO, origen="dooblo",
+        columna_id="ID", evidencia_consentimiento=EVIDENCIA,
+        panel_id=panel["id"],
+    )
+
+    rechazada = resultado["sin_consentimiento"]
+    assert [r["id_en_origen"] for r in rechazada] == ["a4"]
+    assert rechazada[0]["variable"] == "CONS1"
+    assert rechazada[0]["valor_en_el_archivo"] == "2"
+    assert resultado["aviso_sin_consentimiento"]["personas"] == 1
+
+    nombres = {p["nombre"] for p in db.todas(conn_boveda,
+                                             "select nombre from persona")}
+    assert "Zoe Sin" not in nombres
     assert db.una(
         conn_boveda,
-        "select count(*)::int as n from consentimiento where estado = 'vigente'",
-    )["n"] == len(ids)
+        "select count(*)::int as n from alias_origen where id_en_origen = 'a4'",
+    )["n"] == 0
+
+
+def test_cada_finalidad_se_evalua_por_separado(conn_boveda, archivo_sav):
+    """Beto (a2) consiente el contacto y no el uso semántico: entra al panel
+    con un solo consentimiento, y se avisa."""
+    panel = paneles.crear(conn_boveda, "SAV")
+    conn_boveda.commit()
+
+    resultado = sav.crear_individuos(
+        conn_boveda, sav.filas_de(archivo_sav), MAPEO, origen="dooblo",
+        columna_id="ID", evidencia_consentimiento=EVIDENCIA,
+        panel_id=panel["id"],
+    )
+
+    beto = next(c for c in resultado["creados"] if c["id_en_origen"] == "a2")
+    assert beto["consintio"] == {"contacto_participacion": True,
+                                 "uso_semantico": False}
+    finalidades = [
+        f["finalidad"] for f in db.todas(
+            conn_boveda,
+            "select finalidad from consentimiento where id_persona = %s",
+            (beto["id_persona"],))
+    ]
+    assert finalidades == ["contacto_participacion"]
+    assert resultado["aviso_sin_uso_semantico"]["personas"] == 1
+
+
+def test_quien_no_consiente_el_uso_semantico_no_se_ingesta(
+    conn_boveda, conn_semantica, archivo_sav, proveedor
+):
+    """El aviso no alcanza: la consecuencia tiene que ser real. El gate de
+    R1.3 deja las respuestas de Beto fuera del store semántico."""
+    panel = paneles.crear(conn_boveda, "SAV")
+    conn_boveda.commit()
+    filas = sav.filas_de(archivo_sav)
+    creacion = sav.crear_individuos(
+        conn_boveda, filas, MAPEO, origen="dooblo", columna_id="ID",
+        evidencia_consentimiento=EVIDENCIA, panel_id=panel["id"],
+    )
+    encuesta = encuestas.crear(conn_boveda, panel["id"], "Ola SAV")
+    conn_boveda.commit()
+    preguntas = [{"codigo": "P2", "texto": "¿Por qué la elige?",
+                  "tipo": "abierta", "opciones": None, "orden": 1}]
+
+    encuestas.ingestar(conn_boveda, conn_semantica, encuesta["id"], preguntas,
+                       filas, columna_id="ID", origen="dooblo",
+                       proveedor=proveedor)
+
+    beto = next(c for c in creacion["creados"] if c["id_en_origen"] == "a2")
+    ana = next(c for c in creacion["creados"] if c["id_en_origen"] == "a1")
+    con_respuestas = {
+        str(f["id_persona"]) for f in db.todas(
+            conn_semantica, "select id_persona from individuo")
+    }
+    assert ana["id_persona"] in con_respuestas
+    assert beto["id_persona"] not in con_respuestas, (
+        "consintió el contacto pero no el uso semántico"
+    )
+
+
+def test_reimportar_el_mismo_archivo_no_duplica_consentimientos(conn_boveda,
+                                                                archivo_sav):
+    """`consentimiento.otorgar` agrega una fila cada vez a propósito, para no
+    pisar el historial. Pero re-ingestar el mismo archivo no es un
+    consentimiento nuevo: es el mismo dato otra vez, y llenar la tabla de
+    filas idénticas haría ilegible el registro que sirve de prueba."""
+    panel = paneles.crear(conn_boveda, "SAV")
+    conn_boveda.commit()
+    filas = sav.filas_de(archivo_sav)
+
+    primera = sav.crear_individuos(
+        conn_boveda, filas, MAPEO, origen="dooblo", columna_id="ID",
+        evidencia_consentimiento=EVIDENCIA, panel_id=panel["id"])
+    cuantos = db.una(
+        conn_boveda, "select count(*)::int as n from consentimiento")["n"]
+
+    segunda = sav.crear_individuos(
+        conn_boveda, filas, MAPEO, origen="dooblo", columna_id="ID",
+        evidencia_consentimiento=EVIDENCIA, panel_id=panel["id"])
+
+    assert segunda["resumen"]["creados"] == 0
+    assert segunda["resumen"]["reutilizados"] == primera["resumen"]["creados"]
+    assert db.una(
+        conn_boveda, "select count(*)::int as n from consentimiento")["n"] == cuantos
+
+
+def test_el_si_del_archivo_se_compara_sin_distinguir_mayusculas(conn_boveda):
+    """En un export de campo conviven «Si», «SI » y «sí» para la misma
+    respuesta. Rechazar a alguien por eso sería un error de importación
+    disfrazado de falta de consentimiento."""
+    panel = paneles.crear(conn_boveda, "SAV")
+    conn_boveda.commit()
+    evidencia = {
+        f: {"variable": "CONS", "valor_afirmativo": "sí",
+            "version_texto": VERSION_CAMPO}
+        for f in sav.FINALIDADES_EVIDENCIABLES
+    }
+    filas = [
+        {"ID": "x1", "NOM": "Uno", "DOC": "d1", "CONS": "Sí"},
+        {"ID": "x2", "NOM": "Dos", "DOC": "d2", "CONS": "SÍ "},
+        {"ID": "x3", "NOM": "Tres", "DOC": "d3", "CONS": "No"},
+    ]
+
+    resultado = sav.crear_individuos(
+        conn_boveda, filas, {"nombre": "NOM", "documento": "DOC"},
+        origen="dooblo", columna_id="ID", evidencia_consentimiento=evidencia,
+        panel_id=panel["id"],
+    )
+
+    assert resultado["resumen"]["creados"] == 2
+    assert [r["id_en_origen"] for r in resultado["sin_consentimiento"]] == ["x3"]
+
+
+def test_el_ambiguo_se_lleva_su_consentimiento_a_la_revision(conn_boveda,
+                                                             archivo_sav):
+    """Quien resuelve la revisión no tiene que volver al archivo para saber
+    qué consintió esa persona."""
+    import json
+
+    panel = paneles.crear(conn_boveda, "SAV")
+    conn_boveda.commit()
+
+    sav.crear_individuos(
+        conn_boveda, sav.filas_de(archivo_sav), MAPEO, origen="dooblo",
+        columna_id="ID", evidencia_consentimiento=EVIDENCIA,
+        panel_id=panel["id"],
+    )
+
+    revision = db.una(conn_boveda, "select datos from alta_en_revision")
+    datos = revision["datos"]
+    if isinstance(datos, str):
+        datos = json.loads(datos)
+    finalidades = {c["finalidad"] for c in datos["consentimientos"]}
+    assert finalidades == set(sav.FINALIDADES_EVIDENCIABLES)
+    assert all(c["version_texto"] == VERSION_CAMPO
+               for c in datos["consentimientos"])
+    assert "CONS1" in datos["nota"]
+
+
+def test_ya_no_se_crea_nadie_pendiente_de_consentimiento(conn_boveda,
+                                                         archivo_sav):
+    """El estado sigue existiendo para las personas creadas por la versión
+    anterior del módulo, pero la ingesta ya no lo produce."""
+    panel = paneles.crear(conn_boveda, "SAV")
+    conn_boveda.commit()
+
+    sav.crear_individuos(
+        conn_boveda, sav.filas_de(archivo_sav), MAPEO, origen="dooblo",
+        columna_id="ID", evidencia_consentimiento=EVIDENCIA,
+        panel_id=panel["id"],
+    )
+
+    assert db.una(
+        conn_boveda,
+        "select count(*)::int as n from persona "
+        " where estado = 'pendiente_consentimiento'",
+    )["n"] == 0
+
+
+def test_regularizar_sigue_estando_para_las_altas_viejas(conn_boveda):
+    """Transitoria: las personas creadas antes de este cambio quedaron en
+    `pendiente_consentimiento` y hay que poder sacarlas de ahí."""
+    panel = paneles.crear(conn_boveda, "SAV")
+    fila = db.una(
+        conn_boveda,
+        "insert into persona (nombre, documento, estado) "
+        "values ('Vieja', 'v1', 'pendiente_consentimiento') returning id_persona",
+    )
+    conn_boveda.commit()
+    id_persona = str(fila["id_persona"])
+
+    sav.regularizar(conn_boveda, [id_persona], "contacto_participacion",
+                    VERSION_CAMPO)
+
+    assert db.una(
+        conn_boveda, "select estado from persona where id_persona = %s",
+        (id_persona,),
+    )["estado"] == "activa"
 
 
 def test_una_fila_sin_datos_suficientes_se_informa(conn_boveda):
     panel = paneles.crear(conn_boveda, "SAV")
     conn_boveda.commit()
-    filas = [{"ID": "z1", "NOM": "", "DOC": "", "MAIL": ""}]
+    filas = [{"ID": "z1", "NOM": "", "DOC": "", "MAIL": "",
+              "CONS1": "1", "CONS2": "1"}]
 
     resultado = sav.crear_individuos(
         conn_boveda, filas, MAPEO, origen="dooblo", columna_id="ID",
-        panel_id=panel["id"],
+        evidencia_consentimiento=EVIDENCIA, panel_id=panel["id"],
     )
 
     assert resultado["sin_datos_suficientes"] == ["z1"]
@@ -257,13 +535,15 @@ def test_una_fila_sin_datos_suficientes_se_informa(conn_boveda):
 def test_un_mapeo_a_un_campo_inexistente_se_rechaza(conn_boveda):
     with pytest.raises(DatosInvalidos, match="no existen en la bóveda"):
         sav.crear_individuos(
-            conn_boveda, [], {"apodo": "NOM"}, origen="x", columna_id="ID"
+            conn_boveda, [], {"apodo": "NOM"}, origen="x", columna_id="ID",
+            evidencia_consentimiento=EVIDENCIA,
         )
 
 
 def test_sin_columna_de_id_no_se_ingesta(conn_boveda):
     with pytest.raises(DatosInvalidos, match="identifica a cada individuo"):
-        sav.crear_individuos(conn_boveda, [], MAPEO, origen="x", columna_id="")
+        sav.crear_individuos(conn_boveda, [], MAPEO, origen="x", columna_id="",
+                             evidencia_consentimiento=EVIDENCIA)
 
 
 # ── R3.9 · El guardrail de PII sigue valiendo ───────────────────────
@@ -281,7 +561,8 @@ def test_los_datos_patronimicos_del_sav_no_llegan_al_store_semantico(
     conn_boveda.commit()
     filas = sav.filas_de(archivo_sav)
     sav.crear_individuos(conn_boveda, filas, MAPEO, origen="dooblo",
-                         columna_id="ID", panel_id=panel["id"])
+                         columna_id="ID", evidencia_consentimiento=EVIDENCIA,
+                         panel_id=panel["id"])
     encuesta = encuestas.crear(conn_boveda, panel["id"], "Ola SAV")
     conn_boveda.commit()
 
@@ -292,15 +573,22 @@ def test_los_datos_patronimicos_del_sav_no_llegan_al_store_semantico(
         for v in analisis["variables"]
         if v["codigo"] in ("P1", "P2", "P5_1", "P5_2", "P5_3", "P5_4")
     ]
-    encuestas.ingestar(
+    escritas = encuestas.ingestar(
         conn_boveda, conn_semantica, encuesta["id"], preguntas, filas,
-        "dooblo", "ID", proveedor,
+        columna_id="ID", origen="dooblo", proveedor=proveedor,
     )
 
     textos = db.todas(
         conn_semantica,
         "select valor_texto, texto_embebido from respuesta",
     )
+    # Sin esto la prueba pasa en vacío: si la ingesta no escribió nada, no
+    # hay dónde buscar PII y el guardrail queda sin verificar. Pasó: la
+    # llamada tenía `columna_id` y `origen` invertidos y esta prueba no se
+    # enteró.
+    assert escritas["respuestas_escritas"] > 0
+    assert textos, "sin respuestas ingestadas no se está probando nada"
+
     todo = " ".join(
         f"{f['valor_texto']} {f['texto_embebido']}" for f in textos
     ).lower()

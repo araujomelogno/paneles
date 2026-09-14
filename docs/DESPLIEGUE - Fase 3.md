@@ -19,7 +19,7 @@ En términos de despliegue, eso se traduce en cinco cosas concretas:
 | Una migración nueva en la bóveda | `db/boveda/0005_fase3.sql` | Las pantallas nuevas fallan con `relation … does not exist` |
 | Una dependencia nueva en la función | `pyreadstat` | La ingesta SAV responde 400 al primer archivo |
 | Una página pública nueva | `/inscribirse` | La landing no existe |
-| Tres decisiones legales pendientes | ver §1 | Se abren superficies de datos sin base legal |
+| Dos decisiones legales pendientes | ver §1 | Se abren superficies de datos sin base legal |
 | Nada en el store semántico | — | — |
 
 **El store semántico no cambia en esta fase.** No hay migración nueva del lado
@@ -33,36 +33,101 @@ sprint se corta, esta es la secuencia con menos deuda:
 
 - **3A — salud del panel** (muestreo, calidad, puntos): no toca ninguna
   superficie pública ni crea personas. Es lo más seguro de soltar primero.
-- **3C — fricción operativa** (SAV, exportación, panel desde consulta): el
-  modo «ya existen» del SAV y las dos últimas se pueden habilitar sin
-  ninguna definición legal pendiente.
+- **3C — fricción operativa** (SAV, exportación, panel desde consulta): no
+  tiene ninguna definición legal pendiente. El modo «crear individuos» del
+  SAV exige que el archivo evidencie el consentimiento (§1.1), y eso es un
+  requisito del cuestionario de campo, no del despliegue.
 - **3B — crecimiento** (landing): es la única superficie pública del sistema
   y **exige el texto de consentimiento revisado** antes de anunciarla.
 
 ---
 
-## 1 · Antes de empezar: las tres definiciones pendientes
+## 1 · Antes de empezar: las definiciones legales
 
-La spec marca tres puntos como bloqueantes (§11). Ninguno frena el despliegue
-del código —está todo implementado— pero dos de ellos sí frenan **habilitar**
-la funcionalidad. Conviene resolverlos antes de anunciar nada.
+La spec marcaba tres puntos como bloqueantes (§11). **Uno ya está resuelto en
+el código** —la base legal del alta por SAV, §1.1— y de los otros dos, uno
+frena habilitar la landing. Conviene revisarlos antes de anunciar nada.
 
-### 1.1 · Base legal del alta por SAV — *implementado con la opción conservadora*
+### 1.1 · Base legal del alta por SAV — *resuelta: la evidencia viaja en el archivo*
 
-El alta manual (R1.1) rechaza crear una persona sin consentimiento. El modo
-«crear los individuos en esta carga» entra por otra puerta, y la spec deja
-abierto con qué base legal.
+El alta manual (R1.1) rechaza crear una persona sin consentimiento registrado.
+El modo «crear los individuos en esta carga» entraba por otra puerta, y la
+spec dejaba abierto con qué base legal.
 
-**Lo que hace el sistema hoy:** esas personas se crean en estado
-`pendiente_consentimiento`. Existen en la bóveda, pero el muestreo las excluye
-y no pueden ser convocadas. Es una de las dos opciones que plantea la spec, y
-es la conservadora.
+**Ya no está abierto.** Para crear personas desde un `.sav` hay que declarar,
+en el momento de importar, **qué variable del archivo evidencia el
+consentimiento y qué valor cuenta como afirmativo**, para las dos finalidades:
 
-No hay que hacer nada para que esto funcione. Lo que hay que decidir es si se
-queda así o si el archivo puede traer evidencia de consentimiento; si se
-decide lo segundo, el cambio es en `sav.crear_individuos` y en `personas.alta`.
+| Finalidad | Qué habilita |
+|---|---|
+| `contacto_participacion` | Pertenecer al panel y ser convocado |
+| `uso_semantico` | Que sus respuestas se ingesten al store semántico |
 
-Para regularizar a quien ya tenga base legal:
+**Pueden apuntar a la misma variable.** Un cuestionario con una sola pregunta
+de consentimiento es el caso normal; declararla dos veces es decir
+explícitamente que esa pregunta cubre las dos finalidades.
+
+Desde la app: Encuestas → Ingestar respuestas → subí el `.sav` → «¿Los
+panelistas ya están en el sistema?» → *No: darlos de alta en esta carga*. Los
+desplegables se llenan con las variables del archivo. Por API:
+
+```jsonc
+{
+  "modo": "crear_individuos",
+  "columna_id": "ID",
+  "mapeo_patronimico": {"nombre": "NOM", "documento": "DOC", "email": "MAIL"},
+  "evidencia_consentimiento": {
+    "contacto_participacion": {
+      "variable": "CONS1",
+      "valor_afirmativo": "1",          // acepta una lista: ["1", "Sí"]
+      "version_texto": "consentimiento-campo-2026-09"
+    },
+    "uso_semantico": {
+      "variable": "CONS1",              // puede ser la misma
+      "valor_afirmativo": "1",
+      "version_texto": "consentimiento-campo-2026-09"
+    }
+  }
+}
+```
+
+**Qué pasa con cada fila:**
+
+| Situación | Resultado |
+|---|---|
+| Evidencia contacto y uso semántico | Se crea con los dos consentimientos |
+| Evidencia contacto, no uso semántico | Se crea con uno. Está en el panel, sus respuestas **no** se ingestan |
+| No evidencia contacto | **No se crea.** Se informa cuántas filas y con qué valor |
+| La persona ya existe | No se duplica; el consentimiento del archivo se le registra igual |
+
+**Qué se rechaza antes de leer una fila:** una declaración sin alguna de las
+dos finalidades, sin variable, sin valor afirmativo o sin versión de texto; y
+una variable declarada que no existe en el archivo —un typo ahí dejaría cero
+altas sin explicar por qué—.
+
+> **Lo que queda es una decisión de campo, no de software.** El cuestionario
+> tiene que **incluir la pregunta de consentimiento**. Si un `.sav` viene sin
+> ella, no se puede dar de alta a nadie desde ese archivo, y hay que
+> enrolarlos por la pantalla de Panelistas o por la landing. Conviene
+> acordarlo con el equipo de campo y con el proveedor de la plataforma
+> (Dooblo, Alchemer) antes de la primera ola que use esta vía.
+
+La comparación del valor afirmativo no distingue mayúsculas ni espacios: «Sí»,
+«SI » y «sí» son la misma respuesta. Rechazar a alguien por eso sería un error
+de importación disfrazado de falta de consentimiento.
+
+#### Las personas creadas con la versión anterior
+
+Antes de este cambio, la ingesta creaba a esas personas en estado
+`pendiente_consentimiento`. Ya no lo hace: o el archivo prueba la base legal y
+la persona nace activa, o no se crea. Si quedaron altas de la versión
+anterior, se regularizan una vez y el estado deja de usarse:
+
+```bash
+# ¿Queda alguna?
+psql "$DSN_BOVEDA" -c "select count(*) from persona
+                        where estado = 'pendiente_consentimiento';"
+```
 
 ```bash
 curl -s -X POST https://gestion-paneles.web.app/api/panelistas/regularizar \
@@ -129,7 +194,7 @@ psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 -f db/boveda/0005_fase3.sql
 | `bono_puntos` | Bonos dirigidos a un segmento (R3.6) |
 | `texto_consentimiento` | Los textos versionados de la landing (R3.7) |
 | `inscripcion` | Las solicitudes públicas, que **no** son personas todavía (R3.7) |
-| `persona.estado` | `pendiente_consentimiento` para las altas por SAV (R3.9) |
+| `persona.estado` | El valor `pendiente_consentimiento` existe en el enum, pero ya no se usa en altas nuevas: solo puede haberlo en altas por SAV de la versión anterior de R3.9 (ver §1.1) |
 | `participacion.duracion_segundos` y la revisión de calidad | Detectar speeders y poder revertir la marca (R3.2) |
 | `encuesta.umbral_*` y `puntos_participacion` | Umbrales y puntos propios de cada estudio |
 | `puntos_earn_unico_por_encuesta` | Que no se pueda liquidar dos veces, ni con concurrencia (R3.4) |
@@ -339,6 +404,21 @@ usuario `admin`.
    las variables con label vacío o truncado, marcadas. Corregí un texto antes
    de confirmar: es lo que se vectoriza.
 
+9.1. **SAV con alta de individuos.** Elegí *No: darlos de alta en esta carga*.
+   - Sin completar la evidencia de consentimiento, **no tiene que dejar
+     confirmar**.
+   - Con una variable que no existe en el archivo, tiene que rechazarlo
+     diciendo cuál.
+   - Con todo completo, el resumen tiene que decir cuántas personas se
+     crearon y cuántas quedaron afuera por no consentir.
+   - Verificá en la base que las creadas quedaron `activa` y con su
+     consentimiento:
+     ```sql
+     select p.estado, c.finalidad, c.version_texto
+       from persona p join consentimiento c using (id_persona)
+      order by p.creado_en desc limit 10;
+     ```
+
 10. **Exportación con datos.** Consultas → correr una → «CSV con datos» tiene
     que estar **deshabilitado**. Usá «Ver quiénes son» y recién ahí se
     habilita. Después de descargar, verificá el registro con motivo
@@ -391,9 +471,28 @@ un aviso. Hay que escribir los textos a mano antes de confirmar: si se
 ingesta así, la consulta semántica sobre ese estudio no va a servir, porque
 lo que se vectoriza es el texto.
 
+**«La importación con alta de individuos se rechaza y dice que falta la
+evidencia de consentimiento.»**
+Es lo esperado: declararla es obligatorio (§1.1). Hay que indicar variable,
+valor afirmativo y versión del texto para las dos finalidades. Si el
+cuestionario tiene una sola pregunta de consentimiento, se declara la misma
+variable en las dos.
+
+**«Importé y no se creó nadie.»**
+Mirá el aviso del resultado. Lo más probable es que el valor afirmativo
+declarado no coincida con el que trae el archivo —declaraste `1` y el archivo
+codifica `Sí`, o al revés—. El aviso dice qué valor tenía cada fila que quedó
+afuera. Corregí el valor declarado y volvé a importar: reimportar no duplica
+nada.
+
 **«Alguien creado por SAV no aparece en el muestreo.»**
-Está en `pendiente_consentimiento` (§1.1). Es lo esperado hasta que se
-registre su base legal.
+Si quedó en `pendiente_consentimiento`, es un alta de la versión anterior del
+módulo: regularizala (§1.1). Con la versión actual eso no puede pasar, porque
+quien no evidencia el consentimiento no se crea.
+
+**«Las respuestas de alguien no llegaron al store semántico.»**
+Consintió el contacto y no el uso semántico. Es el gate de R1.3 funcionando:
+está en el panel y se lo puede convocar, pero sus respuestas no se ingestan.
 
 ---
 
@@ -434,8 +533,11 @@ Infraestructura:
 
 Definiciones pendientes:
 
-- [ ] Decidido qué pasa con las altas por SAV, o asumido el default
-      conservador (`pendiente_consentimiento`).
+- [ ] El cuestionario de campo **incluye la pregunta de consentimiento**, y se
+      sabe qué variable es y qué valor cuenta como afirmativo. Sin eso, el
+      modo «crear individuos» del SAV no puede dar de alta a nadie.
+- [ ] Si quedaron personas en `pendiente_consentimiento` de la versión
+      anterior, regularizadas.
 - [ ] Texto de consentimiento revisado por el DPO y publicado — **sin esto la
       landing no recibe a nadie**.
 - [ ] Tratamiento fiscal del canje definido, o catálogo cargado con los
@@ -455,6 +557,8 @@ Verificación funcional:
 - [ ] La landing rechaza sin consentimiento y no guarda nada en ese caso.
 - [ ] Aprobar una inscripción crea la persona con la versión que aceptó.
 - [ ] Un `.sav` precarga textos y etiquetas, y marca los dudosos.
+- [ ] Sin evidencia de consentimiento declarada, el alta por SAV se rechaza.
+- [ ] Quien no consiente el contacto no se crea, y el resumen lo dice.
 - [ ] «CSV con datos» está deshabilitado hasta reidentificar.
 - [ ] Crear un panel desde una consulta registra su origen.
 

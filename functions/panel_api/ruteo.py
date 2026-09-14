@@ -812,16 +812,29 @@ def ingestar_sav(ctx, actor, params, cuerpo, consulta):
     filas = sav.filas_de(contenido)
     creacion = None
     if cuerpo.get("modo") == "crear_individuos":
+        # La evidencia de consentimiento es obligatoria en este modo y se
+        # valida **antes** de ingestar nada: si falta o está mal declarada,
+        # la importación entera se rechaza sin haber escrito una respuesta.
+        # Al revés —ingestar primero y fallar al crear— dejaría el store
+        # semántico con respuestas de gente que no existe en la bóveda.
         creacion = sav.crear_individuos(
             ctx.boveda, filas, cuerpo.get("mapeo_patronimico") or {},
             origen=(cuerpo.get("origen") or "sav"), columna_id=columna_id,
+            evidencia_consentimiento=cuerpo.get("evidencia_consentimiento"),
             actor=actor, panel_id=cuerpo.get("panel_id"),
         )
 
+    # Por nombre y no por posición: `ingestar` toma `columna_id` antes que
+    # `origen`, y pasarlos al revés no falla —los dos son strings— sino que
+    # deja la ingesta sin poder mapear a nadie, en silencio.
     resultado = encuestas.ingestar(
         ctx.boveda, ctx.semantica, encuesta_id, preguntas, filas,
-        (cuerpo.get("origen") or "sav"), columna_id, ctx.embeddings,
+        columna_id=columna_id,
+        origen=(cuerpo.get("origen") or "sav"),
+        proveedor=ctx.embeddings,
     )
+    ctx.semantica.commit()
+    ctx.boveda.commit()
     resultado["duplicados_en_el_archivo"] = calidad.detectar_duplicados_en_filas(
         filas, columna_id
     )

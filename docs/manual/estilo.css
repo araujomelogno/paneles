@@ -101,6 +101,9 @@
   figure { margin: 5mm 0 7mm; page-break-inside: avoid; }
   figure img { width: 100%; border: 1px solid var(--border); border-radius: 3px; display: block; }
   figure img.recorte { border-color: #D6D6D6; box-shadow: 0 2px 10px rgba(0,0,0,0.07); }
+  /* Capturas verticales: a ancho completo ocupan casi una página entera y,
+     como la figura no se parte, dejan un hueco arriba. */
+  figure img.angosta { width: 72%; margin: 0 auto; }
   figcaption { font-size: 8.5pt; color: var(--gray); font-weight: 600;
     margin-top: 2mm; padding-left: 1mm; border-left: 3px solid var(--orange); }
   figcaption b { color: var(--dark); font-weight: 700; }
@@ -119,6 +122,10 @@
   /* ══ TABLAS ══ */
   table { width: 100%; border-collapse: collapse; margin: 4mm 0 6mm;
     font-size: 9.5pt; page-break-inside: avoid; }
+  /* Tablas largas: partirlas por filas es mejor que empujarlas enteras a la
+     página siguiente y dejar media página en blanco. */
+  table.parte { page-break-inside: auto; }
+  table.parte tr { page-break-inside: avoid; }
   th { text-align: left; background: var(--gray-xlight); color: var(--gray);
     font-size: 8pt; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
     padding: 2.5mm 3mm; border-bottom: 1px solid var(--border); }
