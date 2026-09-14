@@ -148,6 +148,8 @@ Caché derivado de interpretaciones recurrentes (versionado por modelo, invalida
 
 **R3.9 — Ingesta desde archivo SAV (SPSS).** Alternativa al Excel ancho: se sube un `.sav` y el sistema lo analiza para precargar solo, sin tipeo manual, las **variables** (código), el **texto de la pregunta** (variable labels), el **tipo** (inferido de measure/tipo de dato) y las **etiquetas de las cerradas** (value labels). El usuario revisa y corrige antes de confirmar; el resto del flujo de ingesta no cambia.
 
+Si además se usa para **dar de alta a los individuos** en la misma carga, la base legal viaja en el propio archivo: al importar hay que declarar **qué variable evidencia el consentimiento y qué valor cuenta como afirmativo**, para las dos finalidades —contacto y uso semántico, que pueden compartir variable—. Quien no lo evidencia no se crea.
+
 En la misma carga se elige cómo se resuelven los individuos, con dos modos:
 
 - **Los panelistas ya existen:** se indica qué variable vincula cada fila con el individuo del sistema (el id de la plataforma de campo guardado en `alias_origen`). Es el comportamiento actual.
@@ -155,12 +157,14 @@ En la misma carga se elige cómo se resuelven los individuos, con dos modos:
 
 Criterios de aceptación:
 - Dado un `.sav`, cuando se carga, entonces se precargan códigos, textos, tipos y mapeos de etiquetas, y quedan editables antes de confirmar.
+- Dado el modo «crear los individuos», cuando se importa sin declarar qué variable y qué valor evidencian el consentimiento de cada finalidad, entonces la importación se rechaza antes de leer una fila.
+- Dada una fila que no evidencia el consentimiento de contacto, entonces no se crea la persona y se informa cuántas quedaron afuera.
 - Dada una variable con value labels, entonces se trata como cerrada y sus códigos se resuelven a etiqueta antes de embeber.
 - Dado el modo «crear individuos», entonces cada alta pasa por la **misma resolución de identidad que R1.2** (documento → email → nombre+fecha de nacimiento → nuevo), reutilizando `id_persona` si la persona ya existe y mandando a revisión los casos ambiguos: la ingesta no puede crear duplicados que el alta manual evitaría.
 - Dado el modo «crear individuos», entonces los datos patronímicos se escriben **solo en la bóveda**; el guardrail de PII (R1.6) sigue aplicando sobre el store semántico.
 - Dado que el archivo trae variables no declaradas o sin mapear, entonces el resultado de la ingesta las informa explícitamente (no se descartan en silencio).
 
-> **Tensión a resolver: consentimiento.** El alta manual (R1.1) **rechaza** crear una persona sin consentimiento registrado. Crear individuos desde un SAV entra por otra puerta, así que hay que decidir con qué base legal se dan de alta: que el archivo traiga la evidencia de consentimiento (variable con fecha/versión), o que queden en un estado **pendiente de consentimiento** —contables y consultables solo cuando corresponda, y excluidos de convocatoria y de uso semántico hasta regularizarse—. Sin esta definición, R3.9 abre un camino para poblar la bóveda salteando la columna vertebral de cumplimiento. *(Decisión requerida antes de implementar el modo «crear individuos»; el modo «ya existen» no está afectado.)*
+> **Tensión resuelta: consentimiento.** El alta manual (R1.1) **rechaza** crear una persona sin consentimiento registrado, y crear individuos desde un SAV entraba por otra puerta. De las dos opciones que estaban sobre la mesa —que el archivo traiga la evidencia, o que las personas queden en un estado pendiente— **se eligió la primera**: al importar se declara obligatoriamente qué variable evidencia el consentimiento y qué valor cuenta como afirmativo, para el contacto y para el uso semántico (pueden ser la misma variable), junto con la versión del texto consentido en campo. Quien no lo evidencia no entra a la bóveda. Así la puerta del SAV exige lo mismo que la del alta manual, y no hay ningún estado intermedio que alguien tenga que acordarse de regularizar.
 
 **R3.10 — Exportar el resultado reidentificado.** Hoy «Descargar CSV» re-ejecuta la consulta y exporta el ranking **seudonimizado** (`id_persona`, puntaje, evidencia), y la interfaz lo aclara. Reidentificar muestra los datos en pantalla y queda registrado. Falta el caso operativo intermedio: quien ya reidentificó necesita esa lista como archivo (para convocar, para pasarla al equipo de campo) y hoy la transcribe a mano. Se agrega una **acción distinta**, sin modificar el CSV actual: un botón «Descargar CSV con datos», visible solo después de reidentificar, que exporta el resultado ya resuelto en pantalla con los datos de bóveda de esos individuos.
 
@@ -216,7 +220,7 @@ Criterios de aceptación:
 
 - **[legal]** ¿El consentimiento del alta cubre el perfilado semántico entre estudios, o requiere base/consentimiento separado? *(bloqueante para el uso semántico)*
 - **[legal/finanzas]** Tratamiento fiscal del canje de premios en Uruguay. *(bloqueante — Fase 3)*
-- **[legal]** Con qué base legal se dan de alta los individuos creados desde un archivo SAV (R3.9): evidencia de consentimiento en el propio archivo, o alta en estado pendiente de consentimiento. *(bloqueante para el modo «crear individuos»)*
+- ~~**[legal]** Con qué base legal se dan de alta los individuos creados desde un archivo SAV (R3.9).~~ **Resuelto:** evidencia de consentimiento en el propio archivo, declarada de forma obligatoria al importar. Lo que queda es operativo: que el cuestionario de campo incluya la pregunta de consentimiento, porque sin ella no se puede dar de alta a nadie desde ese archivo.
 - **[producto/ingeniería]** ¿Hasta dónde llega el motor de muestreo: reglas u optimización? (separa Fase 3 de Fase 4)
 - **[datos]** Fuente y vigencia del universo de referencia para composición.
 - **[legal/datos]** Plazos de retención por categoría de dato y purga por inactividad.

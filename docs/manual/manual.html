@@ -36,7 +36,7 @@
     <li><a href="#s4"><span><span class="num">4</span> Paneles</span></a>
       <ul><li>Crear · Agregar miembros · Dar de baja una membresía</li></ul></li>
     <li><a href="#s5"><span><span class="num">5</span> Encuestas</span></a>
-      <ul><li>Crear una ola · Convocar · Ingestar respuestas · Verificar el cruce</li></ul></li>
+      <ul><li>Crear una ola · Convocar · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Verificar el cruce</li></ul></li>
     <li><a href="#s6"><span><span class="num">6</span> Consultas</span></a>
       <ul><li>Buscar por significado · El ranking y la evidencia ·
       Exclusiones · Reidentificación · Modos · Consultas guardadas</li></ul></li>
@@ -581,7 +581,123 @@
     repetirse sin riesgo.</p>
   </div>
 
-  <h3><span class="n">5.4</span> Verificar el cruce entre las dos bases</h3>
+  <h3><span class="n">5.4</span> Ingestar un archivo de SPSS y dar de alta a los panelistas</h3>
+
+  <p>Cuando el export de campo es un archivo <code>.sav</code> de SPSS, el
+  procedimiento es el mismo pero el sistema trabaja bastante más. El archivo se
+  sube entero y se analiza en el servidor: de ahí salen ya cargados los códigos
+  de las variables, el texto de cada pregunta y las etiquetas de las opciones,
+  sin necesidad de tipearlos.</p>
+
+  <div class="aviso info">
+    <div class="t">Lo que propone el archivo es una propuesta, no un hecho</div>
+    <p>SPSS recorta los textos de las variables a 256 caracteres y muchos
+    cuestionarios los dejan en códigos crípticos del tipo <code>P5_1</code>.
+    Como el texto de la pregunta es exactamente lo que después permite
+    encontrar la respuesta buscando por significado, conviene revisarlo antes
+    de confirmar: todo lo que el análisis propone es editable.</p>
+  </div>
+
+  <p>Con un <code>.sav</code> aparece además una pregunta que no existe en el
+  resto de las ingestas: <strong>¿los panelistas ya están en el sistema?</strong>
+  Si el relevamiento se hizo sobre gente enrolada, la respuesta es que sí y solo
+  hay que vincular las respuestas. Si el archivo trae gente que todavía no está
+  —el caso típico de una encuesta de calle con la que se quiere armar panel—,
+  se elige <strong>darlos de alta en esta carga</strong>.</p>
+
+  <h4>La base legal del alta</h4>
+
+  <p>Dar de alta a alguien desde un archivo es enrolarlo, y no se enrola a nadie
+  sin consentimiento. Por eso este modo exige declarar de dónde sale la prueba:
+  <strong>qué variable del archivo evidencia el consentimiento y qué valor de
+  esa variable cuenta como afirmativo</strong>, para cada una de las dos
+  finalidades —integrar el panel y ser contactado, por un lado; uso semántico de
+  las respuestas entre estudios, por el otro—. Puede ser la misma variable para
+  las dos; lo que no puede es faltar.</p>
+
+  <figure>
+    <img class="recorte angosta" src="capturas/45-sav-consentimiento.jpg" alt="Declaración de la evidencia de consentimiento al importar un archivo SAV" />
+    <figcaption><b>Evidencia de consentimiento.</b> Por cada finalidad se
+    declara la variable, el valor que cuenta como «sí» y la versión del texto
+    que la persona consintió en campo. Si una sola pregunta cubre las dos
+    finalidades, la casilla del medio evita repetir la declaración.</figcaption>
+  </figure>
+
+  <ol class="pasos">
+    <li>Indicar, para cada dato patronímico —nombre, documento, correo, celular,
+    fecha de nacimiento, sexo, localidad—, <strong>qué variable del archivo lo
+    trae</strong>. Ninguno es obligatorio por separado, pero sin documento,
+    correo ni nombre no hay con qué identificar a la persona.</li>
+    <li>Elegir la <strong>variable de consentimiento de contacto</strong> y
+    escribir el <strong>valor afirmativo</strong> tal como está codificado en el
+    archivo: normalmente <code>1</code>, a veces <code>Sí</code>. Mayúsculas y
+    espacios no importan.</li>
+    <li>Anotar la <strong>versión del texto consentido</strong>: la referencia
+    del texto que se le leyó a la persona en campo. Es lo que después vuelve
+    demostrable qué fue lo que consintió.</li>
+    <li>Si la misma pregunta cubre el uso semántico, dejar marcada la casilla.
+    Si el cuestionario tenía dos preguntas distintas, desmarcarla y declarar la
+    segunda.</li>
+    <li>Confirmar con <strong>Ingestar</strong>.</li>
+  </ol>
+
+  <div class="aviso">
+    <div class="t">Esto se decide antes del campo, no al importar</div>
+    <p>Para que haya una variable que declarar, el cuestionario tiene que
+    incluir la pregunta de consentimiento. Es una decisión del diseño del
+    formulario: si el <code>.sav</code> no la trae, no hay forma de dar de alta
+    a esa gente desde el archivo, y el enrolamiento tiene que hacerse por la vía
+    manual de la sección 3.</p>
+  </div>
+
+  <h4>Qué le pasa a cada fila</h4>
+
+  <p>Declarada la evidencia, el sistema evalúa fila por fila y clasifica cada
+  una. El resultado de la ingesta informa cuántas cayeron en cada caso.</p>
+
+  <table class="parte">
+    <thead><tr><th>Situación de la fila</th><th>Qué hace el sistema</th></tr></thead>
+    <tr><td class="destacado">Consintió las dos finalidades</td>
+      <td>Se crea la persona, con los dos consentimientos registrados y la
+      versión del texto declarada. Sus respuestas se ingestan al store
+      semántico.</td></tr>
+    <tr><td class="destacado">Consintió el contacto pero no el uso semántico</td>
+      <td>Se crea la persona y se la puede convocar, pero sus respuestas
+      <strong>no</strong> pasan al store semántico. Cada finalidad se evalúa por
+      separado.</td></tr>
+    <tr><td class="destacado">No consintió el contacto</td>
+      <td>No se crea nada. No queda a medias ni «pendiente»: esa persona no
+      entra a la bóveda, y sus respuestas no se van a poder vincular a
+      nadie.</td></tr>
+    <tr><td class="destacado">Ya estaba en el sistema</td>
+      <td>Se reutiliza su registro. El consentimiento que trae el archivo se
+      registra igual si le faltaba, y no se duplica si ya lo tenía.</td></tr>
+    <tr><td class="destacado">Coincide parcialmente con alguien</td>
+      <td>Queda en la bandeja de <strong>revisión de altas</strong> (sección
+      3.4), con su consentimiento a cuestas, para que una persona decida si es
+      la misma o es otra.</td></tr>
+    <tr><td class="destacado">Sin documento, correo ni nombre</td>
+      <td>Se informa como fila sin datos suficientes. No se crea nada: no hay
+      con qué identificar a nadie.</td></tr>
+  </table>
+
+  <p>Las cifras que conviene mirar siempre son dos. Las filas <strong>sin
+  consentimiento de contacto</strong>: si son muchas más de las esperadas, lo
+  más probable es que el valor afirmativo declarado no sea el que usa el
+  archivo —<code>1</code> cuando en realidad el «sí» está codificado como
+  <code>2</code>, por ejemplo—; se corrige la declaración y se vuelve a
+  importar. Y las personas que <strong>consintieron el contacto pero no el uso
+  semántico</strong>: no es un error, es el sistema respetando lo que cada una
+  decidió.</p>
+
+  <div class="aviso ok">
+    <div class="t">Volver a importar el mismo archivo es seguro</div>
+    <p>Si hubo que corregir la declaración o el texto de una pregunta, se vuelve
+    a importar el mismo archivo. Las personas que ya existían se reutilizan y
+    los consentimientos ya registrados no se duplican.</p>
+  </div>
+
+  <h3><span class="n">5.5</span> Verificar el cruce entre las dos bases</h3>
 
   <p>La opción <strong>Verificar</strong> comprueba que lo que quedó del lado
   semántico se corresponda con lo convocado del lado de la bóveda. Es la

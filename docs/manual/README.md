@@ -1,7 +1,8 @@
 # Manual de usuario
 
-`Manual_de_usuario.pdf` es el entregable: 57 páginas, paso a paso de cada tarea,
-con capturas de la aplicación real. Cubre las **fases 1 y 2**.
+`Manual_de_usuario.pdf` es el entregable: paso a paso de cada tarea, con
+capturas de la aplicación real. Cubre las **fases 1 y 2**, más la ingesta de
+archivos `.sav` con alta de panelistas (R3.9) de la fase 3.
 
 ## Cómo se rehace
 
@@ -45,6 +46,11 @@ convocatoria, ingesta, cruce entre stores, cumplimiento, **consultas
 semánticas, composición, participación y gestión de usuarios**. Son 44
 capturas.
 
+La 45 —la declaración de evidencia de consentimiento al importar un `.sav`—
+se toma aparte: la copia en modo demo no parsea SPSS, así que hay que
+darle una respuesta de ejemplo al endpoint `POST /encuestas/:id/sav/analizar`
+para llegar a ese formulario.
+
 ### 3 · Optimizar
 
 Salen en PNG a 2× para que se lean nítidas; en el PDF entran a ~1×, así que
@@ -78,7 +84,7 @@ node docs/manual/generar_pdf.mjs
 | `portada.html` | Portada, a sangre |
 | `manual.html` | Índice y las doce secciones |
 | `estilo.css` | Estilos, compartidos por los dos |
-| `capturas/` | Las 44 capturas |
+| `capturas/` | Las 45 capturas |
 | `tipografia/` | Montserrat local, para que el PDF salga igual sin red |
 | `preparar_demo.sh` | Arma y sirve la copia en modo demo |
 | `capturar.mjs` | Toma las capturas |

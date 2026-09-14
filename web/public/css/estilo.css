@@ -369,6 +369,14 @@ tr.seleccionada td { background: var(--orange-light) !important; }
 /* ══ UTILIDADES ══ */
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
 @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+/* Tres campos del mismo peso en una fila. Lo usa la declaración de evidencia
+   de consentimiento del alta por .sav: variable, valor afirmativo y versión
+   del texto se leen juntos o no se entienden. */
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.6rem; align-items: center; }
+@media (max-width: 760px) { .grid-3 { grid-template-columns: 1fr; } }
+/* Etiqueta pegada a su desplegable: un dato patronímico por fila, en el
+   mapeo de variables del .sav. */
+.fila-mapeo { display: grid; grid-template-columns: 11rem 1fr; gap: 0.75rem; align-items: center; margin-bottom: 0.4rem; }
 .stack { display: grid; gap: 1rem; }
 .muted { color: var(--gray); font-weight: 500; }
 .small { font-size: 0.76rem; }

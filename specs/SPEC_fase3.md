@@ -188,11 +188,21 @@ Alternativa al Excel ancho, con precarga automática de la metadata.
 **Modo «crear los individuos en esta carga»:**
 - Dado ese modo, entonces se indica qué variables contienen los datos patronímicos y cuál es el identificador del individuo.
 - Dada cada alta, entonces pasa por la **misma resolución de identidad que R1.2** (documento → email → nombre+fecha de nacimiento → nuevo): la ingesta no puede crear duplicados que el alta manual habría evitado.
-- Dado un caso ambiguo, entonces va a la cola de revisión, no se fusiona.
+- Dado un caso ambiguo, entonces va a la cola de revisión, no se fusiona, y **la revisión se lleva consigo el consentimiento evidenciado**: quien la resuelve no tiene que volver al archivo.
 - Dados los datos patronímicos, entonces se escriben **solo en la bóveda**; el guardrail de PII (R1.6) sigue aplicando sobre el store semántico.
-- [ ] El resultado informa cuántos individuos se crearon, cuántos se reutilizaron y cuántos quedaron en revisión.
+- [ ] El resultado informa cuántos individuos se crearon, cuántos se reutilizaron, cuántos quedaron en revisión y cuántos quedaron afuera por no evidenciar consentimiento.
 
-> ⚠ **Bloqueante — consentimiento.** El alta manual (R1.1) rechaza crear una persona sin consentimiento registrado. Este modo entra por otra puerta: hay que decidir con qué base legal se dan de alta — que el archivo traiga evidencia de consentimiento (variable con fecha/versión), o que queden en estado **pendiente de consentimiento**, excluidos de convocatoria y de uso semántico hasta regularizarse. Sin esta definición, R3.9 permite poblar la bóveda salteando la columna vertebral de cumplimiento. *El modo «ya existen» no está afectado y puede implementarse antes.*
+**Evidencia de consentimiento (base legal del alta):**
+- Dado el modo «crear los individuos», cuando se importa, entonces **se declara obligatoriamente**, para cada finalidad —`contacto_participacion` y `uso_semantico`—, qué **variable** del archivo evidencia el consentimiento, qué **valor** cuenta como afirmativo y qué **versión de texto** se consintió en campo.
+- Dada una declaración incompleta —falta una finalidad, la variable, el valor afirmativo o la versión— entonces la importación se rechaza **antes de leer una sola fila**.
+- Dada una variable declarada que no existe en el archivo, entonces se rechaza y se dice cuál: un typo dejaría cero altas sin explicar por qué.
+- Dadas las dos finalidades, entonces **pueden apuntar a la misma variable**: un cuestionario con una sola pregunta de consentimiento es el caso normal.
+- Dada una fila que **no** evidencia el consentimiento de contacto, entonces **no se crea la persona**, no se le registra alias, y se informa cuántas filas quedaron afuera y con qué valor.
+- Dada una fila que evidencia el contacto pero no el uso semántico, entonces la persona se crea con el consentimiento que dio y nada más; sus respuestas no se ingestan al store semántico (gate de R1.3).
+- Dada una persona que ya existe, entonces el consentimiento evidenciado en el archivo **se le registra igual**: es evidencia nueva.
+- Dada una re-importación del mismo archivo, entonces no se duplican consentimientos idénticos: el registro que sirve de prueba tiene que seguir siendo legible.
+- [ ] La comparación del valor afirmativo no distingue mayúsculas ni espacios sobrantes: «Sí», «SI » y «sí» son la misma respuesta.
+- [ ] Ninguna persona creada por esta vía queda en un estado pendiente: o el archivo prueba su base legal y nace activa, o no se crea.
 
 #### R3.10 — Exportar el resultado reidentificado (P0)
 - Dado un ranking sin reidentificar, entonces la opción de exportar con datos no está disponible.
@@ -232,7 +242,7 @@ Alternativa al Excel ancho, con precarga automática de la metadata.
 - **Fase 2 cerrada**: composición y participación (para R3.1 y R3.6), consulta y reidentificación (para R3.10 y R3.11).
 - **`pyreadstat`** (o equivalente) en las Cloud Functions para leer `.sav` (R3.9).
 - **Datos de tiempo en los exports de campo**, si se quiere detección de speeders (R3.2). Verificar con Dooblo/Alchemer qué trae cada export.
-- **[legal]** Base legal del alta por SAV *(bloqueante — R3.9 modo crear)*.
+- ~~**[legal]** Base legal del alta por SAV *(bloqueante — R3.9 modo crear)*.~~ **Resuelto:** la evidencia viaja en el archivo y declararla es obligatorio (ver R3.9). Lo que queda es una decisión de campo, no de software: incluir la pregunta de consentimiento en el cuestionario.
 - **[legal/finanzas]** Tratamiento fiscal del canje en Uruguay *(bloqueante — R3.5)*.
 - **[legal]** Texto de consentimiento de la landing, revisado y versionado *(bloqueante — R3.7)*.
 - **Proveedor de premios / logística de entrega** definida antes de abrir el canje.
@@ -256,6 +266,9 @@ Alternativa al Excel ancho, con precarga automática de la metadata.
 **Bloque 3C**
 - [ ] Un `.sav` precarga códigos, textos, tipos y etiquetas, editables antes de confirmar.
 - [ ] En modo «crear individuos», el dedup de R1.2 se aplica y los ambiguos van a revisión (test).
+- [ ] Sin declarar la evidencia de consentimiento, la importación se rechaza (test).
+- [ ] Quien no evidencia el consentimiento de contacto no se crea (test).
+- [ ] Quien evidencia el contacto y no el uso semántico entra al panel y sus respuestas no se ingestan (test).
 - [ ] Los datos patronímicos del `.sav` no llegan al store semántico (test del guardrail).
 - [ ] La exportación con datos solo está disponible tras reidentificar y queda registrada con motivo `exportacion`.
 - [ ] Crear un panel desde una consulta da de alta las membresías, es idempotente y registra su origen.
@@ -277,7 +290,7 @@ Alternativa al Excel ancho, con precarga automática de la metadata.
 
 ## 11. Riesgos y preguntas abiertas
 
-- **[legal]** Base legal del alta de individuos por SAV *(bloqueante R3.9 modo crear)*.
+- ~~**[legal]** Base legal del alta de individuos por SAV.~~ **Resuelto:** el archivo tiene que evidenciar el consentimiento y la importación lo exige. El riesgo que queda es de operación: que el cuestionario de campo salga sin la pregunta de consentimiento, y entonces no se pueda dar de alta a nadie desde ese archivo.
 - **[legal/finanzas]** Tratamiento fiscal del canje *(bloqueante R3.5)*.
 - **[datos]** ¿Los exports de campo traen duración por respuesta? Sin eso, el chequeo de speeders no existe y la gamificación premia sobre una noción de calidad más pobre.
 - **[producto]** Calibración de umbrales de fatiga y de calidad: los defaults no están medidos contra los datos de Equipos. Requiere el mismo tipo de protocolo empírico que se usó para calibrar la consulta.
