@@ -843,6 +843,14 @@ def ingestar_sav(ctx, actor, params, cuerpo, consulta):
     return 200, resultado
 
 
+# Tope del archivo subido. El `.sav` viaja en base64 adentro del JSON, así
+# que ocupa un tercio más que en disco, y todo el cuerpo tiene que entrar en
+# el límite de request del hosting. 22 MiB de `.sav` dan ~30 MiB de cuerpo,
+# que es lo último que pasa con margen. Por encima de eso la subida falla en
+# la red, sin llegar acá: mejor decirlo con un mensaje que se entienda.
+LIMITE_SAV_BYTES = 22 * 1024 * 1024
+
+
 def _archivo_de(cuerpo):
     """El `.sav` llega en base64 dentro del JSON. Es un archivo binario y la
     API es JSON: subirlo aparte pediría multipart en la Cloud Function, que
@@ -853,9 +861,18 @@ def _archivo_de(cuerpo):
     if not crudo:
         raise DatosInvalidos("Falta el archivo .sav (campo «archivo_base64»).")
     try:
-        return base64.b64decode(crudo, validate=True)
+        contenido = base64.b64decode(crudo, validate=True)
     except Exception:
         raise DatosInvalidos("El archivo no viene en base64 válido.")
+    if len(contenido) > LIMITE_SAV_BYTES:
+        raise DatosInvalidos(
+            f"El archivo pesa {len(contenido) / 1048576:.1f} MB y el máximo "
+            f"que admite la subida es {LIMITE_SAV_BYTES // 1048576} MB. "
+            f"Partilo por olas o quitale del export las variables que no se "
+            f"van a ingestar.",
+            {"bytes": len(contenido), "limite_bytes": LIMITE_SAV_BYTES},
+        )
+    return contenido
 
 
 @ruta("POST", "/panelistas/regularizar", "enrolar", requisito="R3.9")

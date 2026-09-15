@@ -9,6 +9,7 @@ Secretos por variable de entorno / Secret Manager; nunca en el repo.
 
 import json
 import os
+import traceback
 
 import firebase_admin
 from firebase_functions import https_fn, options
@@ -74,7 +75,13 @@ def _camino_de(req):
         options.VpcEgressSetting.PRIVATE_RANGES_ONLY if VPC_CONNECTOR else None
     ),
     cors=options.CorsOptions(cors_origins=["*"], cors_methods=["get", "post", "put", "patch", "delete", "options"]),
-    memory=options.MemoryOption.MB_512,
+    # 1 GiB y no 512 MB por la ingesta de `.sav` (R3.9): leer el archivo
+    # levanta pandas y pyreadstat, y el archivo pasa por memoria tres
+    # veces —base64, bytes, DataFrame—. Con 512 MB el proceso moría sin
+    # log y el navegador veía un 500 sin explicación. El resto de las
+    # rutas no importa pandas, así que no pagan la diferencia salvo en
+    # instancias que ya sirvieron una ingesta.
+    memory=options.MemoryOption.GB_1,
     timeout_sec=300,
 )
 def api(req: https_fn.Request) -> https_fn.Response:
@@ -111,7 +118,10 @@ def api(req: https_fn.Request) -> https_fn.Response:
     except config.ErrorConfig as error:
         return _json(500, {"error": "config", "mensaje": str(error)})
     except Exception as error:  # noqa: BLE001
-        print(f"[api] error no manejado: {error!r}")
+        # Con el traceback: sin él, un 500 obliga a reproducir el caso a
+        # ciegas. No lleva datos de la request —`format_exc()` imprime el
+        # código, no los valores—, así que no filtra PII al log.
+        print(f"[api] error no manejado: {error!r}\n{traceback.format_exc()}")
         # Un objeto que no existe casi siempre es una migración sin aplicar, y
         # eso el usuario lo puede resolver. Se le dice cuál es: el mensaje solo
         # nombra el objeto y el archivo, así que no filtra ningún dato.

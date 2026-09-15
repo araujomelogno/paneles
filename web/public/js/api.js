@@ -56,6 +56,54 @@ async function pedir(metodo, camino, { cuerpo, consulta } = {}) {
   return datos;
 }
 
+/* Subida con avance.
+
+   `fetch` no informa el progreso de la subida: no hay forma estándar de
+   escuchar cuántos bytes salieron. Para los cuerpos grandes —el `.sav` viaja
+   en base64 adentro del JSON y puede pesar varios MB— eso deja la pantalla
+   sin nada que mostrar justo cuando la espera se hace larga, así que esos
+   pedidos van por XHR, que sí lo informa. */
+export async function subir(camino, cuerpo, { alSubir } = {}) {
+  if (estado.demo) {
+    alSubir?.(1);
+    return demo.responder('POST', camino, cuerpo, {});
+  }
+
+  const token = await estado.obtenerToken();
+  const url = new URL(BASE + camino, window.location.origin);
+  const carga = JSON.stringify(cuerpo);
+
+  return new Promise((resolver, rechazar) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+    xhr.upload.onprogress = (evento) => {
+      if (evento.lengthComputable) alSubir?.(evento.loaded / evento.total);
+    };
+    xhr.upload.onload = () => alSubir?.(1);
+
+    xhr.onload = () => {
+      let datos = {};
+      try { datos = JSON.parse(xhr.responseText); } catch { /* sin cuerpo */ }
+      if (xhr.status >= 200 && xhr.status < 300) { resolver(datos); return; }
+      rechazar(new ErrorApi(
+        datos.mensaje || `Error ${xhr.status}`, xhr.status, datos));
+    };
+    // Sin respuesta del servidor no hay status ni cuerpo: el caso típico es
+    // que el cuerpo haya superado el límite de request y lo corte el hosting
+    // antes de llegar a la función.
+    xhr.onerror = () => rechazar(new ErrorApi(
+      'No se pudo completar la subida. Revisá la conexión; si el archivo es '
+      + 'grande, puede estar excediendo el tamaño máximo que admite el envío.',
+      0, { error: 'red' }));
+    xhr.onabort = () => rechazar(new ErrorApi('Subida cancelada.', 0, {}));
+
+    xhr.send(carga);
+  });
+}
+
 const GET = (camino, consulta) => pedir('GET', camino, { consulta });
 const POST = (camino, cuerpo) => pedir('POST', camino, { cuerpo });
 const PUT = (camino, cuerpo) => pedir('PUT', camino, { cuerpo });
@@ -227,9 +275,11 @@ export const inscripciones = {
 };
 
 export const sav = {
-  analizar: (encuestaId, archivoBase64) =>
-    POST(`/encuestas/${encuestaId}/sav/analizar`, { archivo_base64: archivoBase64 }),
-  ingestar: (encuestaId, cuerpo) => POST(`/encuestas/${encuestaId}/sav/ingesta`, cuerpo),
+  analizar: (encuestaId, archivoBase64, opciones) =>
+    subir(`/encuestas/${encuestaId}/sav/analizar`,
+          { archivo_base64: archivoBase64 }, opciones),
+  ingestar: (encuestaId, cuerpo, opciones) =>
+    subir(`/encuestas/${encuestaId}/sav/ingesta`, cuerpo, opciones),
 };
 
 export const exportacion = {

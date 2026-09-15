@@ -75,14 +75,55 @@ def _leer(archivo):
             temporal.write(archivo)
             ruta = temporal.name
         try:
-            return pyreadstat.read_sav(ruta)
+            return _read_sav(ruta)
         finally:
             import os
 
             os.unlink(ruta)
     if isinstance(archivo, io.IOBase):
-        return pyreadstat.read_sav(archivo.name)
-    return pyreadstat.read_sav(str(archivo))
+        return _read_sav(archivo.name)
+    return _read_sav(str(archivo))
+
+
+# SPSS graba en la cabecera con qué juego de caracteres se escribió el
+# archivo, pero muchos exports de campo lo declaran mal. `pyreadstat` corta
+# en cuanto aparece una ñ o una tilde, y en la práctica esos archivos son
+# latin1. Se reintenta con esa codificación antes de darlos por perdidos.
+CODIFICACIONES_DE_RESERVA = ("latin1", "cp1252")
+
+
+def _read_sav(ruta):
+    """`pyreadstat.read_sav` con los dos fallos que traen los `.sav` reales.
+
+    Un archivo que el parser no puede leer es un problema **del archivo**, no
+    del servidor: tiene que volver como 400 con el motivo, no como un 500
+    opaco que obliga a alguien a mirar los logs para algo que el usuario
+    puede resolver solo.
+    """
+    import pyreadstat
+
+    try:
+        return pyreadstat.read_sav(ruta)
+    except MemoryError:
+        # No es un archivo inválido: es que no entró en memoria. Se deja
+        # subir para que el handler lo trate como lo que es.
+        raise
+    except Exception as primero:  # noqa: BLE001 - el parser tira de todo
+        for codificacion in CODIFICACIONES_DE_RESERVA:
+            try:
+                return pyreadstat.read_sav(ruta, encoding=codificacion)
+            except MemoryError:
+                raise
+            except Exception:  # noqa: BLE001, PERF203
+                continue
+        raise DatosInvalidos(
+            f"No se pudo leer el archivo .sav: {primero}. Probá reexportarlo "
+            f"desde SPSS con codificación UTF-8, o guardalo como .sav sin "
+            f"comprimir (los .zsav comprimidos y los archivos truncados dan "
+            f"este error).",
+            {"error_del_parser": str(primero),
+             "codificaciones_probadas": ["la del archivo", *CODIFICACIONES_DE_RESERVA]},
+        ) from primero
 
 
 def _tipo_de(codigo, meta, tiene_etiquetas):
