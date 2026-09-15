@@ -587,6 +587,18 @@ def diagnostico_esquema(ctx, actor, params, cuerpo, consulta):
     return (200 if estado["completo"] else 500), estado
 
 
+@ruta("GET", "/diagnostico/sav", "leer", requisito="R3.9")
+def diagnostico_sav(ctx, actor, params, cuerpo, consulta):
+    """Si la función puede leer `.sav`, y si no, qué paquete le falta.
+
+    Mismo problema que el diagnóstico de esquema, en otra capa: la ingesta
+    por SAV depende de dos paquetes que el despliegue puede no haber
+    instalado, y eso no se nota hasta que alguien sube un archivo.
+    """
+    estado = sav.diagnostico()
+    return (200 if estado["puede_leer_sav"] else 500), estado
+
+
 # ════════════════════════════════════════════════════════════════════
 #  Fase 3 · 3A — Salud del panel accionable
 # ════════════════════════════════════════════════════════════════════

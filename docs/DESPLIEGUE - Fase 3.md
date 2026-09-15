@@ -216,14 +216,33 @@ Cumplimiento → Esquema de las dos bases.
 ## 3 · La dependencia nueva
 
 `pyreadstat` lee los `.sav`. Ya está en `functions/requirements.txt`, así que
-el `predeploy` de `firebase.json` la instala sola. Vale saber dos cosas:
+el `predeploy` de `firebase.json` la instala sola. Vale saber tres cosas:
 
-- **Trae `numpy` y `pandas` con ella.** El paquete de la función crece unos
-  60 MB. Está dentro del límite de Cloud Functions gen2, pero el primer
-  deploy después de esto tarda más.
+- **`pandas` va declarado aparte, y es obligatorio.** `pyreadstat` devuelve un
+  `DataFrame`, pero desde la versión 1.3 **no declara pandas entre sus
+  dependencias**: instala `numpy` y `narwhals` y nada más. Sin la línea
+  explícita de `pandas` en `requirements.txt` la función despliega bien,
+  importa bien, y falla recién al leer el primer archivo con
+  `PyreadstatError('You requested pandas as output_format but cannot import
+  pandas')`. Pasó en el primer intento de ingesta real.
+- **`numpy` y `pandas` engordan el paquete** unos 60 MB. Está dentro del
+  límite de Cloud Functions gen2, pero el primer deploy después de esto tarda
+  más.
 - **El parseo corre en el backend a propósito** (R3.9): no hay librería
   cliente confiable para `.sav`, y subir el archivo entero es lo que permite
   validarlo antes de escribir nada.
+
+Después de desplegar, verificar que la función quedó en condiciones de leer
+`.sav` **sin subir un archivo**:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  https://<tu-hosting>/api/diagnostico/sav | python3 -m json.tool
+```
+
+Devuelve 200 con `"puede_leer_sav": true` y las versiones instaladas, o 500
+diciendo qué paquete falta. Es la comprobación que hubiera evitado el primer
+500 en producción.
 
 Si el deploy falla instalando la rueda, el síntoma es un error de compilación
 de `pyreadstat` en el log del predeploy. La causa casi siempre es un runtime
@@ -459,13 +478,17 @@ usuario `admin`.
 
 **«Al subir el `.sav` la pantalla queda en "Analizando el archivo en el
 servidor…" y después tira 500.»**
-Tres causas, en orden de probabilidad. (1) La función se quedó sin memoria:
-verificar que esté desplegada con 1 GiB (§3.1) —en el log de Cloud Logging la
-instancia muere sin dejar traza del error—. (2) El archivo no se puede
-parsear: desde esta versión eso vuelve como **400 con el motivo**, no como
-500; si el mensaje habla de codificación, reexportarlo desde SPSS en UTF-8.
-(3) Cualquier otra cosa: el handler ahora imprime el traceback completo, así
-que el motivo está en el log.
+Cuatro causas. (1) **Falta `pandas` en la función** —la que efectivamente
+pasó la primera vez—: el log dice `You requested pandas as output_format but
+cannot import pandas`. Se arregla redesplegando con el `requirements.txt`
+actual (§3); desde esta versión el mensaje que llega a la pantalla nombra el
+despliegue y no manda a tocar el archivo. (2) La función se quedó sin
+memoria: verificar que esté desplegada con 1 GiB (§3.1) —en Cloud Logging la
+instancia muere sin dejar traza del error—. (3) El archivo no se puede
+parsear: eso vuelve como **400 con el motivo**, no como 500; si el mensaje
+habla de codificación, reexportarlo desde SPSS en UTF-8. (4) Cualquier otra
+cosa: el handler imprime el traceback completo, así que el motivo está en el
+log.
 
 ```bash
 gcloud functions logs read api --region=southamerica-east1 --limit=80 \
@@ -575,6 +598,10 @@ Infraestructura:
 - [ ] `db/boveda/0005_fase3.sql` aplicada.
 - [ ] `python3 scripts/verificar_esquema.py` sale con código 0.
 - [ ] `firebase deploy` completo, con `pyreadstat` instalado en el predeploy.
+- [ ] `GET /api/diagnostico/sav` devuelve 200 con `puede_leer_sav: true`.
+      Es lo que detecta que la función quedó sin `pandas`, que despliega bien
+      y recién falla al leer el primer archivo (§3).
+- [ ] La función quedó desplegada con **1 GiB** de memoria (§3.1).
 - [ ] El rewrite de `/inscribirse` está **antes** del catch-all.
 
 Definiciones pendientes:
