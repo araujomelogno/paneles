@@ -136,6 +136,75 @@ def test_analizar_no_escribe_nada(archivo_sav, conn_boveda):
     assert db.una(conn_boveda, "select count(*)::int as n from persona")["n"] == 0
 
 
+def test_un_archivo_que_no_es_un_sav_vuelve_explicado_y_no_como_500(tmp_path):
+    """Un archivo ilegible es un problema del archivo, no del servidor.
+
+    Antes salía como excepción sin atrapar: el navegador veía un 500 «Error
+    interno del servidor» y el motivo quedaba solo en los logs, que es
+    exactamente donde no lo puede ver quien subió el archivo.
+    """
+    pytest.importorskip("pyreadstat")
+    ruta = tmp_path / "no-es-un-sav.sav"
+    ruta.write_bytes(b"esto es un csv disfrazado\nid,p1\n1,2\n")
+
+    with pytest.raises(DatosInvalidos) as excepcion:
+        sav.analizar(ruta)
+
+    assert "No se pudo leer el archivo .sav" in str(excepcion.value)
+    # El texto del parser viaja en el detalle: es lo que permite distinguir
+    # un archivo truncado de uno comprimido sin tener que pedir el log.
+    assert excepcion.value.detalle["error_del_parser"]
+
+
+def test_un_sav_vacio_pero_valido_no_se_confunde_con_uno_roto(tmp_path):
+    """El fallback de codificación no puede tragarse los archivos buenos."""
+    pyreadstat = pytest.importorskip("pyreadstat")
+    pandas = pytest.importorskip("pandas")
+
+    ruta = tmp_path / "vacio.sav"
+    pyreadstat.write_sav(pandas.DataFrame({"P1": []}), str(ruta))
+
+    analisis = sav.analizar(ruta)
+    assert analisis["filas"] == 0
+    assert [v["codigo"] for v in analisis["variables"]] == ["P1"]
+
+
+def test_un_sav_demasiado_grande_se_rechaza_diciendo_cuanto_pesa(ctx, actor):
+    """El `.sav` viaja en base64 dentro del JSON y hay un tope de request.
+
+    Pasado el tope la subida se corta en la red, sin un mensaje que se
+    entienda. Por eso se chequea acá también: el que falla del lado del
+    servidor por lo menos explica qué pasó y qué hacer.
+    """
+    from panel_api import ruteo
+
+    grande = base64.b64encode(b"\0" * (ruteo.LIMITE_SAV_BYTES + 1)).decode()
+
+    with pytest.raises(DatosInvalidos) as excepcion:
+        ruteo.despachar(
+            "POST", "/encuestas/1/sav/analizar",
+            {"archivo_base64": grande}, {}, actor("operaciones"), ctx,
+        )
+
+    assert "máximo" in str(excepcion.value)
+    assert excepcion.value.detalle["limite_bytes"] == ruteo.LIMITE_SAV_BYTES
+
+
+def test_un_sav_con_enes_y_tildes_se_lee(tmp_path):
+    """Lo que rompe los exports de campo reales es siempre lo mismo."""
+    pyreadstat = pytest.importorskip("pyreadstat")
+    pandas = pytest.importorskip("pandas")
+
+    ruta = tmp_path / "acentos.sav"
+    pyreadstat.write_sav(
+        pandas.DataFrame({"P1": ["Montevideo", "Paysandú", "Ñandubay"]}),
+        str(ruta), column_labels=["¿En qué localidad vive habitualmente?"],
+    )
+
+    analisis = sav.analizar(ruta)
+    assert analisis["variables"][0]["texto"] == "¿En qué localidad vive habitualmente?"
+
+
 # ── R3.9 · Modo «crear los individuos» ──────────────────────────────
 
 MAPEO = {"nombre": "NOM", "documento": "DOC", "fecha_nacimiento": "FNAC",

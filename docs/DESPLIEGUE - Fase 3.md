@@ -229,6 +229,31 @@ Si el deploy falla instalando la rueda, el síntoma es un error de compilación
 de `pyreadstat` en el log del predeploy. La causa casi siempre es un runtime
 distinto de `python311`; verificar el `runtime` en `firebase.json`.
 
+### 3.1 · Memoria de la función
+
+`main.py` declara **1 GiB** (`MemoryOption.GB_1`), no los 512 MB de las fases
+anteriores. Leer un `.sav` levanta `pandas` y `pyreadstat`, y el archivo pasa
+por memoria tres veces: el base64 del cuerpo, los bytes decodificados y el
+`DataFrame`. Con 512 MB el proceso moría sin dejar log y el navegador veía un
+500 sin explicación.
+
+Solo pagan la diferencia las instancias que sirvieron una ingesta —el resto
+de las rutas no importa `pandas`—, pero la facturación de Cloud Functions es
+por GB-segundo: si el gasto importa, se puede volver a 512 MB **a condición de
+no usar la ingesta por `.sav`**.
+
+### 3.2 · Tamaño máximo del archivo
+
+El `.sav` viaja en base64 adentro del JSON, así que ocupa un tercio más que en
+disco y todo el cuerpo tiene que entrar en el límite de request del hosting.
+`ruteo.LIMITE_SAV_BYTES` lo fija en **22 MB de archivo** (unos 30 MB de
+cuerpo). Por encima de eso la subida se corta en la red, antes de llegar a la
+función: el chequeo del servidor está para que, cuando el corte no ocurra, el
+mensaje diga qué pasó en vez de fallar de manera opaca.
+
+Un export que no entra se parte por olas, o se le sacan del `.sav` las
+variables que no se van a ingestar.
+
 ---
 
 ## 4 · Permisos nuevos
@@ -431,6 +456,27 @@ usuario `admin`.
 ---
 
 ## 9 · Problemas frecuentes
+
+**«Al subir el `.sav` la pantalla queda en "Analizando el archivo en el
+servidor…" y después tira 500.»**
+Tres causas, en orden de probabilidad. (1) La función se quedó sin memoria:
+verificar que esté desplegada con 1 GiB (§3.1) —en el log de Cloud Logging la
+instancia muere sin dejar traza del error—. (2) El archivo no se puede
+parsear: desde esta versión eso vuelve como **400 con el motivo**, no como
+500; si el mensaje habla de codificación, reexportarlo desde SPSS en UTF-8.
+(3) Cualquier otra cosa: el handler ahora imprime el traceback completo, así
+que el motivo está en el log.
+
+```bash
+gcloud functions logs read api --region=southamerica-east1 --limit=80 \
+  --gen2 | grep -A 20 "error no manejado"
+```
+
+**«La subida no muestra ningún avance.»**
+Debería mostrar tres fases: leer el archivo y subirlo con porcentaje, y el
+análisis en el servidor con el tiempo transcurrido. Si no aparece nada, el
+navegador está sirviendo el JS viejo de caché: `firebase.json` manda
+`Cache-Control: no-cache` para `.js`, así que alcanza con recargar.
 
 **«La pantalla de Muestreo dice que no hay encuestas abiertas.»**
 Solo ofrece encuestas en `borrador` o `en_campo`. Una cerrada no admite

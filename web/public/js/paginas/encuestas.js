@@ -236,6 +236,87 @@ function mostrarResultado(titulo, filas, nota) {
 
 /* ── Ingesta ────────────────────────────────────────────────────── */
 
+const MB = 1024 * 1024;
+const enMb = (bytes) => `${(bytes / MB).toFixed(1)} MB`;
+
+/* Pasa el archivo a base64 sin congelar la pantalla.
+
+   El bucle manual sobre el `Uint8Array` corría entero en el hilo principal:
+   con un export de varios MB la interfaz quedaba trabada justo mientras se
+   suponía que mostraba avance. `readAsDataURL` lo hace el navegador, fuera
+   del hilo, y además informa progreso. */
+function leerBase64(archivo, alLeer) {
+  return new Promise((resolver, rechazar) => {
+    const lector = new FileReader();
+    lector.onprogress = (evento) => {
+      if (evento.lengthComputable) alLeer?.(evento.loaded / evento.total);
+    };
+    lector.onload = () => {
+      alLeer?.(1);
+      // data:<tipo>;base64,XXXX — el base64 arranca después de la coma.
+      const texto = String(lector.result);
+      resolver(texto.slice(texto.indexOf(',') + 1));
+    };
+    lector.onerror = () => rechazar(new Error('no se pudo leer el archivo del disco'));
+    lector.readAsDataURL(archivo);
+  });
+}
+
+/* Panel de avance de una subida.
+
+   Tres fases, y solo dos tienen porcentaje real: leer el archivo y subirlo.
+   Cuánto le falta al servidor para terminar de parsear el `.sav` no hay
+   forma de saberlo, así que esa fase muestra el tiempo transcurrido. Es la
+   cifra que importa: lo que el usuario necesita distinguir es «tarda» de
+   «se colgó». */
+function panelDeAvance(destino, archivo) {
+  destino.innerHTML = `
+    <div class="avance">
+      <div class="avance-cab">
+        <span class="avance-texto">Preparando…</span>
+        <span class="avance-cifra"></span>
+      </div>
+      <div class="barra"><span style="width:0%"></span></div>
+      <div class="avance-pie">${esc(archivo.name)} · ${enMb(archivo.size)}</div>
+    </div>`;
+  const texto = $('.avance-texto', destino);
+  const cifra = $('.avance-cifra', destino);
+  const barra = $('.barra span', destino);
+  const caja = $('.avance', destino);
+  let reloj = null;
+
+  const detener = () => { clearInterval(reloj); reloj = null; };
+
+  return {
+    /* Fase con porcentaje: la barra avanza y la cifra lo dice. */
+    medido(nombre, fraccion) {
+      detener();
+      caja.classList.remove('indeterminado');
+      const pct = Math.max(0, Math.min(100, Math.round(fraccion * 100)));
+      texto.textContent = nombre;
+      cifra.textContent = `${pct}%`;
+      barra.style.width = `${pct}%`;
+    },
+    /* Fase sin porcentaje: barra en movimiento y cronómetro. */
+    abierto(nombre, nota) {
+      if (reloj) return;
+      caja.classList.add('indeterminado');
+      barra.style.width = '100%';
+      texto.textContent = nombre;
+      const desde = Date.now();
+      const tic = () => {
+        const s = Math.round((Date.now() - desde) / 1000);
+        cifra.textContent = s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`;
+      };
+      tic();
+      reloj = setInterval(tic, 1000);
+      if (nota) $('.avance-pie', destino).textContent = nota;
+    },
+    cerrar() { detener(); },
+  };
+}
+
+
 /* Parser de CSV mínimo, con comillas dobles. El export de campo suele ser
    .xlsx; para eso se carga SheetJS bajo demanda. */
 function parsearCSV(texto) {
@@ -454,7 +535,10 @@ function abrirIngesta(encuesta) {
 
   async function cargarArchivo(archivo) {
     try {
-      if (/\.sav$/i.test(archivo.name)) return cargarSav(archivo);
+      // `await`, no `return` pelado: sin él la promesa se va sin pasar por
+      // el catch de acá y el error queda como «uncaught in promise», con la
+      // pantalla congelada en el cartel de «analizando».
+      if (/\.sav$/i.test(archivo.name)) return await cargarSav(archivo);
       datosArchivo.savBase64 = null;
       datosArchivo = await leerArchivo(archivo);
       $('#resumen-archivo', caja).textContent =
@@ -473,7 +557,13 @@ function abrirIngesta(encuesta) {
         .forEach((h) => agregarFila(h, ''));
       if (!preguntas$.children.length) agregarFila();
     } catch (error) {
-      $('#ing-alerta', caja).innerHTML = alerta(`No se pudo leer el archivo: ${error.message}`);
+      // Los errores del backend ya vienen redactados para que se entiendan
+      // —archivo demasiado grande, .sav ilegible, sin permiso—: envolverlos
+      // en «no se pudo leer el archivo» los empeora.
+      $('#ing-alerta', caja).innerHTML = alerta(
+        error instanceof api.ErrorApi
+          ? error.message
+          : `No se pudo leer el archivo: ${error.message}`);
     }
   }
 
@@ -483,15 +573,24 @@ function abrirIngesta(encuesta) {
      críptica, y el texto de la pregunta es justamente lo que se vectoriza. */
   async function cargarSav(archivo) {
     const alerta$ = $('#ing-alerta', caja);
-    alerta$.innerHTML = alerta('Analizando el archivo en el servidor…', 'info');
-    const bytes = new Uint8Array(await archivo.arrayBuffer());
-    let binario = '';
-    for (let i = 0; i < bytes.length; i += 8192) {
-      binario += String.fromCharCode(...bytes.subarray(i, i + 8192));
-    }
-    const base64 = btoa(binario);
+    const avance = panelDeAvance(alerta$, archivo);
+    let analisis;
+    let base64;
+    try {
+      avance.medido('Leyendo el archivo', 0);
+      base64 = await leerBase64(archivo, (f) => avance.medido('Leyendo el archivo', f));
 
-    const analisis = await api.sav.analizar(encuesta.id, base64);
+      avance.medido('Subiendo al servidor', 0);
+      analisis = await api.sav.analizar(encuesta.id, base64, {
+        alSubir: (f) => (f < 1
+          ? avance.medido('Subiendo al servidor', f)
+          : avance.abierto('Analizando el archivo en el servidor…',
+              'SPSS se lee entero antes de contestar: con archivos grandes '
+              + 'puede tardar unos minutos.')),
+      });
+    } finally {
+      avance.cerrar();
+    }
     datosArchivo = { encabezados: analisis.variables.map((v) => v.codigo),
                      filas: [], savBase64: base64 };
 
@@ -632,15 +731,28 @@ function abrirIngesta(encuesta) {
       }
     }
 
+    // El `.sav` se vuelve a subir para la ingesta: el backend lo reparsea
+    // con las preguntas ya confirmadas. Es la misma espera que en el
+    // análisis, así que muestra el mismo avance.
+    const avance = datosArchivo.savBase64
+      ? panelDeAvance(alerta$, { name: 'archivo .sav', size: datosArchivo.savBase64.length * 0.75 })
+      : null;
     try {
       const resultado = datosArchivo.savBase64
         ? await api.sav.ingestar(encuesta.id, {
             archivo_base64: datosArchivo.savBase64,
             preguntas, columna_id: columnaId, origen: 'sav', ...extraSav,
+          }, {
+            alSubir: (f) => (f < 1
+              ? avance.medido('Subiendo al servidor', f)
+              : avance.abierto('Ingestando en el servidor…',
+                  'Se leen las respuestas, se resuelve cada individuo y se '
+                  + 'calculan los embeddings. Con archivos grandes tarda.')),
           })
         : await api.encuestas.ingestar(encuesta.id, {
             preguntas, filas: datosArchivo.filas, columnaId,
           });
+      avance?.cerrar();
       cerrarModal();
       mostrarResultado('Ingesta terminada', [
         ['Respuestas escritas', resultado.respuestas_escritas],
@@ -665,6 +777,7 @@ function abrirIngesta(encuesta) {
       await cargarParticipacion(encuesta.id);
       await verificarCruce(encuesta.id);
     } catch (error) {
+      avance?.cerrar();
       alerta$.innerHTML = alerta(error.message);
     }
   }

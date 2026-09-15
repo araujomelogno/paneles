@@ -329,6 +329,30 @@ tbody tr:hover td { background: #FAFAFA; }
 .barra span { display: block; height: 100%; background: var(--orange); border-radius: 999px; }
 .barra.ok span { background: var(--green); }
 
+/* ══ AVANCE DE UNA SUBIDA ══
+   Leer el archivo y subirlo tienen porcentaje; lo que el servidor hace
+   después, no. Para esa fase la barra se mueve sola y la cifra pasa a ser el
+   tiempo transcurrido: sin eso, una espera larga no se distingue de un
+   cuelgue. */
+.avance { padding: 0.9rem 1rem; border: 1px solid var(--border); border-radius: 4px; background: var(--gray-xlight); }
+.avance-cab { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; margin-bottom: 0.5rem; }
+.avance-texto { font-size: 0.82rem; font-weight: 700; color: var(--dark); }
+.avance-cifra { font-size: 0.82rem; font-weight: 700; color: var(--orange); font-variant-numeric: tabular-nums; }
+.avance-pie { margin-top: 0.5rem; font-size: 0.74rem; color: var(--gray); }
+.avance .barra { height: 8px; }
+.avance.indeterminado .barra span {
+  width: 40% !important;
+  background: linear-gradient(90deg, transparent, var(--orange), transparent);
+  animation: avance-va-y-viene 1.2s ease-in-out infinite;
+}
+@keyframes avance-va-y-viene {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(250%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .avance.indeterminado .barra span { animation: none; width: 100% !important; }
+}
+
 /* ══ ESTADOS DE ENCUESTA / REVISIÓN ══ */
 .est-borrador   { background: var(--gray-light);  color: var(--gray); }
 .est-en_campo   { background: var(--orange-light); color: var(--orange-dark); }
