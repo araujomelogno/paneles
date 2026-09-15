@@ -7,3 +7,14 @@ requests~=2.32
 openpyxl~=3.1
 # R3.9 — lectura de archivos .sav (SPSS) en el backend.
 pyreadstat~=1.3
+# Va explícito y no de arrastre: `pyreadstat` devuelve un DataFrame, pero
+# desde la 1.3 **no declara pandas** entre sus dependencias —instala numpy y
+# narwhals y nada más—. Sin esta línea la función despliega bien, importa
+# bien, y recién al leer el primer .sav falla con «You requested pandas as
+# output_format but cannot import pandas».
+#
+# El rango es ancho a propósito. De pandas se usan tres cosas —`isna()`,
+# `nunique()` y `to_dict("records")`— que no cambiaron entre la 2 y la 3, y
+# un pin estrecho que no encuentre rueda para el runtime de la función
+# rompería el deploy por nada. Las pruebas corren contra la 3.x.
+pandas>=2.2,<4

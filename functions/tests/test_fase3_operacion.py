@@ -11,6 +11,7 @@ import base64
 import csv
 import io
 import pathlib
+import sys
 import tempfile
 
 import pytest
@@ -134,6 +135,47 @@ def test_las_candidatas_a_id_se_sugieren_sin_decidir(archivo_sav):
 def test_analizar_no_escribe_nada(archivo_sav, conn_boveda):
     sav.analizar(archivo_sav)
     assert db.una(conn_boveda, "select count(*)::int as n from persona")["n"] == 0
+
+
+def test_el_diagnostico_avisa_de_la_dependencia_que_falta(ctx, actor, monkeypatch):
+    """Para enterarse antes de subir un archivo, no después."""
+    from panel_api import ruteo
+
+    status, estado = ruteo.despachar(
+        "GET", "/diagnostico/sav", {}, {}, actor("operaciones"), ctx)
+    assert status == 200
+    assert estado["puede_leer_sav"] is True
+    assert set(estado["instalados"]) == {"pyreadstat", "pandas"}
+
+    monkeypatch.setitem(sys.modules, "pandas", None)
+    status, estado = ruteo.despachar(
+        "GET", "/diagnostico/sav", {}, {}, actor("operaciones"), ctx)
+    assert status == 500
+    assert estado["faltan"] == ["pandas"]
+    assert "requirements.txt" in estado["mensaje"]
+
+
+def test_sin_pandas_el_error_apunta_al_despliegue_y_no_al_archivo(archivo_sav, monkeypatch):
+    """La falla real que tuvo la primera ingesta en producción.
+
+    `pyreadstat` devuelve un DataFrame pero desde la 1.3 no declara pandas
+    entre sus dependencias: la función desplegaba bien, importaba bien, y
+    reventaba al leer el primer `.sav` con un 500 opaco. El riesgo al
+    arreglarlo es el contrario —que el reintento de codificación se lo trague
+    y mande a reexportar el archivo desde SPSS—, así que lo que se prueba es
+    que el mensaje nombre el despliegue.
+    """
+    # `None` en sys.modules hace que `import pandas` levante ImportError,
+    # que es exactamente lo que pasaba en la función.
+    monkeypatch.setitem(sys.modules, "pandas", None)
+
+    with pytest.raises(DatosInvalidos) as excepcion:
+        sav.analizar(archivo_sav)
+
+    mensaje = str(excepcion.value)
+    assert "pandas" in mensaje
+    assert "requirements.txt" in mensaje
+    assert "SPSS" not in mensaje, "no es un problema del archivo"
 
 
 def test_un_archivo_que_no_es_un_sav_vuelve_explicado_y_no_como_500(tmp_path):

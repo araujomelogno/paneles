@@ -61,13 +61,14 @@ NUMERICA = "numerica"
 def _leer(archivo):
     """`archivo` puede ser una ruta o los bytes del `.sav`."""
     try:
-        import pyreadstat
+        import pyreadstat  # noqa: F401
     except ImportError:  # pragma: no cover - depende del despliegue
         raise DatosInvalidos(
             "Falta la librería para leer archivos .sav (pyreadstat). "
             "Está declarada en functions/requirements.txt: si el error "
             "aparece en producción, la función se desplegó sin instalarla."
         )
+    _exigir_pandas()
     if isinstance(archivo, (bytes, bytearray)):
         import tempfile
 
@@ -83,6 +84,58 @@ def _leer(archivo):
     if isinstance(archivo, io.IOBase):
         return _read_sav(archivo.name)
     return _read_sav(str(archivo))
+
+
+def _exigir_pandas():
+    """`pyreadstat` devuelve un DataFrame pero no instala pandas.
+
+    Desde la 1.3 sus dependencias son `numpy` y `narwhals`, nada más. El
+    resultado es un despliegue que instala bien, importa bien y recién falla
+    al leer el primer archivo, con un mensaje que no menciona el despliegue:
+    «You requested pandas as output_format but cannot import pandas». Se
+    chequea antes de tocar el archivo para que el motivo sea el que es y no
+    se confunda con un `.sav` ilegible.
+    """
+    try:
+        import pandas  # noqa: F401
+    except ImportError:  # pragma: no cover - depende del despliegue
+        raise DatosInvalidos(
+            "Falta pandas en la función: `pyreadstat` lo necesita para "
+            "devolver los datos y desde la versión 1.3 no lo instala por su "
+            "cuenta. Está declarado en functions/requirements.txt: si el "
+            "error aparece en producción, la función se desplegó sin "
+            "instalarlo. Redesplegá la función.",
+            {"paquete": "pandas", "de_donde_sale": "functions/requirements.txt"},
+        )
+
+
+def diagnostico():
+    """Si la función puede leer `.sav`, y si no, qué le falta.
+
+    Existe por una falla concreta: la función desplegó bien, importó bien y
+    reventó al leer el primer archivo porque `pyreadstat` no instala pandas.
+    Nada en el despliegue lo anticipaba. Esta ruta lo dice antes, sin
+    necesidad de subir un archivo de verdad.
+    """
+    faltan = []
+    versiones = {}
+    for paquete in ("pyreadstat", "pandas"):
+        try:
+            modulo = __import__(paquete)
+            versiones[paquete] = getattr(modulo, "__version__", "desconocida")
+        except ImportError:
+            faltan.append(paquete)
+    return {
+        "puede_leer_sav": not faltan,
+        "instalados": versiones,
+        "faltan": faltan,
+        "mensaje": (
+            "La función puede leer archivos .sav."
+            if not faltan else
+            f"Falta(n) {', '.join(faltan)} en la función. Están declarados en "
+            f"functions/requirements.txt: redesplegá la función."
+        ),
+    }
 
 
 # SPSS graba en la cabecera con qué juego de caracteres se escribió el
@@ -109,6 +162,11 @@ def _read_sav(ruta):
         # subir para que el handler lo trate como lo que es.
         raise
     except Exception as primero:  # noqa: BLE001 - el parser tira de todo
+        # Una dependencia que falta no es un archivo roto, y mandar a
+        # reexportar desde SPSS por eso es peor que no decir nada.
+        if "cannot import" in str(primero):
+            _exigir_pandas()
+            raise
         for codificacion in CODIFICACIONES_DE_RESERVA:
             try:
                 return pyreadstat.read_sav(ruta, encoding=codificacion)
