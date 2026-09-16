@@ -228,6 +228,29 @@ Alternativa al Excel ancho, con precarga automática de la metadata.
 - El gate de `uso_semantico` tampoco cambia, y acota el alcance: a quien no lo tenga vigente no se le ingesta nada y por lo tanto no se le crea ni membresía ni participación.
 - [ ] Una participación importada **no cuenta como convocatoria** para la fatiga del muestreo, ni para el «último contacto» del tablero y de la ficha. La fatiga mide cuánto se molestó a alguien; a esta persona no la contactó nadie. Sí cuenta como respuesta, y sí cuenta en el denominador de la tasa de respuesta de la ola.
 
+**Variables demográficas y códigos por tipo** (addendum del 2026-09-15; el documento original está en `specs/ADDENDUM_R3.9_demograficos_y_codigos.md`).
+
+*R3.9.d — Marcado de variables demográficas:*
+- Dada la lista de variables, entonces cada una puede marcarse como **demográfica** indicando a qué campo de la bóveda corresponde (`nombre`, `documento`, `email`, `celular`, `sexo`, `fecha_nacimiento`, `localidad`, `contacto`), o como demográfica **sin campo** —para las que la bóveda no modela, `EDAD` el caso típico—.
+- El marcado aplica a **los dos modos**. El mapeo de patronímicos deja de ser un mecanismo aparte: es un subconjunto de este marcado, y es su única fuente.
+- Dada una variable marcada, entonces **no se ingesta como pregunta**: no genera `pregunta`, ni `respuesta`, ni embedding. El filtro corre en el backend y no solo en la pantalla: es una regla de privacidad, y una regla de privacidad que solo vive en el navegador no es una regla.
+- Dado el resultado, entonces informa qué variables quedaron excluidas por demográficas.
+- Dado el modo «crear los individuos», entonces los valores se escriben en la bóveda al dar de alta.
+- Dado el modo «ya existen» y un campo **vacío** en la bóveda, entonces el valor del archivo lo completa.
+- Dado un campo **ya cargado** con un valor distinto, entonces **no se sobrescribe**: se informa la discrepancia. El archivo de un estudio no es autoridad sobre la ficha del panelista.
+- [ ] Dado un valor con value labels, entonces se **traduce antes de escribirlo**: un `.sav` guarda `2` y «Femenino» aparte, y guardar el `2` deja la composición por sexo inservible sin que nada falle. El sexo además se lleva a la forma que usa la bóveda (`F`/`M`/`X`) con una tabla explícita, no adivinando por la primera letra —«Mujer» y «Masculino» empiezan igual—.
+- Dado el resultado, entonces informa cuántos campos se completaron y cuántas discrepancias hubo.
+- Dada la precarga, entonces el sistema **sugiere** el marcado por nombre y por variable label, y el analista confirma o corrige. Nunca se aplica solo: una variable no se excluye del estudio sin que alguien lo haya confirmado.
+- Dadas dos variables apuntando al mismo campo, entonces se rechaza: cuál gana es una decisión, no un detalle de implementación.
+
+*R3.9.e — Campo de códigos según el tipo:*
+- Dado el tipo `abierta`, entonces el campo de códigos está **deshabilitado**.
+- Dados `cerrada` y `escala`, entonces está habilitado y es el mapeo completo de opciones.
+- Dado `numerica`, entonces está habilitado pero acotado a valores especiales (`98=No sabe`, `99=No contesta`), con la aclaración en la pantalla. Deshabilitarlo perdería esa traducción, y «→ 99» es ruido donde «→ No contesta» es información.
+- Dada una variable con etiquetas que se marca como `abierta`, entonces se avisa que el mapeo se descarta —da igual si las etiquetas venían del archivo o las escribió alguien recién—.
+- Dada una variable `cerrada` sin etiquetas, entonces se avisa que sus valores se embeben crudos.
+- Dado un cambio de tipo, entonces el campo se actualiza en el momento y **no se pierde lo cargado** si el tipo vuelve a uno que lo admite.
+
 #### R3.10 — Exportar el resultado reidentificado (P0)
 - Dado un ranking sin reidentificar, entonces la opción de exportar con datos no está disponible.
 - Dado un resultado reidentificado, cuando se exporta con datos, entonces el CSV trae los mismos campos que la reidentificación devuelve (nombre, documento, email, celular, contacto, sexo, localidad, tramo etario), **sin** fecha de nacimiento exacta ni observaciones.
@@ -294,6 +317,12 @@ Alternativa al Excel ancho, con precarga automática de la metadata.
 - [ ] Quien no evidencia el consentimiento de contacto no se crea (test).
 - [ ] Quien evidencia el contacto y no el uso semántico entra al panel y sus respuestas no se ingestan (test).
 - [ ] Los datos patronímicos del `.sav` no llegan al store semántico (test del guardrail).
+- [ ] Una variable marcada como demográfica no genera `pregunta` ni `respuesta` ni embedding (test).
+- [ ] El resultado informa qué variables se excluyeron por demográficas (test).
+- [ ] Un campo vacío de la bóveda se completa con el valor del archivo, ya traducido a la forma que la bóveda usa (test).
+- [ ] Un campo ya cargado con otro valor no se sobrescribe y la discrepancia se informa (test).
+- [ ] El sistema sugiere el marcado pero no lo aplica sin confirmación (test).
+- [ ] El campo de códigos está deshabilitado para `abierta` y habilitado para `cerrada`, `escala` y `numerica`; marcar `abierta` una variable con etiquetas avisa, y `cerrada` sin etiquetas también (verificado contra la interfaz).
 - [ ] Ingestar un archivo con individuos que no eran miembros del panel los da de alta como miembros de ese panel (test).
 - [ ] Ingestar respuestas de alguien nunca convocado crea su participación con `respondio = true` y origen `importacion` (test).
 - [ ] Ingestar respuestas de alguien ya convocado actualiza su fila, sin crear una segunda (test).

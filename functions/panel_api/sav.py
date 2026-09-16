@@ -223,6 +223,172 @@ def _avisos_de_texto(codigo, etiqueta):
     return avisos
 
 
+# ── Variables demográficas ───────────────────────────────────────────
+#
+# Addendum de R3.9. Si el archivo trae SEXO, EDAD o LOCALIDAD, hasta acá se
+# precargaban como variables cualquiera y terminaban embebidas como
+# «Sexo → Femenino». Eso espeja los segmentadores al store semántico por la
+# puerta de atrás, que es exactamente lo que el PRD descarta: quedan
+# autoritativos en la bóveda para no sumar cuasi-identificadores del lado
+# limpio. Y no se gana nada: el filtro demográfico ya se resuelve en la
+# bóveda (R2.4 y el puente de R2.5), así que tenerlos también como vectores
+# no mejora ninguna consulta.
+
+# A qué campo de `persona` puede apuntar una variable marcada. Es la lista
+# de `personas.CAMPOS_PERSONA` menos `observaciones`, que es texto libre y no
+# un segmentador.
+CAMPOS_DEMOGRAFICOS = (
+    "nombre", "documento", "email", "celular",
+    "sexo", "fecha_nacimiento", "localidad", "contacto",
+)
+
+# Marcar sin campo: la variable se excluye del store semántico y no se
+# guarda en ningún lado. Hace falta para las demográficas que la bóveda no
+# modela —`EDAD` es el caso típico: la bóveda guarda fecha de nacimiento y
+# deriva el tramo, así que una columna de edad no tiene dónde ir— y para
+# cualquier segmentador que no se quiera conservar. Sin esta opción, esas
+# variables solo tendrían la salida de quedar como pregunta, que es
+# justamente lo que hay que evitar.
+SOLO_EXCLUIR = "(no guardar)"
+
+# Qué nombres de variable sugerir para cada campo. Es una sugerencia y nada
+# más: se confirma o se corrige, nunca se aplica sola. Una variable puede ser
+# segmentador en un estudio y objeto de análisis en otro —«¿en qué barrio
+# vivís?» es demográfico en un estudio de consumo y es *el* dato en uno sobre
+# barrios—, y ninguna heurística resuelve eso.
+SUGERENCIAS_DEMOGRAFICAS = (
+    ("nombre", r"^(nom|nombre|name|apellido)"),
+    ("documento", r"^(doc|ci|cedula|cédula|documento|dni)"),
+    ("email", r"^(mail|email|correo|e_mail)"),
+    ("celular", r"^(cel|tel|movil|móvil|phone|telefono|teléfono)"),
+    ("fecha_nacimiento", r"^(fnac|fec_nac|fecha_nac|nacim|birth|fdn)"),
+    ("sexo", r"^(sexo|sex|genero|género)"),
+    ("localidad", r"^(loc|localidad|depto|departamento|ciudad|barrio|zona)"),
+    (SOLO_EXCLUIR, r"^(edad|age|tramo|nse|nivel_socio)"),
+)
+
+
+def _sugerir_demografica(codigo, etiqueta):
+    """Qué campo parece traer esta variable, o None si no parece demográfica."""
+    import re
+
+    for campo, patron in SUGERENCIAS_DEMOGRAFICAS:
+        if re.search(patron, codigo or "", re.IGNORECASE):
+            return campo
+        # El label también: muchos exports nombran las variables `V1`, `V2` y
+        # dejan el sentido solo en el variable label.
+        if re.search(patron, (etiqueta or "").strip(), re.IGNORECASE):
+            return campo
+    return None
+
+
+def normalizar_demograficas(demograficas, codigos_del_archivo=None):
+    """Valida el marcado de variables demográficas y lo deja canónico.
+
+    Forma esperada: `{"SEXO": "sexo", "EDAD": "(no guardar)"}` — la variable
+    del archivo apunta al campo de `persona` que trae, o a `SOLO_EXCLUIR`.
+    """
+    if not demograficas:
+        return {}
+    if not isinstance(demograficas, dict):
+        raise DatosInvalidos(
+            "El marcado de variables demográficas es un objeto "
+            "«variable → campo».",
+            {"ejemplo": {"SEXO": "sexo", "EDAD": SOLO_EXCLUIR}},
+        )
+
+    validos = set(CAMPOS_DEMOGRAFICOS) | {SOLO_EXCLUIR}
+    normalizado = {}
+    for variable, campo in demograficas.items():
+        codigo = str(variable).strip()
+        if not codigo:
+            continue
+        destino = (campo or SOLO_EXCLUIR)
+        destino = SOLO_EXCLUIR if destino is True else str(destino).strip()
+        if not destino:
+            destino = SOLO_EXCLUIR
+        if destino not in validos:
+            raise DatosInvalidos(
+                f"«{destino}» no es un campo demográfico de la bóveda.",
+                {"variable": codigo, "campos_validos": sorted(validos)},
+            )
+        normalizado[codigo] = destino
+
+    if codigos_del_archivo is not None:
+        ausentes = sorted(set(normalizado) - set(codigos_del_archivo))
+        if ausentes:
+            raise DatosInvalidos(
+                f"Se marcaron como demográficas variables que no están en el "
+                f"archivo: {ausentes}.",
+                {"variables_del_archivo": sorted(codigos_del_archivo)[:50]},
+            )
+
+    # Dos variables para el mismo campo no se puede resolver sola: cuál gana
+    # es una decisión, no un detalle de implementación.
+    por_campo = {}
+    for variable, campo in normalizado.items():
+        if campo == SOLO_EXCLUIR:
+            continue
+        por_campo.setdefault(campo, []).append(variable)
+    repetidos = {c: sorted(v) for c, v in por_campo.items() if len(v) > 1}
+    if repetidos:
+        raise DatosInvalidos(
+            f"Hay más de una variable apuntando al mismo campo: {repetidos}. "
+            f"Dejá una sola por campo.",
+            {"repetidos": repetidos},
+        )
+    return normalizado
+
+
+# Cómo se escribe el sexo en la bóveda: `F`, `M` o `X`, que es lo que espera
+# `v_demografia` y lo que ofrece el alta manual. Un `.sav` puede traer
+# cualquier cosa —el código crudo, «Femenino», «Mujer»—, así que hay una
+# tabla explícita. Nada de adivinar por la primera letra: «Mujer» y
+# «Masculino» empiezan igual, y confundirlas rompe toda la composición por
+# sexo sin que nadie lo note.
+SEXO_CANONICO = {
+    "f": "F", "fem": "F", "femenino": "F", "femenina": "F", "mujer": "F",
+    "female": "F",
+    "m": "M", "masc": "M", "masculino": "M", "masculina": "M", "hombre": "M",
+    "varon": "M", "varón": "M", "male": "M",
+    "x": "X", "otro": "X", "otra": "X", "otre": "X", "no binario": "X",
+    "no binarie": "X", "no binaria": "X",
+}
+
+
+def valor_demografico(campo, crudo, opciones=None):
+    """Traduce el valor del archivo a lo que la bóveda espera.
+
+    Dos pasos, y el primero es el que más se olvida: un `.sav` guarda `2` y
+    la etiqueta «Femenino» aparte. Escribir el `2` en `persona.sexo` deja la
+    composición por sexo llena de `1` y `2`, y el muestreo por cuota
+    inservible, sin que nada falle.
+    """
+    if crudo is None:
+        return None
+    texto = str(crudo).strip()
+    if not texto:
+        return None
+    # 1 · El código contra las etiquetas de la propia variable.
+    etiqueta = (opciones or {}).get(texto)
+    if etiqueta:
+        texto = str(etiqueta).strip()
+    # 2 · La forma que espera la bóveda, donde hay una.
+    if campo == "sexo":
+        return SEXO_CANONICO.get(texto.lower(), texto)
+    return texto
+
+
+def mapeo_por_campo(demograficas):
+    """Da vuelta el marcado a `{campo: variable}`, que es lo que espera el
+    alta de personas. Las marcadas «no guardar» quedan afuera."""
+    return {
+        campo: variable
+        for variable, campo in (demograficas or {}).items()
+        if campo != SOLO_EXCLUIR
+    }
+
+
 def analizar(archivo):
     """Lee el `.sav` y devuelve la metadata precargada, para editar y confirmar.
 
@@ -250,13 +416,21 @@ def analizar(archivo):
             # Nada se declara solo: el analista elige qué se ingesta. Una
             # variable de control administrativo no tiene por qué embeberse.
             "incluir": False,
+            # Sugerencia de marcado demográfico, para confirmar o corregir.
+            # `null` significa «no parece demográfica», no «no lo es».
+            "demografica_sugerida": _sugerir_demografica(codigo, etiqueta),
         })
 
     con_avisos = [v["codigo"] for v in variables if v["avisos"]]
+    sugeridas = [
+        {"codigo": v["codigo"], "campo": v["demografica_sugerida"]}
+        for v in variables if v["demografica_sugerida"]
+    ]
     return {
         "filas": int(meta.number_rows),
         "variables": variables,
         "candidatas_a_id": _candidatas_a_id(datos, meta),
+        "demograficas_sugeridas": sugeridas,
         "avisos": (
             [{
                 "tipo": "textos_a_revisar",
@@ -268,6 +442,18 @@ def analizar(archivo):
                     f"confirmar."
                 ),
             }] if con_avisos else []
+        ) + (
+            [{
+                "tipo": "demograficas_a_confirmar",
+                "variables": [s["codigo"] for s in sugeridas],
+                "mensaje": (
+                    f"{len(sugeridas)} variable(s) parecen demográficas y se "
+                    f"marcaron como tales: no se van a ingestar al store "
+                    f"semántico. Es una sugerencia —confirmá o corregí cada "
+                    f"una—: una misma variable puede ser segmentador en un "
+                    f"estudio y ser el objeto de análisis en otro."
+                ),
+            }] if sugeridas else []
         ),
         "nota": (
             "Es una propuesta: nada se ingestó. Todos los campos son "
@@ -462,12 +648,18 @@ def _otorgar_si_falta(conn, id_persona, finalidad, version):
 
 
 def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
-                     evidencia_consentimiento, actor=None, panel_id=None):
+                     evidencia_consentimiento, actor=None, panel_id=None,
+                     opciones_por_variable=None):
     """Da de alta a la gente del archivo, con el dedup de R1.2 y con la
     evidencia de consentimiento que trae el propio archivo.
 
     `mapeo`: `{"nombre": "V1", "documento": "V2", ...}` — qué columna del
-    archivo trae cada dato patronímico.
+    archivo trae cada dato patronímico. Sale del marcado demográfico
+    (addendum de R3.9), que es el único lugar donde se declara.
+
+    `opciones_por_variable`: los value labels de cada variable. Sin ellos,
+    `SEXO = 2` se guarda como «2» y no como «F», y la composición por sexo
+    queda inservible sin que nada falle.
 
     `evidencia_consentimiento`: ver `normalizar_evidencia`. Es obligatorio.
     Quien no evidencia el consentimiento de contacto **no se crea**: la
@@ -542,9 +734,11 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
 
         datos = {}
         for campo, columna in mapeo.items():
-            valor = fila.get(columna)
-            if valor is not None and str(valor).strip():
-                datos[campo] = str(valor).strip()
+            valor = valor_demografico(
+                campo, fila.get(columna),
+                (opciones_por_variable or {}).get(columna))
+            if valor:
+                datos[campo] = valor
         if not any(datos.get(c) for c in ("documento", "email", "nombre")):
             sin_datos.append(id_en_origen)
             continue

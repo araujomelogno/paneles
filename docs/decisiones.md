@@ -66,6 +66,7 @@ restricción real del sistema.
 | [D30](#d30) | Las pruebas corren contra un Postgres real | 1-3 |
 | [D31](#d31) | Los defaults numéricos están en el código, no en la base | 3 |
 | [D32](#d32) | La ingesta incorpora al panel y registra la participación | 3 |
+| [D33](#d33) | Los demográficos del archivo van a la bóveda y no al store semántico | 3 |
 
 ---
 
@@ -1213,12 +1214,69 @@ movimiento sea visible y no un efecto de costado.
 
 ---
 
+<a id="d33"></a>
+## D33 · Los demográficos del archivo van a la bóveda y no al store semántico
+
+**El problema.** Si el `.sav` traía `SEXO`, `EDAD` o `LOCALIDAD`, se
+precargaban como variables cualquiera y terminaban embebidas: *«Sexo →
+Femenino»*, *«Localidad → Montevideo»*. Eso espeja los segmentadores al store
+semántico **por la puerta de atrás**, que es exactamente lo que el diseño
+descarta —quedan autoritativos en la bóveda para no sumar cuasi-identificadores
+del lado que se quiere mantener limpio—. Y no se ganaba nada a cambio: el
+filtro demográfico ya se resuelve en la bóveda (R2.4 y el puente de R2.5), así
+que tenerlos también como vectores no mejora ninguna consulta.
+
+**La decisión.** Cada variable se marca con qué es: pregunta del estudio, o
+demográfica con su campo de la bóveda. Lo marcado como demográfico **no genera
+`pregunta`, ni `respuesta`, ni embedding**; su valor va a la ficha del
+panelista.
+
+**El filtro corre en el backend, no en la pantalla.** Es lo que hace que sea
+una regla y no una convención: una regla de privacidad que solo vive en el
+navegador se saltea con una llamada a la API.
+
+**Por qué la marca es del analista y no automática.** Una variable puede ser
+segmentador en un estudio y objeto de análisis en otro: «¿en qué barrio vivís?»
+es demográfico en un estudio de consumo y es *el* dato en uno sobre barrios.
+Ninguna heurística resuelve eso; quien carga el estudio, sí. Por eso el sistema
+**sugiere** —por nombre y por variable label— y nunca aplica solo.
+
+**Tres cosas que se decidieron en el camino:**
+
+| | |
+|---|---|
+| **Existe «demográfica sin campo»** | `EDAD` no tiene dónde ir: la bóveda guarda fecha de nacimiento y deriva el tramo. Sin esta opción, una columna de edad solo podría quedar como pregunta, que es lo que hay que evitar |
+| **El valor se traduce antes de guardarlo** | Un `.sav` guarda `2` y «Femenino» por separado. Escribir el `2` en `persona.sexo` deja la composición por sexo llena de `1` y `2` y el muestreo por cuota inservible, **sin que nada falle**. El sexo se lleva a `F`/`M`/`X` con una tabla explícita: adivinar por la primera letra manda a todas las mujeres a «M» |
+| **El archivo no pisa la ficha** | Un campo vacío se completa; uno ya cargado con otro valor se informa y se deja. El archivo de un estudio puede traer un dato viejo, mal tipeado o de otra persona, y una ingesta no es el lugar para cambiar la identidad de un panelista |
+
+**El campo de códigos, de paso.** Estaba habilitado para todos los tipos,
+incluso `abierta`, donde no hay códigos posibles: solo invitaba a cargar un
+mapeo que nunca se iba a aplicar. Ahora sigue al tipo. **Las numéricas lo
+conservan** a propósito: las variables numéricas de SPSS suelen traer value
+labels solo para los valores especiales, y esa traducción importa —«¿Cuántos
+años tenés? → 99» es ruido, «→ No contesta» es información—.
+
+**Lo que quedó sin resolver, a propósito.** No hay override para embeber un
+demográfico cuando *es* el objeto del estudio. Habilitarlo reintroduce el
+espejado que el diseño descarta, así que si se decide, tiene que ser explícito,
+advertido y registrado. Hoy la marca excluye sin excepción, y la salida es no
+marcarla.
+
+**Dónde vive.** `functions/panel_api/sav.py`
+(`normalizar_demograficas`, `valor_demografico`, `SUGERENCIAS_DEMOGRAFICAS`),
+`encuestas.py` (`completar_demograficos`), `personas.py`
+(`completar_desde_archivo`) y la fila de variables de
+`web/public/js/paginas/encuestas.js`.
+
+---
+
 ## Anexo · Decisiones que no se tomaron
 
 Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 
 | Tema | Estado | Dónde está anotado |
 |---|---|---|
+| Embeber un demográfico cuando es el objeto del estudio | Sin override: la marca excluye sin excepción. Habilitarlo reintroduce el espejado que el diseño descarta | [D33](#d33) |
 | Base legal del alta por SAV | **Resuelta:** la evidencia viaja en el archivo y declararla es obligatorio. Lo que queda es de campo: que el cuestionario incluya la pregunta | [D25](#d25) |
 | Texto de consentimiento de la landing | Pendiente del DPO; el sistema lo trata como dato | [D24](#d24) |
 | Tratamiento fiscal del canje | No-goal explícito de la Fase 3 | `SPEC_fase3.md` §3 |

@@ -21,6 +21,7 @@ En términos de despliegue, eso se traduce en cinco cosas concretas:
 | Una página pública nueva | `/inscribirse` | La landing no existe |
 | Dos decisiones legales pendientes | ver §1 | Se abren superficies de datos sin base legal |
 | Un cambio de conducta de la ingesta | ver §1.4 | Los paneles crecen solos y conviene saberlo antes, no después |
+| Otro, en la pantalla de carga | ver §1.5 | Los demográficos dejan de embeberse; sin avisar, alguien va a pensar que se perdieron variables |
 | Nada en el store semántico | — | — |
 
 **El store semántico no cambia en esta fase.** No hay migración nueva del lado
@@ -206,6 +207,50 @@ cuenta como convocatoria** para la fatiga. Si contara, esa gente saldría del
 muestreo por contactos que nunca ocurrieron. Por eso la columna
 `participacion.origen` de la 0006 no es documentación: es lo que hace posible
 esa distinción.
+
+
+### 1.5 · Las variables demográficas ya no se embeben (addendum de R3.9)
+
+Tampoco es una definición pendiente: es lo segundo que cambia de conducta, y
+no necesita migración.
+
+**Qué hace ahora.** En la pantalla de carga, cada variable del archivo tiene
+una columna nueva que dice **qué es**: pregunta del estudio, o demográfica con
+su campo de la bóveda (nombre, documento, correo, celular, sexo, fecha de
+nacimiento, localidad, contacto), o demográfica **sin campo** para las que la
+bóveda no modela —`EDAD` es el caso: la bóveda guarda fecha de nacimiento y
+deriva el tramo—.
+
+Lo marcado como demográfico **no se ingesta al store semántico** —no genera
+pregunta, ni respuesta, ni embedding— y su valor va a la ficha del panelista.
+
+**Por qué.** Si el archivo traía `SEXO` o `LOCALIDAD`, hasta acá terminaban
+embebidos como «Sexo → Femenino». Eso espeja los segmentadores al store
+semántico por la puerta de atrás, que es lo que el diseño descarta: quedan
+autoritativos en la bóveda para no sumar cuasi-identificadores del lado que se
+quiere mantener limpio. Y no se ganaba nada: el filtro demográfico ya se
+resuelve en la bóveda.
+
+**Qué mirar la primera vez.** El sistema **sugiere** el marcado por nombre y
+por variable label, pero no lo aplica solo: las filas quedan marcadas a la
+vista para confirmar o corregir antes de ingestar. Vale revisarlas: una
+variable puede ser segmentador en un estudio y ser el objeto de análisis en
+otro, y ninguna heurística resuelve eso.
+
+El resultado de la carga suma tres cifras: variables excluidas por
+demográficas, datos completados en la bóveda y discrepancias con la ficha.
+
+**Dos reglas que conviene conocer:**
+
+| | |
+|---|---|
+| **El archivo no pisa la ficha** | Un campo vacío del panelista se completa con el valor del archivo; uno ya cargado con otro valor se informa y **no se toca**. El archivo de un estudio puede traer un dato viejo o mal tipeado, y una ingesta no es el lugar para cambiar la ficha de alguien |
+| **El valor se traduce antes de guardarse** | Un `.sav` guarda `2` y «Femenino» por separado. Se guarda «F», no «2» — si se guardara el código, la composición por sexo quedaría inservible sin que nada falle |
+
+**Y el campo de códigos sigue al tipo.** Deshabilitado en las abiertas —no hay
+códigos que traducir—, completo en cerradas y escalas, y en las numéricas
+acotado a los valores especiales (`98=No sabe`, `99=No contesta`), que es la
+traducción que hace la diferencia entre embeber «→ 99» y «→ No contesta».
 
 ---
 
@@ -561,6 +606,18 @@ Correcto: no se lo convocó. Aparece como miembro y como respuesta, pero
 lo que evita que la fatiga lo saque del muestreo por contactos que nunca
 ocurrieron (§1.4).
 
+**«Faltan variables en el store semántico después de ingestar.»**
+Fijate si están marcadas como demográficas (§1.5): en ese caso es correcto y
+el resultado de la carga las enumera. Si alguna no debería estarlo —porque es
+el objeto del estudio y no un segmentador—, se le cambia la marca a «pregunta
+del estudio» y se vuelve a ingestar.
+
+**«La composición por sexo muestra 1 y 2 en vez de F y M.»**
+Son altas anteriores a este cambio, cuando el código del `.sav` se guardaba
+crudo. Las nuevas se traducen. Las viejas se corrigen desde la ficha del
+panelista; no hay migración porque no hay forma de saber, mirando la base, qué
+codificación usaba cada archivo.
+
 **«La pantalla de Muestreo dice que no hay encuestas abiertas.»**
 Solo ofrece encuestas en `borrador` o `en_campo`. Una cerrada no admite
 convocatorias nuevas, así que proponer para ella no tendría sentido.
@@ -686,6 +743,10 @@ Verificación funcional:
       la informa.
 - [ ] Convocar sigue dejando afuera a quien no tiene consentimiento de
       contacto, aunque tenga membresía y participaciones.
+- [ ] Una variable marcada como demográfica no aparece del lado semántico, y
+      el resultado de la carga la enumera entre las excluidas.
+- [ ] Un `SEXO` codificado 1/2 queda como F/M en la ficha, no como 1/2.
+- [ ] Un dato del archivo que difiere del de la ficha no la pisa y se informa.
 - [ ] Muestreo prioriza la brecha, explica las exclusiones y no convoca.
 - [ ] Un panel sin brecha no reporta «brecha (0 personas)».
 - [ ] Un export sin tiempos informa que no se pudo evaluar el speeder.
