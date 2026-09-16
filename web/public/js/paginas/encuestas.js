@@ -269,6 +269,23 @@ function mostrarResultado(titulo, filas, nota) {
 
 /* ── R3.12.a · Exportar la muestra ──────────────────────────────── */
 
+/* Mientras corre algo largo, el pie del modal queda inutilizable.
+
+   Sin esto, el usuario que no ve avance vuelve a apretar Ingestar —es lo
+   razonable si parece que no pasó nada— y dispara una segunda carga encima
+   de la primera. La barra de avance y esto resuelven el mismo problema desde
+   los dos lados. */
+function bloquearModal(caja) {
+  // El pie y la × del encabezado. No las × de cada fila de variable, que
+  // comparten la clase: esas quedan inertes igual porque el modal entero
+  // está esperando.
+  const botones = $$('.modal-foot .btn, .modal-head .modal-close', caja);
+  botones.forEach((b) => { b.disabled = true; });
+  return {
+    soltar() { botones.forEach((b) => { b.disabled = false; }); },
+  };
+}
+
 function descargarCsv(nombre, contenido) {
   const blob = new Blob([contenido], { type: 'text/csv;charset=utf-8' });
   const enlace = document.createElement('a');
@@ -935,16 +952,31 @@ function abrirIngesta(encuesta) {
     };
   }
 
-  async function correr() {
+  /* El aviso del modal vive arriba de todo y el botón de Ingestar, abajo
+     del todo: con una lista larga de variables, al apretar el botón el
+     usuario está mirando el pie y no ve nada de lo que pasa. Ni la barra de
+     avance ni, peor, el error que le dice qué le falta completar. Así que
+     todo lo que escribe ahí sube la vista primero. */
+  function avisarEnIngesta(html) {
     const alerta$ = $('#ing-alerta', caja);
-    alerta$.innerHTML = '';
+    alerta$.innerHTML = html;
+    // De golpe y no con `smooth`: el desplazamiento suave tarda unos 300 ms
+    // y una respuesta rápida termina antes, así que el usuario alcanza a ver
+    // la vista moviéndose hacia algo que ya no está. Acá lo que importa es
+    // que el cartel esté a la vista en el momento, no que el viaje sea lindo.
+    caja.scrollTop = 0;
+    return alerta$;
+  }
+
+  async function correr() {
+    const alerta$ = avisarEnIngesta('');
     const columnaId = $('#columna-id', caja).value;
     if (!datosArchivo.filas.length && !datosArchivo.savBase64) {
-      alerta$.innerHTML = alerta('Cargá primero el archivo de respuestas.');
+      avisarEnIngesta(alerta('Cargá primero el archivo de respuestas.'));
       return;
     }
     if (!columnaId) {
-      alerta$.innerHTML = alerta('Elegí la columna que identifica al respondente.');
+      avisarEnIngesta(alerta('Elegí la columna que identifica al respondente.'));
       return;
     }
     const preguntas = $$('.pregunta-fila', preguntas$).map((fila, i) => ({
@@ -956,7 +988,8 @@ function abrirIngesta(encuesta) {
     })).filter((p) => p.codigo && p.texto);
 
     if (!preguntas.length) {
-      alerta$.innerHTML = alerta('Cada pregunta necesita su código y su texto: el texto es lo que se embebe.');
+      avisarEnIngesta(alerta(
+        'Cada pregunta necesita su código y su texto: el texto es lo que se embebe.'));
       return;
     }
 
@@ -965,17 +998,22 @@ function abrirIngesta(encuesta) {
       try {
         extraSav = cuerpoDeAltaSav();
       } catch (error) {
-        alerta$.innerHTML = alerta(error.message);
+        avisarEnIngesta(alerta(error.message));
         return;
       }
     }
 
-    // El `.sav` se vuelve a subir para la ingesta: el backend lo reparsea
-    // con las preguntas ya confirmadas. Es la misma espera que en el
-    // análisis, así que muestra el mismo avance.
-    const avance = datosArchivo.savBase64
-      ? panelDeAvance(alerta$, { name: 'archivo .sav', size: datosArchivo.savBase64.length * 0.75 })
-      : null;
+    // Avance para los dos caminos, no solo para el `.sav`. La espera larga
+    // es la del servidor —resolver cada individuo y calcular embeddings— y
+    // esa la tiene igual un `.csv`: sin panel, el modal se quedaba quieto y
+    // no había forma de distinguir «está trabajando» de «no responde».
+    const avance = panelDeAvance(
+      alerta$,
+      datosArchivo.savBase64
+        ? { name: 'archivo .sav', size: datosArchivo.savBase64.length * 0.75 }
+        : { name: `${datosArchivo.filas.length} fila(s)`, size: 0 });
+    caja.scrollTop = 0;
+    const enCurso = bloquearModal(caja);
     try {
       const resultado = datosArchivo.savBase64
         ? await api.sav.ingestar(encuesta.id, {
@@ -993,13 +1031,19 @@ function abrirIngesta(encuesta) {
                   'Se leen las respuestas, se resuelve cada individuo y se '
                   + 'calculan los embeddings. Con archivos grandes tarda.')),
           })
-        : await api.encuestas.ingestar(encuesta.id, {
-            preguntas, filas: datosArchivo.filas, columnaId,
-            origen: datosArchivo.origen || undefined,
-            demograficas: marcadoDemografico(),
-            tipoIdentificador: tipoId$.value,
-          });
-      avance?.cerrar();
+        : await (() => {
+            avance.abierto('Ingestando en el servidor…',
+              'Se resuelve cada individuo y se calculan los embeddings. '
+              + 'Con archivos grandes tarda.');
+            return api.encuestas.ingestar(encuesta.id, {
+              preguntas, filas: datosArchivo.filas, columnaId,
+              origen: datosArchivo.origen || undefined,
+              demograficas: marcadoDemografico(),
+              tipoIdentificador: tipoId$.value,
+            });
+          })();
+      avance.cerrar();
+      enCurso.soltar();
       cerrarModal();
       mostrarResultado('Ingesta terminada', [
         ['Respuestas escritas', resultado.respuestas_escritas],
@@ -1052,8 +1096,9 @@ function abrirIngesta(encuesta) {
       await cargarParticipacion(encuesta.id);
       await verificarCruce(encuesta.id);
     } catch (error) {
-      avance?.cerrar();
-      alerta$.innerHTML = alerta(error.message);
+      avance.cerrar();
+      enCurso.soltar();
+      avisarEnIngesta(alerta(error.message));
     }
   }
 }
