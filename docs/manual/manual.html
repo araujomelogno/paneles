@@ -562,23 +562,64 @@
 
   <figure>
     <img class="recorte" src="capturas/20-ingesta-resultado.jpg" alt="Resultado de la ingesta" />
-    <figcaption><b>Resultado de la ingesta.</b> Las dos últimas cifras son las
-    que indican si algo quedó afuera.</figcaption>
+    <figcaption><b>Resultado de la ingesta.</b> «Sin mapear» y «sin
+    consentimiento» dicen si algo quedó afuera; las cinco cifras de abajo,
+    cómo se movieron el panel y la ola.</figcaption>
   </figure>
 
   <p>Una fila <strong>sin mapear</strong> es una fila cuyo identificador no
-  corresponde a ninguna persona convocada; suele deberse a que esa persona no
-  fue convocada a la ola, o a que se la enroló sin cargarle el «Id en el
-  origen». Una persona <strong>sin consentimiento</strong>, en cambio, respondió
-  pero no otorgó el uso semántico: sus respuestas no se conservan, y eso es
-  correcto.</p>
+  corresponde a ninguna persona del sistema; suele deberse a que se la enroló
+  sin cargarle el «Id en el origen». Una persona <strong>sin
+  consentimiento</strong>, en cambio, respondió pero no otorgó el uso
+  semántico: sus respuestas no se conservan, y eso es correcto.</p>
+
+  <h4>La ingesta incorpora al panel y registra quién respondió</h4>
+
+  <p>No hace falta que una persona haya sido convocada desde el sistema para
+  que sus respuestas cuenten. Si el archivo la trae, la ingesta hace dos cosas
+  además de escribir sus respuestas: la <strong>da de alta como miembro del
+  panel de esa encuesta</strong> —si todavía no lo era— y <strong>registra que
+  respondió</strong>. Por eso el resultado informa cinco cifras más.</p>
+
+  <table class="parte">
+    <thead><tr><th>Cifra</th><th>Qué significa</th></tr></thead>
+    <tr><td class="destacado">Nuevos miembros del panel</td>
+      <td>Respondieron pero no eran miembros. Ahora lo son: entran en el
+      muestreo, en la composición y en «convocar al panel».</td></tr>
+    <tr><td class="destacado">Ya eran miembros</td>
+      <td>Nada que hacer con ellos.</td></tr>
+    <tr><td class="destacado">Con baja en el panel</td>
+      <td>Respondieron, pero alguien les había dado de baja la membresía.
+      <strong>No se reactiva sola.</strong> Si corresponde reincorporarlos, se
+      hace desde la pantalla del panel.</td></tr>
+    <tr><td class="destacado">Participaciones nuevas</td>
+      <td>Respondieron sin haber sido convocados desde el sistema. Antes no
+      figuraban en la ola; ahora sí, y la tasa de respuesta los cuenta.</td></tr>
+    <tr><td class="destacado">Participaciones actualizadas</td>
+      <td>Ya estaban convocados y quedaron marcados como que respondieron.</td></tr>
+  </table>
+
+  <div class="aviso">
+    <div class="t">Ser miembro no es lo mismo que poder ser convocado</div>
+    <p>Que la ingesta incorpore a alguien al panel no habilita a contactarlo.
+    Registrar que una persona respondió en campo es dejar constancia de algo
+    que ya pasó; invitarla a una ola futura es otra cosa, y para eso sigue
+    haciendo falta su consentimiento de contacto vigente. Quien no lo tenga
+    seguirá quedando fuera de toda convocatoria, por más participaciones que
+    acumule.</p>
+    <p>Por la misma razón, una participación que salió de un archivo
+    <strong>no cuenta como convocatoria</strong> en el tablero de
+    participación ni en el «último contacto»: a esa persona no la contactó
+    nadie desde el sistema. Sí cuenta como respuesta.</p>
+  </div>
 
   <div class="aviso ok">
     <div class="t">Reingestar el mismo archivo no duplica nada</div>
     <p>Si se detecta un error en el texto de una pregunta, alcanza con
     corregirlo y volver a ingestar el mismo archivo. El sistema reconoce lo que
     ya estaba y solo actualiza lo que cambió, de modo que la operación puede
-    repetirse sin riesgo.</p>
+    repetirse sin riesgo. Tampoco se duplican membresías ni participaciones, y
+    la fecha de la primera respuesta se conserva.</p>
   </div>
 
   <h3><span class="n">5.4</span> Ingestar un archivo de SPSS y dar de alta a los panelistas</h3>

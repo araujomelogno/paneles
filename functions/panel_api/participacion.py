@@ -56,7 +56,14 @@ def por_ola(conn, panel_id=None):
         """
         select e.id, e.panel_id, e.nombre, e.fecha_campo, e.estado, e.ref_estudio,
                pa.nombre as panel,
+               -- `convocados` es el denominador de la tasa: cuenta toda
+               -- participación de la ola, incluidas las que dedujo la
+               -- ingesta (addendum de R3.9). Si no las contara, alguien que
+               -- respondió sin ser convocado empujaría la tasa por encima
+               -- de uno. `convocatorias` es la otra pregunta —a cuánta
+               -- gente le escribimos— y para eso las importadas no cuentan.
                count(p.id)::int                                          as convocados,
+               count(p.id) filter (where p.origen = 'convocatoria')::int as convocatorias,
                count(p.id) filter (where p.respondio)::int               as respondieron,
                count(p.id) filter (where p.calidad_estado = 'ok')::int    as calidad_ok,
                count(p.id) filter (where p.calidad_estado = 'sospechoso')::int
@@ -85,6 +92,7 @@ def por_ola(conn, panel_id=None):
             "estado": f["estado"],
             "ref_estudio": str(f["ref_estudio"]),
             "convocados": f["convocados"],
+            "convocatorias": f["convocatorias"],
             "respondieron": f["respondieron"],
             "tasa_respuesta": _tasa(f["respondieron"], f["convocados"]),
             "calidad_ok": f["calidad_ok"],
@@ -113,9 +121,15 @@ def _por_persona(conn, panel_id, estado="activo"):
         conn,
         """
         select m.id_persona, p.nombre, p.email, d.sexo, d.localidad, d.tramo_etario,
-               count(pa.id)::int                            as convocatorias,
+               -- «Convocatoria» y «contacto» son lo que emitió el
+               -- sistema: las participaciones que la ingesta deduce de un
+               -- archivo de campo (addendum de R3.9) registran una respuesta,
+               -- no un contacto nuestro. Las respuestas sí cuentan todas.
+               count(pa.id) filter (
+                   where pa.origen = 'convocatoria')::int    as convocatorias,
                count(pa.id) filter (where pa.respondio)::int as respuestas,
-               max(pa.convocado_en)                         as ultimo_contacto,
+               max(pa.convocado_en) filter (
+                   where pa.origen = 'convocatoria')         as ultimo_contacto,
                max(pa.respondio_en)                         as ultima_respuesta,
                count(pa.id) filter (where pa.calidad_estado = 'sospechoso')::int
                                                             as calidad_sospechosa
@@ -190,6 +204,7 @@ def tablero(conn, panel_id, estado="activo", limite_listas=15):
 
     olas = por_ola(conn, panel_id)
     convocados = sum(o["convocados"] for o in olas)
+    convocatorias = sum(o["convocatorias"] for o in olas)
     respondieron = sum(o["respondieron"] for o in olas)
 
     distribucion_contacto = {nombre: 0 for nombre, _, _ in TRAMOS_CONTACTO}
@@ -222,7 +237,8 @@ def tablero(conn, panel_id, estado="activo", limite_listas=15):
         "miembros": total_personas,
         "olas": olas,
         "respuesta": {
-            "convocatorias_emitidas": convocados,
+            "convocatorias_emitidas": convocatorias,
+            "participaciones": convocados,
             "respuestas": respondieron,
             "tasa_respuesta": _tasa(respondieron, convocados),
             "miembros_que_respondieron_alguna": sum(

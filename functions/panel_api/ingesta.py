@@ -117,6 +117,7 @@ def ingestar(
             "personas": 0,
             "sin_mapear": [],
             "sin_consentimiento": [],
+            "ids_persona_ingestados": [],
             "aviso": "El archivo no tenía celdas con respuesta.",
         }
 
@@ -150,6 +151,7 @@ def ingestar(
             "personas": 0,
             "sin_mapear": sin_mapear,
             "sin_consentimiento": bloqueadas,
+            "ids_persona_ingestados": [],
             "aviso": "Ninguna respuesta quedó habilitada para ingestar.",
         }
 
@@ -204,6 +206,11 @@ def ingestar(
         "reutilizadas": len(respuestas) - len(a_embeber),
         "sin_mapear": sin_mapear,
         "sin_consentimiento": bloqueadas,
+        # Quiénes quedaron efectivamente ingestados —mapeados y con
+        # `uso_semantico` vigente—. Lo necesita la bóveda para incorporarlos
+        # al panel y registrarles la participación: son `id_persona` y nada
+        # más, así que no es PII cruzando de vuelta.
+        "ids_persona_ingestados": list(dict.fromkeys(ids_persona)),
     }
 
 

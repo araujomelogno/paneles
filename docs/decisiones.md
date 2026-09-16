@@ -65,6 +65,7 @@ restricción real del sistema.
 | [D29](#d29) | Las rutas públicas se enumeran una por una | 3 |
 | [D30](#d30) | Las pruebas corren contra un Postgres real | 1-3 |
 | [D31](#d31) | Los defaults numéricos están en el código, no en la base | 3 |
+| [D32](#d32) | La ingesta incorpora al panel y registra la participación | 3 |
 
 ---
 
@@ -1128,6 +1129,87 @@ Este documento no la reemplaza: la hace visible.
 
 **Dónde vive.** `functions/panel_api/muestreo.py`, `calidad.py`, `puntos.py`,
 `consultas.py`.
+
+---
+
+<a id="d32"></a>
+## D32 · La ingesta incorpora al panel y registra la participación
+
+**El problema.** Convocatoria e ingesta estaban desacopladas: convocar creaba
+participaciones, ingestar escribía respuestas mapeando por `alias_origen`, y
+nada las unía. Dos agujeros, los dos silenciosos:
+
+- Una persona dada de alta desde un `.sav` no era miembro de ningún panel.
+  Existía en la bóveda, pero no entraba en `todo_el_panel` al convocar, no
+  contaba para la composición ni para la brecha de cuota, y el muestreo no la
+  veía. Invisible para todo lo que se hace con un panel.
+- Alguien que respondió en campo sin haber sido convocado desde el sistema no
+  tenía fila en `participacion`. La ola mostraba menos respuestas de las que
+  realmente hubo.
+
+**La decisión.** La ingesta hace las dos cosas, para los dos modos de R3.9 y
+también para los archivos que no son `.sav`:
+
+1. **Alta automática en el panel de la encuesta**, sin selector. Cada encuesta
+   pertenece a exactamente un panel (`encuesta.panel_id` es FK obligatorio), así
+   que no hay ambigüedad sobre cuál es: si alguien respondió esa encuesta,
+   pertenece a ese panel.
+2. **Registro de la participación** con `respondio = true`, creándola si no
+   existe y actualizándola si la persona ya había sido convocada.
+
+**Una baja no se revierte de costado.** `paneles.agregar_miembro` reactiva una
+membresía en `baja`; esta vía **no**. Una baja fue una decisión explícita de
+alguien y una ingesta no es el lugar para deshacerla. Se informa en el
+resultado y decide un responsable.
+
+**El gate de consentimiento, y por qué no es el mismo que en `convocar()`.**
+Esta es la parte que hay que entender para no «arreglarla» después:
+
+`convocar()` exige `contacto_participacion` porque emite una **invitación
+futura**: no se puede contactar a quien no consintió ser contactado. La
+participación que crea la ingesta es otra cosa —**registra un hecho ya
+ocurrido**, la persona respondió en terreno—. Bloquear ese registro no protege
+a nadie y sí distorsiona la tasa de respuesta de la ola. Así que la
+participación importada no pasa por ese gate, y el gate sigue intacto donde
+corresponde: un miembro sin consentimiento vigente no entra en ninguna
+convocatoria futura por más participaciones que tenga registradas.
+
+El gate de `uso_semantico` tampoco cambia, y acota el alcance de todo esto: a
+quien no lo tenga vigente no se le ingesta nada, y por lo tanto tampoco se le
+crea membresía ni participación.
+
+**`participacion.origen`, y la trampa que evita.** La columna nueva
+(`convocatoria` | `importacion`) no es documentación: sin ella, las
+participaciones importadas se contarían como convocatorias en el motor de
+fatiga, y **sacarían a esa gente del muestreo por contactos que nunca
+ocurrieron**. La fatiga mide cuánto se molestó a alguien. Por eso:
+
+| Métrica | Cuenta importadas | Por qué |
+|---|---|---|
+| Fatiga del muestreo (`recientes`, `totales`, `ultima_convocatoria`) | **No** | Mide contactos emitidos, y nadie contactó a esta persona |
+| `convocatorias` y `ultimo_contacto` del tablero y de la ficha | **No** | Misma pregunta |
+| `respuestas`, `respondidas` | Sí | Respondió |
+| `ya_en_esta` (no re-convocar) | Sí | Ya tenemos sus respuestas |
+| Denominador de la tasa de respuesta de la ola | Sí | Si no, la tasa pasaría de uno |
+
+**Lo que hubo que arreglar para que funcionara.** `encuestas.ingestar` armaba
+el mapa de ids con las participaciones de la ola y, si salía no vacío, la
+ingesta ya no miraba `alias_origen`. Con un solo convocado con alias —o sea,
+siempre— todo el que respondió sin haber sido convocado caía en `sin_mapear`.
+El mapa ahora es la unión de los dos, con la participación mandando si
+difieren.
+
+**Consecuencias.** Un panel crece solo con cada ingesta, que es lo buscado
+pero conviene saberlo: la composición se mueve sin que nadie agregue gente a
+mano. El resultado de la ingesta informa las cinco cifras
+(`membresias_nuevas`, `membresias_existentes`, `membresias_en_baja`,
+`participaciones_nuevas`, `participaciones_actualizadas`) para que el
+movimiento sea visible y no un efecto de costado.
+
+**Dónde vive.** `db/boveda/0006_participacion_por_importacion.sql`,
+`functions/panel_api/encuestas.py` (`incorporar_al_panel`,
+`registrar_participacion_importada`), y los filtros por origen en
+`muestreo.py`, `participacion.py` y `personas.py`.
 
 ---
 

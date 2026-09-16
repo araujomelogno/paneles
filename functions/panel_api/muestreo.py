@@ -147,13 +147,24 @@ def _candidatos(conn, panel_id, encuesta_id, dimension, umbrales):
             p.estado                                     as estado_persona,
             coalesce({columna}::text, '(sin dato)')      as categoria,
             -- Convocatorias dentro de la ventana.
+            --
+            -- Solo las que emitió el sistema. Desde el addendum de R3.9 la
+            -- ingesta también crea participaciones, pero de gente que
+            -- respondió en campo: a esa nadie la contactó desde acá, y
+            -- contarla como convocatoria la sacaría del muestreo por una
+            -- fatiga que no existe. La fatiga mide cuánto se molestó a
+            -- alguien, no cuántas veces respondió.
             count(*) filter (
                 where pa.convocado_en >= now() - make_interval(days => %s)
                   and pa.encuesta_id <> %s
+                  and pa.origen = 'convocatoria'
             )::int                                       as recientes,
             -- Acumuladas de toda la vida.
-            count(pa.id) filter (where pa.encuesta_id <> %s)::int as totales,
-            max(pa.convocado_en) filter (where pa.encuesta_id <> %s)
+            count(pa.id) filter (
+                where pa.encuesta_id <> %s and pa.origen = 'convocatoria'
+            )::int                                       as totales,
+            max(pa.convocado_en) filter (
+                where pa.encuesta_id <> %s and pa.origen = 'convocatoria')
                                                          as ultima_convocatoria,
             bool_or(pa.encuesta_id = %s)                 as ya_en_esta,
             count(*) filter (where pa.respondio and pa.encuesta_id <> %s)::int

@@ -328,8 +328,9 @@ function convocar(encuestaId, cuerpo) {
   habilitadas.forEach((idPersona) => {
     if (bd.participaciones.some((p) => p.encuesta_id === encuestaId && p.id_persona === idPersona)) return;
     bd.participaciones.push({
-      encuesta_id: encuestaId, id_persona: idPersona, convocado_en: ahora(),
-      respondio: false, respondio_en: null, calidad_estado: 'pendiente',
+      encuesta_id: encuestaId, id_persona: idPersona, origen: 'convocatoria',
+      convocado_en: ahora(), respondio: false, respondio_en: null,
+      calidad_estado: 'pendiente',
     });
     nuevas++;
   });
@@ -348,7 +349,11 @@ function ingestar(encuestaId, cuerpo) {
   const filas = cuerpo.filas || [];
   const columnaId = cuerpo.columna_id || 'id_en_origen';
 
+  // La unión de los convocados y de los alias de campo: quien respondió sin
+  // haber sido convocado también tiene que resolver a su id_persona, que es
+  // de lo que depende el addendum de R3.9.
   const mapa = {};
+  bd.alias.forEach((a) => { mapa[a.id_en_origen] = a.id_persona; });
   bd.participaciones.filter((p) => p.encuesta_id === encuestaId).forEach((p) => {
     const alias = bd.alias.find((a) => a.id_persona === p.id_persona);
     if (alias) mapa[alias.id_en_origen] = p.id_persona;
@@ -370,6 +375,7 @@ function ingestar(encuestaId, cuerpo) {
 
   const sinMapear = [];
   const sinConsentimiento = new Set();
+  const ingestados = new Set();
   let escritas = 0;
 
   filas.forEach((fila) => {
@@ -403,9 +409,47 @@ function ingestar(encuestaId, cuerpo) {
       }
       escritas++;
     });
+    ingestados.add(idPersona);
+  });
+
+  // ── Addendum de R3.9: membresía y participación ──
+  // Quien respondió pertenece al panel de la encuesta, y su respuesta queda
+  // registrada aunque nadie lo haya convocado. Una baja no se reactiva.
+  let membresiasNuevas = 0;
+  let membresiasExistentes = 0;
+  const membresiasEnBaja = [];
+  let participacionesNuevas = 0;
+  let participacionesActualizadas = 0;
+
+  ingestados.forEach((idPersona) => {
+    const membresia = bd.membresias.find(
+      (m) => m.panel_id === encuesta.panel_id && m.id_persona === idPersona);
+    if (!membresia) {
+      bd.membresias.push({
+        panel_id: encuesta.panel_id, id_persona: idPersona,
+        estado: 'activo', fecha_alta: ahora(), fecha_baja: null,
+      });
+      membresiasNuevas++;
+    } else if (membresia.estado === 'baja') {
+      membresiasEnBaja.push(idPersona);
+    } else {
+      membresiasExistentes++;
+    }
+
     const participacion = bd.participaciones.find(
       (p) => p.encuesta_id === encuestaId && p.id_persona === idPersona);
-    if (participacion) { participacion.respondio = true; participacion.respondio_en = ahora(); }
+    if (participacion) {
+      participacion.respondio = true;
+      participacion.respondio_en = participacion.respondio_en || ahora();
+      participacionesActualizadas++;
+    } else {
+      bd.participaciones.push({
+        encuesta_id: encuestaId, id_persona: idPersona, origen: 'importacion',
+        convocado_en: ahora(), respondio: true, respondio_en: ahora(),
+        calidad_estado: 'pendiente',
+      });
+      participacionesNuevas++;
+    }
   });
 
   return {
@@ -415,6 +459,11 @@ function ingestar(encuestaId, cuerpo) {
     preguntas: preguntas.length,
     sin_mapear: [...new Set(sinMapear)],
     sin_consentimiento: [...sinConsentimiento],
+    membresias_nuevas: membresiasNuevas,
+    membresias_existentes: membresiasExistentes,
+    membresias_en_baja: membresiasEnBaja,
+    participaciones_nuevas: participacionesNuevas,
+    participaciones_actualizadas: participacionesActualizadas,
   };
 }
 

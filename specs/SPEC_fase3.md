@@ -204,6 +204,30 @@ Alternativa al Excel ancho, con precarga automática de la metadata.
 - [ ] La comparación del valor afirmativo no distingue mayúsculas ni espacios sobrantes: «Sí», «SI » y «sí» son la misma respuesta.
 - [ ] Ninguna persona creada por esta vía queda en un estado pendiente: o el archivo prueba su base legal y nace activa, o no se crea.
 
+**Membresía y participación** (addendum del 2026-09-15; el documento original está en `specs/ADDENDUM_R3.9_membresia_participacion.md`). Aplica a **los dos modos**: un panelista preexistente que respondió una encuesta de un panel del que no era miembro tiene el mismo problema que uno recién creado.
+
+*R3.9.a — Alta automática de membresía:*
+- Dada una ingesta que resuelve un individuo —creado o preexistente— con respuestas ingestadas, entonces se da de alta como miembro **del panel de esa encuesta**. Sin selector: `encuesta.panel_id` es FK obligatorio, así que no hay ambigüedad.
+- Dado un individuo que ya es miembro activo, entonces no se duplica la membresía.
+- Dado un individuo con membresía en estado `baja`, entonces **no se reactiva automáticamente**: se informa para que un responsable decida. Una baja fue una decisión explícita y la ingesta no la revierte de costado.
+- Dado el resultado, entonces informa cuántas membresías se crearon, cuántas ya existían y cuántas están en baja.
+
+*R3.9.b — Registro de participación:*
+- Dado un individuo cuyas respuestas se ingestan, cuando no tiene fila en `participacion` para esa encuesta, entonces se crea una con `respondio = true` y `respondio_en` fechada.
+- Dado un individuo que sí fue convocado y ya tiene fila, entonces se actualiza a `respondio = true`, sin crear una segunda ni pisarle el origen.
+- Dada una participación creada por ingesta, entonces queda distinguible de una convocatoria emitida por el sistema (`participacion.origen`: `convocatoria` | `importacion`).
+- Dada una participación creada por ingesta, entonces `calidad_estado` queda en `pendiente`: la evaluación es de R3.2.
+- Dado el resultado, entonces informa cuántas participaciones se crearon y cuántas se actualizaron.
+
+*R3.9.c — Idempotencia:*
+- Dada una re-ingesta del mismo archivo, entonces no se duplican membresías ni participaciones, los contadores reflejan que ya existían, y `respondio_en` conserva la fecha de la primera respuesta.
+
+*El gate de consentimiento en este caso:*
+- La participación por importación **no** exige `contacto_participacion`. `convocar()` lo exige porque emite una invitación futura; esto registra un hecho ya ocurrido —la persona respondió en campo— y bloquearlo no protege a nadie: solo distorsiona la tasa de respuesta.
+- [ ] `convocar()` no cambia: un miembro sin `contacto_participacion` vigente nunca entra en una convocatoria futura, por más membresía y participaciones que tenga.
+- El gate de `uso_semantico` tampoco cambia, y acota el alcance: a quien no lo tenga vigente no se le ingesta nada y por lo tanto no se le crea ni membresía ni participación.
+- [ ] Una participación importada **no cuenta como convocatoria** para la fatiga del muestreo, ni para el «último contacto» del tablero y de la ficha. La fatiga mide cuánto se molestó a alguien; a esta persona no la contactó nadie. Sí cuenta como respuesta, y sí cuenta en el denominador de la tasa de respuesta de la ola.
+
 #### R3.10 — Exportar el resultado reidentificado (P0)
 - Dado un ranking sin reidentificar, entonces la opción de exportar con datos no está disponible.
 - Dado un resultado reidentificado, cuando se exporta con datos, entonces el CSV trae los mismos campos que la reidentificación devuelve (nombre, documento, email, celular, contacto, sexo, localidad, tramo etario), **sin** fecha de nacimiento exacta ni observaciones.
@@ -270,6 +294,15 @@ Alternativa al Excel ancho, con precarga automática de la metadata.
 - [ ] Quien no evidencia el consentimiento de contacto no se crea (test).
 - [ ] Quien evidencia el contacto y no el uso semántico entra al panel y sus respuestas no se ingestan (test).
 - [ ] Los datos patronímicos del `.sav` no llegan al store semántico (test del guardrail).
+- [ ] Ingestar un archivo con individuos que no eran miembros del panel los da de alta como miembros de ese panel (test).
+- [ ] Ingestar respuestas de alguien nunca convocado crea su participación con `respondio = true` y origen `importacion` (test).
+- [ ] Ingestar respuestas de alguien ya convocado actualiza su fila, sin crear una segunda (test).
+- [ ] Re-ingestar el mismo archivo no duplica membresías ni participaciones (test).
+- [ ] Una membresía en estado `baja` no se reactiva por ingesta y se informa (test).
+- [ ] `convocar()` sigue aplicando el gate de `contacto_participacion` sin cambios (test de no regresión).
+- [ ] Una participación importada no cuenta como convocatoria para la fatiga del muestreo ni para el «último contacto» (test).
+- [ ] El resultado de la ingesta informa los cinco contadores de membresía y participación.
+- [ ] La tasa de respuesta de una ola refleja a los que respondieron sin haber sido convocados desde el sistema (test).
 - [ ] La exportación con datos solo está disponible tras reidentificar y queda registrada con motivo `exportacion`.
 - [ ] Crear un panel desde una consulta da de alta las membresías, es idempotente y registra su origen.
 
