@@ -68,6 +68,7 @@ restricción real del sistema.
 | [D32](#d32) | La ingesta incorpora al panel y registra la participación | 3 |
 | [D33](#d33) | Los demográficos del archivo van a la bóveda y no al store semántico | 3 |
 | [D34](#d34) | El identificador viaja al campo en vez de adivinarlo a la vuelta | 3 |
+| [D35](#d35) | Incorporar individuos y hacerlos panelistas son dos cosas distintas | 3 |
 
 ---
 
@@ -1339,6 +1340,90 @@ respaldos —que por eso están, y por eso siembran el alias—.
 
 ---
 
+<a id="d35"></a>
+## D35 · Incorporar individuos y hacerlos panelistas son dos cosas distintas
+
+**El problema.** La única forma de cargar individuos con sus respuestas era
+desde una encuesta, y toda encuesta pertenece a un panel. Así, dar de alta
+gente implicaba **necesariamente** meterla en un panel: aparecía en las
+convocatorias, en la composición y en el muestreo. Eso bloquea un caso real y
+frecuente —un ómnibus, un estudio de terceros, una base histórica— donde esa
+gente no es panelista: no fue reclutada, no va a ser convocada, y meterla en
+un panel distorsiona todos los indicadores de ese panel. Pero sus respuestas
+sí interesa poder consultarlas por concepto.
+
+**La decisión.** Separar las dos operaciones que venían pegadas:
+**incorporar individuos y sus respuestas** por un lado, **hacerlos miembros de
+un panel** por otro. Una **carga** hace lo primero y nada más.
+
+**Una tabla nueva y no `encuesta.panel_id` nullable.** Fue la alternativa
+obvia y se descartó. Una encuesta es, por definición, algo que se fieldea a un
+panel: `convocar()`, la composición y el muestreo lo dan por sentado en todo
+su código. Hacer el panel opcional obligaría a revisar cada uno de esos
+caminos y dejaría un estado nuevo —la encuesta que no se puede fieldear— que
+no significa nada para nadie. `carga` es una entidad aparte que mantiene esa
+semántica intacta y **no toca ninguna línea de código existente**. Frente al
+store semántico las dos son lo mismo: un `ref_estudio` que agrupa un
+cuestionario. El store semántico no sabe ni le importa de cuál vino.
+
+**La finalidad obligatoria se invierte, y es lo menos obvio del cambio.** En
+la ingesta desde encuesta, una fila sin evidencia de `contacto_participacion`
+no crea la persona: esa persona es un panelista al que se va a seguir
+convocando, y sin base legal para contactarla el alta no tiene sentido. En una
+carga sin panel el propósito es exactamente el inverso —gente que **no** se va
+a contactar y cuyos datos se incorporan para análisis—, así que:
+
+| | En una encuesta | En una carga |
+|---|---|---|
+| `contacto_participacion` | **Obligatoria** | Opcional |
+| `uso_semantico` | Opcional | **Obligatoria** |
+
+Exigir consentimiento de contacto en una carga sería pedir base legal para
+algo que no se va a hacer, y no exigir el de uso semántico dejaría sin base lo
+único que sí se va a hacer. Quien evidencia uso semántico y no contacto se
+crea igual, y el gate de R1.3 —intacto— le impide ser convocado para siempre.
+Por eso la finalidad obligatoria es **un parámetro** de
+`sav.crear_individuos`, no una constante.
+
+**El camino previsto es cargar → consultar → crear panel.** Un individuo sin
+panel es consultable desde el primer momento, y si después se decide sumarlo,
+se lo suma desde el resultado de una consulta (R3.11). Se incorpora solo a
+quien corresponde, en vez de meter la base entera y depurar después. Es la
+razón por la que este requisito no necesitó ninguna forma nueva de dar
+membresías: R3.11 ya era el camino.
+
+**Lo que este flujo deliberadamente no hace.** Después de escribir las
+respuestas, `cargas.ingestar` **no** llama a `incorporar_al_panel` ni a
+`registrar_participacion_importada`. Son las dos líneas que la ingesta desde
+encuesta sí ejecuta (D32) y son exactamente lo que este flujo existe para no
+hacer. Hay pruebas que fallan si alguna vuelve, y el resultado tampoco informa
+esos contadores: mostrarlos en cero sugeriría que algo falló.
+
+**Lo que sí se reutiliza, tal cual:** despivote, resolución de códigos a
+etiquetas, composición del texto a embeber, embeddings en lote, upsert
+idempotente, dedup de identidad (R1.2), tipo de identificador (R3.12.b),
+marcado de demográficos (D33) y guardrail de PII (R1.6). Cambia el contexto,
+no el pipeline. Del lado de la interfaz eso se traduce en **la misma pantalla**
+—la de ingesta— parametrizada por destino, y no en una pantalla nueva que haya
+que aprender.
+
+**La pregunta abierta, y es legal.** ¿Alcanza el consentimiento de uso
+semántico para conservar datos patronímicos —nombre, documento— de alguien que
+no es panelista y no será contactado? Si la respuesta es que no, habría que
+cargar estos individuos con demográficos pero sin patronímicos, o no
+cargarlos. **Conviene definirlo antes de usar el flujo con bases reales**: el
+sistema hoy permite las dos cosas, porque los patronímicos son opcionales, y
+la decisión no es de software.
+
+**Dónde vive.** `db/boveda/0007_carga_sin_panel.sql`,
+`functions/panel_api/cargas.py`, el parámetro `finalidad_obligatoria` de
+`sav.crear_individuos`, `personas.listar(sin_panel=…)`, las rutas `/cargas` de
+`ruteo.py`, y del lado de la interfaz `web/public/js/paginas/panelistas.js`
+(el botón y el filtro) con `web/public/js/paginas/encuestas.js` (la pantalla
+parametrizada por destino).
+
+---
+
 ## Anexo · Decisiones que no se tomaron
 
 Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
@@ -1347,6 +1432,8 @@ Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 |---|---|---|
 | `id_persona` directo al campo, o código por ola | Sin decidir: se implementó el directo, que es lo que pide la spec. El código por ola es defensa en profundidad y el cambio sería acotado | [D34](#d34) |
 | Que Dooblo y Alchemer permitan precargar una variable oculta | **A verificar fuera del código.** Si no se puede, el peso cae en los respaldos por documento o correo | [D34](#d34) |
+| Si el consentimiento de uso semántico alcanza para conservar patronímicos de un no-panelista | **Abierta, y es legal.** El sistema permite cargar con o sin patronímicos; hay que definirlo antes de usar R3.13 con bases reales | [D35](#d35) |
+| Qué hacer con las personas sin panel acumuladas | Sin política: nadie las revisa ni las depura por ahora | [D35](#d35) |
 | Embeber un demográfico cuando es el objeto del estudio | Sin override: la marca excluye sin excepción. Habilitarlo reintroduce el espejado que el diseño descarta | [D33](#d33) |
 | Base legal del alta por SAV | **Resuelta:** la evidencia viaja en el archivo y declararla es obligatorio. Lo que queda es de campo: que el cuestionario incluya la pregunta | [D25](#d25) |
 | Texto de consentimiento de la landing | Pendiente del DPO; el sistema lo trata como dato | [D24](#d24) |

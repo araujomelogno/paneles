@@ -16,13 +16,14 @@ En términos de despliegue, eso se traduce en cinco cosas concretas:
 
 | Qué | Dónde | Riesgo si se saltea |
 |---|---|---|
-| Dos migraciones nuevas en la bóveda | `db/boveda/0005_fase3.sql` y `0006_participacion_por_importacion.sql` | Las pantallas nuevas fallan con `relation … does not exist`; sin la 0006, la ingesta falla con `column "origen" does not exist` |
+| Tres migraciones nuevas en la bóveda | `db/boveda/0005_fase3.sql`, `0006_participacion_por_importacion.sql` y `0007_carga_sin_panel.sql` | Las pantallas nuevas fallan con `relation … does not exist`; sin la 0006, la ingesta falla con `column "origen" does not exist`; sin la 0007, «Cargar panelistas» falla con `relation "carga" does not exist` |
 | Una dependencia nueva en la función | `pyreadstat` | La ingesta SAV responde 400 al primer archivo |
 | Una página pública nueva | `/inscribirse` | La landing no existe |
 | Dos decisiones legales pendientes | ver §1 | Se abren superficies de datos sin base legal |
 | Un cambio de conducta de la ingesta | ver §1.4 | Los paneles crecen solos y conviene saberlo antes, no después |
 | Otro, en la pantalla de carga | ver §1.5 | Los demográficos dejan de embeberse; sin avisar, alguien va a pensar que se perdieron variables |
 | Una forma nueva de identificar al respondente | ver §1.6 | Sin precargar la muestra, las ingestas de estudios nuevos siguen quedando en cero |
+| Una forma de cargar gente **sin panel** | ver §1.7 | Nada se rompe: es una capacidad nueva. Pero si nadie sabe que existe, se siguen metiendo bases externas en paneles que no les corresponden |
 | Nada en el store semántico | — | — |
 
 **El store semántico no cambia en esta fase.** No hay migración nueva del lado
@@ -36,10 +37,12 @@ sprint se corta, esta es la secuencia con menos deuda:
 
 - **3A — salud del panel** (muestreo, calidad, puntos): no toca ninguna
   superficie pública ni crea personas. Es lo más seguro de soltar primero.
-- **3C — fricción operativa** (SAV, exportación, panel desde consulta): no
-  tiene ninguna definición legal pendiente. El modo «crear individuos» del
-  SAV exige que el archivo evidencie el consentimiento (§1.1), y eso es un
-  requisito del cuestionario de campo, no del despliegue.
+- **3C — fricción operativa** (SAV, exportación, panel desde consulta,
+  identificador de campo, carga sin panel): la única definición pendiente es
+  la de §1.7, y solo aplica al flujo de carga sin panel. El modo «crear
+  individuos» del SAV exige que el archivo evidencie el consentimiento
+  (§1.1), y eso es un requisito del cuestionario de campo, no del
+  despliegue.
 - **3B — crecimiento** (landing): es la única superficie pública del sistema
   y **exige el texto de consentimiento revisado** antes de anunciarla.
 
@@ -300,11 +303,64 @@ fila —el valor no es un `id_persona` válido, ese identificador no existe, o
 esa plataforma no tiene registrado ese id—, porque las tres se arreglan
 distinto.
 
+### 1.7 · Ahora se puede cargar gente sin meterla en un panel (R3.13)
+
+Esta **sí lleva migración** (la 0007, ver §2) y trae una definición legal
+abierta. Es lo único de la Fase 3 que agrega una tabla nueva después del
+primer despliegue.
+
+**El problema que resuelve.** La única forma de cargar individuos con sus
+respuestas era desde una encuesta, y toda encuesta pertenece a un panel. O sea
+que dar de alta gente implicaba **necesariamente** meterla en un panel:
+aparecía en las convocatorias, en la composición y en el muestreo. Con una
+base que llega de afuera —un ómnibus, un estudio de terceros, una base
+histórica— eso distorsiona los indicadores de un panel con gente que no es
+panelista.
+
+**Dónde está.** Pantalla de **Panelistas** → botón **«Cargar panelistas»**,
+al lado de «Enrolar panelista». Pide un nombre para la carga («Ómnibus agosto
+2026») y de ahí en adelante es **la misma pantalla de ingesta** de siempre.
+Rige el mismo permiso que la ingesta desde encuesta (`ingestar`).
+
+**Qué hace distinto, y es todo lo que hace distinto:**
+
+- **No crea membresía ni participación.** Esa gente no entra en la
+  composición, la brecha, el muestreo ni las convocatorias de ningún panel.
+- **La finalidad obligatoria se invierte.** En la ingesta desde encuesta, una
+  fila sin `contacto_participacion` no crea la persona. Acá la obligatoria es
+  **`uso_semantico`**, y el contacto es opcional: quien no lo evidencie se
+  crea igual y nunca va a poder ser convocado (el gate de R1.3 sigue
+  intacto). El motivo es que son personas que no se van a contactar; exigir
+  base legal para el contacto sería pedirla para algo que no se va a hacer.
+
+Todo lo demás es idéntico: dedup de identidad, tipo de identificador, marcado
+de demográficos, guardrail de PII, idempotencia.
+
+**Cómo se ve después.** Los individuos cargados aparecen en Panelistas con
+**0 paneles**, y el desplegable de la pantalla tiene una opción **«— Sin panel
+—»** para aislarlos. Son consultables desde el primer momento. Si después se
+decide sumar a alguno a un panel, se hace **desde el resultado de una
+consulta** (R3.11), sin volver a cargar nada: ese es el camino previsto
+—cargar, consultar, crear el panel con los que interesan— en vez de meter la
+base entera y depurar después.
+
+> **La definición pendiente, y es legal.** ¿Alcanza el consentimiento de uso
+> semántico para conservar datos patronímicos —nombre, documento— de alguien
+> que **no es panelista y no será contactado**? Si la respuesta es que no, hay
+> que cargar estos individuos con demográficos pero sin patronímicos (se puede:
+> los patronímicos son opcionales en el mapeo) o no cargarlos. **Definirlo
+> antes de usar el flujo con bases reales.** No bloquea el despliegue —la
+> capacidad puede estar sin usarse— pero sí el primer uso.
+
+> **Y una de producto, más tibia.** Sin una política de revisión periódica, la
+> bóveda acumula gente sin panel que nadie mira. Conviene decidir quién la
+> revisa y cada cuánto.
+
 ---
 
 ## 2 · Las migraciones
 
-Dos, y las dos solo en la bóveda. En este orden.
+Tres, y las tres solo en la bóveda. En este orden.
 
 ```bash
 cloud-sql-proxy gestion-paneles:southamerica-east1:paneles-boveda --port 5432 &
@@ -312,11 +368,17 @@ export DSN_BOVEDA="$(scripts/dsn_local.sh boveda)"
 
 psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 -f db/boveda/0005_fase3.sql
 psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 -f db/boveda/0006_participacion_por_importacion.sql
+psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 -f db/boveda/0007_carga_sin_panel.sql
 ```
 
-La 0006 es **aditiva y se puede aplicar con la app andando**: agrega una
-columna con default, así que no reescribe las filas existentes ni toma
-locks largos.
+La 0006 y la 0007 son **aditivas y se pueden aplicar con la app andando**: la
+0006 agrega una columna con default —no reescribe las filas existentes ni toma
+locks largos— y la 0007 crea una tabla sin tocar ninguna.
+
+> **Orden importa entre el `psql` y el `firebase deploy`.** La 0007 hay que
+> aplicarla **antes** de desplegar la función. Al revés, el botón «Cargar
+> panelistas» ya está en la pantalla y falla con `relation "carga" does not
+> exist` a quien lo apriete. Nada se corrompe, pero es un error feo y evitable.
 
 > El `-v ON_ERROR_STOP=1` no es decorativo. Ya pasó una vez: sin él, `psql`
 > sigue después de un error y la base queda a medio migrar sin que se note
@@ -336,6 +398,7 @@ locks largos.
 | `puntos_earn_unico_por_encuesta` | Que no se pueda liquidar dos veces, ni con concurrencia (R3.4) |
 | `panel.origen` y `origen_definicion` | De dónde salió la composición de un panel (R3.11) |
 | `participacion.origen` (0006) | Distinguir a quien convocó el sistema de quien respondió en campo y se incorporó al ingestar (addendum de R3.9) |
+| `carga` (0007) | Un lote de individuos incorporados con sus respuestas **sin panel**: cumple frente al store semántico el mismo papel que `encuesta`, con su propio `ref_estudio`, y no genera membresías ni participaciones (R3.13) |
 
 ### 2.2 · Verificar
 
@@ -344,7 +407,7 @@ export DSN_SEMANTICA="$(scripts/dsn_local.sh semantica)"
 python3 scripts/verificar_esquema.py
 ```
 
-Tienen que salir las cinco migraciones de la bóveda y las tres de la
+Tienen que salir las seis migraciones de la bóveda y las tres de la
 semántica, todas con tilde. Es la misma comprobación que hace la app en
 Cumplimiento → Esquema de las dos bases.
 
@@ -772,7 +835,9 @@ de rutina: preferir dejar la migración aplicada.
 
 Infraestructura:
 
-- [ ] `db/boveda/0005_fase3.sql` y `db/boveda/0006_participacion_por_importacion.sql` aplicadas, en ese orden.
+- [ ] `db/boveda/0005_fase3.sql`, `db/boveda/0006_participacion_por_importacion.sql`
+      y `db/boveda/0007_carga_sin_panel.sql` aplicadas, en ese orden, y las tres
+      **antes** del `firebase deploy`.
 - [ ] `python3 scripts/verificar_esquema.py` sale con código 0.
 - [ ] `firebase deploy` completo, con `pyreadstat` instalado en el predeploy.
 - [ ] `GET /api/diagnostico/sav` devuelve 200 con `puede_leer_sav: true`.
@@ -794,6 +859,10 @@ Definiciones pendientes:
       premios inactivos.
 - [ ] Revisión con el DPO del conjunto de las tres superficies nuevas de datos
       personales (landing, alta por SAV, exportación con PII), no de a una.
+- [ ] **Si el consentimiento de uso semántico alcanza para conservar
+      patronímicos de un no-panelista** (§1.7). Sin esta definición no se debe
+      usar «Cargar panelistas» con bases reales.
+- [ ] Política de revisión de las personas sin panel acumuladas (§1.7).
 
 Verificación funcional:
 
@@ -812,6 +881,15 @@ Verificación funcional:
       un analista no puede bajarla.
 - [ ] Una carga declarando `id_persona` mapea sin depender de `alias_origen`.
 - [ ] Una carga sin declarar tipo se comporta igual que antes.
+- [ ] «Cargar panelistas» incorpora la gente del archivo y **ninguno queda
+      como miembro de un panel**, ni aparece en la participación de ninguna ola.
+- [ ] Una persona del archivo que ya era panelista conserva sus paneles.
+- [ ] En esa carga, una fila sin evidencia de `uso_semantico` no crea la
+      persona y el resumen lo informa; una con uso semántico y sin contacto se
+      crea, y convocarla sigue estando bloqueado.
+- [ ] El filtro «— Sin panel —» de Panelistas lista a los cargados así, y
+      aparecen en las consultas semánticas.
+- [ ] Crear un panel desde una consulta que los incluye les da membresía.
 - [ ] Muestreo prioriza la brecha, explica las exclusiones y no convoca.
 - [ ] Un panel sin brecha no reporta «brecha (0 personas)».
 - [ ] Un export sin tiempos informa que no se pudo evaluar el speeder.

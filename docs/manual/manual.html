@@ -32,7 +32,8 @@
     <li><a href="#s2"><span><span class="num">2</span> Entrar al sistema</span></a>
       <ul><li>Ingreso · Recuperación de contraseña · Cuentas sin habilitar</li></ul></li>
     <li><a href="#s3"><span><span class="num">3</span> Panelistas</span></a>
-      <ul><li>Buscar · Enrolar · Duplicados · Revisión de altas · La ficha</li></ul></li>
+      <ul><li>Buscar · Enrolar · Duplicados · Revisión de altas · La ficha ·
+      Cargar panelistas sin panel</li></ul></li>
     <li><a href="#s4"><span><span class="num">4</span> Paneles</span></a>
       <ul><li>Crear · Agregar miembros · Dar de baja una membresía</li></ul></li>
     <li><a href="#s5"><span><span class="num">5</span> Encuestas</span></a>
@@ -238,6 +239,10 @@
   determinado, lo que resulta útil cuando la misma persona participa en varios y
   se quiere verificar su situación en uno en particular.</p>
 
+  <p>Ese mismo desplegable tiene una opción <strong>— Sin panel —</strong>, que
+  aísla a las personas que no pertenecen a ningún panel. Son, típicamente, las
+  incorporadas mediante una carga externa (sección 3.6).</p>
+
   <h3><span class="n">3.2</span> Enrolar un panelista</h3>
 
   <p>El alta se inicia con <strong>+ Enrolar panelista</strong>, en el extremo
@@ -392,6 +397,80 @@
     datos: es un código aleatorio. Un clic sobre él lo copia al portapapeles, lo
     que resulta práctico cuando hay que cruzar información con otro sistema sin
     exponer datos personales.</p>
+  </div>
+
+  <h3><span class="n">3.6</span> Cargar panelistas sin asociarlos a un panel</h3>
+
+  <p>Cuando llega una base de afuera —un ómnibus, un estudio realizado por
+  terceros, un archivo histórico— sus respondentes <strong>no son
+  panelistas</strong>: no fueron reclutados y no van a ser convocados.
+  Incorporarlos a un panel los haría aparecer en sus convocatorias, en su
+  composición y en su muestreo, distorsionando todos los indicadores de ese
+  panel. Sus respuestas, en cambio, sí interesa poder consultarlas por
+  significado.</p>
+
+  <p>Para ese caso existe <strong>Cargar panelistas</strong>, junto a
+  <i>+ Enrolar panelista</i>. Incorpora a las personas del archivo con sus
+  respuestas y sus datos demográficos, y no las asocia a ningún panel.</p>
+
+  <figure>
+    <img src="capturas/47-cargar-panelistas.jpg" alt="Inicio de una carga de panelistas" />
+    <figcaption><b>Inicio de una carga.</b> Lo único que se pide en este paso es
+    un nombre, que después permite saber de qué base salió cada respuesta. El
+    aviso naranja indica la condición que define el flujo.</figcaption>
+  </figure>
+
+  <p>Tras confirmar el nombre se abre <strong>la misma pantalla de ingesta</strong>
+  que se describe en las secciones 5.4 y 5.5: archivo, columna que identifica al
+  respondente, mapeo de variables a preguntas, marcado de variables demográficas
+  y modo de resolución de individuos. El procedimiento es idéntico, de modo que
+  no hay un flujo nuevo que aprender.</p>
+
+  <p>Las dos diferencias son las siguientes.</p>
+
+  <p><strong>No se crea ninguna membresía ni ninguna participación.</strong> Es
+  precisamente lo que este flujo evita. Las personas incorporadas no entran en la
+  composición, en la brecha, en el muestreo ni en las convocatorias de ningún
+  panel, y el resumen del final no informa esas cifras, porque no se producen.</p>
+
+  <p><strong>La finalidad obligatoria del consentimiento se invierte.</strong> Al
+  ingestar desde una encuesta, una fila que no evidencia el consentimiento de
+  <i>contacto y participación</i> no da de alta a la persona. En una carga sin
+  panel la finalidad obligatoria es el <strong>uso semántico</strong>, que es la
+  base de lo único que se va a hacer con esos datos; el consentimiento de
+  contacto es opcional. Quien no lo evidencie se incorpora igual, pero no podrá
+  ser convocado nunca: la restricción descrita en la sección 5.2 se mantiene sin
+  cambios.</p>
+
+  <div class="aviso info">
+    <div class="t">Qué hacer si la persona ya estaba en el sistema</div>
+    <p>Nada especial. La carga aplica la misma deduplicación que el alta manual
+    (sección 3.3): reutiliza el identificador existente, suma sus respuestas y
+    completa los campos vacíos de su ficha. <strong>Sus paneles no se
+    modifican</strong>, ni se agregan ni se quitan.</p>
+  </div>
+
+  <p>Las personas incorporadas de este modo aparecen en el listado con
+  <strong>0 paneles</strong> y se aíslan con la opción <i>— Sin panel —</i> del
+  desplegable.</p>
+
+  <figure>
+    <img src="capturas/46-panelistas-sin-panel.jpg" alt="Listado filtrado por «sin panel»" />
+    <figcaption><b>Individuos sin panel.</b> Quedaron incorporados con sus
+    respuestas y sus demográficos, con consentimiento de uso semántico y sin
+    consentimiento de contacto: son consultables y no convocables.</figcaption>
+  </figure>
+
+  <p>Desde ese momento son consultables con normalidad: entran en las consultas
+  semánticas y en los filtros demográficos de la sección 6. Si más adelante se
+  decide sumar a algunos de ellos a un panel, se hace <strong>desde el resultado
+  de una consulta</strong>, sin volver a cargar los datos.</p>
+
+  <div class="aviso">
+    <div class="t">El orden recomendado</div>
+    <p>Cargar, consultar y recién entonces crear el panel con quienes interesen.
+    Así se incorpora únicamente a quien corresponde, en lugar de sumar la base
+    completa a un panel y depurarla después.</p>
   </div>
 </section>
 
