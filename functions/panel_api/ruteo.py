@@ -347,6 +347,7 @@ def ingestar_encuesta(ctx, actor, params, cuerpo, consulta):
         columna_id=cuerpo.get("columna_id", "id_en_origen"),
         origen=cuerpo.get("origen"),
         proveedor=ctx.embeddings,
+        demograficas=cuerpo.get("demograficas"),
     )
     ctx.semantica.commit()
     ctx.boveda.commit()
@@ -822,6 +823,21 @@ def ingestar_sav(ctx, actor, params, cuerpo, consulta):
         raise DatosInvalidos("Falta indicar qué variable identifica al individuo.")
 
     filas = sav.filas_de(contenido)
+    # El marcado demográfico vale para los dos modos y es la única fuente del
+    # mapeo a campos de `persona`: `mapeo_patronimico` quedó como alias de
+    # compatibilidad para las llamadas viejas, no como un mecanismo aparte.
+    demograficas = sav.normalizar_demograficas(
+        cuerpo.get("demograficas"), {c for fila in filas for c in fila})
+    mapeo = sav.mapeo_por_campo(demograficas) or (
+        cuerpo.get("mapeo_patronimico") or {})
+    # Los value labels de cada variable, para traducir el código del archivo
+    # antes de escribirlo en la bóveda. Salen de la misma lista de preguntas:
+    # una variable demográfica se configuró como cualquier otra y recién el
+    # marcado decide que su valor va a `persona`.
+    opciones_por_variable = {
+        p.get("codigo"): (p.get("opciones") or {}) for p in preguntas
+    }
+
     creacion = None
     if cuerpo.get("modo") == "crear_individuos":
         # La evidencia de consentimiento es obligatoria en este modo y se
@@ -830,10 +846,11 @@ def ingestar_sav(ctx, actor, params, cuerpo, consulta):
         # Al revés —ingestar primero y fallar al crear— dejaría el store
         # semántico con respuestas de gente que no existe en la bóveda.
         creacion = sav.crear_individuos(
-            ctx.boveda, filas, cuerpo.get("mapeo_patronimico") or {},
+            ctx.boveda, filas, mapeo,
             origen=(cuerpo.get("origen") or "sav"), columna_id=columna_id,
             evidencia_consentimiento=cuerpo.get("evidencia_consentimiento"),
             actor=actor, panel_id=cuerpo.get("panel_id"),
+            opciones_por_variable=opciones_por_variable,
         )
 
     # Por nombre y no por posición: `ingestar` toma `columna_id` antes que
@@ -844,6 +861,7 @@ def ingestar_sav(ctx, actor, params, cuerpo, consulta):
         columna_id=columna_id,
         origen=(cuerpo.get("origen") or "sav"),
         proveedor=ctx.embeddings,
+        demograficas=demograficas,
     )
     ctx.semantica.commit()
     ctx.boveda.commit()

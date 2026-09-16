@@ -218,6 +218,18 @@ async function convocar(encuestaId) {
   }
 }
 
+/* «localidad (3), sexo (1)»: qué campos discreparon y cuántas veces. La
+   lista completa puede ser larga y lo que hace falta para decidir si mirarla
+   es saber de qué se trata. */
+function resumirDiscrepancias(discrepancias) {
+  const porCampo = {};
+  discrepancias.forEach((d) => { porCampo[d.campo] = (porCampo[d.campo] || 0) + 1; });
+  return Object.entries(porCampo)
+    .sort((a, b) => b[1] - a[1])
+    .map(([campo, n]) => `${campo} (${n})`)
+    .join(', ');
+}
+
 function mostrarResultado(titulo, filas, nota) {
   modal({
     titulo,
@@ -362,15 +374,29 @@ async function leerArchivo(archivo) {
 
 /* Qué datos patronímicos puede traer un .sav, con el patrón que se usa para
    sugerir la variable. Van a la bóveda y solo a la bóveda. */
-const PATRONIMICOS = [
-  ['nombre', 'Nombre', /^(nom|nombre|name)/i],
-  ['documento', 'Documento', /^(doc|ci|cedula|documento)/i],
-  ['email', 'Correo', /^(mail|email|correo)/i],
-  ['celular', 'Celular', /^(cel|tel|movil|phone)/i],
-  ['fecha_nacimiento', 'Fecha de nacimiento', /^(fnac|fecha_nac|nacim|birth)/i],
-  ['sexo', 'Sexo', /^(sexo|sex|genero)/i],
-  ['localidad', 'Localidad', /^(loc|localidad|depto|ciudad)/i],
+/* Addendum de R3.9 — a qué campo de la bóveda puede apuntar una variable
+   marcada como demográfica. Es la misma lista del backend
+   (`sav.CAMPOS_DEMOGRAFICOS`); el orden es el de la ficha del panelista.
+
+   Los patronímicos dejaron de ser un bloque aparte del modo «crear
+   individuos»: son un subconjunto de este marcado, y el marcado vale para
+   los dos modos. */
+const DEMOGRAFICOS = [
+  ['nombre', 'Nombre'],
+  ['documento', 'Documento'],
+  ['email', 'Correo'],
+  ['celular', 'Celular'],
+  ['sexo', 'Sexo'],
+  ['fecha_nacimiento', 'Fecha de nacimiento'],
+  ['localidad', 'Localidad'],
+  ['contacto', 'Contacto preferido'],
 ];
+
+/* Marcar sin campo: se excluye del store semántico y no se guarda. Es para
+   las demográficas que la bóveda no modela —`EDAD` es el caso: la bóveda
+   guarda fecha de nacimiento y deriva el tramo—. Tiene que coincidir con
+   `sav.SOLO_EXCLUIR`. */
+const SOLO_EXCLUIR = '(no guardar)';
 
 /* Las opciones de una cerrada se escriben "1=Fernet; 2=Whisky". */
 function parsearOpciones(texto) {
@@ -422,7 +448,13 @@ function abrirIngesta(encuesta) {
       </div>
 
       <div class="form-group">
-        <label>3 · Preguntas del cuestionario</label>
+        <label>3 · Variables del archivo</label>
+        <div class="field-hint" style="margin:-0.3rem 0 0.6rem">
+          La última columna dice qué es cada variable. Las marcadas como
+          <strong>demográficas no se ingestan al store semántico</strong>: su
+          valor va a la ficha del panelista, en la bóveda. Es la decisión que
+          evita duplicar segmentadores del lado que se quiere mantener limpio.
+        </div>
         <div id="preguntas"></div>
         <button class="btn btn-outline btn-sm" id="add-pregunta" style="margin-top:0.6rem">+ Agregar pregunta</button>
       </div>
@@ -452,9 +484,11 @@ function abrirIngesta(encuesta) {
             vincular a nadie.</p>
           </div>
 
-          <div class="form-group">
-            <label>Datos patronímicos: qué variable trae cada dato</label>
-            <div id="patronimicos"></div>
+          <div class="field-hint" style="margin-bottom:1rem">
+            Los datos patronímicos salen del marcado de la lista de variables
+            de arriba: la que esté marcada como <strong>Nombre</strong>,
+            <strong>Documento</strong> o <strong>Correo</strong> es la que
+            identifica a la persona. Hace falta al menos una de las tres.
           </div>
 
           <div class="form-group">
@@ -490,8 +524,21 @@ function abrirIngesta(encuesta) {
   /* Editor de preguntas. */
   const preguntas$ = $('#preguntas', caja);
   const TIPOS = ['cerrada', 'abierta', 'escala', 'numerica'];
-  const filaPregunta = (codigo = '', texto = '', tipo = 'cerrada', opciones = null) => `
-    <div class="pregunta-fila">
+
+  const opcionesDeRol = (rol) => [
+    ['', 'Pregunta del estudio'],
+    ...DEMOGRAFICOS.map(([campo, etiqueta]) => [campo, `Demográfica · ${etiqueta}`]),
+    [SOLO_EXCLUIR, 'Demográfica · no guardar'],
+  ].map(([valor, etiqueta]) =>
+    `<option value="${esc(valor)}" ${valor === (rol || '') ? 'selected' : ''}>${esc(etiqueta)}</option>`
+  ).join('');
+
+  const textoDeOpciones = (opciones) => (opciones
+    ? Object.entries(opciones).map(([c, e]) => `${c}=${e}`).join('; ') : '');
+
+  const filaPregunta = (codigo = '', texto = '', tipo = 'cerrada',
+                        opciones = null, rol = '') => `
+    <div class="pregunta-fila" data-tenia-etiquetas="${opciones ? '1' : '0'}">
       <input type="text" class="p-codigo" placeholder="P1" value="${esc(codigo)}" />
       <input type="text" class="p-texto" placeholder="Texto de la pregunta" value="${esc(texto)}" />
       <select class="fselect p-tipo">
@@ -499,16 +546,92 @@ function abrirIngesta(encuesta) {
           ${valor === 'numerica' ? 'numérica' : valor}</option>`).join('')}
       </select>
       <input type="text" class="p-opciones" placeholder="1=Fernet; 2=Whisky"
-             value="${esc(opciones ? Object.entries(opciones).map(([c, e]) => `${c}=${e}`).join('; ') : '')}" />
+             value="${esc(textoDeOpciones(opciones))}" />
+      <select class="fselect p-rol" title="Qué es esta variable">${opcionesDeRol(rol)}</select>
       <button class="modal-close p-quitar" title="Quitar">×</button>
     </div>`;
 
-  const agregarFila = (codigo, texto, tipo, opciones) => {
-    preguntas$.insertAdjacentHTML('beforeend', filaPregunta(codigo, texto, tipo, opciones));
-    preguntas$.lastElementChild.querySelector('.p-quitar').onclick = (e) => {
+  /* R3.9.e — el campo de códigos según el tipo, y los avisos que van con él.
+
+     El campo estaba habilitado para todos los tipos, incluso `abierta`,
+     donde no hay códigos posibles: solo invitaba a cargar un mapeo que
+     nunca se iba a aplicar. Y una variable marcada como demográfica no va
+     al store semántico, así que su texto y su tipo dejan de importar. */
+  function ajustarFila(fila) {
+    const tipo = fila.querySelector('.p-tipo').value;
+    const rol = fila.querySelector('.p-rol').value;
+    const opciones$ = fila.querySelector('.p-opciones');
+    const texto$ = fila.querySelector('.p-texto');
+    const tipo$ = fila.querySelector('.p-tipo');
+    const esDemografica = rol !== '';
+
+    // El texto y el tipo solo gobiernan lo que se embebe.
+    texto$.disabled = esDemografica;
+    tipo$.disabled = esDemografica;
+    texto$.classList.toggle('inerte', esDemografica);
+    tipo$.classList.toggle('inerte', esDemografica);
+
+    // Una abierta no tiene códigos. Lo cargado se guarda y vuelve si el
+    // tipo cambia a uno que sí los admite: perderlo castigaría un clic.
+    const admiteCodigos = esDemografica || tipo !== 'abierta';
+    if (!admiteCodigos && opciones$.value) {
+      fila.dataset.opcionesGuardadas = opciones$.value;
+      opciones$.value = '';
+    } else if (admiteCodigos && !opciones$.value && fila.dataset.opcionesGuardadas) {
+      opciones$.value = fila.dataset.opcionesGuardadas;
+      delete fila.dataset.opcionesGuardadas;
+    }
+    opciones$.disabled = !admiteCodigos;
+    opciones$.classList.toggle('inerte', !admiteCodigos);
+
+    opciones$.placeholder = !admiteCodigos ? 'Una abierta no tiene códigos'
+      : esDemografica ? '1=Femenino; 2=Masculino'
+      // Las numéricas de SPSS suelen traer etiquetas solo para los valores
+      // especiales, y esa traducción importa: «→ 99» es ruido, «→ No
+      // contesta» es información.
+      : tipo === 'numerica' ? 'Solo valores especiales: 98=No sabe; 99=No contesta'
+      : '1=Fernet; 2=Whisky';
+
+    avisarDeLaFila(fila, tipo, rol, admiteCodigos);
+  }
+
+  function avisarDeLaFila(fila, tipo, rol, admiteCodigos) {
+    const teniaEtiquetas = fila.dataset.teniaEtiquetas === '1';
+    const hayCodigos = Boolean(
+      fila.querySelector('.p-opciones').value || fila.dataset.opcionesGuardadas);
+    let aviso = '';
+    if (rol === '') {
+      // Da igual si las etiquetas venían del archivo o las escribió alguien
+      // recién: en los dos casos se pierden, y en los dos hay que avisar
+      // antes de confirmar.
+      if (tipo === 'abierta' && (teniaEtiquetas || hayCodigos)) {
+        aviso = 'Esta variable tiene etiquetas de respuesta: como abierta se descartan.';
+      } else if (tipo === 'cerrada' && !hayCodigos) {
+        aviso = 'Sin etiquetas, sus valores se embeben crudos (el código, no la respuesta).';
+      }
+    }
+    let nota = fila.querySelector('.p-aviso');
+    if (!aviso) { nota?.remove(); return; }
+    if (!nota) {
+      nota = document.createElement('div');
+      nota.className = 'p-aviso';
+      fila.appendChild(nota);
+    }
+    nota.textContent = aviso;
+  }
+
+  const agregarFila = (codigo, texto, tipo, opciones, rol) => {
+    preguntas$.insertAdjacentHTML(
+      'beforeend', filaPregunta(codigo, texto, tipo, opciones, rol));
+    const fila = preguntas$.lastElementChild;
+    fila.querySelector('.p-quitar').onclick = (e) => {
       e.preventDefault();
       e.target.closest('.pregunta-fila').remove();
     };
+    fila.querySelector('.p-tipo').onchange = () => ajustarFila(fila);
+    fila.querySelector('.p-rol').onchange = () => ajustarFila(fila);
+    fila.querySelector('.p-opciones').oninput = () => ajustarFila(fila);
+    ajustarFila(fila);
   };
   agregarFila();
   $('#add-pregunta', caja).onclick = (e) => { e.preventDefault(); agregarFila(); };
@@ -605,7 +728,11 @@ function abrirIngesta(encuesta) {
     preguntas$.innerHTML = '';
     analisis.variables
       .filter((v) => v.codigo !== probable)
-      .forEach((v) => agregarFila(v.codigo, v.texto, v.tipo, v.opciones));
+      // El rol viene presugerido, no aplicado: la fila queda a la vista con
+      // su marca para confirmar o corregir. Una variable puede ser
+      // segmentador en un estudio y ser el objeto de análisis en otro.
+      .forEach((v) => agregarFila(
+        v.codigo, v.texto, v.tipo, v.opciones, v.demografica_sugerida || ''));
     if (!preguntas$.children.length) agregarFila();
 
     $('#resumen-archivo', caja).textContent =
@@ -628,14 +755,6 @@ function abrirIngesta(encuesta) {
       (vacia ? '<option value="">— ninguna —</option>' : '')
       + codigos.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
 
-    // Un desplegable por dato patronímico. Ninguno es obligatorio salvo que
-    // sin documento, email ni nombre no hay con qué identificar a nadie.
-    $('#patronimicos', caja).innerHTML = PATRONIMICOS.map(([campo, etiqueta]) => `
-      <div class="fila-mapeo">
-        <span class="small">${etiqueta}</span>
-        <select class="fselect p-map" data-campo="${campo}">${opciones(true)}</select>
-      </div>`).join('');
-
     $('#cons-contacto-var', caja).innerHTML = opciones(true);
     $('#cons-semantico-var', caja).innerHTML = opciones(true);
 
@@ -646,10 +765,19 @@ function abrirIngesta(encuesta) {
       $('#cons-contacto-var', caja).value = probable;
       $('#cons-semantico-var', caja).value = probable;
     }
-    PATRONIMICOS.forEach(([campo, , patron]) => {
-      const encontrada = codigos.find((c) => patron.test(c));
-      if (encontrada) $(`.p-map[data-campo="${campo}"]`, caja).value = encontrada;
+  }
+
+  /* El marcado demográfico de la lista de variables: `{variable: campo}`.
+     Vale para los dos modos, y es de donde sale el mapeo patronímico que el
+     alta necesita. */
+  function marcadoDemografico() {
+    const marcado = {};
+    $$('.pregunta-fila', preguntas$).forEach((fila) => {
+      const codigo = fila.querySelector('.p-codigo').value.trim();
+      const rol = fila.querySelector('.p-rol').value;
+      if (codigo && rol) marcado[codigo] = rol;
     });
+    return marcado;
   }
 
   /* Arma el cuerpo del modo «crear individuos». Valida acá lo que el
@@ -657,13 +785,12 @@ function abrirIngesta(encuesta) {
      backend— sino para no hacerle subir el archivo entero a alguien que se
      olvidó de completar un campo. */
   function cuerpoDeAltaSav() {
-    const mapeo = {};
-    $$('.p-map', caja).forEach((select) => {
-      if (select.value) mapeo[select.dataset.campo] = select.value;
-    });
-    if (!['documento', 'email', 'nombre'].some((c) => mapeo[c])) {
-      throw new Error('Para crear personas hace falta al menos documento, '
-        + 'correo o nombre: sin eso no hay con qué identificarlas.');
+    const marcado = marcadoDemografico();
+    const campos = new Set(Object.values(marcado));
+    if (!['documento', 'email', 'nombre'].some((c) => campos.has(c))) {
+      throw new Error('Para crear personas hace falta marcar al menos una '
+        + 'variable como documento, correo o nombre: sin eso no hay con qué '
+        + 'identificarlas.');
     }
 
     const contacto = {
@@ -687,7 +814,6 @@ function abrirIngesta(encuesta) {
 
     return {
       modo: 'crear_individuos',
-      mapeo_patronimico: mapeo,
       panel_id: encuesta.panel_id,
       evidencia_consentimiento: {
         contacto_participacion: contacto,
@@ -772,6 +898,11 @@ function abrirIngesta(encuesta) {
         ['Con baja en el panel', (resultado.membresias_en_baja || []).length, true],
         ['Participaciones nuevas', resultado.participaciones_nuevas || 0],
         ['Participaciones actualizadas', resultado.participaciones_actualizadas || 0],
+        // Addendum de R3.9: qué quedó fuera del store semántico por ser
+        // demográfico, y qué no se pudo volcar a la bóveda por discrepar.
+        ['Variables demográficas excluidas', (resultado.excluidas_por_demografica || []).length],
+        ['Datos completados en la bóveda', resultado.demograficos_completados || 0],
+        ['Discrepancias con la ficha', (resultado.discrepancias_demograficas || []).length, true],
       ], [
         resultado.creacion_de_individuos?.aviso_sin_consentimiento?.mensaje,
         resultado.creacion_de_individuos?.aviso_sin_uso_semantico?.mensaje,
@@ -786,6 +917,12 @@ function abrirIngesta(encuesta) {
           : null,
         (resultado.membresias_en_baja || []).length
           ? `${resultado.membresias_en_baja.length} persona(s) respondieron pero tienen la membresía dada de baja en este panel. No se reactivó sola: si corresponde reincorporarlas, hay que hacerlo desde el panel.`
+          : null,
+        (resultado.excluidas_por_demografica || []).length
+          ? `No se ingestaron al store semántico, por estar marcadas como demográficas: ${resultado.excluidas_por_demografica.join(', ')}.`
+          : null,
+        (resultado.discrepancias_demograficas || []).length
+          ? `${resultado.discrepancias_demograficas.length} dato(s) del archivo difieren de lo que ya estaba en la ficha del panelista y no se pisaron: ${resumirDiscrepancias(resultado.discrepancias_demograficas)}. El archivo de un estudio no es autoridad sobre la ficha; revisalo desde Panelistas.`
           : null,
       ].filter(Boolean).join(' '));
       await cargarParticipacion(encuesta.id);

@@ -5,7 +5,8 @@ misma uuid, generada al crear la encuesta. No hay FK entre stores; el cruce
 se resuelve por `ref_estudio` y por `id_persona`, y nada más.
 """
 
-from . import consentimiento, db, ingesta as mod_ingesta, semantica
+from . import (
+    consentimiento, db, ingesta as mod_ingesta, personas, sav, semantica)
 from .errores import Conflicto, DatosInvalidos, NoEncontrado
 
 ESTADOS = ("borrador", "en_campo", "cerrada")
@@ -294,8 +295,58 @@ def registrar_participacion_importada(conn, encuesta_id, ids_persona):
             "participaciones_actualizadas": actualizadas}
 
 
+def completar_demograficos(conn, filas, demograficas, columna_id, mapa,
+                           opciones_por_variable=None):
+    """Vuelca a la bóveda los demográficos que trae el archivo.
+
+    Addendum de R3.9 · R3.9.d. Solo completa lo que está vacío; un dato ya
+    cargado con otro valor se informa y no se toca (ver
+    `personas.completar_desde_archivo`).
+
+    `demograficas` es `{variable: campo}`. Las marcadas «no guardar» no
+    llegan acá: ya se filtraron.
+
+    `opciones_por_variable` trae los value labels de cada variable, y no es
+    opcional en la práctica: un `.sav` guarda `2` y «Femenino» por separado.
+    Sin traducir, `persona.sexo` se llena de `1` y `2` y la composición por
+    sexo queda inservible sin que nada falle.
+    """
+    campos = sav.mapeo_por_campo(demograficas)
+    if not campos:
+        return {"demograficos_completados": 0, "discrepancias_demograficas": []}
+
+    por_variable = {variable: campo for campo, variable in campos.items()}
+    opciones_por_variable = opciones_por_variable or {}
+    completados, discrepancias = 0, []
+    vistos = set()
+    for fila in filas:
+        id_en_origen = str(fila.get(columna_id) or "").strip()
+        id_persona = mapa.get(id_en_origen)
+        if not id_persona or id_persona in vistos:
+            continue
+        vistos.add(id_persona)
+
+        datos = {}
+        for variable, campo in por_variable.items():
+            valor = sav.valor_demografico(
+                campo, fila.get(variable), opciones_por_variable.get(variable))
+            if valor:
+                datos[campo] = valor
+        if not datos:
+            continue
+
+        resultado = personas.completar_desde_archivo(conn, id_persona, datos)
+        completados += len(resultado["completados"])
+        for discrepancia in resultado["discrepancias"]:
+            discrepancias.append({"id_persona": id_persona, **discrepancia})
+
+    return {"demograficos_completados": completados,
+            "discrepancias_demograficas": discrepancias}
+
+
 def ingestar(conn_boveda, conn_semantica, encuesta_id, preguntas, filas,
-             columna_id="id_en_origen", origen=None, proveedor=None):
+             columna_id="id_en_origen", origen=None, proveedor=None,
+             demograficas=None):
     """Gancho de fielding → ingesta semántica (R1.5).
 
     Construye el mapa id de campo → `id_persona` a partir de las
@@ -304,8 +355,27 @@ def ingestar(conn_boveda, conn_semantica, encuesta_id, preguntas, filas,
 
     Terminada la escritura, incorpora al panel y registra la participación de
     todos los ingestados (addendum de R3.9).
+
+    `demograficas` (`{variable: campo}`) marca qué variables del archivo son
+    segmentadores: **no se ingestan como preguntas** y sus valores van a la
+    bóveda. El filtro se aplica acá y no solo en la pantalla, porque es una
+    regla de privacidad —los demográficos no se espejan al store semántico— y
+    una regla de privacidad que solo vive en el navegador no es una regla.
     """
     encuesta = obtener(conn_boveda, encuesta_id)
+    demograficas = sav.normalizar_demograficas(demograficas)
+
+    marcadas = set(demograficas)
+    excluidas = sorted(
+        {p.get("codigo") for p in preguntas if p.get("codigo") in marcadas})
+    # Las opciones de la variable demográfica salen de la misma lista de
+    # preguntas: se la configuró como cualquier otra y recién acá se decide
+    # que su valor va a la bóveda y no al store semántico.
+    opciones_demograficas = {
+        p.get("codigo"): (p.get("opciones") or {})
+        for p in preguntas if p.get("codigo") in marcadas
+    }
+    preguntas = [p for p in preguntas if p.get("codigo") not in marcadas]
 
     participantes = listar_participacion(conn_boveda, encuesta_id)
     mapa = {
@@ -347,7 +417,12 @@ def ingestar(conn_boveda, conn_semantica, encuesta_id, preguntas, filas,
         mapa_personas=mapa or None,
     )
 
-    # ── Addendum de R3.9: membresía y participación ──
+    # ── Addendum de R3.9: demográficos, membresía y participación ──
+    resultado["excluidas_por_demografica"] = excluidas
+    resultado.update(completar_demograficos(
+        conn_boveda, filas, demograficas, columna_id, mapa,
+        opciones_por_variable=opciones_demograficas))
+
     ingestados = resultado.get("ids_persona_ingestados") or []
     resultado.update(incorporar_al_panel(conn_boveda, encuesta, ingestados))
     resultado.update(

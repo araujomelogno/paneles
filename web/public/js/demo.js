@@ -18,6 +18,29 @@ const uuid = () => (crypto.randomUUID ? crypto.randomUUID()
     }));
 
 const ahora = () => new Date().toISOString();
+
+/* Addendum de R3.9 — marcar sin campo: se excluye del store semántico y no
+   se guarda. Tiene que coincidir con `sav.SOLO_EXCLUIR` del backend. */
+const SOLO_EXCLUIR = '(no guardar)';
+
+/* Un `.sav` guarda `2` y «Femenino» por separado: sin traducir, la ficha se
+   llena de códigos y la composición por sexo queda inservible. */
+const SEXO_CANONICO = {
+  f: 'F', femenino: 'F', femenina: 'F', mujer: 'F', female: 'F',
+  m: 'M', masculino: 'M', masculina: 'M', hombre: 'M', varon: 'M',
+  'varón': 'M', male: 'M',
+  x: 'X', otro: 'X', otra: 'X', 'no binario': 'X', 'no binarie': 'X',
+};
+
+function valorDemografico(campo, crudo, opciones) {
+  if (crudo === undefined || crudo === null) return null;
+  let texto = String(crudo).trim();
+  if (!texto) return null;
+  const etiqueta = (opciones || {})[texto];
+  if (etiqueta) texto = String(etiqueta).trim();
+  if (campo === 'sexo') return SEXO_CANONICO[texto.toLowerCase()] || texto;
+  return texto;
+}
 const diasAtras = (n) => new Date(Date.now() - n * 86400000).toISOString();
 
 /* ── Estado ─────────────────────────────────────────────────────── */
@@ -345,9 +368,22 @@ function convocar(encuestaId, cuerpo) {
 
 function ingestar(encuestaId, cuerpo) {
   const encuesta = bd.encuestas.find((e) => e.id === encuestaId);
-  const preguntas = cuerpo.preguntas || [];
-  const filas = cuerpo.filas || [];
   const columnaId = cuerpo.columna_id || 'id_en_origen';
+  const filas = cuerpo.filas || [];
+
+  // Addendum de R3.9: lo marcado como demográfico no se ingesta al store
+  // semántico. Su valor va a la ficha, y solo si el campo estaba vacío.
+  const demograficas = cuerpo.demograficas || {};
+  const excluidas = [];
+  const preguntas = (cuerpo.preguntas || []).filter((p) => {
+    if (!demograficas[p.codigo]) return true;
+    excluidas.push(p.codigo);
+    return false;
+  });
+  const opcionesDemograficas = {};
+  (cuerpo.preguntas || []).forEach((p) => {
+    if (demograficas[p.codigo]) opcionesDemograficas[p.codigo] = p.opciones || {};
+  });
 
   // La unión de los convocados y de los alias de campo: quien respondió sin
   // haber sido convocado también tiene que resolver a su id_persona, que es
@@ -452,9 +488,38 @@ function ingestar(encuestaId, cuerpo) {
     }
   });
 
+  // ── Addendum de R3.9: los demográficos a la bóveda ──
+  let completados = 0;
+  const discrepancias = [];
+  const yaVistos = new Set();
+  filas.forEach((fila) => {
+    const idPersona = mapa[String(fila[columnaId] || '').trim()];
+    if (!idPersona || yaVistos.has(idPersona)) return;
+    yaVistos.add(idPersona);
+    const persona = bd.personas.find((p) => p.id_persona === idPersona);
+    if (!persona) return;
+    Object.entries(demograficas).forEach(([variable, campo]) => {
+      if (campo === SOLO_EXCLUIR) return;
+      const valor = valorDemografico(
+        campo, fila[variable], opcionesDemograficas[variable]);
+      if (!valor) return;
+      if (!persona[campo]) { persona[campo] = valor; completados++; return; }
+      if (String(persona[campo]).trim().toLowerCase() !== valor.toLowerCase()) {
+        discrepancias.push({
+          id_persona: idPersona, campo,
+          en_boveda: String(persona[campo]).toLowerCase(),
+          en_el_archivo: valor.toLowerCase(),
+        });
+      }
+    });
+  });
+
   return {
     encuesta_id: encuestaId, ref_estudio: encuesta.ref_estudio,
     respuestas_escritas: escritas,
+    excluidas_por_demografica: excluidas.sort(),
+    demograficos_completados: completados,
+    discrepancias_demograficas: discrepancias,
     personas: bd.semantica.individuos.length,
     preguntas: preguntas.length,
     sin_mapear: [...new Set(sinMapear)],

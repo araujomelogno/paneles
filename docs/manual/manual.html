@@ -545,14 +545,79 @@
     <li>En las preguntas cerradas, cargar las opciones con el formato
     <code>1=Televisión; 2=Redes sociales</code>, de modo que el sistema conserve
     la etiqueta y no el número.</li>
+    <li>Revisar la última columna: <strong>qué es cada variable</strong>. Ver más
+    abajo.</li>
     <li>Confirmar con <strong>Ingestar</strong>.</li>
   </ol>
+
+  <h4>Qué es cada variable: preguntas y demográficos</h4>
+
+  <p>La última columna de cada fila define si esa variable es una
+  <strong>pregunta del estudio</strong> o un <strong>dato demográfico</strong>.
+  La diferencia no es de presentación: decide a cuál de las dos bases va a
+  parar.</p>
+
+  <table class="parte">
+    <thead><tr><th>Si se marca como</th><th>Qué pasa con esa variable</th></tr></thead>
+    <tr><td class="destacado">Pregunta del estudio</td>
+      <td>Se ingesta al store semántico: se vectoriza su texto y queda
+      disponible para las consultas por significado.</td></tr>
+    <tr><td class="destacado">Demográfica · un campo</td>
+      <td><strong>No se ingesta.</strong> Su valor va a la ficha del panelista
+      —sexo, localidad, fecha de nacimiento, nombre, documento, correo,
+      celular, contacto—, en la bóveda.</td></tr>
+    <tr><td class="destacado">Demográfica · no guardar</td>
+      <td><strong>No se ingesta</strong> y tampoco se guarda. Es para los
+      demográficos que la ficha no tiene, como la edad: el sistema guarda la
+      fecha de nacimiento y deriva el tramo etario de ahí.</td></tr>
+  </table>
+
+  <div class="aviso info">
+    <div class="t">Por qué los demográficos no se vectorizan</div>
+    <p>Los segmentadores —sexo, localidad, tramo etario— son autoritativos en
+    la bóveda y no se duplican del lado semántico. Tenerlos en los dos lugares
+    no mejora ninguna consulta, porque el filtro demográfico se resuelve
+    siempre contra la bóveda, y sí aumenta el riesgo de que alguien pueda
+    reidentificar a una persona combinando datos del store semántico.</p>
+    <p>El sistema <strong>sugiere</strong> qué variables parecen demográficas
+    por su nombre y su etiqueta, pero no decide: la marca queda a la vista para
+    confirmarla o corregirla. Conviene mirarla, porque una misma variable puede
+    ser un segmentador en un estudio y ser el objeto de análisis en otro
+    —«¿en qué barrio vive?» es demográfico en un estudio de consumo y es
+    <em>el</em> dato en uno sobre barrios—.</p>
+  </div>
+
+  <p>De los demográficos marcados, el sistema completa lo que falte en la ficha
+  del panelista. Lo que ya está cargado <strong>no se pisa</strong>: si el
+  archivo trae un valor distinto, se informa la discrepancia al terminar y la
+  ficha queda como estaba. El archivo de un estudio puede traer un dato viejo o
+  mal tipeado, y una ingesta no es el lugar para cambiar la identidad de
+  alguien.</p>
+
+  <h4>El campo de códigos sigue al tipo de pregunta</h4>
+
+  <table class="parte">
+    <thead><tr><th>Tipo</th><th>Campo de códigos</th></tr></thead>
+    <tr><td class="destacado">Cerrada · Escala</td>
+      <td>Habilitado, con el mapeo completo: <code>1=Televisión; 2=Redes
+      sociales</code>. Si se deja vacío, se avisa: sin etiquetas se embebe el
+      número y no la respuesta.</td></tr>
+    <tr><td class="destacado">Numérica</td>
+      <td>Habilitado, pero solo para los <strong>valores especiales</strong>:
+      <code>98=No sabe; 99=No contesta</code>. Es una traducción que importa,
+      porque «¿Cuántos años tiene? → 99» es ruido y «→ No contesta» es
+      información.</td></tr>
+    <tr><td class="destacado">Abierta</td>
+      <td>Deshabilitado: no hay códigos que traducir. Si la variable tenía
+      etiquetas, se avisa que se van a descartar.</td></tr>
+  </table>
 
   <figure>
     <img class="recorte" src="capturas/19-ingesta.jpg" alt="Formulario de ingesta de respuestas" />
     <figcaption><b>Ingesta.</b> El recuadro superior detalla exactamente qué
-    información cruza al store semántico y qué se queda en la
-    bóveda.</figcaption>
+    información cruza al store semántico y qué se queda en la bóveda. En la
+    lista de variables, la última columna define cuáles son preguntas del
+    estudio y cuáles son demográficos que no se vectorizan.</figcaption>
   </figure>
 
   <p>El resultado informa cuántas respuestas se escribieron, cuántas personas

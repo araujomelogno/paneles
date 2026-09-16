@@ -120,6 +120,70 @@ def _completar_faltantes(conn, id_persona, datos):
     return sorted(a_completar)
 
 
+def _comparable(valor):
+    """Para decidir si dos valores son «el mismo dato».
+
+    Sin esto, `F` vs `f`, ` Montevideo` vs `Montevideo` y un `date` contra su
+    ISO se reportarían como discrepancias, y el informe se llenaría de ruido
+    que nadie va a mirar.
+    """
+    if valor is None:
+        return ""
+    if hasattr(valor, "isoformat"):
+        return valor.isoformat()[:10]
+    return str(valor).strip().lower()
+
+
+def completar_desde_archivo(conn, id_persona, datos):
+    """Completa los demográficos vacíos con lo que trae un archivo de campo.
+
+    Addendum de R3.9 · R3.9.d. Dos reglas, y la segunda es la que importa:
+
+    1. Un campo **vacío** en la bóveda se completa con el valor del archivo.
+    2. Un campo **ya cargado** con un valor distinto **no se sobrescribe**: se
+       informa la discrepancia y decide un responsable. El archivo de un
+       estudio no es autoridad sobre la ficha del panelista —puede traer un
+       dato viejo, mal tipeado o de otra persona—, y pisar la ficha desde una
+       ingesta sería un cambio que nadie pidió y que nadie ve.
+
+    Devuelve `{"completados": [campos], "discrepancias": [{campo, en_boveda,
+    en_el_archivo}]}`.
+    """
+    limpio = {}
+    for campo, valor in (datos or {}).items():
+        if campo not in CAMPOS_PERSONA:
+            continue
+        if isinstance(valor, str):
+            valor = valor.strip()
+        if valor in (None, ""):
+            continue
+        limpio[campo] = valor
+    if not limpio:
+        return {"completados": [], "discrepancias": []}
+
+    actual = db.una(
+        conn,
+        f"select {', '.join(CAMPOS_PERSONA)} from persona where id_persona = %s",
+        (id_persona,),
+    )
+    if not actual:
+        raise NoEncontrado(f"No existe la persona {id_persona}.")
+
+    discrepancias = [
+        {
+            "campo": campo,
+            "en_boveda": _comparable(actual[campo]),
+            "en_el_archivo": _comparable(valor),
+        }
+        for campo, valor in limpio.items()
+        if actual.get(campo) not in (None, "")
+        and _comparable(actual[campo]) != _comparable(valor)
+    ]
+
+    completados = _completar_faltantes(conn, id_persona, limpio)
+    return {"completados": completados, "discrepancias": discrepancias}
+
+
 def alta(conn, cuerpo, actor=None):
     """Alta de panelista: dedup → persona → consentimientos → membresía.
 
