@@ -12,6 +12,7 @@ from . import (
     auditoria,
     bajas,
     calidad,
+    cargas,
     composicion,
     consentimiento,
     consultas,
@@ -89,6 +90,11 @@ def despachar(metodo, camino, cuerpo, consulta, actor, ctx):
     return funcion(ctx, actor, params, cuerpo or {}, consulta or {})
 
 
+def _bandera(valor):
+    """`?sin_panel=1`, `=true`, `=si`. En la query string todo es texto."""
+    return str(valor or "").strip().lower() in ("1", "true", "si", "sí")
+
+
 def _entero(valor, por_defecto=None):
     try:
         return int(valor)
@@ -115,6 +121,9 @@ def listar_panelistas(ctx, actor, params, cuerpo, consulta):
         panel_id=_entero(consulta.get("panel_id")),
         limite=min(_entero(consulta.get("limite"), 50) or 50, 200),
         desplazamiento=_entero(consulta.get("desde"), 0) or 0,
+        # R3.13.e — los que entraron por una carga externa y no son miembros
+        # de ningún panel. Sin filtro se mezclan con el resto.
+        sin_panel=_bandera(consulta.get("sin_panel")),
     )
 
 
@@ -898,6 +907,90 @@ def ingestar_sav(ctx, actor, params, cuerpo, consulta):
         ctx.boveda, ctx.semantica, encuesta_id, preguntas, filas,
         columna_id=columna_id,
         origen=(cuerpo.get("origen") or "sav"),
+        proveedor=ctx.embeddings,
+        demograficas=demograficas,
+        tipo_identificador=cuerpo.get("tipo_identificador"),
+    )
+    ctx.semantica.commit()
+    ctx.boveda.commit()
+    resultado["duplicados_en_el_archivo"] = calidad.detectar_duplicados_en_filas(
+        filas, columna_id
+    )
+    if creacion is not None:
+        resultado["creacion_de_individuos"] = creacion
+    return 200, resultado
+
+
+# ════════════════════════════════════════════════════════════════════
+#  R3.13 — Cargar panelistas sin asociarlos a un panel
+# ════════════════════════════════════════════════════════════════════
+#
+# Mismo permiso que la ingesta desde encuesta: es la misma operación —
+# incorporar individuos y respuestas—, solo que sin panel.
+
+@ruta("POST", "/cargas", "ingestar", requisito="R3.13")
+def crear_carga(ctx, actor, params, cuerpo, consulta):
+    """Abre una carga y devuelve su `ref_estudio`, que es lo que la ata a su
+    cuestionario del lado semántico."""
+    carga = cargas.crear(
+        ctx.boveda, cuerpo.get("nombre"), cuerpo.get("descripcion"), actor)
+    ctx.boveda.commit()
+    return 201, carga
+
+
+@ruta("GET", "/cargas", "leer", requisito="R3.13")
+def listar_cargas(ctx, actor, params, cuerpo, consulta):
+    return 200, {"items": cargas.listar(ctx.boveda)}
+
+
+@ruta("POST", "/cargas/<carga_id>/analizar", "ingestar", requisito="R3.13")
+def analizar_sav_de_carga(ctx, actor, params, cuerpo, consulta):
+    """Mismo contrato que el análisis de R3.9: la pantalla es la misma."""
+    cargas.obtener(ctx.boveda, _entero(params["carga_id"]))
+    return 200, sav.analizar(_archivo_de(cuerpo))
+
+
+@ruta("POST", "/cargas/<carga_id>/ingesta", "ingestar", requisito="R3.13")
+def ingestar_carga(ctx, actor, params, cuerpo, consulta):
+    """Incorpora los individuos del archivo y sus respuestas. Sin panel.
+
+    Lo que **no** hace es tan importante como lo que hace: no crea membresías
+    ni participaciones. Esa gente no es panelista y no tiene por qué aparecer
+    en la composición, la brecha ni el muestreo de ningún panel.
+    """
+    carga_id = _entero(params["carga_id"])
+    preguntas = cuerpo.get("preguntas") or []
+    columna_id = (cuerpo.get("columna_id") or "").strip()
+    if not columna_id:
+        raise DatosInvalidos("Falta indicar qué variable identifica al individuo.")
+
+    # Las filas llegan del `.sav` o ya despivotadas, igual que en R3.9.
+    filas = (sav.filas_de(_archivo_de(cuerpo))
+             if cuerpo.get("archivo_base64") or cuerpo.get("archivo")
+             else (cuerpo.get("filas") or []))
+
+    demograficas = sav.normalizar_demograficas(
+        cuerpo.get("demograficas"), {c for fila in filas for c in fila})
+    opciones_por_variable = {
+        p.get("codigo"): (p.get("opciones") or {}) for p in preguntas
+    }
+
+    creacion = None
+    if cuerpo.get("modo") == "crear_individuos":
+        # Igual que en R3.9: la evidencia se valida **antes** de ingestar
+        # nada. Al revés dejaría el store semántico con respuestas de gente
+        # que no existe en la bóveda.
+        creacion = cargas.crear_individuos(
+            ctx.boveda, filas, sav.mapeo_por_campo(demograficas),
+            origen=(cuerpo.get("origen") or "carga"), columna_id=columna_id,
+            evidencia_consentimiento=cuerpo.get("evidencia_consentimiento"),
+            actor=actor, opciones_por_variable=opciones_por_variable,
+        )
+
+    resultado = cargas.ingestar(
+        ctx.boveda, ctx.semantica, carga_id, preguntas, filas,
+        columna_id=columna_id,
+        origen=(cuerpo.get("origen") or "carga"),
         proveedor=ctx.embeddings,
         demograficas=demograficas,
         tipo_identificador=cuerpo.get("tipo_identificador"),

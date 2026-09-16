@@ -509,14 +509,47 @@ function parsearOpciones(texto) {
   return Object.keys(opciones).length ? opciones : null;
 }
 
-function abrirIngesta(encuesta) {
+/* R3.13 — la misma pantalla sirve para los dos destinos.
+
+   `destino` es `{tipo, id, nombre, panel_id?}`:
+
+   - `encuesta`: la ingesta de siempre. Incorpora al panel de la encuesta y
+     registra la participación (R3.9.a/b), y la finalidad obligatoria del
+     alta es el contacto.
+   - `carga`: R3.13. **No** crea membresía ni participación —esa gente no es
+     panelista— y la finalidad obligatoria es el uso semántico, que es la
+     base de lo único que se va a hacer con esos datos.
+
+   Todo lo demás —mapeo de variables, marcado de demográficos, tipo de
+   identificador, dedup, guardrail de PII— es idéntico, y por eso es la misma
+   pantalla y no una nueva que haya que aprender. */
+export function abrirCargaDePanelistas(carga, alTerminar) {
+  return abrirIngesta(
+    { tipo: 'carga', id: carga.id, nombre: carga.nombre }, alTerminar);
+}
+
+function abrirIngesta(destino, alTerminar) {
+  const esCarga = destino.tipo === 'carga';
+  const encuesta = destino;
   let datosArchivo = { encabezados: [], filas: [] };
 
   const caja = modal({
-    titulo: `Ingestar respuestas — ${encuesta.nombre}`,
+    titulo: `${esCarga ? 'Cargar panelistas' : 'Ingestar respuestas'} — ${encuesta.nombre}`,
     ancho: '720px',
     cuerpo: `
       <div id="ing-alerta"></div>
+      ${esCarga ? `
+      <div class="aviso destacado">
+        <h4>Esta gente no queda en ningún panel</h4>
+        <p>Los individuos de esta carga <strong>no se incorporan a ningún
+        panel</strong>: no generan membresía ni participación, no se los puede
+        convocar y no entran en la composición, la brecha ni el muestreo de
+        ningún panel.</p>
+        <p>Sus respuestas sí quedan consultables por concepto, y sus
+        demográficos permiten filtrarlos. Si después se decide sumar a alguno
+        de ellos a un panel, se hace desde el resultado de una consulta, sin
+        volver a cargar nada.</p>
+      </div>` : ''}
       <div class="aviso">
         <h4>Qué cruza al store semántico</h4>
         <p>Solo el <code>id_persona</code>, el <code>ref_estudio</code>, el texto de la
@@ -586,9 +619,16 @@ function abrirIngesta(encuesta) {
             <strong>qué variable evidencia el consentimiento y qué valor cuenta
             como afirmativo</strong>, para las dos finalidades. Puede ser la
             misma variable.</p>
+            ${esCarga ? `
+            <p>En una carga sin panel la finalidad obligatoria es el
+            <strong>uso semántico</strong>: es la base de lo único que se va a
+            hacer con estos datos. Quien no la evidencie <strong>no se
+            crea</strong>. El consentimiento de contacto es opcional acá; quien
+            no lo evidencie se crea igual, pero nunca va a poder ser
+            convocado.</p>` : `
             <p>Quien no evidencie el consentimiento de contacto
             <strong>no se crea</strong>: sus respuestas no se van a poder
-            vincular a nadie.</p>
+            vincular a nadie.</p>`}
           </div>
 
           <div class="field-hint" style="margin-bottom:1rem">
@@ -834,7 +874,7 @@ function abrirIngesta(encuesta) {
       base64 = await leerBase64(archivo, (f) => avance.medido('Leyendo el archivo', f));
 
       avance.medido('Subiendo al servidor', 0);
-      analisis = await api.sav.analizar(encuesta.id, base64, {
+      analisis = await (esCarga ? api.cargas : api.sav).analizar(encuesta.id, base64, {
         alSubir: (f) => (f < 1
           ? avance.medido('Subiendo al servidor', f)
           : avance.abierto('Analizando el archivo en el servidor…',
@@ -944,7 +984,8 @@ function abrirIngesta(encuesta) {
 
     return {
       modo: 'crear_individuos',
-      panel_id: encuesta.panel_id,
+      // En una carga no hay panel al que incorporar: es el punto.
+      ...(esCarga ? {} : { panel_id: encuesta.panel_id }),
       evidencia_consentimiento: {
         contacto_participacion: contacto,
         uso_semantico: semantico,
@@ -1016,7 +1057,7 @@ function abrirIngesta(encuesta) {
     const enCurso = bloquearModal(caja);
     try {
       const resultado = datosArchivo.savBase64
-        ? await api.sav.ingestar(encuesta.id, {
+        ? await (esCarga ? api.cargas : api.sav).ingestar(encuesta.id, {
             archivo_base64: datosArchivo.savBase64,
             preguntas, columna_id: columnaId, origen: 'sav',
             // El marcado y el tipo de identificador valen para los dos modos
@@ -1035,7 +1076,7 @@ function abrirIngesta(encuesta) {
             avance.abierto('Ingestando en el servidor…',
               'Se resuelve cada individuo y se calculan los embeddings. '
               + 'Con archivos grandes tarda.');
-            return api.encuestas.ingestar(encuesta.id, {
+            return (esCarga ? api.cargas.ingestarFilas : api.encuestas.ingestar)(encuesta.id, {
               preguntas, filas: datosArchivo.filas, columnaId,
               origen: datosArchivo.origen || undefined,
               demograficas: marcadoDemografico(),
@@ -1058,11 +1099,15 @@ function abrirIngesta(encuesta) {
         // Addendum de R3.9: la ingesta ahora incorpora al panel y registra
         // la participación. Son cifras que cambian la composición y la tasa
         // de respuesta de la ola, así que se muestran siempre.
-        ['Nuevos miembros del panel', resultado.membresias_nuevas || 0],
-        ['Ya eran miembros', resultado.membresias_existentes || 0],
-        ['Con baja en el panel', (resultado.membresias_en_baja || []).length, true],
-        ['Participaciones nuevas', resultado.participaciones_nuevas || 0],
-        ['Participaciones actualizadas', resultado.participaciones_actualizadas || 0],
+        // R3.13.f — en una carga sin panel no se informan, porque no se
+        // crean: mostrarlas en cero sugeriría que algo falló.
+        ...(esCarga ? [] : [
+          ['Nuevos miembros del panel', resultado.membresias_nuevas || 0],
+          ['Ya eran miembros', resultado.membresias_existentes || 0],
+          ['Con baja en el panel', (resultado.membresias_en_baja || []).length, true],
+          ['Participaciones nuevas', resultado.participaciones_nuevas || 0],
+          ['Participaciones actualizadas', resultado.participaciones_actualizadas || 0],
+        ]),
         // Addendum de R3.9: qué quedó fuera del store semántico por ser
         // demográfico, y qué no se pudo volcar a la bóveda por discrepar.
         ['Variables demográficas excluidas', (resultado.excluidas_por_demografica || []).length],
@@ -1070,7 +1115,7 @@ function abrirIngesta(encuesta) {
         ['Discrepancias con la ficha', (resultado.discrepancias_demograficas || []).length, true],
       ], [
         resultado.creacion_de_individuos?.aviso_sin_consentimiento?.mensaje,
-        resultado.creacion_de_individuos?.aviso_sin_uso_semantico?.mensaje,
+        resultado.creacion_de_individuos?.aviso_sin_la_otra_finalidad?.mensaje,
         (resultado.sin_mapear || []).length
           ? `${resultado.sin_mapear.length} fila(s) no se pudieron vincular a ningún panelista: ${resumirSinMapear(resultado)}.`
           : null,
@@ -1093,8 +1138,14 @@ function abrirIngesta(encuesta) {
           ? `${resultado.discrepancias_demograficas.length} dato(s) del archivo difieren de lo que ya estaba en la ficha del panelista y no se pisaron: ${resumirDiscrepancias(resultado.discrepancias_demograficas)}. El archivo de un estudio no es autoridad sobre la ficha; revisalo desde Panelistas.`
           : null,
       ].filter(Boolean).join(' '));
-      await cargarParticipacion(encuesta.id);
-      await verificarCruce(encuesta.id);
+      if (esCarga) {
+        // La pantalla que abrió la carga es la de panelistas, y la gente
+        // recién incorporada tiene que aparecer ahí sin recargar a mano.
+        await alTerminar?.();
+      } else {
+        await cargarParticipacion(encuesta.id);
+        await verificarCruce(encuesta.id);
+      }
     } catch (error) {
       avance.cerrar();
       enCurso.soltar();

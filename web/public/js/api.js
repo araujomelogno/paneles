@@ -287,6 +287,32 @@ export const sav = {
     subir(`/encuestas/${encuestaId}/sav/ingesta`, cuerpo, opciones),
 };
 
+/* R3.13 — cargar individuos sin panel.
+
+   Contra el servidor es otro camino, pero del lado de la pantalla es el
+   mismo flujo que `sav`: mismo análisis, mismo mapeo, misma barra de avance.
+   Por eso comparte la forma exacta de `sav.analizar`/`sav.ingestar`: la
+   pantalla de ingesta elige uno u otro por el destino, sin ramificar nada
+   más. */
+export const cargas = {
+  crear: (nombre, descripcion) => POST('/cargas', { nombre, descripcion }),
+  listar: () => GET('/cargas'),
+  analizar: (cargaId, archivoBase64, opciones) =>
+    subir(`/cargas/${cargaId}/analizar`,
+          { archivo_base64: archivoBase64 }, opciones),
+  ingestar: (cargaId, cuerpo, opciones) =>
+    subir(`/cargas/${cargaId}/ingesta`, cuerpo, opciones),
+  /* El camino sin `.sav` (csv/xlsx, que se parsean en el navegador) manda
+     las filas ya leídas. Mismo endpoint; lo que cambia es que acá el cuerpo
+     se arma con los nombres del servidor, igual que `encuestas.ingestar`. */
+  ingestarFilas: (cargaId, { preguntas, filas, columnaId, origen, demograficas,
+                            tipoIdentificador }, opciones) =>
+    subir(`/cargas/${cargaId}/ingesta`, {
+      preguntas, filas, columna_id: columnaId || 'id_en_origen', origen,
+      demograficas, tipo_identificador: tipoIdentificador,
+    }, opciones),
+};
+
 export const exportacion = {
   csvIdentificado: (reidentificacionResuelta, resultado) =>
     POST('/consultas/csv-identificado', {
