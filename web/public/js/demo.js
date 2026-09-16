@@ -385,15 +385,41 @@ function ingestar(encuestaId, cuerpo) {
     if (demograficas[p.codigo]) opcionesDemograficas[p.codigo] = p.opciones || {};
   });
 
-  // La unión de los convocados y de los alias de campo: quien respondió sin
-  // haber sido convocado también tiene que resolver a su id_persona, que es
-  // de lo que depende el addendum de R3.9.
+  // R3.12 — qué trae la columna de identidad. El default es `alias`.
+  const tipo = cuerpo.tipo_identificador || 'alias';
   const mapa = {};
-  bd.alias.forEach((a) => { mapa[a.id_en_origen] = a.id_persona; });
-  bd.participaciones.filter((p) => p.encuesta_id === encuestaId).forEach((p) => {
-    const alias = bd.alias.find((a) => a.id_persona === p.id_persona);
-    if (alias) mapa[alias.id_en_origen] = p.id_persona;
-  });
+  let aliasRegistrados = 0;
+  if (tipo === 'alias') {
+    // La unión de los convocados y de los alias de campo: quien respondió sin
+    // haber sido convocado también tiene que resolver a su id_persona, que es
+    // de lo que depende el addendum de R3.9.
+    bd.alias.forEach((a) => { mapa[a.id_en_origen] = a.id_persona; });
+    bd.participaciones.filter((p) => p.encuesta_id === encuestaId).forEach((p) => {
+      const alias = bd.alias.find((a) => a.id_persona === p.id_persona);
+      if (alias) mapa[alias.id_en_origen] = p.id_persona;
+    });
+  } else {
+    filas.forEach((fila) => {
+      const valor = String(fila[columnaId] || '').trim();
+      if (!valor) return;
+      const persona = tipo === 'id_persona'
+        ? bd.personas.find((p) => p.id_persona === valor)
+        : tipo === 'documento'
+          ? bd.personas.find((p) => p.documento === valor)
+          : bd.personas.find(
+              (p) => (p.email || '').toLowerCase() === valor.toLowerCase());
+      if (!persona) return;
+      mapa[valor] = persona.id_persona;
+      // R3.12.c — la carga por llave natural deja sembrado el alias.
+      if ((tipo === 'documento' || tipo === 'email') && cuerpo.origen
+          && !bd.alias.some((a) => a.origen === cuerpo.origen && a.id_en_origen === valor)) {
+        bd.alias.push({
+          id_persona: persona.id_persona, origen: cuerpo.origen, id_en_origen: valor,
+        });
+        aliasRegistrados++;
+      }
+    });
+  }
 
   let cuestionario = bd.semantica.cuestionarios.find((c) => c.ref_estudio === encuesta.ref_estudio);
   if (!cuestionario) {
@@ -410,6 +436,7 @@ function ingestar(encuestaId, cuerpo) {
   });
 
   const sinMapear = [];
+  const motivos = {};
   const sinConsentimiento = new Set();
   const ingestados = new Set();
   let escritas = 0;
@@ -417,7 +444,15 @@ function ingestar(encuestaId, cuerpo) {
   filas.forEach((fila) => {
     const idOrigen = String(fila[columnaId] || '').trim();
     const idPersona = mapa[idOrigen];
-    if (!idPersona) { if (idOrigen) sinMapear.push(idOrigen); return; }
+    if (!idPersona) {
+      if (idOrigen) {
+        sinMapear.push(idOrigen);
+        motivos[idOrigen] = tipo === 'alias' ? 'sin_alias_para_ese_origen'
+          : tipo === 'id_persona' && !/^[0-9a-f-]{36}$/i.test(idOrigen)
+            ? 'formato_invalido' : 'no_encontrado';
+      }
+      return;
+    }
     if (!vigente(idPersona, 'uso_semantico')) { sinConsentimiento.add(idPersona); return; }
 
     let individuo = bd.semantica.individuos.find((i) => i.id_persona === idPersona);
@@ -522,7 +557,11 @@ function ingestar(encuestaId, cuerpo) {
     discrepancias_demograficas: discrepancias,
     personas: bd.semantica.individuos.length,
     preguntas: preguntas.length,
+    tipo_identificador: tipo,
+    alias_registrados: aliasRegistrados,
     sin_mapear: [...new Set(sinMapear)],
+    sin_mapear_detalle: [...new Set(sinMapear)].map(
+      (i) => ({ id_en_origen: i, motivo: motivos[i] })),
     sin_consentimiento: [...sinConsentimiento],
     membresias_nuevas: membresiasNuevas,
     membresias_existentes: membresiasExistentes,
@@ -881,6 +920,32 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
             consiente_semantico: vigente(p.id_persona, 'uso_semantico'),
           };
         }),
+    };
+  }
+
+  if (metodo === 'GET' && partes[0] === 'encuestas' && partes[2] === 'muestra') {
+    const encuestaId = Number(partes[1]);
+    const conContacto = ['1', 'true'].includes(String(consulta.con_contacto || ''));
+    const campos = conContacto
+      ? ['id_persona', 'nombre', 'documento', 'email', 'celular', 'contacto',
+         'sexo', 'localidad', 'tramo_etario']
+      : ['id_persona'];
+    const gente = bd.participaciones
+      .filter((p) => p.encuesta_id === encuestaId)
+      .map((p) => bd.personas.find((x) => x.id_persona === p.id_persona))
+      .filter(Boolean);
+    const lineas = [campos.join(',')];
+    gente.forEach((p) => lineas.push(campos.map((c) => (
+      c === 'tramo_etario' ? tramoEtario(p.fecha_nacimiento) : (p[c] ?? '')
+    )).join(',')));
+    const aviso = conContacto
+      ? '# ATENCIÓN: este archivo contiene datos personales de panelistas.\n' : '';
+    return {
+      encuesta_id: encuestaId, personas: gente.length,
+      csv: aviso + lineas.join('\n') + '\n',
+      nombre_archivo: `muestra-${encuestaId}${conContacto ? '-CON-DATOS-PERSONALES' : ''}.csv`,
+      contiene_datos_personales: conContacto,
+      columnas: campos,
     };
   }
 

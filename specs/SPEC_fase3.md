@@ -45,7 +45,7 @@ Once requisitos de naturaleza distinta. Se agrupan en tres bloques con dependenc
 |---|---|---|
 | **3A — Salud del panel accionable** | R3.1, R3.2, R3.3, R3.4, R3.5, R3.6 | Muestreo, calidad y gamificación |
 | **3B — Crecimiento y administración** | R3.7, R3.8 | Landing pública y usuarios del sistema |
-| **3C — Fricción operativa** | R3.9, R3.10, R3.11 | Ingesta SAV, exportación e instanciación de paneles |
+| **3C — Fricción operativa** | R3.9, R3.10, R3.11, R3.12 | Ingesta SAV, exportación, instanciación de paneles e identificación en campo |
 
 **Dependencias internas:** R3.4 (earn por calidad) depende de R3.2 (chequeos de calidad) — sin calidad medida, no hay con qué condicionar el punto. R3.5 (canje) depende de R3.3 (ledger). R3.6 (bono dirigido) depende de R3.3 y de la composición de Fase 2. R3.1 (muestreo) depende de la composición y la participación de Fase 2.
 
@@ -266,6 +266,28 @@ Alternativa al Excel ancho, con precarga automática de la metadata.
 - Dado un individuo sin `contacto_participacion` vigente, entonces la membresía puede existir pero no puede ser convocado (el gate de R1.3 sigue aplicando).
 - [ ] Si el resultado venía de una consulta semántica, la creación deja registro equivalente al de reidentificación: materializar un ranking en un panel es, en los hechos, fijar una lista de personas.
 
+#### R3.12 — Identificación del respondente en el trabajo de campo (P0)
+Spec propia en `specs/SPEC_R3.12_identificador_campo.md`. El mapeo se apoyaba siempre en `alias_origen`, o sea en el id que la plataforma de campo le puso al respondente, y eso asume que ese id es estable por persona entre estudios. No lo es: cada encuesta genera ids nuevos, así que al ingestar un estudio nuevo no matcheaba ninguna fila y todas caían en `sin_mapear`, con la ingesta en cero y nada roto.
+
+*R3.12.a — Exportar la muestra con el identificador del sistema:*
+- Dada una encuesta con convocatoria, cuando se exporta la muestra, entonces se genera un CSV con una fila por convocado y una columna `id_persona`, y **nada más**: es lo necesario para precargar el instrumento, y mantiene seudónimo un archivo que circula por la plataforma, por la computadora de quien lo baja y por correo.
+- Dada una exportación **con contacto**, entonces se trata como una reidentificación: exige el permiso `exportar_identificado` y se registra en `reidentificacion` con motivo `exportacion`, igual que R3.10.
+- Dada la exportación con contacto, entonces trae los mismos campos que la reidentificación, **sin** fecha de nacimiento exacta ni observaciones, y el archivo lleva la marca visible en su nombre y en su primera línea.
+
+*R3.12.b — Tipo de identificador declarado:*
+- Dada una carga, entonces se declara qué tipo de identificador trae la columna: `id_persona` (preferido), `alias` (**default**, la conducta actual), `documento` o `email` (respaldo).
+- Dado el tipo `id_persona`, entonces se resuelve directo y **no se consulta `alias_origen`**.
+- Dado un valor que no es un uuid, entonces se descarta **antes de consultar**: Postgres aborta la transacción entera ante un uuid inválido, así que sin ese filtro una fila con un typo se lleva puesta la carga completa.
+- Dado el tipo `documento` o `email`, entonces se resuelve contra el campo de la bóveda (el correo, sin distinguir mayúsculas).
+- Dado cualquier tipo, entonces el resto del flujo no cambia: gate de `uso_semantico`, membresía y participación (R3.9.a/b) y guardrail de PII siguen igual.
+
+*R3.12.c — Registro automático del alias:*
+- Dada una fila resuelta por `documento` o `email` y declarado el origen, entonces se registra el alias `(origen, id_en_origen)` si no existía, y el resultado informa cuántos se registraron. Así la re-ingesta del mismo estudio ya no depende de la llave natural, y el archivo de campo deja de necesitar PII a partir de la segunda vuelta.
+- Dado un alias ya existente, entonces no se duplica.
+
+*R3.12.d — Motivo por fila:*
+- Dado el informe de `sin_mapear`, entonces cada fila trae su motivo: `formato_invalido`, `no_encontrado` o `sin_alias_para_ese_origen`. Las tres se arreglan distinto y un número suelto obliga a adivinar cuál pasó.
+
 ---
 
 ## 7. Contratos de API (propuestos)
@@ -281,6 +303,7 @@ Alternativa al Excel ancho, con precarga automática de la metadata.
 | `POST /inscripciones` (**pública**) · `GET /inscripciones` · `POST /inscripciones/{id}/aprobar` | R3.7 |
 | `GET /usuarios` · `POST /usuarios` · `PATCH /usuarios/{uid}` | R3.8 |
 | `POST /encuestas/{id}/sav/analizar` — devuelve metadata precargada · `POST /encuestas/{id}/sav/ingesta` | R3.9 |
+| `GET /encuestas/{id}/muestra` — muestra seudónima para precargar el campo · `?con_contacto=1` la convierte en reidentificación | R3.12 |
 | `POST /consultas/csv-identificado` | R3.10 |
 | `POST /paneles/desde-consulta` | R3.11 |
 
@@ -334,6 +357,13 @@ Alternativa al Excel ancho, con precarga automática de la metadata.
 - [ ] La tasa de respuesta de una ola refleja a los que respondieron sin haber sido convocados desde el sistema (test).
 - [ ] La exportación con datos solo está disponible tras reidentificar y queda registrada con motivo `exportacion`.
 - [ ] Crear un panel desde una consulta da de alta las membresías, es idempotente y registra su origen.
+- [ ] Se puede exportar la muestra de una encuesta con `id_persona` y sin PII (test).
+- [ ] La exportación con contacto exige el permiso y queda registrada en `reidentificacion` (test).
+- [ ] Una carga declarando `id_persona` mapea directo y no consulta `alias_origen` (test).
+- [ ] Un `id_persona` mal formado y uno inexistente aparecen con motivos distintos, y el mal formado no voltea la carga entera (test).
+- [ ] Una carga por `documento` resuelve, registra el alias de esa plataforma, y la carga siguiente ya anda por alias (test).
+- [ ] Un alias ya existente no se duplica (test).
+- [ ] Una carga sin declarar tipo se comporta como `alias` (test de no regresión).
 
 ## 10. Success Metrics
 

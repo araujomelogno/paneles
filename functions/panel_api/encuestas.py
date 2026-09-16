@@ -6,7 +6,8 @@ se resuelve por `ref_estudio` y por `id_persona`, y nada más.
 """
 
 from . import (
-    consentimiento, db, ingesta as mod_ingesta, personas, sav, semantica)
+    consentimiento, db, dedup, ingesta as mod_ingesta, personas, sav,
+    semantica)
 from .errores import Conflicto, DatosInvalidos, NoEncontrado
 
 ESTADOS = ("borrador", "en_campo", "cerrada")
@@ -344,9 +345,157 @@ def completar_demograficos(conn, filas, demograficas, columna_id, mapa,
             "discrepancias_demograficas": discrepancias}
 
 
+# ── R3.12.a · Exportar la muestra para precargar el instrumento ──────
+#
+# El sistema tiene una ventaja que no estaba usando: **la muestra sale de
+# él**. La convocatoria se decide acá, así que el identificador correcto puede
+# viajar *hacia* el campo en vez de intentar adivinarlo *a la vuelta*. Y de
+# paso el archivo que va a campo queda seudónimo: la alternativa era usar
+# documento o email como llave, o sea meter PII en un export que circula por
+# la plataforma, por la computadora de quien lo baja y por correo.
+
+# El archivo seudónimo lleva `id_persona` y nada más: es lo necesario para
+# precargar el instrumento.
+CAMPOS_MUESTRA = ("id_persona",)
+
+# El de contacto lleva lo mismo que devuelve la reidentificación, **sin**
+# fecha de nacimiento exacta ni observaciones.
+CAMPOS_MUESTRA_CON_CONTACTO = (
+    "id_persona", "nombre", "documento", "email", "celular", "contacto",
+    "sexo", "localidad", "tramo_etario",
+)
+
+AVISO_MUESTRA_CON_PII = (
+    "# ATENCIÓN: este archivo contiene datos personales de panelistas. "
+    "Tratarlo según la política de protección de datos: no reenviarlo fuera "
+    "del equipo de campo, no subirlo a servicios de terceros y borrarlo "
+    "cuando termine el trabajo para el que se pidió."
+)
+
+
+def exportar_muestra(conn, encuesta_id, con_contacto=False):
+    """La muestra de la ola, para precargar en la plataforma de campo.
+
+    Seudónimo por defecto. `con_contacto=True` es una reidentificación en los
+    hechos —devuelve nombre, documento, correo— y quien llama tiene que
+    exigir el permiso y registrarla, igual que en R3.10. La ruta lo hace.
+    """
+    import csv
+    import io
+
+    encuesta = obtener(conn, encuesta_id)
+    filas = db.todas(
+        conn,
+        """
+        select pa.id_persona, p.nombre, p.documento, p.email, p.celular,
+               p.contacto, d.sexo, d.localidad, d.tramo_etario
+          from participacion pa
+          join persona p on p.id_persona = pa.id_persona
+          left join v_demografia d on d.id_persona = pa.id_persona
+         where pa.encuesta_id = %s
+         order by p.nombre nulls last
+        """,
+        (encuesta_id,),
+    )
+
+    campos = CAMPOS_MUESTRA_CON_CONTACTO if con_contacto else CAMPOS_MUESTRA
+    salida = io.StringIO()
+    if con_contacto:
+        salida.write(AVISO_MUESTRA_CON_PII + "\n")
+    escritor = csv.writer(salida, lineterminator="\n")
+    escritor.writerow(campos)
+    for fila in filas:
+        escritor.writerow([
+            str(fila[c]) if c == "id_persona" else fila[c] for c in campos
+        ])
+
+    marca = "-CON-DATOS-PERSONALES" if con_contacto else ""
+    return {
+        "encuesta_id": encuesta_id,
+        "encuesta": encuesta["nombre"],
+        "personas": len(filas),
+        "ids_persona": [str(f["id_persona"]) for f in filas],
+        "csv": salida.getvalue(),
+        "nombre_archivo": f"muestra-{encuesta_id}{marca}.csv",
+        "contiene_datos_personales": con_contacto,
+        "columnas": list(campos),
+        "nota": (
+            "Precargá la columna `id_persona` como variable oculta en el "
+            "instrumento y pedile a la plataforma que la devuelva en el "
+            "export. Al ingestar, declará el tipo de identificador "
+            "«id_persona»: el mapeo es directo y no depende de que la "
+            "plataforma repita sus ids entre estudios."
+        ),
+    }
+
+
+def _resolver_identidades(conn, encuesta_id, tipo, valores, origen):
+    """Traduce la columna de identidad a `id_persona`, según el tipo declarado.
+
+    R3.12.b. El tipo por defecto es `alias` —la conducta de siempre— para que
+    las cargas existentes sigan andando sin tocar nada.
+    """
+    if tipo != mod_ingesta.POR_ALIAS:
+        return mod_ingesta.resolver_identificadores(conn, tipo, valores, origen)
+
+    # Alias: las participaciones de esta ola **y** `alias_origen`, unidos.
+    # Antes era uno u otro, y con un solo convocado con alias —o sea,
+    # siempre— la ingesta dejaba de mirar `alias_origen`: todo el que
+    # respondió sin haber sido convocado caía en `sin_mapear`. La
+    # participación manda sobre el alias si difieren.
+    mapa = {
+        p["id_en_origen"]: p["id_persona"]
+        for p in listar_participacion(conn, encuesta_id)
+        if p["id_en_origen"]
+    }
+    if origen:
+        por_alias, _ = mod_ingesta.mapear_a_id_persona(
+            conn, origen, [v for v in valores if v not in mapa])
+        mapa = {**por_alias, **mapa}
+    return mapa, {v: mod_ingesta.SIN_ALIAS for v in valores if v not in mapa}
+
+
+def _sembrar_alias(conn, tipo, mapa, origen):
+    """Registra el alias de plataforma de lo que se resolvió por llave natural.
+
+    R3.12.c. El valor que se guarda como `id_en_origen` es el que traía la
+    columna —el documento o el correo—, porque es con eso que esa plataforma
+    identificó al respondente: la próxima carga del mismo estudio lo encuentra
+    por alias y ya no necesita la llave natural. Queda del lado de la bóveda,
+    que es donde ese dato ya vive; el guardrail de PII del store semántico no
+    se toca.
+
+    Sin origen declarado no hay alias que registrar: el par
+    `(origen, id_en_origen)` es lo que identifica al alias, y la mitad sola no
+    sirve para nada.
+    """
+    if tipo not in (mod_ingesta.POR_DOCUMENTO, mod_ingesta.POR_EMAIL) or not origen:
+        return 0
+    if not mapa:
+        return 0
+
+    # De una consulta y no de una por fila: un export de campo trae miles.
+    ya_estan = {
+        f["id_en_origen"]
+        for f in db.todas(
+            conn,
+            "select id_en_origen from alias_origen "
+            " where origen = %s and id_en_origen = any(%s)",
+            (origen, list(mapa)),
+        )
+    }
+    nuevos = 0
+    for id_en_origen, id_persona in mapa.items():
+        if id_en_origen in ya_estan:
+            continue
+        dedup.registrar_alias(conn, id_persona, origen, id_en_origen)
+        nuevos += 1
+    return nuevos
+
+
 def ingestar(conn_boveda, conn_semantica, encuesta_id, preguntas, filas,
              columna_id="id_en_origen", origen=None, proveedor=None,
-             demograficas=None):
+             demograficas=None, tipo_identificador=None):
     """Gancho de fielding → ingesta semántica (R1.5).
 
     Construye el mapa id de campo → `id_persona` a partir de las
@@ -377,32 +526,22 @@ def ingestar(conn_boveda, conn_semantica, encuesta_id, preguntas, filas,
     }
     preguntas = [p for p in preguntas if p.get("codigo") not in marcadas]
 
-    participantes = listar_participacion(conn_boveda, encuesta_id)
-    mapa = {
-        p["id_en_origen"]: p["id_persona"]
-        for p in participantes
-        if p["id_en_origen"]
-    }
-    # La unión, y no uno u otro. Antes, con un solo convocado que tuviera
-    # alias, `mapa` dejaba de estar vacío y la ingesta ya no miraba
-    # `alias_origen`: todo el que respondió sin haber sido convocado caía en
-    # `sin_mapear`, que es justamente el caso que este addendum viene a
-    # resolver. La participación manda sobre el alias si difieren.
-    if origen:
-        ids_del_archivo = [
-            i for i in dict.fromkeys(
-                str(f.get(columna_id) or "").strip() for f in filas)
-            if i
-        ]
-        por_alias, _ = mod_ingesta.mapear_a_id_persona(
-            conn_boveda, origen, [i for i in ids_del_archivo if i not in mapa])
-        mapa = {**por_alias, **mapa}
+    ids_del_archivo = [
+        i for i in dict.fromkeys(
+            str(f.get(columna_id) or "").strip() for f in filas)
+        if i
+    ]
+    tipo = tipo_identificador or mod_ingesta.POR_ALIAS
+    mapa, motivos = _resolver_identidades(
+        conn_boveda, encuesta_id, tipo, ids_del_archivo, origen)
 
-    if not mapa and not origen:
+    if not mapa and tipo == mod_ingesta.POR_ALIAS and not origen:
         raise DatosInvalidos(
             "No hay forma de saber a qué panelista corresponde cada fila del "
-            "archivo: registrá el `alias_origen` de los convocados o indicá "
-            "el `origen` de la plataforma de campo."
+            "archivo: registrá el `alias_origen` de los convocados, indicá "
+            "el `origen` de la plataforma de campo, o declará otro tipo de "
+            "identificador.",
+            {"tipos_validos": list(mod_ingesta.TIPOS_DE_IDENTIFICADOR)},
         )
 
     resultado = mod_ingesta.ingestar(
@@ -415,7 +554,15 @@ def ingestar(conn_boveda, conn_semantica, encuesta_id, preguntas, filas,
         origen=origen,
         proveedor=proveedor,
         mapa_personas=mapa or None,
+        motivos_sin_mapear=motivos,
     )
+    resultado["tipo_identificador"] = tipo
+
+    # R3.12.c — que una carga por llave natural deje sembrado el alias: la
+    # próxima vuelta del mismo estudio ya no depende de documento ni email, y
+    # el archivo de campo deja de necesitar PII.
+    resultado["alias_registrados"] = _sembrar_alias(
+        conn_boveda, tipo, mapa, origen)
 
     # ── Addendum de R3.9: demográficos, membresía y participación ──
     resultado["excluidas_por_demografica"] = excluidas

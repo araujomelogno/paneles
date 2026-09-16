@@ -128,6 +128,7 @@ async function renderDetalle(main, encuestaId) {
         <span class="card-header-title">Convocatoria y participación</span>
         <div class="toolbar">
           <button class="btn btn-outline btn-sm" id="convocar">Convocar al panel</button>
+          <button class="btn btn-outline btn-sm" id="muestra">Exportar muestra</button>
           <button class="btn btn-orange btn-sm" id="ingestar">Ingestar respuestas</button>
         </div>
       </div>
@@ -160,6 +161,7 @@ async function renderDetalle(main, encuestaId) {
   activarTokens(main);
 
   $('#convocar').onclick = () => convocar(encuestaId);
+  $('#muestra').onclick = () => exportarMuestra(encuestaId);
   $('#ingestar').onclick = () => abrirIngesta(encuesta);
   $('#verificar').onclick = () => verificarCruce(encuestaId);
 
@@ -218,6 +220,25 @@ async function convocar(encuestaId) {
   }
 }
 
+/* R3.12.d — las tres causas se arreglan distinto, así que el informe las
+   separa en vez de dar un número suelto. */
+const MOTIVOS_SIN_MAPEAR = {
+  formato_invalido: 'el valor no es un id_persona válido',
+  no_encontrado: 'ese identificador no existe en la bóveda',
+  sin_alias_para_ese_origen: 'esa plataforma no tiene registrado ese id',
+};
+
+function resumirSinMapear(resultado) {
+  const detalle = resultado.sin_mapear_detalle || [];
+  if (!detalle.length) return 'sin detalle del motivo';
+  const porMotivo = {};
+  detalle.forEach((d) => { porMotivo[d.motivo] = (porMotivo[d.motivo] || 0) + 1; });
+  return Object.entries(porMotivo)
+    .sort((a, b) => b[1] - a[1])
+    .map(([motivo, n]) => `${n} porque ${MOTIVOS_SIN_MAPEAR[motivo] || motivo}`)
+    .join('; ');
+}
+
 /* «localidad (3), sexo (1)»: qué campos discreparon y cuántas veces. La
    lista completa puede ser larga y lo que hace falta para decidir si mirarla
    es saber de qué se trata. */
@@ -243,6 +264,68 @@ function mostrarResultado(titulo, filas, nota) {
       </div>
       ${nota ? `<div class="aviso"><p>${esc(nota)}</p></div>` : ''}`,
     acciones: [{ texto: 'Cerrar', clase: 'btn-outline', onClick: cerrarModal }],
+  });
+}
+
+/* ── R3.12.a · Exportar la muestra ──────────────────────────────── */
+
+function descargarCsv(nombre, contenido) {
+  const blob = new Blob([contenido], { type: 'text/csv;charset=utf-8' });
+  const enlace = document.createElement('a');
+  enlace.href = URL.createObjectURL(blob);
+  enlace.download = nombre || 'muestra.csv';
+  enlace.click();
+  URL.revokeObjectURL(enlace.href);
+}
+
+
+/* El identificador del sistema viaja al campo en vez de adivinarlo a la
+   vuelta: se precarga `id_persona` como variable oculta en el instrumento y
+   vuelve en el archivo. El archivo seudónimo es el camino normal; el que
+   lleva contacto es una reidentificación y se trata como tal. */
+function exportarMuestra(encuestaId) {
+  modal({
+    titulo: 'Exportar la muestra para el campo',
+    cuerpo: `
+      <div id="muestra-alerta"></div>
+      <div class="aviso">
+        <h4>Para qué sirve</h4>
+        <p>El archivo trae el <code>id_persona</code> de cada convocado.
+        Precargalo como <strong>variable oculta</strong> en el instrumento y
+        pedile a la plataforma que lo devuelva en el export: al ingestar,
+        declarás que la columna trae el <strong>id_persona</strong> y el
+        mapeo es directo.</p>
+        <p>Resuelve el problema de fondo: las plataformas suelen generar ids
+        nuevos en cada estudio, y entonces ninguna fila mapea.</p>
+      </div>
+      <div class="form-group">
+        <label class="check">
+          <input type="checkbox" id="muestra-contacto" />
+          Incluir datos de contacto (nombre, documento, correo, celular)
+        </label>
+        <div class="field-hint">Solo si el equipo de campo necesita llamar o
+        mandar el link. Es una <strong>reidentificación</strong>: queda
+        registrada con tu usuario, igual que en una consulta.</div>
+      </div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Exportar', clase: 'btn-orange', onClick: async (caja) => {
+          const conContacto = $('#muestra-contacto', caja).checked;
+          try {
+            const muestra = await api.encuestas.muestra(encuestaId, conContacto);
+            if (!muestra.personas) {
+              $('#muestra-alerta', caja).innerHTML = alerta(
+                'Esta ola todavía no tiene a nadie convocado: no hay muestra que exportar.');
+              return;
+            }
+            descargarCsv(muestra.nombre_archivo, muestra.csv);
+            cerrarModal();
+            toast(`Muestra de ${muestra.personas} persona(s) exportada.`, 'ok');
+          } catch (error) {
+            $('#muestra-alerta', caja).innerHTML = alerta(error.message);
+          }
+        } },
+    ],
   });
 }
 
@@ -440,11 +523,18 @@ function abrirIngesta(encuesta) {
 
       <div class="form-group">
         <label>2 · Columna que identifica al respondente</label>
-        <select class="fselect" name="columna_id" id="columna-id" disabled>
-          <option value="">Cargá primero el archivo</option>
-        </select>
-        <div class="field-hint">Debe traer el id que usó la plataforma de campo
-          (el mismo que se guardó en <code>alias_origen</code> al enrolar).</div>
+        <div class="grid-2">
+          <select class="fselect" name="columna_id" id="columna-id" disabled>
+            <option value="">Cargá primero el archivo</option>
+          </select>
+          <select class="fselect" id="tipo-identificador">
+            <option value="alias">Trae el id de la plataforma de campo</option>
+            <option value="id_persona">Trae el id_persona del sistema (precargado)</option>
+            <option value="documento">Trae el documento</option>
+            <option value="email">Trae el correo</option>
+          </select>
+        </div>
+        <div class="field-hint" id="hint-identificador"></div>
       </div>
 
       <div class="form-group">
@@ -635,6 +725,29 @@ function abrirIngesta(encuesta) {
   };
   agregarFila();
   $('#add-pregunta', caja).onclick = (e) => { e.preventDefault(); agregarFila(); };
+
+  /* R3.12 — qué trae la columna de identidad. El default es `alias`, la
+     conducta de siempre, para que nadie tenga que cambiar nada. */
+  const AYUDA_IDENTIFICADOR = {
+    alias: 'El id que la plataforma le puso al respondente, el mismo que se '
+      + 'guardó al enrolar. Ojo: muchas plataformas generan ids nuevos en cada '
+      + 'estudio, y entonces ninguna fila va a mapear.',
+    id_persona: 'El identificador del sistema, precargado en el instrumento '
+      + 'desde «Exportar muestra». Es el mapeo directo y el único que no '
+      + 'depende de lo que haga la plataforma.',
+    documento: 'Respaldo, cuando no se pudo precargar. Al terminar queda '
+      + 'registrado el alias de esta plataforma, así la próxima carga ya no '
+      + 'necesita el documento.',
+    email: 'Respaldo, cuando no se pudo precargar. Al terminar queda '
+      + 'registrado el alias de esta plataforma, así la próxima carga ya no '
+      + 'necesita el correo.',
+  };
+  const tipoId$ = $('#tipo-identificador', caja);
+  const refrescarAyudaIdentificador = () => {
+    $('#hint-identificador', caja).textContent = AYUDA_IDENTIFICADOR[tipoId$.value];
+  };
+  tipoId$.onchange = refrescarAyudaIdentificador;
+  refrescarAyudaIdentificador();
 
   $('#modo-sav', caja).onchange = (e) => {
     $('#alta-sav', caja).classList.toggle('hidden', e.target.value !== 'crear_individuos');
@@ -867,7 +980,12 @@ function abrirIngesta(encuesta) {
       const resultado = datosArchivo.savBase64
         ? await api.sav.ingestar(encuesta.id, {
             archivo_base64: datosArchivo.savBase64,
-            preguntas, columna_id: columnaId, origen: 'sav', ...extraSav,
+            preguntas, columna_id: columnaId, origen: 'sav',
+            // El marcado y el tipo de identificador valen para los dos modos
+            // y para cualquier formato: van siempre, no solo al crear gente.
+            demograficas: marcadoDemografico(),
+            tipo_identificador: tipoId$.value,
+            ...extraSav,
           }, {
             alSubir: (f) => (f < 1
               ? avance.medido('Subiendo al servidor', f)
@@ -877,6 +995,9 @@ function abrirIngesta(encuesta) {
           })
         : await api.encuestas.ingestar(encuesta.id, {
             preguntas, filas: datosArchivo.filas, columnaId,
+            origen: datosArchivo.origen || undefined,
+            demograficas: marcadoDemografico(),
+            tipoIdentificador: tipoId$.value,
           });
       avance?.cerrar();
       cerrarModal();
@@ -907,7 +1028,10 @@ function abrirIngesta(encuesta) {
         resultado.creacion_de_individuos?.aviso_sin_consentimiento?.mensaje,
         resultado.creacion_de_individuos?.aviso_sin_uso_semantico?.mensaje,
         (resultado.sin_mapear || []).length
-          ? `${resultado.sin_mapear.length} fila(s) traían un id que no corresponde a ningún panelista convocado.`
+          ? `${resultado.sin_mapear.length} fila(s) no se pudieron vincular a ningún panelista: ${resumirSinMapear(resultado)}.`
+          : null,
+        resultado.alias_registrados
+          ? `Se registró el id de esta plataforma para ${resultado.alias_registrados} persona(s): la próxima carga de este estudio ya no va a necesitar el documento ni el correo.`
           : null,
         (resultado.sin_consentimiento || []).length
           ? `${resultado.sin_consentimiento.length} panelista(s) quedaron fuera por no tener uso semántico vigente.`

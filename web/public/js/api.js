@@ -169,11 +169,16 @@ export const encuestas = {
       ids_persona: idsPersona, todo_el_panel: !!todoElPanel,
     }),
   participacion: (id) => GET(`/encuestas/${id}/participacion`),
-  ingestar: (id, { preguntas, filas, columnaId, origen }) =>
+  ingestar: (id, { preguntas, filas, columnaId, origen, demograficas,
+                  tipoIdentificador }) =>
     POST(`/encuestas/${id}/ingesta`, {
       preguntas, filas, columna_id: columnaId || 'id_en_origen', origen,
+      demograficas, tipo_identificador: tipoIdentificador,
     }),
   cruce: (id) => GET(`/encuestas/${id}/cruce`),
+  // R3.12.a — la muestra para precargar en la plataforma de campo.
+  muestra: (id, conContacto = false) =>
+    GET(`/encuestas/${id}/muestra`, conContacto ? { con_contacto: '1' } : {}),
 };
 
 /* ── Fase 2 ─────────────────────────────────────────────────────── */

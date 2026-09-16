@@ -18,6 +18,8 @@ la plataforma de campo (Dooblo, Alchemer). Ese id se traduce a `id_persona`
 el `id_persona`. La PII se queda de este lado.
 """
 
+import re
+
 from . import consentimiento, db, embeddings as mod_embeddings, semantica
 from .errores import DatosInvalidos
 
@@ -70,6 +72,103 @@ def despivotar(filas, preguntas, columna_id):
     return largo
 
 
+# ── R3.12 · Qué tipo de identificador trae la columna ────────────────
+#
+# El mapeo se apoyaba siempre en `alias_origen`, o sea en el id que la
+# plataforma de campo le puso al respondente. Eso asume que ese id es estable
+# por persona entre estudios, y no lo es: cada encuesta genera ids nuevos para
+# el mismo individuo. Al ingestar un estudio nuevo no matcheaba ninguna fila y
+# todas caían en `sin_mapear`, con la ingesta en cero y nada roto.
+#
+# La salida es que el identificador del sistema viaje **hacia** el campo en
+# vez de adivinarlo a la vuelta: la muestra se exporta con `id_persona`, se
+# precarga en el instrumento y vuelve en el archivo.
+POR_ID_PERSONA = "id_persona"
+POR_ALIAS = "alias"
+POR_DOCUMENTO = "documento"
+POR_EMAIL = "email"
+TIPOS_DE_IDENTIFICADOR = (POR_ID_PERSONA, POR_ALIAS, POR_DOCUMENTO, POR_EMAIL)
+
+# Por qué una fila no resolvió. Las tres se arreglan distinto, y una lista sin
+# motivo obliga a adivinar cuál de las tres pasó.
+FORMATO_INVALIDO = "formato_invalido"
+NO_ENCONTRADO = "no_encontrado"
+SIN_ALIAS = "sin_alias_para_ese_origen"
+
+_UUID = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
+)
+
+
+def resolver_identificadores(conn_boveda, tipo, valores, origen=None):
+    """Traduce lo que trae la columna de identidad a `id_persona`.
+
+    Devuelve `(mapa, motivos)`, donde `motivos` dice por qué cada valor que no
+    resolvió no resolvió.
+    """
+    if tipo not in TIPOS_DE_IDENTIFICADOR:
+        raise DatosInvalidos(
+            f"«{tipo}» no es un tipo de identificador conocido.",
+            {"tipos_validos": list(TIPOS_DE_IDENTIFICADOR)},
+        )
+    valores = [str(v).strip() for v in dict.fromkeys(valores) if str(v).strip()]
+    if not valores:
+        return {}, {}
+
+    if tipo == POR_ALIAS:
+        if not origen:
+            raise DatosInvalidos(
+                "Para mapear por alias hace falta declarar el origen (la "
+                "plataforma de campo que emitió esos ids)."
+            )
+        mapa, _ = mapear_a_id_persona(conn_boveda, origen, valores)
+        return mapa, {v: SIN_ALIAS for v in valores if v not in mapa}
+
+    if tipo == POR_ID_PERSONA:
+        # Un uuid mal formado no se puede ni consultar: Postgres aborta la
+        # transacción entera con un error de tipo. Se filtran antes, y se
+        # informan aparte de los que sí son uuid pero no existen —un typo y
+        # una persona borrada por baja se arreglan de forma distinta—.
+        motivos = {v: FORMATO_INVALIDO for v in valores if not _UUID.match(v)}
+        candidatos = [v for v in valores if v not in motivos]
+        existentes = {
+            str(f["id_persona"]).lower()
+            for f in db.todas(
+                conn_boveda,
+                "select id_persona from persona where id_persona = any(%s::uuid[])",
+                (candidatos,),
+            )
+        } if candidatos else set()
+        mapa = {v: v.lower() for v in candidatos if v.lower() in existentes}
+        motivos.update({v: NO_ENCONTRADO for v in candidatos if v not in mapa})
+        return mapa, motivos
+
+    columna = "documento" if tipo == POR_DOCUMENTO else "email"
+    comparacion = (
+        "documento = any(%s)" if tipo == POR_DOCUMENTO
+        else "lower(email) = any(%s)"
+    )
+    buscados = valores if tipo == POR_DOCUMENTO else [v.lower() for v in valores]
+    filas = db.todas(
+        conn_boveda,
+        f"select {columna}, id_persona from persona where {comparacion}",
+        (buscados,),
+    )
+    encontrados = {
+        (f[columna] if tipo == POR_DOCUMENTO else (f[columna] or "").lower()):
+            str(f["id_persona"])
+        for f in filas
+    }
+    mapa, motivos = {}, {}
+    for valor in valores:
+        clave = valor if tipo == POR_DOCUMENTO else valor.lower()
+        if clave in encontrados:
+            mapa[valor] = encontrados[clave]
+        else:
+            motivos[valor] = NO_ENCONTRADO
+    return mapa, motivos
+
+
 def mapear_a_id_persona(conn_boveda, origen, ids_en_origen):
     """Traduce ids de la plataforma de campo a `id_persona`, contra la
     bóveda. Devuelve `(mapa, sin_mapear)`."""
@@ -99,6 +198,7 @@ def ingestar(
     origen=None,
     proveedor=None,
     mapa_personas=None,
+    motivos_sin_mapear=None,
 ):
     """Corre la ingesta de un estudio. `encuesta` es el dict del store de bóveda
     (necesita `ref_estudio`, `nombre`, `fecha_campo`).
@@ -116,6 +216,7 @@ def ingestar(
             "respuestas_escritas": 0,
             "personas": 0,
             "sin_mapear": [],
+            "sin_mapear_detalle": [],
             "sin_consentimiento": [],
             "ids_persona_ingestados": [],
             "aviso": "El archivo no tenía celdas con respuesta.",
@@ -129,11 +230,21 @@ def ingestar(
         sin_mapear = [i for i in ids_origen if i not in mapa]
     elif origen:
         mapa, sin_mapear = mapear_a_id_persona(conn_boveda, origen, ids_origen)
+        motivos_sin_mapear = {i: SIN_ALIAS for i in sin_mapear}
     else:
         raise DatosInvalidos(
             "Para ingestar hace falta `origen` (para resolver los alias contra "
             "la bóveda) o un `mapa_personas` explícito."
         )
+
+    # R3.12.d — el motivo por fila. Las tres causas —el valor no es un uuid,
+    # el uuid no existe, esa plataforma no tiene ese alias— se arreglan de
+    # forma distinta, y una lista sin motivo obliga a adivinar cuál pasó.
+    motivos_sin_mapear = motivos_sin_mapear or {}
+    detalle_sin_mapear = [
+        {"id_en_origen": i, "motivo": motivos_sin_mapear.get(i, NO_ENCONTRADO)}
+        for i in sin_mapear
+    ]
 
     # ── Gate de consentimiento (R1.3 / regla de finalidad) ──
     habilitadas, bloqueadas = consentimiento.filtrar_con_consentimiento(
@@ -150,6 +261,7 @@ def ingestar(
             "respuestas_escritas": 0,
             "personas": 0,
             "sin_mapear": sin_mapear,
+            "sin_mapear_detalle": detalle_sin_mapear,
             "sin_consentimiento": bloqueadas,
             "ids_persona_ingestados": [],
             "aviso": "Ninguna respuesta quedó habilitada para ingestar.",
@@ -205,6 +317,7 @@ def ingestar(
         "embebidas": len(a_embeber),
         "reutilizadas": len(respuestas) - len(a_embeber),
         "sin_mapear": sin_mapear,
+        "sin_mapear_detalle": detalle_sin_mapear,
         "sin_consentimiento": bloqueadas,
         # Quiénes quedaron efectivamente ingestados —mapeados y con
         # `uso_semantico` vigente—. Lo necesita la bóveda para incorporarlos

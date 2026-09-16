@@ -22,6 +22,7 @@ En términos de despliegue, eso se traduce en cinco cosas concretas:
 | Dos decisiones legales pendientes | ver §1 | Se abren superficies de datos sin base legal |
 | Un cambio de conducta de la ingesta | ver §1.4 | Los paneles crecen solos y conviene saberlo antes, no después |
 | Otro, en la pantalla de carga | ver §1.5 | Los demográficos dejan de embeberse; sin avisar, alguien va a pensar que se perdieron variables |
+| Una forma nueva de identificar al respondente | ver §1.6 | Sin precargar la muestra, las ingestas de estudios nuevos siguen quedando en cero |
 | Nada en el store semántico | — | — |
 
 **El store semántico no cambia en esta fase.** No hay migración nueva del lado
@@ -251,6 +252,53 @@ demográficas, datos completados en la bóveda y discrepancias con la ficha.
 códigos que traducir—, completo en cerradas y escalas, y en las numéricas
 acotado a los valores especiales (`98=No sabe`, `99=No contesta`), que es la
 traducción que hace la diferencia entre embeber «→ 99» y «→ No contesta».
+
+
+### 1.6 · El identificador ahora viaja al campo (R3.12)
+
+Tampoco lleva migración, pero **sí necesita un cambio en cómo trabaja el
+equipo de campo**, y es el único de los tres que no funciona solo.
+
+**El problema que resuelve.** El mapeo se apoyaba siempre en `alias_origen`:
+el id que la plataforma de campo le puso al respondente. Eso asume que ese id
+es estable por persona entre estudios, y no lo es —cada encuesta genera ids
+nuevos—. Al ingestar un estudio nuevo no matcheaba ninguna fila, todas caían
+en `sin_mapear` y **la ingesta quedaba en cero sin que nada fallara**.
+
+**El flujo nuevo, en tres pasos:**
+
+1. Después de convocar, en la pantalla de la encuesta: **Exportar muestra**.
+   Baja un CSV con una sola columna, `id_persona`. Sin datos personales.
+2. El equipo de campo **precarga esa columna como variable oculta** en el
+   instrumento (Dooblo, Alchemer) y configura que vuelva en el export.
+3. Al ingestar, en el paso 2, se declara que la columna trae el
+   **`id_persona` del sistema**. El mapeo es directo.
+
+> **Verificar antes de prometerlo:** que Dooblo y Alchemer permitan precargar
+> una variable oculta por respondente en el flujo que usa hoy el equipo. Si no
+> se puede, el paso 2 no existe y hay que ir por los respaldos.
+
+**Los respaldos, cuando no se pudo precargar.** La misma pantalla deja
+declarar que la columna trae el **documento** o el **correo**. Funciona, con
+dos advertencias: el archivo de campo contuvo PII —conviene tener una política
+de borrado de esos archivos—, y a cambio el sistema **registra el alias de esa
+plataforma**, así que la próxima carga del mismo estudio ya anda por alias y
+no necesita la llave natural.
+
+**El default no cambia.** Una carga que no declara nada se comporta como
+`alias`, igual que hoy: las cargas existentes siguen andando sin tocar nada.
+
+**Exportar con contacto es una reidentificación.** La casilla «incluir datos
+de contacto» existe porque el equipo a veces necesita llamar, pero ese archivo
+lleva nombre, documento y correo: exige el permiso `exportar_identificado`,
+queda registrado en `reidentificacion` con motivo `exportacion`, y el archivo
+se marca en el nombre y en su primera línea. El analista puede bajar la
+muestra seudónima y **no** la que lleva contacto.
+
+**Y el informe ahora dice por qué no mapeó.** `sin_mapear` trae el motivo por
+fila —el valor no es un `id_persona` válido, ese identificador no existe, o
+esa plataforma no tiene registrado ese id—, porque las tres se arreglan
+distinto.
 
 ---
 
@@ -606,6 +654,18 @@ Correcto: no se lo convocó. Aparece como miembro y como respuesta, pero
 lo que evita que la fatiga lo saque del muestreo por contactos que nunca
 ocurrieron (§1.4).
 
+**«Ingesté un estudio nuevo y no mapeó ninguna fila.»**
+Es el problema que R3.12 resuelve (§1.6): la plataforma generó ids nuevos y
+ninguno coincide con los alias guardados. El informe ahora lo dice —«esa
+plataforma no tiene registrado ese id»—. La salida de fondo es precargar la
+muestra; la de este archivo, declarar que la columna trae el documento o el
+correo, que además deja sembrado el alias para la próxima.
+
+**«Una fila con un id mal escrito hizo fallar toda la carga.»**
+Ya no. Los valores que no son uuid se descartan antes de consultar y se
+informan aparte: Postgres aborta la transacción entera ante un uuid inválido,
+así que sin ese filtro un typo se llevaba puesta la ingesta completa.
+
 **«Faltan variables en el store semántico después de ingestar.»**
 Fijate si están marcadas como demográficas (§1.5): en ese caso es correcto y
 el resultado de la carga las enumera. Si alguna no debería estarlo —porque es
@@ -747,6 +807,11 @@ Verificación funcional:
       el resultado de la carga la enumera entre las excluidas.
 - [ ] Un `SEXO` codificado 1/2 queda como F/M en la ficha, no como 1/2.
 - [ ] Un dato del archivo que difiere del de la ficha no la pisa y se informa.
+- [ ] «Exportar muestra» baja un CSV con `id_persona` y sin datos personales.
+- [ ] La exportación con contacto queda en la auditoría de reidentificación, y
+      un analista no puede bajarla.
+- [ ] Una carga declarando `id_persona` mapea sin depender de `alias_origen`.
+- [ ] Una carga sin declarar tipo se comporta igual que antes.
 - [ ] Muestreo prioriza la brecha, explica las exclusiones y no convoca.
 - [ ] Un panel sin brecha no reporta «brecha (0 personas)».
 - [ ] Un export sin tiempos informa que no se pudo evaluar el speeder.

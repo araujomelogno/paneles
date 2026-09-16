@@ -67,6 +67,7 @@ restricción real del sistema.
 | [D31](#d31) | Los defaults numéricos están en el código, no en la base | 3 |
 | [D32](#d32) | La ingesta incorpora al panel y registra la participación | 3 |
 | [D33](#d33) | Los demográficos del archivo van a la bóveda y no al store semántico | 3 |
+| [D34](#d34) | El identificador viaja al campo en vez de adivinarlo a la vuelta | 3 |
 
 ---
 
@@ -1270,12 +1271,82 @@ marcarla.
 
 ---
 
+<a id="d34"></a>
+## D34 · El identificador viaja al campo en vez de adivinarlo a la vuelta
+
+**El problema.** El mapeo de respuestas a personas se apoyaba siempre en
+`alias_origen`: el id que la plataforma de campo le puso al respondente,
+guardado al enrolar. Eso asume que **ese id es estable por persona entre
+estudios**, y no se cumple: cada encuesta genera ids nuevos para el mismo
+individuo. Al ingestar un estudio nuevo no matcheaba ninguna fila, todas
+caían en `sin_mapear`, y la ingesta quedaba en cero **sin que nada estuviera
+roto**. Es el peor tipo de falla: no hay excepción, no hay log, hay un número
+en cero que alguien tiene que notar.
+
+**La decisión.** Dar vuelta la dirección. El sistema tiene una ventaja que no
+estaba usando —**la muestra sale de él**—, así que el identificador correcto
+puede viajar *hacia* el campo en vez de intentar adivinarlo *a la vuelta*: se
+exporta la muestra con `id_persona`, se precarga como variable oculta en el
+instrumento, y vuelve en el archivo. Al ingestar se **declara qué tipo de
+identificador** trae la columna, en vez de asumir siempre alias.
+
+| Tipo | Contra qué resuelve | Cuándo |
+|---|---|---|
+| `id_persona` | `persona.id_persona`, directo | **Preferido**: se precargó la muestra |
+| `alias` | `alias_origen` (origen + id) | **Default**, por compatibilidad: las cargas existentes siguen andando sin tocar nada |
+| `documento` | `persona.documento` | Respaldo |
+| `email` | `persona.email`, sin distinguir mayúsculas | Respaldo |
+
+**Y de paso, el archivo de campo queda seudónimo.** La alternativa a
+precargar era usar documento o email como llave, o sea meter PII en un export
+que circula por la plataforma, por la computadora de quien lo baja y por
+correo. La exportación con contacto existe —el equipo de campo a veces
+necesita llamar— pero es una **reidentificación**: exige el permiso y queda
+registrada, igual que R3.10.
+
+**El alias se siembra solo.** Una carga por documento o email registra el
+alias de esa plataforma, así que la segunda vuelta del mismo estudio ya no
+depende de la llave natural. Es lo que hace que el respaldo no sea una
+condena: se usa PII una vez y después se sale de ahí.
+
+**Tres cosas que aparecieron al construirlo:**
+
+| | |
+|---|---|
+| **Un uuid mal formado voltea la carga entera** | Postgres aborta la transacción completa ante un `invalid input syntax for type uuid`. Si el filtro por formato no corriera **antes** de consultar, una fila con un typo se llevaría puesta toda la ingesta. Hay prueba, y falla sin el filtro |
+| **`formato_invalido` y `no_encontrado` son cosas distintas** | Un typo y una persona borrada por baja se arreglan distinto. Por eso `sin_mapear` pasó a traer el motivo por fila (R3.12.d), en vez de un número suelto |
+| **El alias sembrado guarda el documento como `id_en_origen`** | Es lo que la plataforma usó para identificar al respondente, así que es lo correcto, y queda del lado de la bóveda —donde ese dato ya vive—. El guardrail de PII del store semántico no se toca |
+
+**La pregunta que quedó sin decidir, y que conviene decidir.** Precargar el
+`id_persona` significa que la plataforma de campo pasa a tener ese token. Es
+opaco y no reidentifica por sí solo, pero **es la misma clave con la que está
+indexado el store semántico**. La alternativa más conservadora es emitir un
+**código por ola** y traducirlo en la ingesta: cuesta una tabla de mapeo más y
+no cambia el flujo del equipo de campo. Se implementó `id_persona` directo
+porque es lo que pide la spec en su cuerpo, pero la puerta al código por ola
+sigue abierta y el cambio sería acotado —el tipo de identificador ya es un
+parámetro declarado—.
+
+**Lo otro que hay que verificar fuera del código:** que Dooblo y Alchemer
+permitan precargar una variable oculta por respondente en el flujo que usa hoy
+el equipo. Si no lo permiten, R3.12.a pierde sentido y el peso cae en los
+respaldos —que por eso están, y por eso siembran el alias—.
+
+**Dónde vive.** `functions/panel_api/ingesta.py`
+(`resolver_identificadores`, los tipos y los motivos), `encuestas.py`
+(`exportar_muestra`, `_resolver_identidades`, `_sembrar_alias`) y la ruta
+`GET /encuestas/{id}/muestra` en `ruteo.py`.
+
+---
+
 ## Anexo · Decisiones que no se tomaron
 
 Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 
 | Tema | Estado | Dónde está anotado |
 |---|---|---|
+| `id_persona` directo al campo, o código por ola | Sin decidir: se implementó el directo, que es lo que pide la spec. El código por ola es defensa en profundidad y el cambio sería acotado | [D34](#d34) |
+| Que Dooblo y Alchemer permitan precargar una variable oculta | **A verificar fuera del código.** Si no se puede, el peso cae en los respaldos por documento o correo | [D34](#d34) |
 | Embeber un demográfico cuando es el objeto del estudio | Sin override: la marca excluye sin excepción. Habilitarlo reintroduce el espejado que el diseño descarta | [D33](#d33) |
 | Base legal del alta por SAV | **Resuelta:** la evidencia viaja en el archivo y declararla es obligatorio. Lo que queda es de campo: que el cuestionario incluya la pregunta | [D25](#d25) |
 | Texto de consentimiento de la landing | Pendiente del DPO; el sistema lo trata como dato | [D24](#d24) |
