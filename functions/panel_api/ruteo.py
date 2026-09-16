@@ -348,10 +348,48 @@ def ingestar_encuesta(ctx, actor, params, cuerpo, consulta):
         origen=cuerpo.get("origen"),
         proveedor=ctx.embeddings,
         demograficas=cuerpo.get("demograficas"),
+        tipo_identificador=cuerpo.get("tipo_identificador"),
     )
     ctx.semantica.commit()
     ctx.boveda.commit()
     return 200, resultado
+
+
+@ruta("GET", "/encuestas/<encuesta_id>/muestra", "leer", requisito="R3.12")
+def exportar_muestra(ctx, actor, params, cuerpo, consulta):
+    """La muestra de la ola para precargar en la plataforma de campo.
+
+    Seudónima por defecto: solo `id_persona`, que es lo que hace falta para
+    que el identificador del sistema viaje al campo y vuelva en el archivo.
+
+    `con_contacto=1` la convierte en una reidentificación —nombre, documento,
+    correo— y por eso exige el permiso de exportar identificado y queda
+    registrada, igual que R3.10. Que el equipo de campo necesite llamar a la
+    gente no lo hace un caso distinto: lo que sale es PII.
+    """
+    encuesta_id = _entero(params["encuesta_id"])
+    con_contacto = str(consulta.get("con_contacto") or "").lower() in ("1", "true", "si", "sí")
+
+    if con_contacto:
+        actor.exigir("exportar_identificado")
+
+    muestra = encuestas.exportar_muestra(
+        ctx.boveda, encuesta_id, con_contacto=con_contacto)
+
+    if con_contacto:
+        auditoria.registrar_reidentificacion(
+            ctx.boveda, muestra["ids_persona"], actor=actor,
+            motivo="exportacion",
+            contexto={"ruta": f"GET /encuestas/{encuesta_id}/muestra",
+                      "personas": muestra["personas"],
+                      "para": "precarga de campo"},
+        )
+        ctx.boveda.commit()
+
+    # La lista de ids ya va en el CSV; repetirla en el JSON solo hace el
+    # cuerpo más grande.
+    muestra.pop("ids_persona", None)
+    return 200, muestra
 
 
 @ruta("GET", "/encuestas/<encuesta_id>/cruce", "leer", requisito="R1.5, R1.6")
@@ -862,6 +900,7 @@ def ingestar_sav(ctx, actor, params, cuerpo, consulta):
         origen=(cuerpo.get("origen") or "sav"),
         proveedor=ctx.embeddings,
         demograficas=demograficas,
+        tipo_identificador=cuerpo.get("tipo_identificador"),
     )
     ctx.semantica.commit()
     ctx.boveda.commit()

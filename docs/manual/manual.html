@@ -36,7 +36,7 @@
     <li><a href="#s4"><span><span class="num">4</span> Paneles</span></a>
       <ul><li>Crear · Agregar miembros · Dar de baja una membresía</li></ul></li>
     <li><a href="#s5"><span><span class="num">5</span> Encuestas</span></a>
-      <ul><li>Crear una ola · Convocar · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Verificar el cruce</li></ul></li>
+      <ul><li>Crear una ola · Convocar · Exportar la muestra · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Verificar el cruce</li></ul></li>
     <li><a href="#s6"><span><span class="num">6</span> Consultas</span></a>
       <ul><li>Buscar por significado · El ranking y la evidencia ·
       Exclusiones · Reidentificación · Modos · Consultas guardadas</li></ul></li>
@@ -525,7 +525,35 @@
     quedan fuera y el sistema lo informa explícitamente.</figcaption>
   </figure>
 
-  <h3><span class="n">5.3</span> Ingestar las respuestas</h3>
+  <h3><span class="n">5.3</span> Exportar la muestra para el campo</h3>
+
+  <p>Convocada la ola, <strong>Exportar muestra</strong> baja un archivo con
+  una fila por convocado y una sola columna: el <strong>identificador del
+  sistema</strong> de cada persona. Ese archivo se le pasa al equipo de campo
+  para que lo precargue como <em>variable oculta</em> en el instrumento, de
+  modo que vuelva junto con las respuestas.</p>
+
+  <div class="aviso info">
+    <div class="t">Por qué conviene hacerlo</div>
+    <p>Las plataformas de campo asignan un identificador propio a cada
+    respondente, y <strong>suelen generar uno nuevo en cada estudio</strong>.
+    Si la ingesta depende de ese número, al cargar un estudio nuevo no
+    coincide ninguna fila y el resultado queda en cero sin que nada dé error.
+    Precargar el identificador del sistema elimina el problema: el archivo
+    vuelve con la referencia correcta.</p>
+    <p>El archivo además <strong>no lleva datos personales</strong>. El
+    identificador es un código opaco, así que puede circular por la plataforma
+    y por correo sin exponer a nadie.</p>
+  </div>
+
+  <p>Si el equipo de campo necesita además llamar a la gente o enviarle un
+  enlace, la casilla <strong>Incluir datos de contacto</strong> agrega nombre,
+  documento, correo y celular. Eso es una <strong>reidentificación</strong>:
+  requiere el permiso correspondiente, queda registrada con el usuario que la
+  pidió y el archivo se marca como portador de datos personales, igual que la
+  exportación de una consulta (sección 6.5).</p>
+
+  <h3><span class="n">5.4</span> Ingestar las respuestas</h3>
 
   <p>Terminado el campo, las respuestas se incorporan desde
   <strong>Ingestar respuestas</strong>. El archivo esperado es el export habitual
@@ -536,9 +564,10 @@
   <ol class="pasos">
     <li>Arrastrar o seleccionar el archivo <code>.xlsx</code> o
     <code>.csv</code>.</li>
-    <li>Confirmar cuál es la <strong>columna que identifica al respondente</strong>.
-    El sistema suele deducirla; debe contener el mismo identificador que se cargó
-    como «Id en el origen» al enrolar.</li>
+    <li>Confirmar cuál es la <strong>columna que identifica al respondente</strong>
+    y, al lado, <strong>qué tipo de identificador contiene</strong>. Ver más
+    abajo: es la decisión que determina si las respuestas se van a poder
+    vincular con las personas.</li>
     <li>Completar el <strong>texto de cada pregunta</strong>. Los códigos vienen
     del archivo, pero el texto se escribe aquí y es determinante: es lo que
     después permite encontrar esa respuesta buscando por significado.</li>
@@ -549,6 +578,32 @@
     abajo.</li>
     <li>Confirmar con <strong>Ingestar</strong>.</li>
   </ol>
+
+  <h4>Qué identificador trae la columna</h4>
+
+  <table class="parte">
+    <thead><tr><th>Opción</th><th>Cuándo usarla</th></tr></thead>
+    <tr><td class="destacado">El id_persona del sistema</td>
+      <td><strong>La preferida.</strong> Se precargó la muestra en el
+      instrumento (sección 5.3) y el archivo la devuelve. El vínculo es
+      directo y no depende de lo que haga la plataforma de campo.</td></tr>
+    <tr><td class="destacado">El id de la plataforma de campo</td>
+      <td>La opción por omisión, y la que funcionaba hasta ahora. Sirve cuando
+      ese identificador es el mismo que se cargó al enrolar. Cuidado: muchas
+      plataformas generan uno nuevo en cada estudio, y en ese caso no va a
+      coincidir ninguna fila.</td></tr>
+    <tr><td class="destacado">El documento</td>
+      <td>Respaldo, cuando no se pudo precargar. Al terminar, el sistema
+      registra el identificador de esa plataforma, de modo que la próxima
+      carga del mismo estudio ya no lo necesite.</td></tr>
+    <tr><td class="destacado">El correo</td>
+      <td>Igual que el documento. No distingue mayúsculas.</td></tr>
+  </table>
+
+  <p>Cuando alguna fila no se puede vincular, el resultado dice <strong>por
+  qué</strong>: si el valor no tiene la forma de un identificador del sistema,
+  si el identificador no existe en la bóveda, o si esa plataforma no tiene
+  registrado ese número. Las tres se corrigen de forma distinta.</p>
 
   <h4>Qué es cada variable: preguntas y demográficos</h4>
 
@@ -687,7 +742,7 @@
     la fecha de la primera respuesta se conserva.</p>
   </div>
 
-  <h3><span class="n">5.4</span> Ingestar un archivo de SPSS y dar de alta a los panelistas</h3>
+  <h3><span class="n">5.5</span> Ingestar un archivo de SPSS y dar de alta a los panelistas</h3>
 
   <p>Cuando el export de campo es un archivo <code>.sav</code> de SPSS, el
   procedimiento es el mismo pero el sistema trabaja bastante más. El archivo se
@@ -803,7 +858,7 @@
     los consentimientos ya registrados no se duplican.</p>
   </div>
 
-  <h3><span class="n">5.5</span> Verificar el cruce entre las dos bases</h3>
+  <h3><span class="n">5.6</span> Verificar el cruce entre las dos bases</h3>
 
   <p>La opción <strong>Verificar</strong> comprueba que lo que quedó del lado
   semántico se corresponda con lo convocado del lado de la bóveda. Es la
