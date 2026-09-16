@@ -764,6 +764,14 @@ function abrirIngesta(encuesta) {
           ['Sin consentimiento',
            resultado.creacion_de_individuos.resumen.sin_consentimiento, true],
         ] : []),
+        // Addendum de R3.9: la ingesta ahora incorpora al panel y registra
+        // la participación. Son cifras que cambian la composición y la tasa
+        // de respuesta de la ola, así que se muestran siempre.
+        ['Nuevos miembros del panel', resultado.membresias_nuevas || 0],
+        ['Ya eran miembros', resultado.membresias_existentes || 0],
+        ['Con baja en el panel', (resultado.membresias_en_baja || []).length, true],
+        ['Participaciones nuevas', resultado.participaciones_nuevas || 0],
+        ['Participaciones actualizadas', resultado.participaciones_actualizadas || 0],
       ], [
         resultado.creacion_de_individuos?.aviso_sin_consentimiento?.mensaje,
         resultado.creacion_de_individuos?.aviso_sin_uso_semantico?.mensaje,
@@ -772,6 +780,12 @@ function abrirIngesta(encuesta) {
           : null,
         (resultado.sin_consentimiento || []).length
           ? `${resultado.sin_consentimiento.length} panelista(s) quedaron fuera por no tener uso semántico vigente.`
+          : null,
+        resultado.membresias_nuevas
+          ? `${resultado.membresias_nuevas} persona(s) respondieron sin ser miembros del panel y quedaron incorporadas: ahora entran en el muestreo y en la composición.`
+          : null,
+        (resultado.membresias_en_baja || []).length
+          ? `${resultado.membresias_en_baja.length} persona(s) respondieron pero tienen la membresía dada de baja en este panel. No se reactivó sola: si corresponde reincorporarlas, hay que hacerlo desde el panel.`
           : null,
       ].filter(Boolean).join(' '));
       await cargarParticipacion(encuesta.id);

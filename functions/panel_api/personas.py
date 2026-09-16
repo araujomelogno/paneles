@@ -408,9 +408,14 @@ def ficha(conn, id_persona):
     convocatorias = db.una(
         conn,
         """
-        select count(*)::int as convocatorias,
-               count(*) filter (where respondio)::int as respondidas,
-               max(convocado_en) as ultimo_contacto
+        select count(*) filter (where origen = 'convocatoria')::int
+                                                       as convocatorias,
+               count(*) filter (where respondio)::int  as respondidas,
+               -- El último contacto es el último que emitimos nosotros. Una
+               -- participación deducida de un archivo (addendum de R3.9) no
+               -- es un contacto: la persona respondió en campo.
+               max(convocado_en) filter (where origen = 'convocatoria')
+                                                       as ultimo_contacto
           from participacion
          where id_persona = %s
         """,

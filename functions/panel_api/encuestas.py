@@ -193,13 +193,117 @@ def marcar_respuesta(conn, encuesta_id, ids_persona, respondio=True):
     )
 
 
+def incorporar_al_panel(conn, encuesta, ids_persona):
+    """Da de alta en el panel de la encuesta a quienes se acaba de ingestar.
+
+    Addendum de R3.9 · R3.9.a. Una persona sin membresía es invisible para la
+    operación: no entra en `todo_el_panel` al convocar, no cuenta para la
+    composición ni para la brecha de cuota, y el muestreo no la ve. Si
+    respondió una encuesta de un panel, pertenece a ese pool.
+
+    Cada encuesta pertenece a exactamente un panel (`encuesta.panel_id` es FK
+    obligatorio), así que no hay que preguntar a cuál.
+
+    **Una baja no se revierte de costado.** `paneles.agregar_miembro`
+    reactiva, y acá eso estaría mal: la baja fue una decisión explícita de
+    alguien y una ingesta no es el lugar para deshacerla. Se informa y decide
+    un responsable.
+    """
+    if not ids_persona:
+        return {"membresias_nuevas": 0, "membresias_existentes": 0,
+                "membresias_en_baja": []}
+
+    ids = [str(i) for i in dict.fromkeys(ids_persona)]
+    estados = {
+        str(f["id_persona"]): f["estado"]
+        for f in db.todas(
+            conn,
+            "select id_persona, estado from membresia "
+            " where panel_id = %s and id_persona = any(%s::uuid[])",
+            (encuesta["panel_id"], ids),
+        )
+    }
+
+    nuevas, existentes, en_baja = 0, 0, []
+    for id_persona in ids:
+        estado = estados.get(id_persona)
+        if estado == "activo":
+            existentes += 1
+        elif estado == "baja":
+            en_baja.append(id_persona)
+        else:
+            db.ejecutar(
+                conn,
+                "insert into membresia (panel_id, id_persona) values (%s, %s) "
+                "on conflict (panel_id, id_persona) do nothing",
+                (encuesta["panel_id"], id_persona),
+            )
+            nuevas += 1
+    return {"membresias_nuevas": nuevas, "membresias_existentes": existentes,
+            "membresias_en_baja": en_baja}
+
+
+def registrar_participacion_importada(conn, encuesta_id, ids_persona):
+    """Deja constancia de que estas personas respondieron esta ola.
+
+    Addendum de R3.9 · R3.9.b. Sin esto, quien respondió en campo sin haber
+    sido convocado desde el sistema no tiene fila en `participacion` y la ola
+    muestra menos respuestas de las que hubo.
+
+    **No aplica el gate de `contacto_participacion`, y es a propósito.**
+    `convocar()` sí lo aplica porque emite una invitación futura: no se puede
+    contactar a quien no consintió ser contactado. Esto es otra cosa —un
+    hecho ya ocurrido, la persona respondió en campo—, y bloquear el registro
+    no protege a nadie: solo distorsiona la tasa de respuesta. El gate sigue
+    intacto donde corresponde: un miembro sin consentimiento vigente no entra
+    en ninguna convocatoria futura por más participaciones que tenga.
+    """
+    if not ids_persona:
+        return {"participaciones_nuevas": 0, "participaciones_actualizadas": 0}
+
+    nuevas, actualizadas = 0, 0
+    for id_persona in dict.fromkeys(str(i) for i in ids_persona):
+        creada = db.ejecutar(
+            conn,
+            """
+            insert into participacion
+                   (encuesta_id, id_persona, origen, respondio, respondio_en)
+                 values (%s, %s, 'importacion', true, now())
+            on conflict (encuesta_id, id_persona) do nothing
+            """,
+            (encuesta_id, id_persona),
+        )
+        if creada:
+            nuevas += 1
+            continue
+        # Ya estaba: la convocó el sistema. Se marca que respondió sin tocar
+        # su origen, y `respondio_en` se conserva —una re-ingesta no debería
+        # mover la fecha de la primera respuesta.
+        db.ejecutar(
+            conn,
+            """
+            update participacion
+               set respondio = true,
+                   respondio_en = coalesce(respondio_en, now())
+             where encuesta_id = %s and id_persona = %s
+            """,
+            (encuesta_id, id_persona),
+        )
+        actualizadas += 1
+    return {"participaciones_nuevas": nuevas,
+            "participaciones_actualizadas": actualizadas}
+
+
 def ingestar(conn_boveda, conn_semantica, encuesta_id, preguntas, filas,
              columna_id="id_en_origen", origen=None, proveedor=None):
     """Gancho de fielding → ingesta semántica (R1.5).
 
     Construye el mapa id de campo → `id_persona` a partir de las
-    participaciones de esta ola (y, si hace falta, de `alias_origen`), y se
-    lo pasa a la ingesta. La PII no entra en el mapa: solo el par de ids.
+    participaciones de esta ola y de `alias_origen`, y se lo pasa a la
+    ingesta. La PII no entra en el mapa: solo el par de ids.
+
+    Terminada la escritura, incorpora al panel y registra la participación de
+    todos los ingestados (addendum de R3.9).
     """
     encuesta = obtener(conn_boveda, encuesta_id)
 
@@ -209,6 +313,21 @@ def ingestar(conn_boveda, conn_semantica, encuesta_id, preguntas, filas,
         for p in participantes
         if p["id_en_origen"]
     }
+    # La unión, y no uno u otro. Antes, con un solo convocado que tuviera
+    # alias, `mapa` dejaba de estar vacío y la ingesta ya no miraba
+    # `alias_origen`: todo el que respondió sin haber sido convocado caía en
+    # `sin_mapear`, que es justamente el caso que este addendum viene a
+    # resolver. La participación manda sobre el alias si difieren.
+    if origen:
+        ids_del_archivo = [
+            i for i in dict.fromkeys(
+                str(f.get(columna_id) or "").strip() for f in filas)
+            if i
+        ]
+        por_alias, _ = mod_ingesta.mapear_a_id_persona(
+            conn_boveda, origen, [i for i in ids_del_archivo if i not in mapa])
+        mapa = {**por_alias, **mapa}
+
     if not mapa and not origen:
         raise DatosInvalidos(
             "No hay forma de saber a qué panelista corresponde cada fila del "
@@ -228,14 +347,24 @@ def ingestar(conn_boveda, conn_semantica, encuesta_id, preguntas, filas,
         mapa_personas=mapa or None,
     )
 
-    # Quien tiene respuestas ingestadas, respondió.
-    ids_con_respuesta = [
+    # ── Addendum de R3.9: membresía y participación ──
+    ingestados = resultado.get("ids_persona_ingestados") or []
+    resultado.update(incorporar_al_panel(conn_boveda, encuesta, ingestados))
+    resultado.update(
+        registrar_participacion_importada(conn_boveda, encuesta_id, ingestados))
+
+    # Los que respondieron pero no se ingestaron —no tienen `uso_semantico`
+    # vigente— igual respondieron. Si ya tenían fila porque el sistema los
+    # convocó, se marca; no se les crea una, que es lo que pide el addendum.
+    ingestados_set = set(ingestados)
+    respondieron_sin_ingestar = [
         mapa[i]
         for i in {str(f.get(columna_id) or "").strip() for f in filas}
-        if i in mapa
+        if i in mapa and mapa[i] not in ingestados_set
     ]
-    if ids_con_respuesta:
-        marcar_respuesta(conn_boveda, encuesta_id, ids_con_respuesta, respondio=True)
+    if respondieron_sin_ingestar:
+        marcar_respuesta(
+            conn_boveda, encuesta_id, respondieron_sin_ingestar, respondio=True)
 
     resultado["encuesta_id"] = encuesta_id
     return resultado

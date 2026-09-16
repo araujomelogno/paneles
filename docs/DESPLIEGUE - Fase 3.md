@@ -16,10 +16,11 @@ En términos de despliegue, eso se traduce en cinco cosas concretas:
 
 | Qué | Dónde | Riesgo si se saltea |
 |---|---|---|
-| Una migración nueva en la bóveda | `db/boveda/0005_fase3.sql` | Las pantallas nuevas fallan con `relation … does not exist` |
+| Dos migraciones nuevas en la bóveda | `db/boveda/0005_fase3.sql` y `0006_participacion_por_importacion.sql` | Las pantallas nuevas fallan con `relation … does not exist`; sin la 0006, la ingesta falla con `column "origen" does not exist` |
 | Una dependencia nueva en la función | `pyreadstat` | La ingesta SAV responde 400 al primer archivo |
 | Una página pública nueva | `/inscribirse` | La landing no existe |
 | Dos decisiones legales pendientes | ver §1 | Se abren superficies de datos sin base legal |
+| Un cambio de conducta de la ingesta | ver §1.4 | Los paneles crecen solos y conviene saberlo antes, no después |
 | Nada en el store semántico | — | — |
 
 **El store semántico no cambia en esta fase.** No hay migración nueva del lado
@@ -169,18 +170,60 @@ haya definido el tratamiento y exista logística de entrega.
 Mientras tanto, el catálogo puede quedar cargado con los premios en `activo:
 false`: se ven en la administración y no se pueden canjear.
 
+
+### 1.4 · La ingesta ahora hace crecer el panel (addendum de R3.9)
+
+No es una definición pendiente: es un cambio de conducta que conviene avisar
+antes de desplegarlo, porque mueve números que la gente mira.
+
+**Qué hace ahora.** Al ingestar —cualquier archivo, no solo `.sav`—, todo
+individuo cuyas respuestas se escriben queda:
+
+- **dado de alta como miembro del panel de esa encuesta**, si no lo era, y
+- **con su participación registrada** (`respondio = true`), creándola si no
+  existía.
+
+**Por qué.** Sin eso, quien respondía en campo sin haber sido convocado desde
+el sistema quedaba invisible: sin membresía no entraba en «convocar al panel»,
+no contaba para la composición ni para la brecha de cuota, y el muestreo no lo
+veía; sin participación, la ola mostraba menos respuestas de las que hubo.
+
+**Qué mirar la primera vez.** El resultado de la ingesta informa cinco cifras
+nuevas: membresías nuevas, existentes y en baja, y participaciones nuevas y
+actualizadas. Si la primera ingesta después de desplegar reporta muchas
+membresías nuevas, no es un error: es el atraso que se estaba acumulando.
+
+**Tres cosas que no cambian, y son a propósito:**
+
+| | |
+|---|---|
+| Una membresía en `baja` **no se reactiva** | Fue una decisión explícita de alguien. Se informa y decide un responsable desde la pantalla del panel |
+| `convocar()` **sigue exigiendo** `contacto_participacion` | La membresía no habilita a contactar a nadie. Registrar que alguien respondió es otra cosa que invitarlo |
+| Quien no tiene `uso_semantico` vigente **no entra por esta vía** | No se le ingesta nada, así que no hay hecho que registrar |
+
+**Y una que sí cambia sin que se vea:** una participación importada **no
+cuenta como convocatoria** para la fatiga. Si contara, esa gente saldría del
+muestreo por contactos que nunca ocurrieron. Por eso la columna
+`participacion.origen` de la 0006 no es documentación: es lo que hace posible
+esa distinción.
+
 ---
 
-## 2 · La migración
+## 2 · Las migraciones
 
-Una sola, y solo en la bóveda.
+Dos, y las dos solo en la bóveda. En este orden.
 
 ```bash
 cloud-sql-proxy gestion-paneles:southamerica-east1:paneles-boveda --port 5432 &
 export DSN_BOVEDA="$(scripts/dsn_local.sh boveda)"
 
 psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 -f db/boveda/0005_fase3.sql
+psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 -f db/boveda/0006_participacion_por_importacion.sql
 ```
+
+La 0006 es **aditiva y se puede aplicar con la app andando**: agrega una
+columna con default, así que no reescribe las filas existentes ni toma
+locks largos.
 
 > El `-v ON_ERROR_STOP=1` no es decorativo. Ya pasó una vez: sin él, `psql`
 > sigue después de un error y la base queda a medio migrar sin que se note
@@ -199,6 +242,7 @@ psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 -f db/boveda/0005_fase3.sql
 | `encuesta.umbral_*` y `puntos_participacion` | Umbrales y puntos propios de cada estudio |
 | `puntos_earn_unico_por_encuesta` | Que no se pueda liquidar dos veces, ni con concurrencia (R3.4) |
 | `panel.origen` y `origen_definicion` | De dónde salió la composición de un panel (R3.11) |
+| `participacion.origen` (0006) | Distinguir a quien convocó el sistema de quien respondió en campo y se incorporó al ingestar (addendum de R3.9) |
 
 ### 2.2 · Verificar
 
@@ -501,6 +545,22 @@ análisis en el servidor con el tiempo transcurrido. Si no aparece nada, el
 navegador está sirviendo el JS viejo de caché: `firebase.json` manda
 `Cache-Control: no-cache` para `.js`, así que alcanza con recargar.
 
+**«Después de ingestar, el panel tiene más miembros de los que yo agregué.»**
+Es la conducta nueva (§1.4): quien respondió esa encuesta queda incorporado
+al panel de la encuesta. El resultado de la ingesta dice cuántos fueron. Si
+no era lo que se quería, la vía es dar de baja la membresía desde la pantalla
+del panel —y esa baja no se revierte en la próxima ingesta—.
+
+**«Ingestar falla con `column "origen" does not exist`.»**
+Falta la migración `0006_participacion_por_importacion.sql` (§2).
+`python3 scripts/verificar_esquema.py` lo dice y da el comando.
+
+**«Alguien que respondió no aparece como convocado en el tablero.»**
+Correcto: no se lo convocó. Aparece como miembro y como respuesta, pero
+`convocatorias` y «último contacto» cuentan solo lo que emitió el sistema. Es
+lo que evita que la fatiga lo saque del muestreo por contactos que nunca
+ocurrieron (§1.4).
+
 **«La pantalla de Muestreo dice que no hay encuestas abiertas.»**
 Solo ofrece encuestas en `borrador` o `en_campo`. Una cerrada no admite
 convocatorias nuevas, así que proponer para ella no tendría sentido.
@@ -595,7 +655,7 @@ de rutina: preferir dejar la migración aplicada.
 
 Infraestructura:
 
-- [ ] `db/boveda/0005_fase3.sql` aplicada.
+- [ ] `db/boveda/0005_fase3.sql` y `db/boveda/0006_participacion_por_importacion.sql` aplicadas, en ese orden.
 - [ ] `python3 scripts/verificar_esquema.py` sale con código 0.
 - [ ] `firebase deploy` completo, con `pyreadstat` instalado en el predeploy.
 - [ ] `GET /api/diagnostico/sav` devuelve 200 con `puede_leer_sav: true`.
@@ -620,6 +680,12 @@ Definiciones pendientes:
 
 Verificación funcional:
 
+- [ ] Ingestar un archivo con gente no convocada la incorpora al panel y la
+      cuenta en la tasa de respuesta de la ola.
+- [ ] Una membresía dada de baja no se reactiva al ingestar, y el resultado
+      la informa.
+- [ ] Convocar sigue dejando afuera a quien no tiene consentimiento de
+      contacto, aunque tenga membresía y participaciones.
 - [ ] Muestreo prioriza la brecha, explica las exclusiones y no convoca.
 - [ ] Un panel sin brecha no reporta «brecha (0 personas)».
 - [ ] Un export sin tiempos informa que no se pudo evaluar el speeder.

@@ -49,6 +49,7 @@ MIGRACIONES_BOVEDA = (
         "participacion.calidad_evaluada_en", "participacion.calidad_revisada_en",
         "participacion.calidad_motivo_revision",
     )),
+    ("0006_participacion_por_importacion.sql", ("participacion.origen",)),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -84,6 +85,7 @@ PARA_QUE = {
     "encuesta.umbral_speeder_segundos": "el umbral de speeder propio de ese estudio",
     "encuesta.puntos_participacion": "los puntos que otorga ese estudio",
     "panel.origen": "distinguir un panel armado a mano de uno creado desde una consulta",
+    "participacion.origen": "distinguir a quien convocó el sistema de quien respondió en campo y se incorporó al ingestar",
 }
 
 
