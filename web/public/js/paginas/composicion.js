@@ -10,6 +10,7 @@
 */
 
 import * as api from '../api.js';
+import * as catalogo from '../catalogo.js';
 import {
   $, $$, esc, encabezado, vacio, cargando, toast, modal, cerrarModal,
   leerFormulario, alerta, confirmar,
@@ -19,19 +20,21 @@ let contexto = {};
 let panelActual = null;
 let cruceActual = null;
 
-const DIMENSIONES = {
-  sexo: 'Sexo',
-  tramo_etario: 'Tramo etario',
-  localidad: 'Localidad',
-};
-
-const TRAMOS = ['<18', '18-24', '25-34', '35-44', '45-54', '55-64', '65+'];
+/* R3.14 — las dimensiones de cuota salen del catálogo de atributos, no de
+   una lista escrita acá. Definir «nivel socioeconómico» en Configuración
+   alcanza para poder fijarle un objetivo y ver su brecha. */
+let catalogoDeAtributos = [];
+const dimensiones = () => catalogo.categoricos(catalogoDeAtributos);
+const etiqueta = (clave) => catalogo.etiquetaDe(catalogoDeAtributos, clave);
 
 const pct = (n) => (n == null ? '—' : `${(n * 100).toFixed(1)} %`);
 
 export async function render(main, ctx) {
   contexto = ctx;
-  const { items: paneles } = await api.paneles.listar();
+  const [{ items: paneles }, delCatalogo] = await Promise.all([
+    api.paneles.listar(), catalogo.cargar(),
+  ]);
+  catalogoDeAtributos = delCatalogo;
   const activos = paneles.filter((p) => p.estado === 'activo');
   if (!activos.length) {
     main.innerHTML = encabezado('Composición', 'del panel', '')
@@ -51,9 +54,9 @@ export async function render(main, ctx) {
         <div class="form-group" style="margin:0"><label>Cruce de dos dimensiones</label>
           <select class="fselect" id="cruce">
             <option value="">Sin cruce</option>
-            <option value="sexo,tramo_etario">Sexo × Tramo etario</option>
-            <option value="sexo,localidad">Sexo × Localidad</option>
-            <option value="tramo_etario,localidad">Tramo etario × Localidad</option>
+            ${dimensiones().flatMap((a, i) => dimensiones().slice(i + 1).map((b) =>
+              `<option value="${esc(a.clave)},${esc(b.clave)}">${esc(a.etiqueta)} × ${esc(b.etiqueta)}</option>`
+            )).join('')}
           </select></div>
       </div>
     </div></div>
@@ -114,7 +117,7 @@ function pintarDimension(dimension, miembros, puedeGestionar) {
   const hay = dimension.brecha_disponible;
   return `<div class="card">
     <div class="card-header">
-      <span class="card-header-title">${esc(DIMENSIONES[dimension.dimension] || dimension.dimension)}</span>
+      <span class="card-header-title">${esc(etiqueta(dimension.dimension))}</span>
       <div class="toolbar">
         ${hay ? `<span class="small muted">disimilitud ${pct(dimension.disimilitud)}</span>
           ${puedeGestionar ? `<button class="btn btn-outline btn-sm btn-del"
@@ -144,6 +147,12 @@ function pintarDimension(dimension, miembros, puedeGestionar) {
             : c.sobran ? `sobran ${c.sobran}` : (hay ? 'calza' : '—')}</td>
         </tr>`).join('')}</tbody>
       </table></div>
+      ${dimension.sin_dato ? `<div class="alert alert-info" style="margin:1rem 1.5rem 0">
+        <strong>${dimension.sin_dato}</strong> miembro(s) no tienen esta
+        variable cargada y no se cuentan en ninguna categoría: los porcentajes
+        de arriba son sobre los <strong>${dimension.con_dato}</strong> que sí
+        la tienen. Contarlos como una categoría más haría que la brecha de las
+        demás mienta.</div>` : ''}
     </div>
   </div>`;
 }
@@ -158,7 +167,7 @@ function pintarCruce(cruce) {
   return `<div class="card">
     <div class="card-header">
       <span class="card-header-title">
-        ${esc(DIMENSIONES[a] || a)} × ${esc(DIMENSIONES[b] || b)}</span>
+        ${esc(etiqueta(a))} × ${esc(etiqueta(b))}</span>
       <span class="badge badge-off">descriptivo</span>
     </div>
     <div class="card-body tight">
@@ -167,7 +176,7 @@ function pintarCruce(cruce) {
         las marginales esconden.
       </div>
       <div class="table-wrap"><table>
-        <thead><tr><th>${esc(DIMENSIONES[a] || a)}</th>
+        <thead><tr><th>${esc(etiqueta(a))}</th>
           ${columnas.map((c) => `<th>${esc(c)}</th>`).join('')}<th>Total</th></tr></thead>
         <tbody>${filas.map((f) => {
           const total = columnas.reduce((s, c) => s + (valor[`${f}|${c}`] || 0), 0);
@@ -199,7 +208,7 @@ function abrirObjetivo(salida) {
     observadas[d.dimension] = d.categorias.map((c) => c.categoria);
   });
 
-  const dimension = 'sexo';
+  const dimension = (dimensiones()[0] || {}).clave || 'sexo';
   const caja = modal({
     titulo: 'Universo de referencia',
     ancho: '680px',
@@ -211,8 +220,8 @@ function abrirObjetivo(salida) {
       </div>
       <div class="form-group"><label>Dimensión</label>
         <select class="fselect" id="obj-dimension">
-          ${Object.entries(DIMENSIONES).map(([k, v]) =>
-            `<option value="${k}">${esc(v)}</option>`).join('')}
+          ${dimensiones().map((a) =>
+            `<option value="${esc(a.clave)}">${esc(a.etiqueta)}</option>`).join('')}
         </select></div>
       <div id="obj-categorias"></div>
       <div class="fila-criterio"><div>Suma de las proporciones</div>
@@ -232,8 +241,12 @@ function abrirObjetivo(salida) {
     const propias = Object.entries(actuales)
       .filter(([clave]) => clave.startsWith(`${dim}|`))
       .map(([clave, valor]) => [clave.split('|')[1], valor]);
-    const sugeridas = dim === 'tramo_etario' ? TRAMOS
-      : dim === 'sexo' ? ['F', 'M']
+    // Las categorías canónicas del atributo. Antes estaban escritas acá para
+    // sexo y tramo etario, y para localidad se caía a «lo que haya en el
+    // panel»; ahora las tres salen del mismo lugar, que es el catálogo.
+    const delCatalogo = catalogo.categoriasDe(catalogoDeAtributos, dim)
+      .map((c) => c.clave);
+    const sugeridas = delCatalogo.length ? delCatalogo
       : (observadas[dim] || []).filter((c) => c !== '(sin dato)');
     const lista = propias.length ? propias
       : sugeridas.map((c) => [c, 0]);
@@ -296,7 +309,7 @@ async function guardarObjetivo(caja) {
   try {
     await api.composicion.cargarObjetivo(panelActual, objetivos);
     cerrarModal();
-    toast(`Universo de referencia de «${DIMENSIONES[dimension]}» guardado.`, 'ok');
+    toast(`Universo de referencia de «${etiqueta(dimension)}» guardado.`, 'ok');
     await cargar();
   } catch (error) {
     toast(error.detalle?.suma != null
@@ -307,7 +320,7 @@ async function guardarObjetivo(caja) {
 
 async function borrarObjetivo(dimension) {
   const ok = await confirmar({
-    titulo: `Quitar el objetivo de ${DIMENSIONES[dimension] || dimension}`,
+    titulo: `Quitar el objetivo de ${etiqueta(dimension)}`,
     cuerpo: `<p>La composición de esa dimensión vuelve a ser descriptiva y la
       brecha deja de estar disponible.</p>`,
     textoOk: 'Quitar',

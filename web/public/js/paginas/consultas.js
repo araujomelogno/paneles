@@ -17,6 +17,7 @@
 */
 
 import * as api from '../api.js';
+import * as catalogo from '../catalogo.js';
 import {
   $, $$, esc, encabezado, token, vacio, cargando, toast, modal, cerrarModal,
   leerFormulario, alerta, activarTokens, fechaCorta, confirmar,
@@ -39,12 +40,10 @@ let definicion = {
 let ultimoResultado = null;
 let nombresResueltos = {};   // id_persona → datos de contacto, si se pidieron
 
-const DIMENSIONES = {
-  sexo: 'Sexo',
-  tramo_etario: 'Tramo etario',
-  localidad: 'Localidad',
-  edad: 'Edad',
-};
+/* R3.14 — las dimensiones ya no son una lista escrita acá: salen del
+   catálogo de atributos, que administra un admin desde Configuración. Un
+   segmentador nuevo aparece en este desplegable sin tocar una línea. */
+let catalogoDeAtributos = [];
 
 const OPERADORES = {
   eq: 'es', ne: 'no es', in: 'es alguno de', not_in: 'no es ninguno de',
@@ -76,10 +75,12 @@ const ETAPAS = {
 
 export async function render(main, ctx) {
   contexto = ctx;
-  const [{ items: paneles }, guardadas] = await Promise.all([
+  const [{ items: paneles }, guardadas, atributosDelCatalogo] = await Promise.all([
     api.paneles.listar(),
     api.consultas.guardadas().catch(() => ({ items: [] })),
+    catalogo.cargar(),
   ]);
+  catalogoDeAtributos = atributosDelCatalogo;
 
   main.innerHTML = encabezado('Consulta', 'semántica',
     'Quiénes se aproximan a un criterio, con la respuesta que lo justifica.') + `
@@ -163,7 +164,7 @@ function pintarCriterios() {
          ${c.duro ? '<span class="badge">duro</span>' : ''}
          <span class="small muted">peso ${c.peso ?? 1}</span>`
       : `<span class="badge badge-user">demográfico</span>
-         <strong>${esc(DIMENSIONES[c.dimension] || c.dimension)}</strong>
+         <strong>${esc(catalogo.etiquetaDe(catalogoDeAtributos, c.dimension))}</strong>
          ${esc(OPERADORES[c.operador] || c.operador)}
          <strong>${esc(Array.isArray(c.valor) ? c.valor.join(', ') : c.valor)}</strong>`;
     return `<div class="fila-criterio">
@@ -234,7 +235,8 @@ function abrirCriterioDemografico() {
       <div class="form-row">
         <div class="form-group"><label>Dimensión</label>
           <select class="fselect" name="dimension">
-            ${Object.entries(DIMENSIONES).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}
+            ${catalogo.filtrables(catalogoDeAtributos).map((a) =>
+              `<option value="${esc(a.clave)}">${esc(a.etiqueta)}${a.es_especial ? ' · especial' : ''}</option>`).join('')}
           </select></div>
         <div class="form-group"><label>Operador</label>
           <select class="fselect" name="operador">
@@ -242,7 +244,8 @@ function abrirCriterioDemografico() {
           </select></div>
       </div>
       <div class="form-group"><label>Valor</label>
-        <input type="text" name="valor" placeholder="F" />
+        <input type="text" name="valor" placeholder="F" list="valores-dimension" />
+        <datalist id="valores-dimension"></datalist>
         <div class="field-hint" id="hint-valor">
           Para «es alguno de», separá los valores con coma.
         </div></div>`,
@@ -263,14 +266,26 @@ function abrirCriterioDemografico() {
         } },
     ],
   });
+  /* R3.14 — las categorías admitidas salen del catálogo, así que el campo
+     de valor se autocompleta con ellas. Con vocabulario canónico, tipear
+     «Medio alto» donde la categoría es `medio_alto` deja el filtro en cero y
+     nadie entiende por qué. */
   const hint = $('#hint-valor', caja);
-  $('[name="dimension"]', caja).onchange = (e) => {
-    hint.textContent = e.target.value === 'tramo_etario'
-      ? 'Tramos: <18, 18-24, 25-34, 35-44, 45-54, 55-64, 65+'
-      : e.target.value === 'edad'
+  const lista$ = $('#valores-dimension', caja);
+  const actualizarValores = (clave) => {
+    const categorias = catalogo.categoriasDe(catalogoDeAtributos, clave);
+    lista$.innerHTML = categorias.map(
+      (c) => `<option value="${esc(c.clave)}">${esc(c.etiqueta)}</option>`).join('');
+    hint.textContent = categorias.length
+      ? `Categorías: ${categorias.map((c) => c.clave).join(', ')}. `
+        + 'Para «es alguno de», separalas con coma.'
+      : clave === 'edad'
         ? 'Un número de años.'
         : 'Para «es alguno de», separá los valores con coma.';
   };
+  const dimension$ = $('[name="dimension"]', caja);
+  dimension$.onchange = (e) => actualizarValores(e.target.value);
+  actualizarValores(dimension$.value);
 }
 
 function abrirParametros() {

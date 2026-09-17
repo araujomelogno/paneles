@@ -2,6 +2,7 @@
    Cubre R1.1, R1.2 y R1.3 desde la interfaz. */
 
 import * as api from '../api.js';
+import * as catalogo from '../catalogo.js';
 import {
   $, $$, esc, encabezado, consentimientos, token, vacio, cargando, toast,
   modal, cerrarModal, leerFormulario, confirmar, activarTokens, fechaCorta,
@@ -13,11 +14,31 @@ const VERSION = () => window.VERSION_CONSENTIMIENTO || 'consentimiento-2026-01';
 let filtro = { q: '', panel_id: '', sin_panel: false };
 let contexto = {};
 
+/* R3.14 — sexo y localidad dejaron de ser texto libre: son atributos del
+   catálogo, con categorías canónicas. El alta y la edición ofrecen esas
+   categorías en vez de un campo abierto, que es lo que hace que las cuotas
+   cierren y que un filtro por localidad devuelva siempre lo mismo. */
+let catalogoDeAtributos = [];
+
+const opcionesDe = (clave, elegido = '') => [
+  `<option value="">—</option>`,
+  ...catalogo.categoriasDe(catalogoDeAtributos, clave).map((c) =>
+    `<option value="${esc(c.clave)}" ${c.clave === elegido ? 'selected' : ''}>${esc(c.etiqueta)}</option>`),
+].join('');
+
+const faltaEnElCatalogo = (clave) =>
+  `<div class="field-hint">¿Falta una opción? Se agrega en
+   <strong>Configuración → Atributos demográficos</strong>: el vocabulario es
+   cerrado a propósito, para que las cuotas cierren.</div>`;
+
 export async function render(main, ctx) {
   contexto = ctx;
   if (ctx.contexto?.idPersona) return renderFicha(main, ctx.contexto.idPersona);
 
-  const { items: paneles } = await api.paneles.listar();
+  const [{ items: paneles }, delCatalogo] = await Promise.all([
+    api.paneles.listar(), catalogo.cargar(),
+  ]);
+  catalogoDeAtributos = delCatalogo;
 
   main.innerHTML = encabezado('Panelistas', 'de la bóveda',
     'Alta con deduplicación, consentimiento por finalidad y ficha de cada persona.') + `
@@ -106,6 +127,55 @@ async function cargarTabla() {
   $$('[data-ficha]', contenedor).forEach((boton) => {
     boton.onclick = () => contexto.irA('panelistas', { idPersona: boton.dataset.ficha });
   });
+}
+
+/* R3.14 — los segmentadores de la persona, con su procedencia.
+
+   Lo que importa mostrar acá, y que antes no se veía, es **de dónde sale el
+   tramo etario**: derivado de la fecha de nacimiento, envejecido desde una
+   edad declarada en un archivo, o cargado tal cual. Los tres valen, pero no
+   valen lo mismo, y quien mira la ficha tiene que poder distinguirlos. */
+const PROCEDENCIAS = {
+  derivado: {
+    etiqueta: 'derivado',
+    detalle: 'Se calcula de la fecha de nacimiento. Es el más preciso y '
+      + 'siempre está al día.',
+  },
+  envejecido: {
+    etiqueta: 'envejecido',
+    detalle: 'La base traía la edad, no la fecha. Se envejece desde la fecha '
+      + 'de campo de esa carga, así que sigue al día.',
+  },
+  cargado: {
+    etiqueta: 'cargado',
+    detalle: 'Vino del archivo tal cual y queda congelado: sin fecha de '
+      + 'referencia no hay desde cuándo envejecerlo.',
+  },
+};
+
+function pintarAtributos(ficha) {
+  const items = ficha.atributos || [];
+  if (!items.length) {
+    return `<div class="small muted" style="padding:1rem 1.5rem">
+      Esta persona no tiene ningún atributo cargado. No entra en filtros
+      demográficos ni cuenta para ninguna cuota: no se sabe dónde va.</div>`;
+  }
+  return `<div class="table-wrap"><table>
+    <thead><tr><th>Atributo</th><th>Valor</th><th>Origen</th><th>Del archivo</th></tr></thead>
+    <tbody>${items.map((a) => {
+      const procedencia = PROCEDENCIAS[a.procedencia];
+      return `<tr>
+        <td class="td-strong">${esc(a.etiqueta)}
+          ${a.es_especial ? '<span class="badge badge-off">especial</span>' : ''}</td>
+        <td>${esc(a.etiqueta_valor ?? a.valor ?? '—')}
+          ${procedencia ? `<span class="badge badge-off" title="${esc(procedencia.detalle)}"
+            >${procedencia.etiqueta}</span>` : ''}</td>
+        <td class="small muted">${esc(a.origen || '—')}
+          ${a.fecha_referencia ? `<div class="small">ref. ${esc(a.fecha_referencia)}</div>` : ''}</td>
+        <td class="small mono muted">${esc(a.valor_crudo || '—')}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table></div>`;
 }
 
 /* ── Alta ───────────────────────────────────────────────────────── */
@@ -203,17 +273,15 @@ function abrirAlta(paneles) {
       </div>
       <div class="form-row">
         <div class="form-group"><label>Sexo</label>
-          <select class="fselect" name="sexo">
-            <option value="">—</option><option value="F">F</option>
-            <option value="M">M</option><option value="X">X</option>
-          </select></div>
+          <select class="fselect" name="sexo">${opcionesDe('sexo')}</select></div>
         <div class="form-group"><label>Fecha de nacimiento</label>
           <input type="date" name="fecha_nacimiento" />
           <div class="field-hint">De acá sale el tramo etario. No sale de la bóveda.</div></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>Localidad</label>
-          <input type="text" name="localidad" placeholder="Montevideo" /></div>
+          <select class="fselect" name="localidad">${opcionesDe('localidad')}</select>
+          ${faltaEnElCatalogo('localidad')}</div>
         <div class="form-group"><label>Sumar al panel</label>
           <select class="fselect" name="panel_id">
             <option value="">No sumar a ningún panel todavía</option>
@@ -356,10 +424,7 @@ async function renderFicha(main, idPersona) {
               ${dato('Documento', p.documento)}
               ${dato('Email', p.email)}
               ${dato('Celular', p.celular)}
-              ${dato('Sexo', p.sexo)}
               ${dato('Fecha de nacimiento', p.fecha_nacimiento ? fechaCorta(p.fecha_nacimiento) : null)}
-              ${dato('Tramo etario', ficha.demografia.tramo_etario)}
-              ${dato('Localidad', p.localidad)}
               ${dato('Observaciones', p.observaciones)}
               <dt>Identificador</dt>
               <dd>${token(ficha.id_persona, ficha.id_persona.slice(0, 13))}
@@ -378,6 +443,16 @@ async function renderFicha(main, idPersona) {
               </dd>
               ${dato('Enrolado', fechaHora(ficha.creado_en))}
             </dl>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-header-title">Atributos demográficos</span>
+            <span class="small muted">con los que se filtra y se fijan cuotas</span>
+          </div>
+          <div class="card-body tight">
+            ${pintarAtributos(ficha)}
           </div>
         </div>
 
@@ -518,16 +593,14 @@ function abrirEdicion(ficha) {
       </div>
       <div class="form-row">
         <div class="form-group"><label>Sexo</label>
-          <select class="fselect" name="sexo">
-            ${['', 'F', 'M', 'X'].map((o) => `
-              <option value="${o}" ${(p.sexo || '') === o ? 'selected' : ''}>${o || '—'}</option>`).join('')}
-          </select></div>
+          <select class="fselect" name="sexo">${opcionesDe('sexo', p.sexo || '')}</select></div>
         <div class="form-group"><label>Fecha de nacimiento</label>
           <input type="date" name="fecha_nacimiento" value="${v(p.fecha_nacimiento)}" /></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>Localidad</label>
-          <input type="text" name="localidad" value="${v(p.localidad)}" /></div>
+          <select class="fselect" name="localidad">${opcionesDe('localidad', p.localidad || '')}</select>
+          ${faltaEnElCatalogo('localidad')}</div>
         <div class="form-group"><label>Otros datos de contacto</label>
           <input type="text" name="contacto" value="${v(p.contacto)}" /></div>
       </div>
