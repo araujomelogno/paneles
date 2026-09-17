@@ -198,10 +198,11 @@ def crear_bono(conn, panel_id, dimension, categoria, puntos_extra,
                hasta=None, actor=None):
     from . import demografia
 
-    if dimension not in demografia.DIMENSIONES_CATEGORICAS:
+    categoricas = demografia.categoricas(conn)
+    if dimension not in categoricas:
         raise DatosInvalidos(
             f"«{dimension}» no es una dimensión de segmento.",
-            {"dimensiones_validas": list(demografia.DIMENSIONES_CATEGORICAS)},
+            {"dimensiones_validas": list(categoricas)},
         )
     if not (categoria or "").strip():
         raise DatosInvalidos("El bono necesita una categoría.")
@@ -269,15 +270,18 @@ def _bono_para(conn, panel_id, id_persona):
     fila = db.una(
         conn,
         """
+        -- R3.14 — el segmento de un bono se resuelve contra el catálogo, así
+        -- que un bono puede dirigirse a cualquier atributo activo y no solo a
+        -- las tres dimensiones que estaban escritas acá a mano.
         select coalesce(sum(b.puntos_extra), 0)::int as extra,
                string_agg(b.dimension || '=' || b.categoria, ', ') as detalle
           from bono_puntos b
-          join v_demografia d on d.id_persona = %s
+          join v_atributo_persona va
+            on va.id_persona = %s
+           and va.atributo = b.dimension
+           and va.valor = b.categoria
          where b.panel_id = %s
            and b.desde <= now() and (b.hasta is null or b.hasta > now())
-           and ((b.dimension = 'sexo'         and d.sexo = b.categoria)
-             or (b.dimension = 'localidad'    and d.localidad = b.categoria)
-             or (b.dimension = 'tramo_etario' and d.tramo_etario = b.categoria))
         """,
         (str(id_persona), panel_id),
     )

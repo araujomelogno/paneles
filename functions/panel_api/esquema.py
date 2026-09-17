@@ -51,6 +51,15 @@ MIGRACIONES_BOVEDA = (
     )),
     ("0006_participacion_por_importacion.sql", ("participacion.origen",)),
     ("0007_carga_sin_panel.sql", ("carga",)),
+    ("0008_atributos_demograficos.sql", (
+        "atributo_demografico", "atributo_categoria", "persona_atributo",
+        "atributo_auditoria", "v_atributo_persona",
+        # La 0008 **reescribe** `v_demografia` sobre el catálogo, conservando
+        # su nombre y sus columnas. Se declara acá además de en la 0001 porque
+        # esta migración también la crea, y la prueba que compara esta lista
+        # con el DDL real lo exige.
+        "v_demografia",
+    )),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -88,6 +97,11 @@ PARA_QUE = {
     "panel.origen": "distinguir un panel armado a mano de uno creado desde una consulta",
     "participacion.origen": "distinguir a quien convocó el sistema de quien respondió en campo y se incorporó al ingestar",
     "carga": "incorporar individuos con sus respuestas sin meterlos en ningún panel",
+    "atributo_demografico": "el catálogo de segmentadores con el que se filtra, se compone y se fijan cuotas",
+    "atributo_categoria": "las categorías canónicas de cada segmentador",
+    "persona_atributo": "el valor de cada persona para cada segmentador, canónico y crudo",
+    "atributo_auditoria": "quién tocó el vocabulario de segmentación y cuándo",
+    "v_atributo_persona": "el valor efectivo de cada atributo, con la precedencia del tramo etario",
 }
 
 

@@ -1,9 +1,10 @@
 # Manual de usuario
 
 `Manual_de_usuario.pdf` es el entregable: paso a paso de cada tarea, con
-capturas de la aplicación real. Cubre las **fases 1 y 2**, más dos cosas de la
-fase 3: la ingesta de archivos `.sav` con alta de panelistas (R3.9) y la carga
-de individuos sin asociarlos a ningún panel (R3.13).
+capturas de la aplicación real. Cubre las **fases 1 y 2**, más tres cosas de la
+fase 3: la ingesta de archivos `.sav` con alta de panelistas (R3.9), la carga
+de individuos sin asociarlos a ningún panel (R3.13) y el catálogo de atributos
+demográficos (R3.14).
 
 ## Cómo se rehace
 
@@ -53,8 +54,10 @@ darle una respuesta de ejemplo al endpoint `POST /encuestas/:id/sav/analizar`
 para llegar a ese formulario.
 
 Las 46 y 47 —el filtro «sin panel» y el inicio de una carga de panelistas
-(R3.13)— también se toman aparte, con el mismo recorrido que `capturar.mjs`:
-se agregaron después y no hacía falta rehacer las 44 para sumarlas.
+(R3.13)— y las 48 a 50 —el catálogo de atributos, el alta de uno y la tarjeta
+de atributos de la ficha (R3.14)— también se toman aparte, con el mismo
+recorrido que `capturar.mjs`: se agregaron después y no hacía falta rehacer
+las 44 para sumarlas.
 
 ### 3 · Optimizar
 
@@ -89,7 +92,7 @@ node docs/manual/generar_pdf.mjs
 | `portada.html` | Portada, a sangre |
 | `manual.html` | Índice y las doce secciones |
 | `estilo.css` | Estilos, compartidos por los dos |
-| `capturas/` | Las 47 capturas |
+| `capturas/` | Las 50 capturas |
 | `tipografia/` | Montserrat local, para que el PDF salga igual sin red |
 | `preparar_demo.sh` | Arma y sirve la copia en modo demo |
 | `capturar.mjs` | Toma las capturas |

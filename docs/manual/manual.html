@@ -48,7 +48,8 @@
     <li><a href="#s9"><span><span class="num">9</span> Cumplimiento</span></a>
       <ul><li>Retiro de consentimiento · Baja total · Auditoría de privacidad</li></ul></li>
     <li><a href="#s10"><span><span class="num">10</span> Configuración</span></a>
-      <ul><li>Alta de usuarios · Roles · Desactivación · Auditoría</li></ul></li>
+      <ul><li>Alta de usuarios · Roles · Desactivación · Auditoría ·
+      Atributos demográficos</li></ul></li>
     <li><a href="#s11"><span><span class="num">11</span> Preguntas frecuentes</span></a></li>
     <li><a href="#s12"><span><span class="num">12</span> Glosario</span></a></li>
   </ol>
@@ -373,8 +374,12 @@
   <h3><span class="n">3.5</span> La ficha de un panelista</h3>
 
   <p>La ficha concentra todo lo que el sistema sabe de una persona: sus datos,
-  su demografía derivada, los paneles a los que pertenece, el historial completo
-  de consentimientos y su participación acumulada.</p>
+  sus atributos demográficos, los paneles a los que pertenece, el historial
+  completo de consentimientos y su participación acumulada.</p>
+
+  <p>Los segmentadores —sexo, localidad, tramo etario y cualquier otro que se
+  haya definido— tienen su propia tarjeta, <i>Atributos demográficos</i>, que
+  además indica de dónde sale cada valor. Se explica en la sección 10.6.</p>
 
   <figure>
     <img src="capturas/10-ficha-panelista.jpg" alt="Ficha de un panelista" />
@@ -1345,6 +1350,16 @@
 
   <h3><span class="n">7.3</span> Interpretar la brecha</h3>
 
+  <div class="aviso info">
+    <div class="t">Los miembros sin el dato cargado</div>
+    <p>Quien no tenga cargada la variable de una dimensión no se cuenta en
+    ninguna de sus categorías: se informa aparte, debajo de la tabla. Los
+    porcentajes observados son sobre quienes sí la tienen, que es la única
+    base sobre la cual las proporciones suman 100 % y la comparación con el
+    universo significa algo. Contarlos como una categoría más haría que la
+    brecha de todas las demás indique un déficit inexistente.</p>
+  </div>
+
   <p>Con el objetivo cargado, cada categoría muestra su situación en cuatro
   columnas. <strong>% observado</strong> indica cómo está compuesto el panel hoy
   y <strong>% objetivo</strong> cómo debería estarlo. La <strong>brecha</strong>
@@ -1661,6 +1676,122 @@
       toda la información, atiende retiros y bajas, y revisa el registro de
       accesos.</td></tr>
   </table>
+
+  <h3><span class="n">10.6</span> Atributos demográficos</h3>
+
+  <p>La segunda solapa de esta pantalla define <strong>con qué se puede
+  segmentar al panel</strong>. Cada atributo del catálogo sirve en los cuatro
+  lugares donde intervienen los segmentadores: los filtros de una consulta
+  (sección 6.7), las dimensiones de la composición y su brecha (sección 7),
+  las cuotas de un objetivo de referencia y el equilibrio de un muestreo.</p>
+
+  <p>El sistema viene con cuatro definidos: <strong>sexo</strong>,
+  <strong>localidad</strong>, <strong>tramo etario</strong> y
+  <strong>edad</strong>. Los dos últimos son <i>derivados</i>: el sistema los
+  calcula y no se cargan a mano. Cualquier otro segmentador —nivel educativo,
+  nivel socioeconómico, ocupación, composición del hogar— se agrega desde
+  acá, sin necesidad de pedir un desarrollo.</p>
+
+  <figure>
+    <img src="capturas/48-atributos-catalogo.jpg" alt="Catálogo de atributos demográficos" />
+    <figcaption><b>El catálogo.</b> La columna <i>Clave</i> es el
+    identificador estable con el que el resto del sistema nombra al atributo.
+    Los marcados <i>con datos</i> ya tienen valores cargados en fichas de
+    panelistas.</figcaption>
+  </figure>
+
+  <h4>Definir un atributo</h4>
+
+  <p>Se indica el nombre visible, una clave, el tipo y, si es categórico, sus
+  <strong>categorías canónicas</strong>. Esas categorías son los únicos
+  valores admitidos: es lo que hace que un filtro devuelva siempre lo mismo y
+  que la aritmética de las cuotas cierre. Sin un vocabulario cerrado
+  aparecerían veinte formas de escribir el mismo nivel y ninguna cuota
+  cerraría.</p>
+
+  <figure>
+    <img src="capturas/49-atributo-nuevo.jpg" alt="Alta de un atributo demográfico" />
+    <figcaption><b>Un atributo nuevo.</b> La clave se escribe una sola vez: una
+    vez que hay valores cargados no se puede cambiar, porque es lo que guardan
+    los objetivos de composición y la ficha de cada persona.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Qué se puede corregir después, y qué no</div>
+    <p>El <strong>nombre visible</strong>, la descripción y las etiquetas de
+    las categorías se corrigen en cualquier momento. La <strong>clave</strong>
+    del atributo y la de sus categorías, en cambio, quedan fijas una vez que
+    hay datos: cambiarlas dejaría los objetivos de composición y los valores
+    ya cargados apuntando a nada.</p>
+    <p>Un atributo con datos tampoco se elimina: se <strong>desactiva</strong>.
+    Deja de ofrecerse en cargas y filtros nuevos y conserva todo lo cargado.
+    Solo se pueden eliminar los que no tienen ningún valor.</p>
+  </div>
+
+  <h4>Cuando un valor del archivo no corresponde a ninguna categoría</h4>
+
+  <p>Al ingestar un archivo, un valor que no coincide con ninguna categoría
+  <strong>no genera una categoría nueva</strong>: esa fila queda sin el
+  atributo y el resultado de la carga lo informa con la lista de valores que
+  no se pudieron mapear. La corrección no obliga a volver a cargar el archivo:
+  se agrega la categoría que faltaba y se utiliza <strong>Recalcular</strong>,
+  que vuelve a resolver los valores a partir de lo que decía el archivo
+  original, conservado junto a cada valor.</p>
+
+  <h4>Categorías especiales</h4>
+
+  <div class="aviso grave">
+    <div class="t">Ley 18.331</div>
+    <p>Salud, origen étnico o racial, convicciones religiosas o morales,
+    afiliación sindical, ideología política y vida sexual son
+    <strong>categorías especiales de datos</strong>. Su tratamiento exige
+    consentimiento específico y protección reforzada: no alcanza con el
+    consentimiento del alta ni con el de la landing.</p>
+    <p>Al definir un atributo se puede declarar que corresponde a una de
+    ellas. El sistema entonces lo advierte, lo lista aparte para que su
+    existencia sea visible en una revisión de cumplimiento, y lo excluye de
+    las exportaciones con datos personales. Antes de definir un atributo de
+    este tipo conviene consultarlo con quien responde por la protección de
+    datos.</p>
+  </div>
+
+  <h4>Dónde se ven los atributos de una persona</h4>
+
+  <p>En su ficha (sección 3.5), en la tarjeta <i>Atributos demográficos</i>.
+  Además del valor, la tarjeta indica <strong>de dónde sale</strong> cada uno,
+  y eso importa especialmente para el tramo etario.</p>
+
+  <figure>
+    <img src="capturas/50-ficha-atributos.jpg" alt="Atributos de un panelista" />
+    <figcaption><b>Atributos de una persona.</b> La etiqueta junto a cada valor
+    indica su procedencia. <i>Derivado</i> es el caso más preciso: el sistema
+    lo calcula y siempre está al día.</figcaption>
+  </figure>
+
+  <table class="tabla-roles">
+    <tr><th style="width:26%">Procedencia</th><th>Qué significa</th></tr>
+    <tr><td class="destacado">Derivado</td>
+      <td>Se calcula a partir de la fecha de nacimiento. Es el caso más
+      preciso y siempre está actualizado. Ningún valor cargado lo
+      reemplaza.</td></tr>
+    <tr><td class="destacado">Envejecido</td>
+      <td>La base no traía la fecha de nacimiento sino la edad. El sistema la
+      envejece desde la fecha de campo de esa carga, de modo que el tramo
+      sigue siendo el correcto con el paso de los años.</td></tr>
+    <tr><td class="destacado">Cargado</td>
+      <td>El tramo vino del archivo tal cual y queda congelado: sin una fecha
+      de referencia no hay desde cuándo envejecerlo. Es el último
+      recurso.</td></tr>
+  </table>
+
+  <div class="aviso info">
+    <div class="t">Cuando no hay ningún dato de edad</div>
+    <p>Si una persona no tiene fecha de nacimiento, ni edad declarada, ni
+    tramo cargado, su tramo etario queda <strong>sin dato</strong>. No se
+    cuenta en ninguna categoría de edad, no infla ninguna cuota y el muestreo
+    no puede utilizarla para cerrar una brecha etaria: no se sabe a qué tramo
+    pertenece. Lo mismo vale para cualquier otro atributo.</p>
+  </div>
 </section>
 
 <!-- ════════════════ 11 ════════════════ -->

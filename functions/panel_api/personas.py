@@ -7,15 +7,27 @@ personas.
 
 import json
 
-from . import consentimiento, db, dedup
+from . import atributos, consentimiento, db, dedup
 from .errores import Conflicto, DatosInvalidos, NoEncontrado
 
 # Columnas de PII que acepta el alta. Se listan explícitamente para que
 # nada entre por accidente y para que el orden de escritura sea evidente.
+#
+# R3.14.f — `sexo` y `localidad` **ya no están acá**. Dejaron de ser columnas
+# de `persona` para ser atributos del catálogo, que es donde viven todos los
+# segmentadores desde R3.14. Las columnas siguen existiendo en la base porque
+# se eliminan en una migración posterior, pero este módulo no las escribe ni
+# las lee. `fecha_nacimiento` sí se queda: es dato de identidad y llave del
+# dedup (R1.2), y de ella se deriva el tramo etario.
 CAMPOS_PERSONA = (
-    "documento", "nombre", "sexo", "fecha_nacimiento", "localidad",
+    "documento", "nombre", "fecha_nacimiento",
     "email", "celular", "contacto", "observaciones",
 )
+
+# Las dos claves que el resto del sistema sigue mandando dentro de `persona`
+# porque siempre estuvieron ahí. Se aceptan y se enrutan al catálogo, para no
+# romper a ningún cliente ni a la pantalla de alta.
+ATRIBUTOS_HEREDADOS = ("sexo", "localidad")
 
 # `documento` y `email` tienen índice único y son las claves con las que el
 # dedup reconoce a una persona, así que se tratan distinto del resto: se
@@ -37,6 +49,66 @@ def _limpiar(datos):
         if valor is not None:
             limpio[campo] = valor
     return limpio
+
+
+def _atributos_del_cuerpo(cuerpo, datos_persona=None):
+    """Junta los valores de atributos que trae un alta o una edición.
+
+    Vienen por dos caminos, los dos válidos: sueltos dentro de `persona`
+    —`sexo`, `localidad`, que es como los mandó siempre la pantalla de alta—
+    y en `atributos: {clave: valor}`, que es como se manda cualquier atributo
+    del catálogo.
+    """
+    valores = {}
+    for clave in ATRIBUTOS_HEREDADOS:
+        for origen in (datos_persona or {}, cuerpo.get("persona") or {}, cuerpo):
+            valor = origen.get(clave)
+            if valor not in (None, ""):
+                valores[clave] = valor
+                break
+    for clave, valor in (cuerpo.get("atributos") or {}).items():
+        if valor not in (None, ""):
+            valores[str(clave).strip().lower()] = valor
+    return valores
+
+
+def _fijar_atributos(conn, id_persona, valores, origen="alta", pisar=True,
+                     fecha_referencia=None):
+    """Escribe los atributos del catálogo. Devuelve qué pasó con cada uno.
+
+    Los que no corresponden a ninguna categoría no se inventan (R3.14.c): se
+    informan, y la persona queda sin ese atributo.
+    """
+    fijados, sin_categoria, discrepancias = [], [], []
+    for clave, valor in (valores or {}).items():
+        try:
+            resultado = atributos.fijar(
+                conn, id_persona, clave, valor, origen=origen,
+                pisar=pisar, fecha_referencia=fecha_referencia)
+        except NoEncontrado:
+            # El atributo no existe en el catálogo. No se crea al vuelo: el
+            # vocabulario lo define un admin (no-goal explícito de R3.14).
+            sin_categoria.append({"clave": clave, "motivo": "atributo_desconocido",
+                                  "valor": valor})
+            continue
+        if resultado["estado"] == "completado":
+            fijados.append(resultado["clave"])
+        elif resultado["estado"] == "sin_categoria":
+            sin_categoria.append({"clave": resultado["clave"],
+                                  "motivo": "valor_sin_categoria",
+                                  "valor": resultado.get("valor_crudo")})
+        elif resultado["estado"] == "no_numerico":
+            sin_categoria.append({"clave": resultado["clave"],
+                                  "motivo": "valor_no_numerico",
+                                  "valor": resultado.get("valor_crudo")})
+        elif resultado["estado"] == "discrepancia":
+            discrepancias.append({
+                "campo": resultado["clave"],
+                "en_boveda": resultado["en_boveda"],
+                "en_el_archivo": resultado["en_el_archivo"],
+            })
+    return {"fijados": fijados, "sin_categoria": sin_categoria,
+            "discrepancias": discrepancias}
 
 
 def _validar_consentimientos(consentimientos):
@@ -134,7 +206,8 @@ def _comparable(valor):
     return str(valor).strip().lower()
 
 
-def completar_desde_archivo(conn, id_persona, datos):
+def completar_desde_archivo(conn, id_persona, datos, origen="ingesta",
+                           fecha_referencia=None):
     """Completa los demográficos vacíos con lo que trae un archivo de campo.
 
     Addendum de R3.9 · R3.9.d. Dos reglas, y la segunda es la que importa:
@@ -149,17 +222,29 @@ def completar_desde_archivo(conn, id_persona, datos):
     Devuelve `{"completados": [campos], "discrepancias": [{campo, en_boveda,
     en_el_archivo}]}`.
     """
-    limpio = {}
+    # R3.14 — lo que llega se parte en dos: las columnas de `persona` y los
+    # atributos del catálogo. La regla es la misma para los dos —completar lo
+    # vacío, informar lo que discrepa, no pisar—, pero el lugar donde se
+    # escribe es distinto.
+    limpio, del_catalogo = {}, {}
     for campo, valor in (datos or {}).items():
-        if campo not in CAMPOS_PERSONA:
-            continue
         if isinstance(valor, str):
             valor = valor.strip()
         if valor in (None, ""):
             continue
-        limpio[campo] = valor
+        if campo in CAMPOS_PERSONA:
+            limpio[campo] = valor
+        else:
+            del_catalogo[campo] = valor
+
+    escritos = _fijar_atributos(
+        conn, id_persona, del_catalogo, origen=origen, pisar=False,
+        fecha_referencia=fecha_referencia)
+
     if not limpio:
-        return {"completados": [], "discrepancias": []}
+        return {"completados": list(escritos["fijados"]),
+                "discrepancias": list(escritos["discrepancias"]),
+                "sin_categoria": escritos["sin_categoria"]}
 
     actual = db.una(
         conn,
@@ -181,17 +266,23 @@ def completar_desde_archivo(conn, id_persona, datos):
     ]
 
     completados = _completar_faltantes(conn, id_persona, limpio)
-    return {"completados": completados, "discrepancias": discrepancias}
+    return {
+        "completados": sorted(set(completados) | set(escritos["fijados"])),
+        "discrepancias": discrepancias + escritos["discrepancias"],
+        "sin_categoria": escritos["sin_categoria"],
+    }
 
 
-def alta(conn, cuerpo, actor=None):
+def alta(conn, cuerpo, actor=None, origen_atributo="alta"):
     """Alta de panelista: dedup → persona → consentimientos → membresía.
 
     Devuelve `{"estado": "creada"|"reutilizada"|"revision", ...}`. En
     `revision` no se crea ni se toca ninguna persona: el alta queda
     esperando decisión humana.
     """
-    datos = _limpiar(cuerpo.get("persona") or cuerpo)
+    crudo_persona = cuerpo.get("persona") or cuerpo
+    datos = _limpiar(crudo_persona)
+    valores_atributos = _atributos_del_cuerpo(cuerpo, crudo_persona)
     consentimientos = _validar_consentimientos(cuerpo.get("consentimientos"))
     origen = (cuerpo.get("origen") or "").strip() or None
     id_en_origen = (cuerpo.get("id_en_origen") or "").strip() or None
@@ -225,6 +316,10 @@ def alta(conn, cuerpo, actor=None):
                     json.dumps(
                         {
                             "persona": datos,
+                            # R3.14 — los atributos viajan con el alta en
+                            # revisión: si no, resolverla crearía la persona
+                            # sin sexo ni localidad y nadie se enteraría.
+                            "atributos": valores_atributos,
                             "consentimientos": consentimientos,
                             "origen": origen,
                             "id_en_origen": id_en_origen,
@@ -249,9 +344,20 @@ def alta(conn, cuerpo, actor=None):
         id_persona = _crear(conn, datos)
         estado = "creada"
         completados = []
+        # R3.14 — en un alta nueva los atributos se escriben tal cual: no hay
+        # nada que pisar.
+        atributos_escritos = _fijar_atributos(
+            conn, id_persona, valores_atributos, origen=origen_atributo,
+            pisar=True)
     else:
         estado = "reutilizada"
         completados = _completar_faltantes(conn, id_persona, datos)
+        # Al reutilizar una persona rige la misma regla que para el resto de
+        # su ficha: se completa lo que falta y no se pisa lo que ya está.
+        atributos_escritos = _fijar_atributos(
+            conn, id_persona, valores_atributos, origen=origen_atributo,
+            pisar=False)
+        completados = sorted(set(completados) | set(atributos_escritos["fijados"]))
 
     if origen and id_en_origen:
         dedup.registrar_alias(conn, id_persona, origen, id_en_origen)
@@ -269,7 +375,7 @@ def alta(conn, cuerpo, actor=None):
 
         membresia = paneles.agregar_miembro(conn, panel_id, id_persona)
 
-    return {
+    salida = {
         "estado": estado,
         "id_persona": str(id_persona),
         "motivo_dedup": motivo,
@@ -277,6 +383,14 @@ def alta(conn, cuerpo, actor=None):
         "consentimientos": otorgados,
         "membresia": membresia,
     }
+    if atributos_escritos["sin_categoria"]:
+        # R3.14.c — no se inventa la categoría, y no se calla: si el alta dice
+        # «Lavalleja» y el catálogo no lo tiene, la persona se crea sin
+        # localidad y quien la dio de alta se entera en el momento.
+        salida["atributos_sin_guardar"] = atributos_escritos["sin_categoria"]
+    if atributos_escritos["discrepancias"]:
+        salida["atributos_en_discrepancia"] = atributos_escritos["discrepancias"]
+    return salida
 
 
 def _en_uso_por_otro(conn, campo, valor, id_persona):
@@ -315,11 +429,23 @@ def editar(conn, id_persona, cambios, actor=None):
     if not actual:
         raise NoEncontrado(f"No existe la persona {id_persona}.")
 
+    # R3.14 — los atributos del catálogo se editan por el mismo endpoint,
+    # pero no son columnas: se separan antes de armar el UPDATE. Van tanto
+    # sueltos (`sexo`, `localidad`) como en `atributos: {clave: valor}`.
+    cambios = dict(cambios or {})
+    valores_atributos = {}
+    for clave in list(cambios):
+        if clave in ATRIBUTOS_HEREDADOS:
+            valores_atributos[clave] = cambios.pop(clave)
+    for clave, valor in (cambios.pop("atributos", None) or {}).items():
+        valores_atributos[str(clave).strip().lower()] = valor
+
     desconocidos = sorted(set(cambios) - set(CAMPOS_EDITABLES))
     if desconocidos:
         raise DatosInvalidos(
             "Hay campos que no se pueden editar desde acá.",
-            {"campos": desconocidos, "editables": list(CAMPOS_EDITABLES)},
+            {"campos": desconocidos, "editables":
+                list(CAMPOS_EDITABLES) + list(ATRIBUTOS_HEREDADOS)},
         )
 
     # Las claves de dedup solo se pueden completar, no cambiar ni borrar.
@@ -370,19 +496,31 @@ def editar(conn, id_persona, cambios, actor=None):
                     },
                 )
 
-    if not a_guardar:
-        return {"id_persona": str(id_persona), "campos_modificados": []}
+    # Editar es una corrección deliberada de una persona, así que acá sí se
+    # pisa: es lo que distingue una edición de una carga.
+    escritos = _fijar_atributos(
+        conn, id_persona, valores_atributos, origen="edicion", pisar=True)
+    # Un atributo presente con valor vacío borra el dato, igual que una
+    # columna. Es la única forma de sacar un segmentador mal cargado.
+    for clave, valor in (valores_atributos or {}).items():
+        if valor in (None, ""):
+            atributos.borrar_valor(conn, id_persona, clave)
 
-    asignaciones = ", ".join(f"{c} = %s" for c in a_guardar)
-    db.ejecutar(
-        conn,
-        f"update persona set {asignaciones} where id_persona = %s",
-        tuple(a_guardar.values()) + (id_persona,),
-    )
-    return {
+    if a_guardar:
+        asignaciones = ", ".join(f"{c} = %s" for c in a_guardar)
+        db.ejecutar(
+            conn,
+            f"update persona set {asignaciones} where id_persona = %s",
+            tuple(a_guardar.values()) + (id_persona,),
+        )
+
+    salida = {
         "id_persona": str(id_persona),
-        "campos_modificados": sorted(a_guardar),
+        "campos_modificados": sorted(set(a_guardar) | set(escritos["fijados"])),
     }
+    if escritos["sin_categoria"]:
+        salida["atributos_sin_guardar"] = escritos["sin_categoria"]
+    return salida
 
 
 def agregar_alias(conn, id_persona, origen, id_en_origen):
@@ -449,6 +587,12 @@ def ficha(conn, id_persona):
         "select edad, tramo_etario from v_demografia where id_persona = %s",
         (id_persona,),
     )
+    # R3.14 — los segmentadores de esta persona, con su procedencia. Para los
+    # derivados eso dice si el tramo salió de la fecha de nacimiento, de una
+    # edad declarada envejecida o de un tramo cargado a mano, que es lo que
+    # hace visible la precisión del dato (R3.14.g).
+    del_catalogo = atributos.valores_de(conn, id_persona)
+    por_clave = {a["clave"]: a for a in del_catalogo}
     paneles_de = db.todas(
         conn,
         """
@@ -489,14 +633,25 @@ def ficha(conn, id_persona):
     return {
         "id_persona": str(persona["id_persona"]),
         "persona": {
-            c: (persona[c].isoformat() if hasattr(persona[c], "isoformat") else persona[c])
-            for c in CAMPOS_PERSONA
+            **{
+                c: (persona[c].isoformat()
+                    if hasattr(persona[c], "isoformat") else persona[c])
+                for c in CAMPOS_PERSONA
+            },
+            # `sexo` y `localidad` siguen apareciendo donde siempre estuvieron,
+            # aunque ya no sean columnas de `persona`: lo que cambió es dónde
+            # viven, no qué es una ficha.
+            **{c: (por_clave.get(c) or {}).get("valor")
+               for c in ATRIBUTOS_HEREDADOS},
         },
         "creado_en": persona["creado_en"].isoformat(),
         "demografia": {
             "edad": demografia["edad"] if demografia else None,
             "tramo_etario": demografia["tramo_etario"] if demografia else None,
+            "procedencia_tramo": (
+                por_clave.get("tramo_etario") or {}).get("procedencia"),
         },
+        "atributos": del_catalogo,
         "paneles": [
             {
                 "panel_id": p["id"],
@@ -561,7 +716,7 @@ def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
     filas = db.todas(
         conn,
         f"""
-        select p.id_persona, p.nombre, p.documento, p.email, p.sexo, p.localidad,
+        select p.id_persona, p.nombre, p.documento, p.email, d.sexo, d.localidad,
                d.tramo_etario,
                exists (select 1 from consentimiento c
                         where c.id_persona = p.id_persona

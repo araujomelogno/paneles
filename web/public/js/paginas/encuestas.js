@@ -7,6 +7,7 @@
    `id_persona`: la PII se queda en la bóveda. */
 
 import * as api from '../api.js';
+import * as catalogo from '../catalogo.js';
 import {
   $, $$, esc, encabezado, token, vacio, cargando, toast, modal, cerrarModal,
   leerFormulario, activarTokens, fechaCorta, estado, alerta, confirmar,
@@ -481,15 +482,28 @@ async function leerArchivo(archivo) {
    Los patronímicos dejaron de ser un bloque aparte del modo «crear
    individuos»: son un subconjunto de este marcado, y el marcado vale para
    los dos modos. */
-const DEMOGRAFICOS = [
+/* Los campos de `persona`: patronímicos y de contacto. Coincide con
+   `sav.CAMPOS_DEMOGRAFICOS`. */
+const CAMPOS_DE_PERSONA = [
   ['nombre', 'Nombre'],
   ['documento', 'Documento'],
   ['email', 'Correo'],
   ['celular', 'Celular'],
-  ['sexo', 'Sexo'],
   ['fecha_nacimiento', 'Fecha de nacimiento'],
-  ['localidad', 'Localidad'],
   ['contacto', 'Contacto preferido'],
+];
+
+/* R3.14 — y los atributos del catálogo, que es donde viven ahora los
+   segmentadores: sexo, localidad, tramo etario, edad y cualquiera que un
+   admin haya definido. La lista la trae el servidor: si estuviera escrita
+   acá, definir un atributo nuevo no alcanzaría para poder cargarlo, que es
+   justamente lo que este requisito resuelve. */
+let catalogoDeAtributos = [];
+const DEMOGRAFICOS = () => [
+  ...CAMPOS_DE_PERSONA,
+  ...catalogo.activos(catalogoDeAtributos).map((a) => [
+    a.clave, a.es_especial ? `${a.etiqueta} · especial` : a.etiqueta,
+  ]),
 ];
 
 /* Marcar sin campo: se excluye del store semántico y no se guarda. Es para
@@ -674,11 +688,24 @@ function abrirIngesta(destino, alTerminar) {
 
   const opcionesDeRol = (rol) => [
     ['', 'Pregunta del estudio'],
-    ...DEMOGRAFICOS.map(([campo, etiqueta]) => [campo, `Demográfica · ${etiqueta}`]),
+    ...DEMOGRAFICOS().map(([campo, etiqueta]) => [campo, `Demográfica · ${etiqueta}`]),
     [SOLO_EXCLUIR, 'Demográfica · no guardar'],
   ].map(([valor, etiqueta]) =>
     `<option value="${esc(valor)}" ${valor === (rol || '') ? 'selected' : ''}>${esc(etiqueta)}</option>`
   ).join('');
+
+  /* El catálogo llega del servidor, así que el modal se pinta primero y los
+     desplegables de rol se repintan cuando llega. Es lo único que depende de
+     él, y esperarlo antes de abrir dejaría la pantalla en blanco por una
+     lista de opciones. */
+  catalogo.cargar().then((items) => {
+    catalogoDeAtributos = items;
+    $$('.pregunta-fila .p-rol', caja).forEach((select) => {
+      const elegido = select.value;
+      select.innerHTML = opcionesDeRol(elegido);
+      select.value = elegido;
+    });
+  });
 
   const textoDeOpciones = (opciones) => (opciones
     ? Object.entries(opciones).map(([c, e]) => `${c}=${e}`).join('; ') : '');

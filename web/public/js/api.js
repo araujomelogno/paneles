@@ -287,6 +287,32 @@ export const sav = {
     subir(`/encuestas/${encuestaId}/sav/ingesta`, cuerpo, opciones),
 };
 
+/* R3.14 — el catálogo de atributos demográficos.
+
+   Leerlo lo puede hacer cualquiera que pueda leer: las pantallas de carga, de
+   consulta y de composición lo necesitan para armar sus desplegables.
+   Escribirlo es solo de admin. */
+export const atributos = {
+  listar: (opciones) => GET('/atributos', opciones),
+  ver: (id) => GET(`/atributos/${id}`),
+  crear: (cuerpo) => POST('/atributos', cuerpo),
+  editar: (id, cambios) => PATCH(`/atributos/${id}`, cambios),
+  eliminar: (id) => pedir('DELETE', `/atributos/${id}`),
+  activar: (id, activo) => PATCH(`/atributos/${id}`, { activo }),
+  agregarCategoria: (id, cuerpo) => POST(`/atributos/${id}/categorias`, cuerpo),
+  editarCategoria: (id, categoriaId, cambios) =>
+    PATCH(`/atributos/${id}/categorias/${categoriaId}`, cambios),
+  // R3.14.h — corregido el vocabulario, se recalculan los canónicos desde el
+  // valor crudo que quedó guardado. Sin volver a pedir el archivo original.
+  recalcular: (id) => POST(`/atributos/${id}/recalcular`, {}),
+  auditoria: (atributoId) =>
+    GET('/atributos-auditoria', atributoId ? { atributo_id: atributoId } : {}),
+  deLaPersona: (idPersona) => GET(`/panelistas/${idPersona}/atributos`),
+  fijarEnPersona: (idPersona, clave, valor, fechaReferencia) =>
+    PUT(`/panelistas/${idPersona}/atributos/${clave}`,
+        { valor, fecha_referencia: fechaReferencia }),
+};
+
 /* R3.13 — cargar individuos sin panel.
 
    Contra el servidor es otro camino, pero del lado de la pantalla es el

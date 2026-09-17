@@ -88,9 +88,10 @@ const bd = {
   inscripciones: [],       // solicitudes de la landing, todavía no personas
   textosConsentimiento: [],
   cargas: [],              // R3.13 — lotes incorporados sin panel
+  atributos: [],           // R3.14 — el catálogo de segmentadores
   secuencias: {
     panel: 1, encuesta: 1, revision: 1, consentimiento: 1, semantica: 1,
-    guardada: 1, auditoria: 1, reident: 1, carga: 1,
+    guardada: 1, auditoria: 1, reident: 1, carga: 1, atributo: 1,
   },
 };
 
@@ -111,7 +112,71 @@ const SEMILLA = [
   ['5.333.888-4', 'Joaquín Lema', 'M', '1998-01-22', 'Tacuarembó', 'j.lema@correo.uy', '099 012 345', ['contacto_participacion', 'uso_semantico']],
 ];
 
+/* R3.14 — el catálogo. En la copia demo los valores siguen viviendo en la
+   ficha de cada persona (`p.sexo`, `p.localidad`), porque lo que el demo
+   imita es la **API**, no el esquema; lo que sí hace falta es que el catálogo
+   exista y responda, que es de donde las pantallas arman sus desplegables. */
+const DEPARTAMENTOS = [
+  'Artigas', 'Canelones', 'Cerro Largo', 'Colonia', 'Durazno', 'Flores',
+  'Florida', 'Lavalleja', 'Maldonado', 'Montevideo', 'Paysandú', 'Río Negro',
+  'Rivera', 'Rocha', 'Salto', 'San José', 'Soriano', 'Tacuarembó',
+  'Treinta y Tres',
+];
+const TRAMOS = ['<18', '18-24', '25-34', '35-44', '45-54', '55-64', '65+'];
+
+function crearAtributo({ clave, etiqueta, tipo = 'categorico', categorias = [],
+                         descripcion = null, es_especial = false }) {
+  const atributo = {
+    id: siguiente('atributo'), clave, etiqueta, tipo, descripcion,
+    es_especial, activo: true, orden: bd.atributos.length * 10 + 10,
+    creado_en: ahora(), del_nucleo: ['sexo', 'localidad', 'tramo_etario', 'edad']
+      .includes(clave),
+    tiene_datos: false,
+    categorias: categorias.map((c, i) => ({
+      id: bd.atributos.length * 100 + i + 1,
+      clave: typeof c === 'string' ? c : c.clave,
+      etiqueta: typeof c === 'string' ? c : (c.etiqueta || c.clave),
+      orden: (i + 1) * 10, activo: true,
+    })),
+  };
+  bd.atributos.push(atributo);
+  return atributo;
+}
+
+function sembrarCatalogo() {
+  crearAtributo({
+    clave: 'sexo', etiqueta: 'Sexo',
+    descripcion: 'Segmentador de cuota básico.',
+    categorias: [{ clave: 'F', etiqueta: 'Femenino' },
+                 { clave: 'M', etiqueta: 'Masculino' },
+                 { clave: 'X', etiqueta: 'Otro / no binario' }],
+  });
+  crearAtributo({
+    clave: 'tramo_etario', etiqueta: 'Tramo etario', tipo: 'derivado',
+    descripcion: 'Se deriva de la fecha de nacimiento; si no hay, de la edad '
+      + 'declarada envejecida hasta hoy.',
+    categorias: TRAMOS,
+  });
+  crearAtributo({
+    clave: 'edad', etiqueta: 'Edad', tipo: 'derivado',
+    descripcion: 'Edad efectiva, derivada de la fecha de nacimiento.',
+  });
+  crearAtributo({
+    clave: 'localidad', etiqueta: 'Localidad',
+    descripcion: 'Segmentador geográfico.', categorias: DEPARTAMENTOS,
+  });
+  // Y uno definido por un admin, para que se vea el caso de uso de R3.14.
+  crearAtributo({
+    clave: 'nivel_educativo', etiqueta: 'Nivel educativo',
+    descripcion: 'Máximo nivel alcanzado, tal como lo releva el campo.',
+    categorias: [{ clave: 'primaria', etiqueta: 'Primaria' },
+                 { clave: 'secundaria', etiqueta: 'Secundaria' },
+                 { clave: 'terciaria', etiqueta: 'Terciaria o más' }],
+  });
+}
+
 function sembrar() {
+  sembrarCatalogo();
   const nacional = crearPanel('Panel Nacional', 'Panel general de hogares, cobertura país.');
   const joven = crearPanel('Panel Joven 18-29', 'Submuestra de jóvenes urbanos.');
 
@@ -647,6 +712,41 @@ const tramoEtario = (fechaNacimiento) => {
   return '65+';
 };
 
+/* R3.14 — los atributos efectivos de una persona, con su procedencia. En la
+   copia demo se derivan de la ficha; contra el servidor salen de
+   `v_atributo_persona`, que es donde vive la precedencia de R3.14.g. */
+function atributosDe(persona) {
+  const salida = [];
+  const agregar = (clave, valor, procedencia = 'cargado') => {
+    if (valor === null || valor === undefined || valor === '') return;
+    const atributo = bd.atributos.find((a) => a.clave === clave);
+    if (!atributo) return;
+    const categoria = (atributo.categorias || []).find((c) => c.clave === String(valor));
+    salida.push({
+      clave, etiqueta: atributo.etiqueta, tipo: atributo.tipo,
+      es_especial: atributo.es_especial,
+      valor: String(valor),
+      etiqueta_valor: categoria ? categoria.etiqueta : String(valor),
+      valor_num: clave === 'edad' ? Number(valor) : null,
+      valor_fecha: null,
+      valor_crudo: persona.crudos?.[clave] ?? null,
+      origen: persona.origen_atributos?.[clave] || 'alta',
+      procedencia, fecha_referencia: null,
+    });
+  };
+  agregar('sexo', persona.sexo);
+  agregar('localidad', persona.localidad);
+  if (persona.fecha_nacimiento) {
+    const edad = Math.floor(
+      (Date.now() - new Date(persona.fecha_nacimiento).getTime()) / 31557600000);
+    agregar('edad', edad, 'derivado');
+    agregar('tramo_etario', tramoEtario(persona.fecha_nacimiento), 'derivado');
+  }
+  Object.entries(persona.atributos || {}).forEach(([clave, valor]) =>
+    agregar(clave, valor));
+  return salida;
+}
+
 const resumenPersona = (p) => ({
   id_persona: p.id_persona, nombre: p.nombre, documento: p.documento,
   email: p.email, sexo: p.sexo, localidad: p.localidad,
@@ -719,7 +819,11 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
         edad: persona.fecha_nacimiento
           ? Math.floor((Date.now() - new Date(persona.fecha_nacimiento).getTime()) / 31557600000)
           : null,
+        // R3.14.g — de dónde sale el tramo. En la copia demo solo existe el
+        // caso derivado, porque no hay cargas con edad declarada.
+        procedencia_tramo: persona.fecha_nacimiento ? 'derivado' : null,
       },
+      atributos: atributosDe(persona),
       paneles: bd.membresias.filter((m) => m.id_persona === persona.id_persona).map((m) => ({
         panel_id: m.panel_id,
         nombre: bd.paneles.find((p) => p.id === m.panel_id)?.nombre,
@@ -1019,6 +1123,105 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
 
   if (metodo === 'POST' && partes[0] === 'encuestas' && partes[2] === 'ingesta') {
     return ingestar(Number(partes[1]), cuerpo);
+  }
+
+  /* R3.14 — el catálogo de atributos demográficos. */
+  if (clave === 'GET /atributos') {
+    const conDatos = new Set();
+    bd.personas.forEach((p) => {
+      if (p.sexo) conDatos.add('sexo');
+      if (p.localidad) conDatos.add('localidad');
+      if (p.fecha_nacimiento) { conDatos.add('tramo_etario'); conDatos.add('edad'); }
+      Object.keys(p.atributos || {}).forEach((k) => conDatos.add(k));
+    });
+    return {
+      items: bd.atributos
+        .filter((a) => (!['1', 'true'].includes(String(consulta.activos || '')) || a.activo))
+        .map((a) => ({ ...a, tiene_datos: conDatos.has(a.clave) })),
+    };
+  }
+
+  if (metodo === 'POST' && clave === 'POST /atributos') {
+    const claveNueva = (cuerpo.clave || '').trim().toLowerCase();
+    if (!claveNueva) throw new ErrorDemo('Falta la clave del atributo.', 400);
+    if (bd.atributos.some((a) => a.clave === claveNueva)) {
+      throw new ErrorDemo(`Ya existe un atributo con la clave «${claveNueva}».`, 409);
+    }
+    if (cuerpo.tipo === 'derivado') {
+      throw new ErrorDemo(
+        'Un atributo derivado se calcula a partir de otro dato de la persona, '
+        + 'y ese cálculo vive en el esquema: no se puede definir desde la app.',
+        400);
+    }
+    return crearAtributo({
+      clave: claveNueva, etiqueta: cuerpo.etiqueta || claveNueva,
+      tipo: cuerpo.tipo || 'categorico', descripcion: cuerpo.descripcion || null,
+      es_especial: !!cuerpo.es_especial, categorias: cuerpo.categorias || [],
+    });
+  }
+
+  if (partes[0] === 'atributos' && partes.length >= 2 && partes[1] !== 'auditoria') {
+    const atributo = bd.atributos.find((a) => String(a.id) === partes[1]);
+    if (!atributo) throw new ErrorDemo('No existe el atributo.', 404);
+
+    if (metodo === 'PATCH' && partes.length === 2) {
+      if ('activo' in cuerpo && Object.keys(cuerpo).length === 1) {
+        if (!cuerpo.activo && atributo.del_nucleo) {
+          throw new ErrorDemo(
+            `«${atributo.clave}» es uno de los segmentadores sobre los que `
+            + 'funcionan la composición, las cuotas y el muestreo: no se puede '
+            + 'desactivar.', 409);
+        }
+        atributo.activo = !!cuerpo.activo;
+        return atributo;
+      }
+      if (cuerpo.etiqueta) atributo.etiqueta = cuerpo.etiqueta;
+      if ('descripcion' in cuerpo) atributo.descripcion = cuerpo.descripcion || null;
+      if ('es_especial' in cuerpo) atributo.es_especial = !!cuerpo.es_especial;
+      return atributo;
+    }
+
+    if (metodo === 'DELETE' && partes.length === 2) {
+      if (atributo.del_nucleo) {
+        throw new ErrorDemo(
+          `«${atributo.clave}» es uno de los segmentadores del núcleo: no se `
+          + 'elimina.', 409);
+      }
+      bd.atributos.splice(bd.atributos.indexOf(atributo), 1);
+      return { id: atributo.id, clave: atributo.clave, estado: 'eliminado' };
+    }
+
+    if (metodo === 'POST' && partes[2] === 'categorias') {
+      const claveCat = (cuerpo.clave || '').trim();
+      if (atributo.categorias.some((c) => c.clave === claveCat)) {
+        throw new ErrorDemo(`La categoría «${claveCat}» ya existe.`, 409);
+      }
+      const categoria = {
+        id: siguiente('atributo') * 1000 + atributo.categorias.length,
+        clave: claveCat, etiqueta: cuerpo.etiqueta || claveCat,
+        orden: (atributo.categorias.length + 1) * 10, activo: true,
+      };
+      atributo.categorias.push(categoria);
+      return categoria;
+    }
+
+    if (metodo === 'PATCH' && partes[2] === 'categorias') {
+      const categoria = atributo.categorias.find((c) => String(c.id) === partes[3]);
+      if (!categoria) throw new ErrorDemo('No existe la categoría.', 404);
+      if (cuerpo.etiqueta) categoria.etiqueta = cuerpo.etiqueta;
+      return categoria;
+    }
+
+    if (metodo === 'POST' && partes[2] === 'recalcular') {
+      return { clave: atributo.clave, revisados: 0, recalculados: 0,
+               sin_categoria: [] };
+    }
+  }
+
+  if (metodo === 'GET' && partes[0] === 'panelistas' && partes[2] === 'atributos') {
+    const persona = bd.personas.find((p) => p.id_persona === partes[1]);
+    if (!persona) throw new ErrorDemo('No existe la persona.', 404);
+    return { items: atributosDe(persona) };
   }
 
   /* R3.13 — cargas: incorporar individuos con sus respuestas, sin panel. */

@@ -9,6 +9,7 @@ Eso lo hace probable sin desplegar nada.
 import re
 
 from . import (
+    atributos,
     auditoria,
     bajas,
     calidad,
@@ -847,11 +848,18 @@ def publicar_texto(ctx, actor, params, cuerpo, consulta):
 #  Fase 3 · 3C — Fricción operativa
 # ════════════════════════════════════════════════════════════════════
 
+
+def _claves_del_catalogo(ctx):
+    """Las claves de los atributos activos (R3.14), para sugerir el marcado."""
+    return [a["clave"] for a in atributos.listar(
+        ctx.boveda, solo_activos=True, con_categorias=False)]
+
+
 @ruta("POST", "/encuestas/<encuesta_id>/sav/analizar", "ingestar", requisito="R3.9")
 def analizar_sav(ctx, actor, params, cuerpo, consulta):
     """Devuelve la metadata precargada del `.sav`. No ingesta nada."""
     contenido = _archivo_de(cuerpo)
-    return 200, sav.analizar(contenido)
+    return 200, sav.analizar(contenido, _claves_del_catalogo(ctx))
 
 
 @ruta("POST", "/encuestas/<encuesta_id>/sav/ingesta", "ingestar", requisito="R3.9")
@@ -874,7 +882,8 @@ def ingestar_sav(ctx, actor, params, cuerpo, consulta):
     # mapeo a campos de `persona`: `mapeo_patronimico` quedó como alias de
     # compatibilidad para las llamadas viejas, no como un mecanismo aparte.
     demograficas = sav.normalizar_demograficas(
-        cuerpo.get("demograficas"), {c for fila in filas for c in fila})
+        cuerpo.get("demograficas"), {c for fila in filas for c in fila},
+        campos_validos=sav.campos_demograficos(ctx.boveda))
     mapeo = sav.mapeo_por_campo(demograficas) or (
         cuerpo.get("mapeo_patronimico") or {})
     # Los value labels de cada variable, para traducir el código del archivo
@@ -947,7 +956,7 @@ def listar_cargas(ctx, actor, params, cuerpo, consulta):
 def analizar_sav_de_carga(ctx, actor, params, cuerpo, consulta):
     """Mismo contrato que el análisis de R3.9: la pantalla es la misma."""
     cargas.obtener(ctx.boveda, _entero(params["carga_id"]))
-    return 200, sav.analizar(_archivo_de(cuerpo))
+    return 200, sav.analizar(_archivo_de(cuerpo), _claves_del_catalogo(ctx))
 
 
 @ruta("POST", "/cargas/<carga_id>/ingesta", "ingestar", requisito="R3.13")
@@ -970,7 +979,8 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
              else (cuerpo.get("filas") or []))
 
     demograficas = sav.normalizar_demograficas(
-        cuerpo.get("demograficas"), {c for fila in filas for c in fila})
+        cuerpo.get("demograficas"), {c for fila in filas for c in fila},
+        campos_validos=sav.campos_demograficos(ctx.boveda))
     opciones_por_variable = {
         p.get("codigo"): (p.get("opciones") or {}) for p in preguntas
     }
@@ -1093,6 +1103,115 @@ def panel_desde_consulta(ctx, actor, params, cuerpo, consulta):
         descripcion=cuerpo.get("descripcion"),
         actor=actor, consulta_id=cuerpo.get("consulta_id"),
     )
+
+
+# ════════════════════════════════════════════════════════════════════
+#  R3.14 — Catálogo de atributos demográficos
+# ════════════════════════════════════════════════════════════════════
+#
+# Leer el catálogo lo puede hacer cualquiera que pueda leer: la pantalla de
+# carga, la de consultas y la de composición lo necesitan para armar sus
+# desplegables. **Escribirlo es solo de admin** (`gestionar_atributos`):
+# define con qué se puede segmentar al panel entero y, cuando marca una
+# categoría especial, toca una obligación legal.
+
+@ruta("GET", "/atributos", "leer", requisito="R3.14")
+def listar_atributos(ctx, actor, params, cuerpo, consulta):
+    return 200, {
+        "items": atributos.listar(
+            ctx.boveda,
+            solo_activos=_bandera(consulta.get("activos")),
+            incluir_especiales=not _bandera(consulta.get("sin_especiales")),
+        )
+    }
+
+
+@ruta("GET", "/atributos/<atributo_id>", "leer", requisito="R3.14")
+def ver_atributo(ctx, actor, params, cuerpo, consulta):
+    return 200, atributos.obtener(ctx.boveda, params["atributo_id"])
+
+
+@ruta("POST", "/atributos", "gestionar_atributos", requisito="R3.14")
+def crear_atributo(ctx, actor, params, cuerpo, consulta):
+    salida = atributos.crear(ctx.boveda, cuerpo or {}, actor=actor)
+    ctx.boveda.commit()
+    return 201, salida
+
+
+@ruta("PATCH", "/atributos/<atributo_id>", "gestionar_atributos", requisito="R3.14")
+def editar_atributo(ctx, actor, params, cuerpo, consulta):
+    cuerpo = cuerpo or {}
+    # `activo` se maneja por su propio camino: desactivar no es editar, y
+    # tiene una regla propia (los del núcleo no se desactivan).
+    if "activo" in cuerpo and len(cuerpo) == 1:
+        salida = atributos.desactivar(
+            ctx.boveda, params["atributo_id"], bool(cuerpo["activo"]), actor=actor)
+    else:
+        salida = atributos.editar(
+            ctx.boveda, params["atributo_id"], cuerpo, actor=actor)
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("DELETE", "/atributos/<atributo_id>", "gestionar_atributos", requisito="R3.14")
+def eliminar_atributo(ctx, actor, params, cuerpo, consulta):
+    salida = atributos.eliminar(ctx.boveda, params["atributo_id"], actor=actor)
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("POST", "/atributos/<atributo_id>/categorias", "gestionar_atributos",
+      requisito="R3.14")
+def agregar_categoria(ctx, actor, params, cuerpo, consulta):
+    salida = atributos.agregar_categoria(
+        ctx.boveda, params["atributo_id"], cuerpo or {}, actor=actor)
+    ctx.boveda.commit()
+    return 201, salida
+
+
+@ruta("PATCH", "/atributos/<atributo_id>/categorias/<categoria_id>",
+      "gestionar_atributos", requisito="R3.14")
+def editar_categoria(ctx, actor, params, cuerpo, consulta):
+    salida = atributos.editar_categoria(
+        ctx.boveda, params["atributo_id"], _entero(params["categoria_id"]),
+        cuerpo or {}, actor=actor)
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("POST", "/atributos/<atributo_id>/recalcular", "gestionar_atributos",
+      requisito="R3.14")
+def recalcular_atributo(ctx, actor, params, cuerpo, consulta):
+    """R3.14.h — corregido el vocabulario, se recalculan los canónicos desde
+    los valores crudos guardados. Sin volver a pedir el archivo original."""
+    salida = atributos.recalcular(ctx.boveda, params["atributo_id"], actor=actor)
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("GET", "/atributos-auditoria", "cumplimiento", requisito="R3.14")
+def auditoria_atributos(ctx, actor, params, cuerpo, consulta):
+    """Quién tocó el vocabulario y cuándo. Va con `cumplimiento` porque el
+    uso previsto es una revisión: que no aparezca una categoría especial sin
+    que nadie la haya decidido."""
+    return 200, {"items": atributos.auditoria(
+        ctx.boveda, atributo_id=_entero(consulta.get("atributo_id")))}
+
+
+@ruta("GET", "/panelistas/<id_persona>/atributos", "leer", requisito="R3.14")
+def atributos_de_persona(ctx, actor, params, cuerpo, consulta):
+    return 200, {"items": atributos.valores_de(ctx.boveda, params["id_persona"])}
+
+
+@ruta("PUT", "/panelistas/<id_persona>/atributos/<clave>", "enrolar",
+      requisito="R3.14")
+def fijar_atributo_de_persona(ctx, actor, params, cuerpo, consulta):
+    salida = atributos.fijar(
+        ctx.boveda, params["id_persona"], params["clave"],
+        (cuerpo or {}).get("valor"), origen="edicion",
+        fecha_referencia=(cuerpo or {}).get("fecha_referencia"))
+    ctx.boveda.commit()
+    return 200, salida
 
 
 @ruta("GET", "/yo", None)

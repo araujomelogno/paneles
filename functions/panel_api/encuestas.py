@@ -297,7 +297,8 @@ def registrar_participacion_importada(conn, encuesta_id, ids_persona):
 
 
 def completar_demograficos(conn, filas, demograficas, columna_id, mapa,
-                           opciones_por_variable=None):
+                           opciones_por_variable=None, origen="ingesta",
+                           fecha_referencia=None):
     """Vuelca a la bóveda los demográficos que trae el archivo.
 
     Addendum de R3.9 · R3.9.d. Solo completa lo que está vacío; un dato ya
@@ -314,11 +315,17 @@ def completar_demograficos(conn, filas, demograficas, columna_id, mapa,
     """
     campos = sav.mapeo_por_campo(demograficas)
     if not campos:
-        return {"demograficos_completados": 0, "discrepancias_demograficas": []}
+        return {"demograficos_completados": 0, "discrepancias_demograficas": [],
+                "valores_sin_categoria": []}
 
     por_variable = {variable: campo for campo, variable in campos.items()}
     opciones_por_variable = opciones_por_variable or {}
     completados, discrepancias = 0, []
+    # R3.14.c — los valores del archivo que no corresponden a ninguna
+    # categoría del atributo. No se inventa la categoría: la fila queda sin
+    # ese atributo y se informa, con el listado para que se pueda corregir el
+    # vocabulario y después recalcular.
+    sin_categoria = {}
     vistos = set()
     for fila in filas:
         id_en_origen = str(fila.get(columna_id) or "").strip()
@@ -336,13 +343,24 @@ def completar_demograficos(conn, filas, demograficas, columna_id, mapa,
         if not datos:
             continue
 
-        resultado = personas.completar_desde_archivo(conn, id_persona, datos)
+        resultado = personas.completar_desde_archivo(
+            conn, id_persona, datos, origen=origen,
+            fecha_referencia=fecha_referencia)
         completados += len(resultado["completados"])
         for discrepancia in resultado["discrepancias"]:
             discrepancias.append({"id_persona": id_persona, **discrepancia})
+        for caso in resultado.get("sin_categoria") or []:
+            sin_categoria.setdefault(
+                (caso["clave"], caso["motivo"]), set()).add(str(caso.get("valor")))
 
-    return {"demograficos_completados": completados,
-            "discrepancias_demograficas": discrepancias}
+    return {
+        "demograficos_completados": completados,
+        "discrepancias_demograficas": discrepancias,
+        "valores_sin_categoria": [
+            {"atributo": clave, "motivo": motivo, "valores": sorted(valores)}
+            for (clave, motivo), valores in sorted(sin_categoria.items())
+        ],
+    }
 
 
 # ── R3.12.a · Exportar la muestra para precargar el instrumento ──────
@@ -365,6 +383,10 @@ CAMPOS_MUESTRA_CON_CONTACTO = (
     "sexo", "localidad", "tramo_etario",
 )
 
+# R3.14.e — un atributo marcado como categoría especial **no** se agrega a
+# esta lista ni a ninguna exportación con datos. La lista es fija a propósito:
+# que el catálogo crezca no puede hacer crecer solo lo que sale del sistema en
+# un archivo.
 AVISO_MUESTRA_CON_PII = (
     "# ATENCIÓN: este archivo contiene datos personales de panelistas. "
     "Tratarlo según la política de protección de datos: no reenviarlo fuera "
@@ -512,7 +534,8 @@ def ingestar(conn_boveda, conn_semantica, encuesta_id, preguntas, filas,
     una regla de privacidad que solo vive en el navegador no es una regla.
     """
     encuesta = obtener(conn_boveda, encuesta_id)
-    demograficas = sav.normalizar_demograficas(demograficas)
+    demograficas = sav.normalizar_demograficas(
+        demograficas, campos_validos=sav.campos_demograficos(conn_boveda))
 
     marcadas = set(demograficas)
     excluidas = sorted(

@@ -69,6 +69,7 @@ restricción real del sistema.
 | [D33](#d33) | Los demográficos del archivo van a la bóveda y no al store semántico | 3 |
 | [D34](#d34) | El identificador viaja al campo en vez de adivinarlo a la vuelta | 3 |
 | [D35](#d35) | Incorporar individuos y hacerlos panelistas son dos cosas distintas | 3 |
+| [D36](#d36) | Los segmentadores son un catálogo, no una lista en el código | 3 |
 
 ---
 
@@ -1424,6 +1425,114 @@ parametrizada por destino).
 
 ---
 
+<a id="d36"></a>
+## D36 · Los segmentadores son un catálogo, no una lista en el código
+
+**El problema.** La bóveda tenía tres segmentadores y punto: `persona.sexo`,
+`persona.localidad` y el tramo derivado de `persona.fecha_nacimiento`. Eran
+los únicos por los que se podía filtrar una consulta, fijar una cuota, ver una
+brecha y equilibrar un muestreo. Nivel educativo, nivel socioeconómico,
+ocupación, composición del hogar, tenencia de bienes —todo lo que una
+consultora de mercado pregunta en cada estudio— no tenía dónde guardarse: o se
+perdía, o terminaba embebido como una pregunta más del lado semántico, que es
+justamente lo que el marcado de demográficas (D33) existe para evitar. Y
+agregar uno costaba una migración, o sea un ciclo de desarrollo para algo que
+es vocabulario, no software.
+
+**La decisión.** Un **catálogo** que administra un admin desde la app. Define
+el atributo y sus categorías, y de ahí en más ese atributo sirve exactamente
+igual que sexo o localidad, en los cuatro lugares que dependen de
+segmentadores.
+
+**Acá sí canonizamos, y es la inversa de lo que hacemos con las respuestas.**
+Es la misma distinción de diseño de todo el sistema: lo estructurado se
+consulta con SQL exacto y necesita categorías estables; lo semántico se
+interpreta en cada consulta (*schema-on-read*). Canonizar texto libre congela
+errores en el dato —por eso las respuestas no se canonizan—, pero canonizar
+segmentadores es lo que hace que un filtro devuelva siempre lo mismo y que la
+aritmética de las cuotas cierre. Sin vocabulario cerrado aparecen veinte
+variantes de «nivel educativo» escritas distinto y ninguna cuota cierra.
+
+**La salvaguarda contra congelar un error es el valor crudo.** Cada valor
+guarda además **lo que decía el archivo**. Si el mapeo salió mal, se corrige el
+catálogo y se recalcula desde ahí, sin volver a pedir ni recargar el archivo
+original (R3.14.h). Es lo que hace que canonizar sea reversible, y es la razón
+por la que se pudo canonizar sin repetir el problema que hizo descartarlo para
+las respuestas.
+
+**Se unificó ahora, no después, y esa fue la parte cara.** `sexo`,
+`localidad`, `tramo_etario` y `edad` pasaron al mismo catálogo, con las mismas
+claves de siempre. Eso obligó a tocar código que ya funcionaba —consultas
+demográficas, composición, muestreo, bonos, la ficha, el alta— a cambio de no
+quedar con dos mecanismos en paralelo para siempre. El argumento decisivo fue
+el muestreo: **todavía no existía**, así que construirlo contra el catálogo no
+costó nada, mientras que construirlo contra las columnas fijas habría creado
+la deuda en el momento mismo de nacer. Lo que separa una unificación limpia de
+una que rompe en silencio es el test de no regresión sobre sexo y localidad, y
+se escribió antes de migrar.
+
+**Dos cosas que hicieron que la unificación no rompiera nada:**
+
+| | |
+|---|---|
+| **`v_demografia` conserva nombre y columnas** | Se reescribió sobre el catálogo pero sigue devolviendo `id_persona, sexo, localidad, edad, tramo_etario`. Todo el código que la consulta —participación, exportaciones, ficha, bonos— siguió andando sin tocarse. Las 519 pruebas que ya existían pasaron sin cambios de comportamiento |
+| **Un solo lugar resuelve el valor efectivo** | `v_atributo_persona`. Los filtros, la composición, las cuotas y el muestreo leen de ahí, y `v_demografia` también. No hay un camino para los segmentadores «de fábrica» y otro para los definidos por el usuario |
+
+**«Sin dato» no es una categoría.** Antes, quien no tenía sexo cargado
+aparecía como una categoría `(sin dato)` en la composición, con su proporción
+calculada sobre el panel entero. Eso hacía dos cosas malas a la vez: mostraba
+una categoría de cuota que nadie cargó, y su peso en el denominador bajaba la
+proporción observada de todas las demás, con lo cual la brecha marcaba un
+déficit que no existía. Ahora se informa aparte, y las proporciones se
+calculan sobre quienes tienen el dato —que es la única base sobre la que suman
+1—; el faltante en personas, en cambio, se sigue contando contra el panel
+entero, porque el panel es del tamaño que es.
+
+**La edad se envejece, no se congela.** Es habitual que una base traiga «34
+años» y no la fecha de nacimiento. Guardarla como tramo lo congela: alguien
+cargado como «25-34» en 2019 seguiría contando ahí hoy, y las cuotas se
+calcularían sobre una edad que ya no es. La precedencia es fecha de nacimiento
+→ edad declarada **con su fecha de referencia**, envejecida hasta hoy → tramo
+cargado tal cual, que es el último recurso y el único que queda congelado. La
+fecha de nacimiento gana siempre que exista, y cuando aparece después, el
+tramo pasa a derivarse de ella sin recargar nada. La ficha dice cuál de los
+tres casos es, porque los tres valen pero no valen lo mismo.
+
+**Las categorías especiales tienen freno propio.** Un catálogo abierto permite
+definir «religión» o «afiliación política» como si fueran un segmentador
+cualquiera, y en investigación de mercado se preguntan seguido. Bajo la Ley
+18.331 son categorías especiales con exigencias propias. Sin un control, el
+sistema facilitaría almacenarlas sin que nadie lo note: por eso se declaran al
+definirlas, se advierte ahí mismo que exigen consentimiento específico, se
+listan aparte para que una revisión de cumplimiento las vea, y quedan fuera de
+las exportaciones con datos. La lista de campos de esas exportaciones es
+**fija** a propósito: que el catálogo crezca no puede hacer crecer solo lo que
+sale del sistema en un archivo.
+
+**El costo que sí se paga.** Con vocabulario cerrado, dar de alta a alguien de
+una localidad que no está en el catálogo ya no se puede hacer tipeándola: hay
+que agregarla primero. La migración siembra los diecinueve departamentos más
+todo valor distinto que ya estuviera cargado, así que en la práctica el hueco
+aparece poco; pero cuando aparece, el alta lo informa en el momento en vez de
+guardar una variante nueva en silencio. Es deliberado: la alternativa es que
+las cuotas geográficas no cierren nunca.
+
+**Lo que quedó afuera a propósito.** Los datos de identidad y contacto no
+entran al catálogo: no son segmentadores. Tampoco `fecha_nacimiento`, que es
+dato de identidad y llave del dedup (R1.2); de ella se deriva el tramo, que sí
+es un atributo. Y no se crean atributos al vuelo durante una carga: el
+vocabulario lo define un admin, porque si cualquiera pudiera inventarlo al
+cargar volveríamos exactamente al problema que esto resuelve.
+
+**Dónde vive.** `db/boveda/0008_atributos_demograficos.sql` (las tres tablas,
+la siembra, la migración de datos y las dos vistas),
+`functions/panel_api/atributos.py`, y el catálogo enhebrado en
+`demografia.py`, `composicion.py`, `muestreo.py`, `puntos.py`, `personas.py`,
+`sav.py` y `encuestas.py`. Del lado de la interfaz, `web/public/js/catalogo.js`
+y la solapa de atributos en `web/public/js/paginas/configuracion.js`.
+
+---
+
 ## Anexo · Decisiones que no se tomaron
 
 Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
@@ -1434,6 +1543,11 @@ Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 | Que Dooblo y Alchemer permitan precargar una variable oculta | **A verificar fuera del código.** Si no se puede, el peso cae en los respaldos por documento o correo | [D34](#d34) |
 | Si el consentimiento de uso semántico alcanza para conservar patronímicos de un no-panelista | **Abierta, y es legal.** El sistema permite cargar con o sin patronímicos; hay que definirlo antes de usar R3.13 con bases reales | [D35](#d35) |
 | Qué hacer con las personas sin panel acumuladas | Sin política: nadie las revisa ni las depura por ahora | [D35](#d35) |
+| Si se van a definir atributos que sean categorías especiales | **Abierta, y es legal.** El sistema los permite y los advierte; el consentimiento actual probablemente no alcance para tratarlos | [D36](#d36) |
+| Quién es dueño del vocabulario de segmentadores | Sin definir. Sin un responsable, el catálogo se llena de atributos parecidos | [D36](#d36) |
+| Versionar el conjunto de categorías de un atributo | No se hizo: alcanza con no permitir cambiar claves. Cambiar categorías usadas en cuotas históricas rompe la comparabilidad entre olas, y eso queda como riesgo anotado | [D36](#d36) |
+| Historial de un atributo que cambia con el tiempo (ocupación, ingresos) | Se guarda un solo valor vigente. El historial se cruza con el análisis longitudinal de Fase 4 | [D36](#d36) |
+| Eliminar `persona.sexo` y `persona.localidad` | Pendiente de una migración posterior: quedaron obsoletas, no se escriben ni se leen, y se borran una vez verificado que nada las usa | [D36](#d36) |
 | Embeber un demográfico cuando es el objeto del estudio | Sin override: la marca excluye sin excepción. Habilitarlo reintroduce el espejado que el diseño descarta | [D33](#d33) |
 | Base legal del alta por SAV | **Resuelta:** la evidencia viaja en el archivo y declararla es obligatorio. Lo que queda es de campo: que el cuestionario incluya la pregunta | [D25](#d25) |
 | Texto de consentimiento de la landing | Pendiente del DPO; el sistema lo trata como dato | [D24](#d24) |

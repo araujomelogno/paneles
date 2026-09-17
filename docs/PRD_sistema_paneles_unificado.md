@@ -77,6 +77,7 @@ Cómo funciona el motor por dentro. Las tres formas de consulta como feature de 
 
 Desde archivo de cuestionario + Excel ancho de respuestas (exports de las plataformas de campo, p. ej. Dooblo o Alchemer; el identificador de cada plataforma se guarda como alias de origen para resolver ingestas futuras a la misma persona). El estudio que agrupa lo ingestado puede ser una **encuesta** de un panel o una **carga** sin panel (R3.13): del lado semántico son lo mismo, un `ref_estudio`.
 - Despivote ancho → largo; cada columna se une a su pregunta por `codigo` (= encabezado del Excel).
+- Las variables marcadas como **demográficas** no se ingestan como pregunta: su valor va a la bóveda, al campo de `persona` o al atributo del catálogo que se les haya asignado (R3.14).
 - Resolución código/etiqueta por celda contra el mapa de opciones antes de embeber.
 - Composición del texto como "pregunta → respuesta" y vectorización en lotes.
 - Inserción idempotente (re-corridas no duplican).
@@ -134,9 +135,9 @@ Caché derivado de interpretaciones recurrentes (versionado por modelo, invalida
 
 **Objetivo.** Pasar de observar a accionar.
 
-**Alcance.** Motor de muestreo por reglas (propone a quién invitar priorizando brechas de cuota y excluyendo sobre-convocados); chequeos de calidad (speeders, straightliners, duplicados); gamificación con ledger de puntos como moneda (auditable, saldo ≥ 0, vencimiento), catálogo y canje, ganando puntos **solo por participación de calidad**; bonos dirigidos a segmentos de cuota difíciles; **landing pública de auto-registro** de panelistas; **ingesta desde archivos SAV de SPSS** (con alta opcional de individuos en la misma carga); y tres mejoras operativas sobre la consulta y la carga: **exportar el resultado reidentificado**, **crear un panel a partir de un resultado** y **cargar individuos sin asociarlos a ningún panel**.
+**Alcance.** Motor de muestreo por reglas (propone a quién invitar priorizando brechas de cuota y excluyendo sobre-convocados); chequeos de calidad (speeders, straightliners, duplicados); gamificación con ledger de puntos como moneda (auditable, saldo ≥ 0, vencimiento), catálogo y canje, ganando puntos **solo por participación de calidad**; bonos dirigidos a segmentos de cuota difíciles; **landing pública de auto-registro** de panelistas; **ingesta desde archivos SAV de SPSS** (con alta opcional de individuos en la misma carga); y cuatro mejoras operativas sobre la consulta y la carga: **exportar el resultado reidentificado**, **crear un panel a partir de un resultado**, **cargar individuos sin asociarlos a ningún panel** y **atributos demográficos configurables**.
 
-**Requisitos.** R3.1 muestreo por reglas · R3.2 chequeos de calidad · R3.3 ledger de puntos · R3.4 earn por calidad · R3.5 catálogo y canje · R3.6 bono dirigido · **R3.7 landing de auto-registro** · **R3.8 gestión de usuarios del sistema** · **R3.9 ingesta desde archivo SAV (SPSS)** · **R3.10 exportar el resultado reidentificado** · **R3.11 crear panel desde el resultado de una consulta** · **R3.12 identificación del respondente en el trabajo de campo** · **R3.13 cargar panelistas sin asociarlos a un panel**.
+**Requisitos.** R3.1 muestreo por reglas · R3.2 chequeos de calidad · R3.3 ledger de puntos · R3.4 earn por calidad · R3.5 catálogo y canje · R3.6 bono dirigido · **R3.7 landing de auto-registro** · **R3.8 gestión de usuarios del sistema** · **R3.9 ingesta desde archivo SAV (SPSS)** · **R3.10 exportar el resultado reidentificado** · **R3.11 crear panel desde el resultado de una consulta** · **R3.12 identificación del respondente en el trabajo de campo** · **R3.13 cargar panelistas sin asociarlos a un panel** · **R3.14 atributos demográficos configurables**.
 
 **R3.7 — Landing de auto-registro.** Formulario público donde una persona se inscribe al panel y **da su propio consentimiento** (más fuerte legalmente que un operador registrándolo por ella). Incluye: captura de datos patronímicos y de contacto, texto de consentimiento versionado por finalidad, dedup contra panelistas existentes al enviar, y estado de alta pendiente de aprobación por Equipos antes de entrar al panel. Emite `id_persona` por la misma vía que el alta interna (R1.1–R1.3), reutilizando identidad si la persona ya existe.
 
@@ -209,6 +210,27 @@ Criterios de aceptación:
 
 > **Una tabla nueva y no una encuesta sin panel.** Una encuesta es, por definición, algo que se fieldea a un panel: convocar, la composición y el muestreo lo dan por sentado. Hacer el panel opcional obligaría a revisar cada uno de esos caminos y dejaría encuestas que no se pueden fieldear, un estado que no significa nada. Una entidad aparte mantiene esa semántica intacta.
 
+**R3.14 — Atributos demográficos configurables.** La bóveda tenía una lista **fija** de segmentadores —sexo, fecha de nacimiento y localidad— y eran los únicos por los que se podía filtrar, segmentar y fijar cuotas. Cualquier otro segmentador habitual en investigación de mercado —nivel educativo, nivel socioeconómico, ocupación, composición del hogar, tenencia de bienes— no tenía dónde guardarse: o se perdía, o terminaba embebido como una pregunta más en el store semántico, que es justamente lo que el marcado de demográficas evita. Y agregar cada segmentador nuevo requería una migración de base, o sea que dependía de un ciclo de desarrollo.
+
+Se reemplaza esa lista por un **catálogo** que administra un admin desde la app: define el atributo, su tipo y sus **categorías canónicas**, y de ahí en más ese atributo sirve exactamente igual que sexo o localidad en los cuatro lugares que dependen de segmentadores —filtros de consulta, composición, cuotas y muestreo—. Los cuatro segmentadores existentes pasan al mismo catálogo, con las mismas claves, de modo que no queden dos mecanismos en paralelo.
+
+Criterios de aceptación:
+- Dado un admin, cuando define un atributo categórico con sus categorías, entonces queda disponible para cargarlo desde un archivo y para filtrar, componer y fijar cuotas por él. Solo `admin` administra el catálogo, y toda creación, edición y desactivación queda auditada.
+- Dada una clave ya usada por datos cargados, entonces **no se puede cambiar** —es lo que guardan los objetivos de composición y los valores de cada persona—; la etiqueta visible sí.
+- Dado un atributo con datos, cuando se lo quiere eliminar, entonces **no se borra: se desactiva**, y conserva lo cargado.
+- Dado un valor del archivo que no corresponde a ninguna categoría, entonces **no se inventa una**: la fila queda sin ese atributo y el resultado lo informa. Se guarda además el **valor crudo**, y corregido el vocabulario se recalcula desde él, sin volver a pedir el archivo.
+- Dada una persona sin valor para un atributo, entonces se informa aparte como «sin dato» y **no se cuenta dentro de ninguna categoría**, para no inflar ninguna ni distorsionar la brecha.
+- Dado un atributo marcado como **categoría especial** (salud, origen étnico o racial, convicciones religiosas o morales, afiliación sindical, ideología política, vida sexual), entonces se advierte que su tratamiento exige consentimiento específico bajo la Ley 18.331, se lista aparte y queda excluido de las exportaciones con datos.
+- Dado el guardrail de PII (R1.6), entonces ningún valor de atributo llega al store semántico: los segmentadores siguen siendo autoritativos en la bóveda.
+- Dada la migración, entonces `sexo`, `localidad`, `tramo_etario` y `edad` existen en el catálogo con las claves de siempre, los objetivos ya cargados siguen resolviendo, y una consulta demográfica por sexo o localidad devuelve **exactamente los mismos individuos** que antes.
+- Dado un individuo con fecha de nacimiento, entonces su tramo se deriva de ella y ningún valor cargado la reemplaza. Sin fecha, una **edad declarada con su fecha de referencia** se envejece hasta hoy; en última instancia se usa un tramo cargado. Sin ninguno de los tres, queda «sin dato».
+
+> **Por qué acá sí se canoniza.** Es la misma distinción de diseño de todo el sistema: lo estructurado se consulta con SQL exacto y necesita categorías estables; lo semántico se interpreta en cada consulta. Canonizar texto libre congela errores en el dato —por eso las respuestas no se canonizan—, pero canonizar segmentadores es lo que hace que un filtro devuelva siempre lo mismo y que la aritmética de las cuotas cierre. La salvaguarda contra congelar un error es guardar el valor crudo junto al canónico.
+
+> **Por qué unificar ahora y no después.** El muestreo (R3.1) no existía todavía: construirlo contra el catálogo no costó nada, mientras que construirlo contra los campos fijos habría creado la deuda en el mismo momento de nacer. La composición y las consultas demográficas sí hubo que tocarlas, pero es una vez y con test de no regresión, en vez de dos mecanismos que hay que recordar mantener en paralelo para siempre.
+
+> **Por qué la edad se envejece y no se congela.** Un panel vive años. Alguien cargado como «25-34» en 2024 puede estar hoy en otro tramo, y con el valor congelado nadie se entera: las cuotas se calculan sobre una edad que ya no es. Guardar la edad con su fecha de referencia cuesta una columna y mantiene el dato vivo.
+
 **Bloqueante.** Tratamiento fiscal del canje de premios en Uruguay.
 
 ---
@@ -243,6 +265,10 @@ Criterios de aceptación:
 - **[legal]** ¿El consentimiento del alta cubre el perfilado semántico entre estudios, o requiere base/consentimiento separado? *(bloqueante para el uso semántico)*
 - **[legal/finanzas]** Tratamiento fiscal del canje de premios en Uruguay. *(bloqueante — Fase 3)*
 - ~~**[legal]** Con qué base legal se dan de alta los individuos creados desde un archivo SAV (R3.9).~~ **Resuelto:** evidencia de consentimiento en el propio archivo, declarada de forma obligatoria al importar. Lo que queda es operativo: que el cuestionario de campo incluya la pregunta de consentimiento, porque sin ella no se puede dar de alta a nadie desde ese archivo.
+- **[legal]** ¿Se van a definir atributos que sean **categorías especiales** (R3.14)? Si la respuesta es sí, el consentimiento del alta y el de la landing probablemente no alcancen: esas categorías requieren consentimiento específico bajo la Ley 18.331. *Definir antes de habilitar el marcado.*
+- **[privacidad]** Cada atributo demográfico nuevo es un cuasi-identificador más: aumenta el riesgo de reidentificación por combinación, aun quedando del lado bóveda. Conviene un criterio sobre cuántos y cuáles.
+- **[producto]** ¿Quién mantiene el vocabulario de segmentadores? Sin un dueño claro, el catálogo se llena de atributos parecidos y vuelve el problema que R3.14 resuelve.
+- **[datos]** Atributos que cambian con el tiempo (nivel educativo, ocupación, ingresos): hoy se guarda un solo valor vigente. Si interesa la evolución, hace falta historial, y eso se cruza con el análisis longitudinal de Fase 4.
 - **[legal]** ¿Alcanza el consentimiento de uso semántico para conservar datos patronímicos (nombre, documento) de alguien que **no es panelista y no será contactado** (R3.13)? Si la respuesta es que no, esos individuos habría que cargarlos con demográficos pero sin patronímicos, o no cargarlos. *Definir antes de usar el flujo con bases reales.*
 - **[producto]** Personas sin panel acumuladas: sin una política de revisión periódica, la bóveda crece con gente que nadie mira.
 - **[producto/ingeniería]** ¿Hasta dónde llega el motor de muestreo: reglas u optimización? (separa Fase 3 de Fase 4)

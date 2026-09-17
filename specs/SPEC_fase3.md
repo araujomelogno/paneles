@@ -45,7 +45,7 @@ Once requisitos de naturaleza distinta. Se agrupan en tres bloques con dependenc
 |---|---|---|
 | **3A — Salud del panel accionable** | R3.1, R3.2, R3.3, R3.4, R3.5, R3.6 | Muestreo, calidad y gamificación |
 | **3B — Crecimiento y administración** | R3.7, R3.8 | Landing pública y usuarios del sistema |
-| **3C — Fricción operativa** | R3.9, R3.10, R3.11, R3.12, R3.13 | Ingesta SAV, exportación, instanciación de paneles, identificación en campo y carga sin panel |
+| **3C — Fricción operativa** | R3.9, R3.10, R3.11, R3.12, R3.13, R3.14 | Ingesta SAV, exportación, instanciación de paneles, identificación en campo, carga sin panel y atributos demográficos configurables |
 
 **Dependencias internas:** R3.4 (earn por calidad) depende de R3.2 (chequeos de calidad) — sin calidad medida, no hay con qué condicionar el punto. R3.5 (canje) depende de R3.3 (ledger). R3.6 (bono dirigido) depende de R3.3 y de la composición de Fase 2. R3.1 (muestreo) depende de la composición y la participación de Fase 2.
 
@@ -318,6 +318,46 @@ Spec propia en `specs/SPEC_R3.13_cargar_panelistas_sin_panel.md`. La única form
 *R3.13.f — Informe de resultados:*
 - Dado el resultado, entonces informa creados, reutilizados, en revisión, filas sin evidencia de consentimiento, respuestas escritas, variables excluidas por demográficas, campos completados y discrepancias. **No** informa membresías ni participaciones, porque no se crean.
 
+#### R3.14 — Atributos demográficos configurables (P0)
+Spec propia en `specs/SPEC_R3.14_atributos_demograficos.md`. La bóveda tenía una lista **fija** de segmentadores: sexo, fecha de nacimiento y localidad. Eran los únicos por los que se podía filtrar, segmentar y fijar cuotas, y cualquier otro segmentador habitual en investigación de mercado —nivel educativo, nivel socioeconómico, ocupación, composición del hogar— no tenía dónde guardarse: o se perdía, o terminaba embebido como una pregunta más del lado semántico, que es lo que el marcado de demográficas evita. Además, agregar uno costaba una migración, o sea un ciclo de desarrollo.
+
+*R3.14.a — Catálogo de atributos:*
+- Un admin define un atributo con su **clave** (identificador estable), **etiqueta**, **tipo** (`categorico` | `numerico` | `fecha` | `derivado`), descripción y si es **categoría especial**. Los `categorico` llevan sus **categorías canónicas**, que son los únicos valores admitidos.
+- Una clave ya usada por datos cargados **no se cambia**: es lo que guardan los objetivos de composición y los valores de cada persona. La etiqueta visible sí.
+- Un atributo con datos **no se borra: se desactiva**. Deja de ofrecerse en cargas y filtros nuevos y conserva lo cargado. Sin datos, sí se elimina.
+- Solo el rol `admin` administra el catálogo (permiso propio `gestionar_atributos`), y toda creación, edición y desactivación queda auditada con autor y fecha.
+
+*R3.14.b — Valores por persona:*
+- Una persona tiene **un solo valor vigente** por atributo, con su **origen** (alta, ingesta, carga, inscripción, edición) y su fecha de actualización. Un categórico guarda la categoría canónica, nunca texto libre.
+
+*R3.14.c — Carga desde archivos:*
+- El desplegable de campo demográfico lista los campos fijos de `persona` **más los atributos activos del catálogo**, tanto en la ingesta desde encuesta como en «Cargar panelistas» (R3.13).
+- Un valor del archivo que no corresponde a ninguna categoría **no inventa una**: la fila queda sin ese atributo y el resultado lo informa con el listado de valores no mapeados.
+- Se guarda también el **valor crudo tal como vino del archivo**, junto al canónico. Rigen las reglas de escritura del addendum R3.9.d: completar lo vacío, informar lo que discrepa, no pisar.
+
+*R3.14.d — Uso en consultas, composición y cuotas:*
+- Los atributos del catálogo se usan como dimensión en los filtros demográficos (R2.4 y R2.5), como dimensión de composición y cuota (R2.2 y R2.3) y en el muestreo por reglas (R3.1), igual que los campos fijos.
+- Una persona **sin valor** no cuenta como una categoría más: se informa aparte como «sin dato», y las proporciones observadas se calculan sobre quienes sí lo tienen, para no distorsionar la brecha.
+
+*R3.14.e — Categorías especiales:*
+- Un atributo puede declararse **categoría especial** (salud, origen étnico o racial, convicciones religiosas o morales, afiliación sindical, ideología política, vida sexual). Al definirlo se advierte que su tratamiento exige consentimiento específico y protección reforzada bajo la Ley 18.331.
+- Los especiales quedan **fuera de las exportaciones con datos** por defecto, se listan aparte en el catálogo y se pueden ocultar de la ficha.
+
+*R3.14.f — Unificación de los segmentadores existentes:*
+- `sexo`, `localidad`, `tramo_etario` y `edad` pasan al catálogo **con las mismas claves de siempre**, para que los objetivos de composición ya cargados y las consultas guardadas sigan resolviendo. `tramo_etario` y `edad` quedan como `derivado`.
+- `persona.sexo` y `persona.localidad` quedan **obsoletas**: dejan de escribirse y de leerse, y se eliminan en una migración posterior.
+- `v_demografia` se reescribe sobre el catálogo **conservando nombre y columnas**, para que el código que la consulta siga andando durante la transición.
+- El muestreo se construye directamente sobre el catálogo: al no estar implementado todavía, no hay reescritura que pagar.
+- Test de no regresión: una consulta demográfica por sexo o localidad devuelve exactamente los mismos individuos antes y después.
+
+*R3.14.g — Edad sin fecha de nacimiento:*
+- Precedencia, de más a menos preciso: **fecha de nacimiento** (gana siempre que exista) → **edad declarada con fecha de referencia**, que se envejece hasta hoy → **tramo cargado directamente**, que queda congelado.
+- Sin ninguno de los tres, el tramo queda **sin dato**: no infla ninguna cuota y el muestreo no puede usarlo para cerrar una brecha etaria.
+- La ficha muestra de dónde sale el tramo (derivado, envejecido o cargado), para que la precisión del dato sea visible.
+
+*R3.14.h — Corrección de mapeos (P1):*
+- Corregido el vocabulario, se recalculan los valores canónicos **a partir de los crudos guardados**, sin volver a pedir el archivo original. El recálculo queda registrado con autor, fecha y cantidad de valores afectados.
+
 ---
 
 ## 7. Contratos de API (propuestos)
@@ -337,6 +377,7 @@ Spec propia en `specs/SPEC_R3.13_cargar_panelistas_sin_panel.md`. La única form
 | `POST /consultas/csv-identificado` | R3.10 |
 | `POST /paneles/desde-consulta` | R3.11 |
 | `POST /cargas` · `GET /cargas` · `POST /cargas/{id}/analizar` · `POST /cargas/{id}/ingesta` · `GET /panelistas?sin_panel=1` | R3.13 |
+| `GET/POST /atributos` · `PATCH/DELETE /atributos/{id}` · `POST /atributos/{id}/categorias` · `POST /atributos/{id}/recalcular` · `GET /panelistas/{id}/atributos` | R3.14 |
 
 ## 8. Dependencias
 
@@ -405,6 +446,19 @@ Spec propia en `specs/SPEC_R3.13_cargar_panelistas_sin_panel.md`. La única form
 - [ ] Los individuos sin panel se pueden filtrar en la pantalla de panelistas y aparecen en consultas.
 - [ ] Un panel creado por R3.11 desde un resultado con individuos sin panel les da membresía correctamente (test).
 - [ ] La ingesta desde encuesta sigue creando membresía y participación como antes (test de no regresión).
+- [ ] Un admin define un atributo categórico con sus categorías y aparece disponible en la carga (test).
+- [ ] Un no-admin no puede administrar el catálogo (test).
+- [ ] Una carga guarda el valor canónico **y** el crudo, y un valor sin categoría no se inventa y se informa (test).
+- [ ] Un valor existente distinto no se sobrescribe y se informa la discrepancia (test).
+- [ ] Una consulta demográfica filtra por un atributo del catálogo, y se puede fijar una cuota por él y ver su brecha (test).
+- [ ] Las personas sin valor se informan como «sin dato» y no se cuentan dentro de ninguna categoría (test).
+- [ ] Un atributo con datos no se puede eliminar, solo desactivar (test).
+- [ ] Un atributo marcado como especial queda excluido de las exportaciones con datos por defecto (test).
+- [ ] Ningún valor de atributo llega al store semántico (test del guardrail).
+- [ ] Un individuo con fecha de nacimiento deriva su tramo de ella aunque el archivo traiga una edad distinta; una edad declarada con fecha de referencia se envejece; sin ninguno de los tres queda «sin dato» (tests).
+- [ ] Tras la migración, `sexo`, `localidad`, `tramo_etario` y `edad` existen en el catálogo y `v_demografia` conserva nombre y columnas (test).
+- [ ] Una consulta demográfica por sexo o localidad devuelve exactamente los mismos individuos antes y después de la migración (test de no regresión).
+- [ ] Los objetivos de composición ya cargados siguen resolviendo contra las mismas claves (test).
 
 ## 10. Success Metrics
 
@@ -424,6 +478,9 @@ Spec propia en `specs/SPEC_R3.13_cargar_panelistas_sin_panel.md`. La única form
 ## 11. Riesgos y preguntas abiertas
 
 - ~~**[legal]** Base legal del alta de individuos por SAV.~~ **Resuelto:** el archivo tiene que evidenciar el consentimiento y la importación lo exige. El riesgo que queda es de operación: que el cuestionario de campo salga sin la pregunta de consentimiento, y entonces no se pueda dar de alta a nadie desde ese archivo.
+- **[legal]** ¿Se van a definir atributos que sean categorías especiales? Si la respuesta es sí, el consentimiento actual —el del alta y el de la landing— probablemente no alcance: esas categorías requieren consentimiento específico. *Definir antes de habilitar el marcado de «especial».*
+- **[privacidad]** Cada atributo nuevo es un cuasi-identificador más: aumenta el riesgo de reidentificación por combinación, aun quedando del lado bóveda. Conviene un criterio sobre cuántos y cuáles, no agregar por si acaso.
+- **[producto]** ¿Quién mantiene el vocabulario de segmentadores? Sin un dueño claro, el catálogo se llena de atributos parecidos y vuelve el problema que este diseño evita.
 - **[legal]** ¿Alcanza el consentimiento de uso semántico para conservar datos patronímicos (nombre, documento) de alguien que no es panelista y no será contactado? Si la respuesta es que no, habría que cargar estos individuos con demográficos pero sin patronímicos, o no cargarlos. *Definir antes de usar R3.13 con bases reales.*
 - **[producto]** Personas sin panel acumuladas: sin una política de revisión periódica, la bóveda crece con gente que nadie mira.
 - **[legal/finanzas]** Tratamiento fiscal del canje *(bloqueante R3.5)*.
