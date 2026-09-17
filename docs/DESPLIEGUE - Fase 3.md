@@ -16,7 +16,7 @@ En términos de despliegue, eso se traduce en cinco cosas concretas:
 
 | Qué | Dónde | Riesgo si se saltea |
 |---|---|---|
-| Tres migraciones nuevas en la bóveda | `db/boveda/0005_fase3.sql`, `0006_participacion_por_importacion.sql` y `0007_carga_sin_panel.sql` | Las pantallas nuevas fallan con `relation … does not exist`; sin la 0006, la ingesta falla con `column "origen" does not exist`; sin la 0007, «Cargar panelistas» falla con `relation "carga" does not exist` |
+| Cuatro migraciones nuevas en la bóveda | `0005_fase3.sql`, `0006_participacion_por_importacion.sql`, `0007_carga_sin_panel.sql` y `0008_atributos_demograficos.sql` | Las pantallas nuevas fallan con `relation … does not exist`; sin la 0006, la ingesta falla con `column "origen" does not exist`; sin la 0007, «Cargar panelistas» falla con `relation "carga" does not exist`; **sin la 0008 no arranca casi nada**: la ficha, las consultas demográficas, la composición y el muestreo leen del catálogo |
 | Una dependencia nueva en la función | `pyreadstat` | La ingesta SAV responde 400 al primer archivo |
 | Una página pública nueva | `/inscribirse` | La landing no existe |
 | Dos decisiones legales pendientes | ver §1 | Se abren superficies de datos sin base legal |
@@ -24,6 +24,7 @@ En términos de despliegue, eso se traduce en cinco cosas concretas:
 | Otro, en la pantalla de carga | ver §1.5 | Los demográficos dejan de embeberse; sin avisar, alguien va a pensar que se perdieron variables |
 | Una forma nueva de identificar al respondente | ver §1.6 | Sin precargar la muestra, las ingestas de estudios nuevos siguen quedando en cero |
 | Una forma de cargar gente **sin panel** | ver §1.7 | Nada se rompe: es una capacidad nueva. Pero si nadie sabe que existe, se siguen metiendo bases externas en paneles que no les corresponden |
+| Los segmentadores pasan a ser **un catálogo** | ver §1.8 | Es el cambio más profundo de la fase: `sexo` y `localidad` dejan de ser columnas de `persona`. La 0008 migra los datos; desplegar el código sin aplicarla deja el sistema sin demografía |
 | Nada en el store semántico | — | — |
 
 **El store semántico no cambia en esta fase.** No hay migración nueva del lado
@@ -356,11 +357,70 @@ base entera y depurar después.
 > bóveda acumula gente sin panel que nadie mira. Conviene decidir quién la
 > revisa y cada cuánto.
 
+### 1.8 · Los segmentadores ahora son un catálogo (R3.14)
+
+Es el cambio más profundo de la fase y el único que **migra datos existentes**,
+así que conviene leer esta sección entera antes de aplicar la 0008.
+
+**El problema que resuelve.** La bóveda tenía tres segmentadores y punto:
+`persona.sexo`, `persona.localidad` y el tramo derivado de la fecha de
+nacimiento. Eran los únicos por los que se podía filtrar, fijar cuotas y ver
+brechas. Nivel educativo, nivel socioeconómico, ocupación, composición del
+hogar —todo lo que se pregunta en cada estudio— no tenía dónde guardarse, y
+agregar uno costaba una migración.
+
+**Qué cambia para quien usa la app.** Aparece **Configuración → Atributos
+demográficos**, donde un admin define un segmentador con sus categorías. De
+ahí en más ese atributo sirve igual que sexo o localidad: en los filtros de
+las consultas, en las dimensiones de composición, en las cuotas y en el
+muestreo. No hay que tocar código ni pedir un desarrollo.
+
+**Qué cambia por debajo.** `sexo`, `localidad`, `tramo_etario` y `edad` pasan
+al mismo catálogo, **con las mismas claves de siempre**: los objetivos de
+composición ya cargados y las consultas guardadas siguen resolviendo sin
+tocarlos. `v_demografia` se reescribe sobre el catálogo conservando su nombre
+y sus columnas, así que todo el código que la consulta sigue andando.
+`persona.sexo` y `persona.localidad` quedan obsoletas —no se escriben ni se
+leen— y se eliminan en una migración posterior, una vez verificado que nada
+las usa.
+
+**Tres consecuencias operativas que conviene avisar antes, no después:**
+
+| Qué | Por qué |
+|---|---|
+| **La localidad pasa a ser un desplegable** | Con vocabulario cerrado, las cuotas geográficas cierran. La migración siembra los diecinueve departamentos más todo valor distinto que ya esté cargado, así que el hueco aparece poco; cuando aparece, hay que **agregar la categoría desde Configuración** antes de dar el alta. El alta lo avisa en el momento en vez de guardar una variante nueva en silencio |
+| **Un valor de archivo sin categoría no se inventa** | La fila queda sin ese atributo y la carga lo informa con el listado de valores no mapeados. Se corrige el vocabulario y se aprieta **Recalcular**: los valores se vuelven a resolver desde el crudo guardado, sin recargar el archivo |
+| **«Sin dato» sale de las categorías de composición** | Antes aparecía como una categoría más y su peso bajaba la proporción observada de todas las demás, con lo cual la brecha marcaba un déficit que no existía. Ahora se informa aparte y las proporciones son sobre quienes tienen el dato. Los números de composición van a **cambiar** en los paneles que tengan gente sin demografía cargada, y van a cambiar para bien |
+
+**La edad ahora se puede cargar sin fecha de nacimiento.** Es habitual que una
+base externa traiga «34 años». Se mapea la variable a **Edad** y el tramo se
+calcula envejeciéndola desde la fecha de campo de esa carga; si después
+aparece la fecha de nacimiento, el tramo pasa a derivarse de ella solo. La
+ficha del panelista dice de dónde sale el tramo —derivado, envejecido o
+cargado—, porque los tres valen pero no valen lo mismo.
+
+> **La definición pendiente, y es legal.** El catálogo permite marcar un
+> atributo como **categoría especial** de la Ley 18.331 (salud, origen étnico
+> o racial, convicciones religiosas o morales, afiliación sindical, ideología
+> política, vida sexual). Si se van a definir atributos de esos, el
+> consentimiento actual —el del alta y el de la landing— **probablemente no
+> alcance**: esas categorías exigen consentimiento específico. Definirlo con
+> el DPO antes de habilitar el marcado. El sistema advierte al marcarlos, los
+> lista aparte y los deja fuera de las exportaciones con datos, pero eso es
+> una baranda, no una base legal.
+
+> **Y una de privacidad, más tibia.** Cada atributo nuevo es un
+> cuasi-identificador más: aumenta el riesgo de reidentificación por
+> combinación, aun quedando del lado bóveda. Conviene un criterio sobre
+> cuántos y cuáles, en vez de agregar por si acaso. Y conviene decidir quién
+> es dueño del vocabulario: sin un responsable, el catálogo se llena de
+> atributos parecidos y vuelve el problema que este diseño evita.
+
 ---
 
 ## 2 · Las migraciones
 
-Tres, y las tres solo en la bóveda. En este orden.
+Cuatro, y las cuatro solo en la bóveda. En este orden.
 
 ```bash
 cloud-sql-proxy gestion-paneles:southamerica-east1:paneles-boveda --port 5432 &
@@ -369,11 +429,34 @@ export DSN_BOVEDA="$(scripts/dsn_local.sh boveda)"
 psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 -f db/boveda/0005_fase3.sql
 psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 -f db/boveda/0006_participacion_por_importacion.sql
 psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 -f db/boveda/0007_carga_sin_panel.sql
+psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 -f db/boveda/0008_atributos_demograficos.sql
 ```
 
 La 0006 y la 0007 son **aditivas y se pueden aplicar con la app andando**: la
 0006 agrega una columna con default —no reescribe las filas existentes ni toma
 locks largos— y la 0007 crea una tabla sin tocar ninguna.
+
+La **0008 es distinta y merece su propio párrafo**. Tiene tres partes: crea
+cuatro tablas (aditiva), **copia los valores de `persona.sexo` y
+`persona.localidad` al catálogo** (migración de datos) y **reemplaza
+`v_demografia`** por una versión que lee de ahí. El reemplazo de la vista es
+instantáneo, pero entre que corre y que se despliega el código nuevo hay una
+ventana en la que la app vieja sigue escribiendo en las columnas obsoletas y
+esos valores no llegan al catálogo. Con tráfico bajo la ventana es de
+segundos y no importa; si hay altas en curso, conviene aplicarla y desplegar
+seguido, y después revisar que no haya quedado nadie con `persona.sexo`
+cargado y sin su atributo:
+
+```sql
+select count(*) from persona p
+ where p.sexo is not null
+   and not exists (select 1 from v_atributo_persona v
+                    where v.id_persona = p.id_persona and v.atributo = 'sexo');
+```
+
+Tiene que dar **0**. Si da más, esas altas entraron durante la ventana y se
+arreglan volviendo a correr la parte 4 de la migración, que es idempotente
+(`on conflict do nothing`).
 
 > **Orden importa entre el `psql` y el `firebase deploy`.** La 0007 hay que
 > aplicarla **antes** de desplegar la función. Al revés, el botón «Cargar
@@ -399,6 +482,11 @@ locks largos— y la 0007 crea una tabla sin tocar ninguna.
 | `panel.origen` y `origen_definicion` | De dónde salió la composición de un panel (R3.11) |
 | `participacion.origen` (0006) | Distinguir a quien convocó el sistema de quien respondió en campo y se incorporó al ingestar (addendum de R3.9) |
 | `carga` (0007) | Un lote de individuos incorporados con sus respuestas **sin panel**: cumple frente al store semántico el mismo papel que `encuesta`, con su propio `ref_estudio`, y no genera membresías ni participaciones (R3.13) |
+| `atributo_demografico` + `atributo_categoria` (0008) | El catálogo de segmentadores y sus categorías canónicas. Se siembra con `sexo`, `localidad`, `tramo_etario` y `edad`, con las claves de siempre (R3.14) |
+| `persona_atributo` (0008) | El valor de cada persona para cada atributo, **canónico y crudo**. El crudo es lo que permite recalcular si el mapeo salió mal, sin recargar el archivo |
+| `atributo_auditoria` (0008) | Quién tocó el vocabulario de segmentación y cuándo. Se revisa para detectar una categoría especial que apareció sin que nadie la haya decidido |
+| `v_atributo_persona` (0008) | El valor efectivo de cada atributo, con la precedencia del tramo etario (fecha de nacimiento → edad declarada envejecida → tramo cargado). Es el **único** lugar donde vive esa resolución |
+| `v_demografia` (0008, reescrita) | Conserva nombre y columnas y pasa a leer del catálogo. Es lo que hace que composición, participación, exportaciones y ficha sigan andando sin tocarlas |
 
 ### 2.2 · Verificar
 
@@ -407,7 +495,7 @@ export DSN_SEMANTICA="$(scripts/dsn_local.sh semantica)"
 python3 scripts/verificar_esquema.py
 ```
 
-Tienen que salir las seis migraciones de la bóveda y las tres de la
+Tienen que salir las siete migraciones de la bóveda y las tres de la
 semántica, todas con tilde. Es la misma comprobación que hace la app en
 Cumplimiento → Esquema de las dos bases.
 
@@ -835,9 +923,11 @@ de rutina: preferir dejar la migración aplicada.
 
 Infraestructura:
 
-- [ ] `db/boveda/0005_fase3.sql`, `db/boveda/0006_participacion_por_importacion.sql`
-      y `db/boveda/0007_carga_sin_panel.sql` aplicadas, en ese orden, y las tres
-      **antes** del `firebase deploy`.
+- [ ] `db/boveda/0005_fase3.sql`, `0006_participacion_por_importacion.sql`,
+      `0007_carga_sin_panel.sql` y `0008_atributos_demograficos.sql` aplicadas,
+      en ese orden, y las cuatro **antes** del `firebase deploy`.
+- [ ] Tras la 0008, la consulta de verificación de §2 da **0** personas con
+      sexo cargado y sin su atributo en el catálogo.
 - [ ] `python3 scripts/verificar_esquema.py` sale con código 0.
 - [ ] `firebase deploy` completo, con `pyreadstat` instalado en el predeploy.
 - [ ] `GET /api/diagnostico/sav` devuelve 200 con `puede_leer_sav: true`.
@@ -863,6 +953,13 @@ Definiciones pendientes:
       patronímicos de un no-panelista** (§1.7). Sin esta definición no se debe
       usar «Cargar panelistas» con bases reales.
 - [ ] Política de revisión de las personas sin panel acumuladas (§1.7).
+- [ ] **Si se van a definir atributos que sean categorías especiales** (§1.8).
+      Si la respuesta es sí, el consentimiento actual probablemente no alcance:
+      hace falta uno específico. Definirlo con el DPO antes de habilitar el
+      marcado.
+- [ ] Criterio sobre cuántos atributos y cuáles: cada uno es un
+      cuasi-identificador más (§1.8).
+- [ ] Responsable del vocabulario de segmentadores definido (§1.8).
 
 Verificación funcional:
 
@@ -890,6 +987,18 @@ Verificación funcional:
 - [ ] El filtro «— Sin panel —» de Panelistas lista a los cargados así, y
       aparecen en las consultas semánticas.
 - [ ] Crear un panel desde una consulta que los incluye les da membresía.
+- [ ] Un admin define un atributo desde Configuración y aparece en el criterio
+      de una consulta, en las dimensiones de composición y en el desplegable
+      de la pantalla de carga.
+- [ ] Una consulta por sexo o localidad devuelve **lo mismo que antes** de la
+      migración: es la comprobación de que la unificación no rompió nada.
+- [ ] Los objetivos de composición ya cargados siguen resolviendo.
+- [ ] Un valor del archivo sin categoría deja la fila sin el atributo y la
+      carga lo informa; corregir el vocabulario y apretar **Recalcular** lo
+      resuelve sin recargar.
+- [ ] La ficha de un panelista muestra sus atributos y dice de dónde sale el
+      tramo etario.
+- [ ] Un atributo con datos no se puede eliminar: la app ofrece desactivarlo.
 - [ ] Muestreo prioriza la brecha, explica las exclusiones y no convoca.
 - [ ] Un panel sin brecha no reporta «brecha (0 personas)».
 - [ ] Un export sin tiempos informa que no se pudo evaluar el speeder.
