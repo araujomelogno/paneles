@@ -26,7 +26,14 @@ TABLAS_BOVEDA = [
     "consulta_guardada", "usuario_auditoria", "reidentificacion",
     # Fase 3
     "umbral_fatiga", "bono_puntos", "texto_consentimiento", "inscripcion",
+    "carga", "atributo_auditoria",
 ]
+
+# R3.14 — el catálogo de atributos **no** se trunca: `sexo`, `localidad`,
+# `tramo_etario` y `edad` los siembra la migración y el sistema los da por
+# existentes. Lo que sí se limpia entre pruebas son los atributos que una
+# prueba haya definido, para que no se filtren a la siguiente.
+CLAVES_DEL_NUCLEO = ("sexo", "localidad", "tramo_etario", "edad")
 TABLAS_SEMANTICA = ["respuesta", "pregunta", "individuo", "cuestionario"]
 
 VERSION_TEXTO = "consentimiento-2026-01"
@@ -59,7 +66,12 @@ def dsn_semantica():
 def conn_boveda(dsn_boveda):
     conn = _conectar(dsn_boveda)
     with conn.cursor() as cur:
+        # `persona_atributo` se vacía solo: el truncate de `persona` cascadea
+        # por la FK.
         cur.execute(f"truncate {', '.join(TABLAS_BOVEDA)} restart identity cascade")
+        cur.execute(
+            "delete from atributo_demografico where clave <> all(%s)",
+            (list(CLAVES_DEL_NUCLEO),))
     conn.commit()
     yield conn
     conn.rollback()

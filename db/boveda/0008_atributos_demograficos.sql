@@ -238,6 +238,16 @@ select p.id_persona, a.id, c.id, p.localidad, 'migracion'
     on conflict (id_persona, atributo_id) do nothing;
 
 -- ============================================================
+--  4b · El bono ya no está limitado a tres dimensiones
+-- ============================================================
+-- `bono_puntos.dimension` tenía un check con las tres columnas fijas. Desde
+-- que el vocabulario lo define un admin, ese check convertiría cada atributo
+-- nuevo en un segmento al que no se le puede dirigir un bono, sin ninguna
+-- razón de diseño. La validación pasa a hacerse contra el catálogo, en la
+-- app, que es donde está la lista viva.
+alter table bono_puntos drop constraint if exists bono_puntos_dimension_check;
+
+-- ============================================================
 --  5 · Las vistas
 -- ============================================================
 
