@@ -306,6 +306,10 @@ tbody tr:hover td { background: #FAFAFA; }
 /* ══ CAJA DE AVISO CON TÍTULO (cumplimiento) ══ */
 .aviso { border: 1px solid var(--border); border-left: 3px solid var(--amber); background: var(--amber-light); border-radius: 3px; padding: 1rem 1.15rem; }
 .aviso.grave { border-left-color: var(--red); background: var(--red-light); }
+/* R3.13 — el aviso de que la carga no asocia a ningún panel. No es un error
+   (no es `grave`) pero sí la condición que define el flujo, así que va en el
+   naranja de la marca y no en el ámbar del resto de los avisos. */
+.aviso.destacado { border-left-color: var(--orange); background: var(--orange-light); }
 .aviso h4 { font-size: 0.78rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 0.35rem; color: var(--dark); }
 .aviso p { font-size: 0.82rem; font-weight: 500; color: var(--dark2); }
 .aviso p + p { margin-top: 0.5rem; }

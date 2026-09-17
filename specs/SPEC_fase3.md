@@ -45,7 +45,7 @@ Once requisitos de naturaleza distinta. Se agrupan en tres bloques con dependenc
 |---|---|---|
 | **3A — Salud del panel accionable** | R3.1, R3.2, R3.3, R3.4, R3.5, R3.6 | Muestreo, calidad y gamificación |
 | **3B — Crecimiento y administración** | R3.7, R3.8 | Landing pública y usuarios del sistema |
-| **3C — Fricción operativa** | R3.9, R3.10, R3.11, R3.12 | Ingesta SAV, exportación, instanciación de paneles e identificación en campo |
+| **3C — Fricción operativa** | R3.9, R3.10, R3.11, R3.12, R3.13 | Ingesta SAV, exportación, instanciación de paneles, identificación en campo y carga sin panel |
 
 **Dependencias internas:** R3.4 (earn por calidad) depende de R3.2 (chequeos de calidad) — sin calidad medida, no hay con qué condicionar el punto. R3.5 (canje) depende de R3.3 (ledger). R3.6 (bono dirigido) depende de R3.3 y de la composición de Fase 2. R3.1 (muestreo) depende de la composición y la participación de Fase 2.
 
@@ -288,6 +288,36 @@ Spec propia en `specs/SPEC_R3.12_identificador_campo.md`. El mapeo se apoyaba si
 *R3.12.d — Motivo por fila:*
 - Dado el informe de `sin_mapear`, entonces cada fila trae su motivo: `formato_invalido`, `no_encontrado` o `sin_alias_para_ese_origen`. Las tres se arreglan distinto y un número suelto obliga a adivinar cuál pasó.
 
+#### R3.13 — Cargar panelistas sin asociarlos a un panel (P0)
+Spec propia en `specs/SPEC_R3.13_cargar_panelistas_sin_panel.md`. La única forma de cargar individuos con sus respuestas era desde una encuesta, y toda encuesta pertenece a un panel: dar de alta gente implicaba necesariamente meterla en un panel, con lo cual aparecía en convocatorias, en la composición y en el muestreo. Eso bloquea un caso real —un ómnibus, un estudio de terceros, una base histórica— cuya gente **no es panelista**: no fue reclutada, no va a ser convocada, y meterla en un panel distorsionaría todos sus indicadores. Pero sus respuestas sí interesa poder consultarlas por concepto. El requisito separa **incorporar individuos y sus respuestas** de **hacerlos miembros de un panel**.
+
+*R3.13.a — Acceso desde la pantalla de panelistas:*
+- Dada la pantalla de panelistas, entonces hay un botón «Cargar panelistas» que abre el mismo flujo de ingesta de R3.9: archivo, columna identificadora, mapeo de variables, marcado de demográficos y modo de resolución.
+- Dada la pantalla, entonces se indica de forma visible que los individuos cargados **no quedarán asociados a ningún panel**.
+- Se pide un nombre para la carga (ej. «Ómnibus agosto 2026»), que identifica el origen de esos datos. Rige el mismo permiso que la ingesta desde encuesta (`ingestar`).
+
+*R3.13.b — Ingesta sin panel:*
+- Dada una carga, entonces se crea un registro de `carga` con su propio `ref_estudio`, que cumple frente al store semántico el mismo rol que una encuesta.
+- Dada la ingesta, entonces **no se crea membresía ni participación**: no hubo convocatoria ni encuesta fieldeada.
+- Dado el resto del flujo, entonces se comporta exactamente como la ingesta desde encuesta: despivote, resolución de códigos a etiquetas, composición del texto a embeber, embeddings en lote, upsert idempotente, marcado de demográficos (addendum R3.9.d) y guardrail de PII (R1.6).
+
+*R3.13.c — Resolución de individuos:*
+- Dado el modo «crear los individuos», entonces cada alta pasa por la misma resolución de identidad que R1.2, y los casos ambiguos van a la cola de revisión.
+- Dada una persona que ya existe, entonces se reutiliza su `id_persona` y sus **membresías no se modifican en ninguna dirección**.
+- Dado el tipo de identificador declarado (R3.12.b), entonces se resuelve según ese tipo; para bases externas lo habitual será `documento` o `email`.
+
+*R3.13.d — Consentimiento, con la obligatoriedad invertida:*
+- Dada una carga en modo «crear los individuos», entonces la finalidad **obligatoria es `uso_semantico`**: una fila sin esa evidencia no crea la persona y se informa.
+- Dada `contacto_participacion`, entonces es **opcional** acá: quien no la evidencie se crea igual, pero el gate de R1.3 le impide ser convocado.
+- El porqué: en la ingesta desde encuesta la obligatoria es el contacto, porque esa persona es un panelista al que se va a seguir convocando. Acá el propósito es el inverso —gente que no se va a contactar y cuyos datos se incorporan para análisis—, así que exigir consentimiento de contacto sería pedir base legal para algo que no se va a hacer, y no exigir el de uso semántico dejaría sin base lo único que sí se va a hacer.
+
+*R3.13.e — Visibilidad y camino a panel:*
+- Dado un individuo cargado así, entonces aparece en la pantalla de panelistas, se puede filtrar por «sin panel» y es consultable con normalidad.
+- Dado un resultado de consulta que lo incluye, entonces puede incorporarse a un panel mediante R3.11, sin recargar los datos. El camino previsto es cargar → consultar → crear panel con los que interesan, en vez de meter la base entera y depurar después.
+
+*R3.13.f — Informe de resultados:*
+- Dado el resultado, entonces informa creados, reutilizados, en revisión, filas sin evidencia de consentimiento, respuestas escritas, variables excluidas por demográficas, campos completados y discrepancias. **No** informa membresías ni participaciones, porque no se crean.
+
 ---
 
 ## 7. Contratos de API (propuestos)
@@ -306,6 +336,7 @@ Spec propia en `specs/SPEC_R3.12_identificador_campo.md`. El mapeo se apoyaba si
 | `GET /encuestas/{id}/muestra` — muestra seudónima para precargar el campo · `?con_contacto=1` la convierte en reidentificación | R3.12 |
 | `POST /consultas/csv-identificado` | R3.10 |
 | `POST /paneles/desde-consulta` | R3.11 |
+| `POST /cargas` · `GET /cargas` · `POST /cargas/{id}/analizar` · `POST /cargas/{id}/ingesta` · `GET /panelistas?sin_panel=1` | R3.13 |
 
 ## 8. Dependencias
 
@@ -364,6 +395,16 @@ Spec propia en `specs/SPEC_R3.12_identificador_campo.md`. El mapeo se apoyaba si
 - [ ] Una carga por `documento` resuelve, registra el alias de esa plataforma, y la carga siguiente ya anda por alias (test).
 - [ ] Un alias ya existente no se duplica (test).
 - [ ] Una carga sin declarar tipo se comporta como `alias` (test de no regresión).
+- [ ] El botón «Cargar panelistas» está en la pantalla de panelistas y abre el flujo conocido.
+- [ ] Una carga crea individuos y escribe sus respuestas en el store semántico, con su propio `ref_estudio`.
+- [ ] Ningún individuo cargado por ese flujo queda como miembro de un panel, y no se crea ninguna participación (test).
+- [ ] Una persona que ya era panelista conserva sus membresías intactas tras la carga (test).
+- [ ] Una fila sin evidencia de `uso_semantico` no crea la persona y se informa; una con `uso_semantico` y sin contacto se crea y no puede ser convocada (test).
+- [ ] El marcado de demográficos excluye esas variables del store semántico, y ningún dato patronímico llega ahí (test).
+- [ ] Re-cargar el mismo archivo no duplica preguntas ni respuestas (test).
+- [ ] Los individuos sin panel se pueden filtrar en la pantalla de panelistas y aparecen en consultas.
+- [ ] Un panel creado por R3.11 desde un resultado con individuos sin panel les da membresía correctamente (test).
+- [ ] La ingesta desde encuesta sigue creando membresía y participación como antes (test de no regresión).
 
 ## 10. Success Metrics
 
@@ -383,6 +424,8 @@ Spec propia en `specs/SPEC_R3.12_identificador_campo.md`. El mapeo se apoyaba si
 ## 11. Riesgos y preguntas abiertas
 
 - ~~**[legal]** Base legal del alta de individuos por SAV.~~ **Resuelto:** el archivo tiene que evidenciar el consentimiento y la importación lo exige. El riesgo que queda es de operación: que el cuestionario de campo salga sin la pregunta de consentimiento, y entonces no se pueda dar de alta a nadie desde ese archivo.
+- **[legal]** ¿Alcanza el consentimiento de uso semántico para conservar datos patronímicos (nombre, documento) de alguien que no es panelista y no será contactado? Si la respuesta es que no, habría que cargar estos individuos con demográficos pero sin patronímicos, o no cargarlos. *Definir antes de usar R3.13 con bases reales.*
+- **[producto]** Personas sin panel acumuladas: sin una política de revisión periódica, la bóveda crece con gente que nadie mira.
 - **[legal/finanzas]** Tratamiento fiscal del canje *(bloqueante R3.5)*.
 - **[datos]** ¿Los exports de campo traen duración por respuesta? Sin eso, el chequeo de speeders no existe y la gamificación premia sobre una noción de calidad más pobre.
 - **[producto]** Calibración de umbrales de fatiga y de calidad: los defaults no están medidos contra los datos de Equipos. Requiere el mismo tipo de protocolo empírico que se usó para calibrar la consulta.

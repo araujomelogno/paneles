@@ -75,7 +75,7 @@ Cómo funciona el motor por dentro. Las tres formas de consulta como feature de 
 
 ### Ingesta
 
-Desde archivo de cuestionario + Excel ancho de respuestas (exports de las plataformas de campo, p. ej. Dooblo o Alchemer; el identificador de cada plataforma se guarda como alias de origen para resolver ingestas futuras a la misma persona):
+Desde archivo de cuestionario + Excel ancho de respuestas (exports de las plataformas de campo, p. ej. Dooblo o Alchemer; el identificador de cada plataforma se guarda como alias de origen para resolver ingestas futuras a la misma persona). El estudio que agrupa lo ingestado puede ser una **encuesta** de un panel o una **carga** sin panel (R3.13): del lado semántico son lo mismo, un `ref_estudio`.
 - Despivote ancho → largo; cada columna se une a su pregunta por `codigo` (= encabezado del Excel).
 - Resolución código/etiqueta por celda contra el mapa de opciones antes de embeber.
 - Composición del texto como "pregunta → respuesta" y vectorización en lotes.
@@ -134,9 +134,9 @@ Caché derivado de interpretaciones recurrentes (versionado por modelo, invalida
 
 **Objetivo.** Pasar de observar a accionar.
 
-**Alcance.** Motor de muestreo por reglas (propone a quién invitar priorizando brechas de cuota y excluyendo sobre-convocados); chequeos de calidad (speeders, straightliners, duplicados); gamificación con ledger de puntos como moneda (auditable, saldo ≥ 0, vencimiento), catálogo y canje, ganando puntos **solo por participación de calidad**; bonos dirigidos a segmentos de cuota difíciles; **landing pública de auto-registro** de panelistas; **ingesta desde archivos SAV de SPSS** (con alta opcional de individuos en la misma carga); y dos mejoras operativas sobre la consulta: **exportar el resultado reidentificado** y **crear un panel a partir de un resultado**.
+**Alcance.** Motor de muestreo por reglas (propone a quién invitar priorizando brechas de cuota y excluyendo sobre-convocados); chequeos de calidad (speeders, straightliners, duplicados); gamificación con ledger de puntos como moneda (auditable, saldo ≥ 0, vencimiento), catálogo y canje, ganando puntos **solo por participación de calidad**; bonos dirigidos a segmentos de cuota difíciles; **landing pública de auto-registro** de panelistas; **ingesta desde archivos SAV de SPSS** (con alta opcional de individuos en la misma carga); y tres mejoras operativas sobre la consulta y la carga: **exportar el resultado reidentificado**, **crear un panel a partir de un resultado** y **cargar individuos sin asociarlos a ningún panel**.
 
-**Requisitos.** R3.1 muestreo por reglas · R3.2 chequeos de calidad · R3.3 ledger de puntos · R3.4 earn por calidad · R3.5 catálogo y canje · R3.6 bono dirigido · **R3.7 landing de auto-registro** · **R3.8 gestión de usuarios del sistema** · **R3.9 ingesta desde archivo SAV (SPSS)** · **R3.10 exportar el resultado reidentificado** · **R3.11 crear panel desde el resultado de una consulta**.
+**Requisitos.** R3.1 muestreo por reglas · R3.2 chequeos de calidad · R3.3 ledger de puntos · R3.4 earn por calidad · R3.5 catálogo y canje · R3.6 bono dirigido · **R3.7 landing de auto-registro** · **R3.8 gestión de usuarios del sistema** · **R3.9 ingesta desde archivo SAV (SPSS)** · **R3.10 exportar el resultado reidentificado** · **R3.11 crear panel desde el resultado de una consulta** · **R3.12 identificación del respondente en el trabajo de campo** · **R3.13 cargar panelistas sin asociarlos a un panel**.
 
 **R3.7 — Landing de auto-registro.** Formulario público donde una persona se inscribe al panel y **da su propio consentimiento** (más fuerte legalmente que un operador registrándolo por ella). Incluye: captura de datos patronímicos y de contacto, texto de consentimiento versionado por finalidad, dedup contra panelistas existentes al enviar, y estado de alta pendiente de aprobación por Equipos antes de entrar al panel. Emite `id_persona` por la misma vía que el alta interna (R1.1–R1.3), reutilizando identidad si la persona ya existe.
 
@@ -187,6 +187,28 @@ Criterios de aceptación:
 
 > **Es una foto, no una vista viva.** El panel se crea con los individuos que el resultado tenía en ese momento; si después cambia el corpus o los parámetros, el panel no se actualiza solo. Re-ejecutar la consulta y volver a aplicarla sobre el mismo panel es una operación distinta (agregar miembros), y conviene decidir si se ofrece. Vale además que la creación deje registro equivalente al de reidentificación cuando el resultado venía de una consulta semántica: materializar un ranking en un panel es, en los hechos, fijar una lista de personas.
 
+**R3.12 — Identificación del respondente en el trabajo de campo.** El mapeo de respuestas a personas se apoyaba siempre en el id que la plataforma de campo le puso al respondente, y ese id no es estable entre estudios: al ingestar un estudio nuevo no matcheaba ninguna fila y la ingesta quedaba en cero sin que nada fallara. Se agrega la exportación de la muestra con el `id_persona` del sistema, para precargarlo como variable oculta en el instrumento, y al ingestar se **declara qué trae la columna identificadora** (`id_persona`, alias de campo, documento o correo). Una carga por documento o correo registra de paso el alias de esa plataforma, así que la siguiente ya no necesita la llave natural. Spec propia en `specs/SPEC_R3.12_identificador_campo.md`.
+
+**R3.13 — Cargar panelistas sin asociarlos a un panel.** La única forma de cargar individuos con sus respuestas era desde una encuesta, y toda encuesta pertenece a un panel: dar de alta gente implicaba necesariamente incorporarla a un panel, con lo cual aparecía en convocatorias, composición y muestreo. Eso bloquea un caso real —un ómnibus, un estudio de terceros, una base histórica— cuya gente **no es panelista**: no fue reclutada, no va a ser convocada, y meterla en un panel distorsionaría todos sus indicadores. Pero sus respuestas sí interesa poder consultarlas por concepto. El requisito separa **incorporar individuos y sus respuestas** de **hacerlos miembros de un panel**.
+
+Desde la pantalla de panelistas, un botón «Cargar panelistas» abre **la misma pantalla de ingesta** de R3.9 —archivo, columna identificadora, mapeo de variables, marcado de demográficos, modo de resolución— con un aviso visible de que esa gente no quedará asociada a ningún panel, y pidiendo un nombre para la carga que identifique el origen de esos datos. Una **carga** cumple frente al store semántico el mismo papel que una encuesta: agrupa el cuestionario, sus preguntas y sus respuestas bajo un `ref_estudio` propio.
+
+Criterios de aceptación:
+- Dada una carga, entonces **no se crea membresía en ningún panel ni participación** en ninguna ola: no hubo convocatoria ni encuesta fieldeada.
+- Dado el resto del flujo, entonces se comporta exactamente como la ingesta desde encuesta: despivote, resolución de códigos a etiquetas, composición del texto a embeber, embeddings en lote, upsert idempotente, marcado de demográficos y guardrail de PII (R1.6).
+- Dado el modo «crear los individuos», entonces cada alta pasa por la **misma resolución de identidad que R1.2**, y una persona que ya existe conserva sus membresías **intactas en ambas direcciones**: ni se agregan ni se quitan.
+- Dada una carga en modo «crear los individuos», entonces la finalidad **obligatoria es `uso_semantico`**: una fila sin esa evidencia no crea la persona y se informa cuántas quedaron afuera.
+- Dada `contacto_participacion`, entonces es **opcional** en este flujo: quien no la evidencie se crea igual y el gate de R1.3 le impide ser convocado.
+- Dado un individuo cargado así, entonces aparece en la pantalla de panelistas, se puede filtrar por «sin panel», y es consultable con normalidad.
+- Dado un resultado de consulta que lo incluye, entonces puede incorporarse a un panel mediante **R3.11**, sin recargar los datos.
+- Dado el resultado de la carga, entonces informa creados, reutilizados, en revisión, filas sin consentimiento, respuestas escritas, variables excluidas por demográficas, campos completados y discrepancias, y **no** informa membresías ni participaciones, porque no se crean.
+
+> **Por qué se invierte la obligatoriedad del consentimiento.** En la ingesta desde encuesta la finalidad obligatoria es `contacto_participacion`, porque esa persona es un panelista al que se va a seguir convocando. Acá el propósito es el inverso: son personas que **no** se van a contactar y cuyos datos se incorporan para análisis. Exigir consentimiento de contacto sería pedir base legal para algo que no se va a hacer, y no exigir el de uso semántico dejaría sin base lo único que sí se va a hacer.
+
+> **El camino previsto es cargar → consultar → crear panel.** Así se incorpora a un panel solo a quien corresponde, en vez de meter la base entera y depurar después. Es también la razón por la que el requisito no necesitó ninguna forma nueva de dar membresías: R3.11 ya era el camino.
+
+> **Una tabla nueva y no una encuesta sin panel.** Una encuesta es, por definición, algo que se fieldea a un panel: convocar, la composición y el muestreo lo dan por sentado. Hacer el panel opcional obligaría a revisar cada uno de esos caminos y dejaría encuestas que no se pueden fieldear, un estado que no significa nada. Una entidad aparte mantiene esa semántica intacta.
+
 **Bloqueante.** Tratamiento fiscal del canje de premios en Uruguay.
 
 ---
@@ -221,6 +243,8 @@ Criterios de aceptación:
 - **[legal]** ¿El consentimiento del alta cubre el perfilado semántico entre estudios, o requiere base/consentimiento separado? *(bloqueante para el uso semántico)*
 - **[legal/finanzas]** Tratamiento fiscal del canje de premios en Uruguay. *(bloqueante — Fase 3)*
 - ~~**[legal]** Con qué base legal se dan de alta los individuos creados desde un archivo SAV (R3.9).~~ **Resuelto:** evidencia de consentimiento en el propio archivo, declarada de forma obligatoria al importar. Lo que queda es operativo: que el cuestionario de campo incluya la pregunta de consentimiento, porque sin ella no se puede dar de alta a nadie desde ese archivo.
+- **[legal]** ¿Alcanza el consentimiento de uso semántico para conservar datos patronímicos (nombre, documento) de alguien que **no es panelista y no será contactado** (R3.13)? Si la respuesta es que no, esos individuos habría que cargarlos con demográficos pero sin patronímicos, o no cargarlos. *Definir antes de usar el flujo con bases reales.*
+- **[producto]** Personas sin panel acumuladas: sin una política de revisión periódica, la bóveda crece con gente que nadie mira.
 - **[producto/ingeniería]** ¿Hasta dónde llega el motor de muestreo: reglas u optimización? (separa Fase 3 de Fase 4)
 - **[datos]** Fuente y vigencia del universo de referencia para composición.
 - **[legal/datos]** Plazos de retención por categoría de dato y purga por inactividad.

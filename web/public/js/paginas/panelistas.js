@@ -10,7 +10,7 @@ import {
 
 const VERSION = () => window.VERSION_CONSENTIMIENTO || 'consentimiento-2026-01';
 
-let filtro = { q: '', panel_id: '' };
+let filtro = { q: '', panel_id: '', sin_panel: false };
 let contexto = {};
 
 export async function render(main, ctx) {
@@ -30,6 +30,7 @@ export async function render(main, ctx) {
           </div>
           <select class="fselect" id="f-panel" style="width:auto">
             <option value="">Todos los paneles</option>
+            <option value="__sin__" ${filtro.sin_panel ? 'selected' : ''}>— Sin panel —</option>
             ${paneles.map((p) => `<option value="${p.id}" ${String(filtro.panel_id) === String(p.id) ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')}
           </select>
         </div>
@@ -37,9 +38,11 @@ export async function render(main, ctx) {
       <div class="card-body tight"><div id="tabla">${cargando()}</div></div>
     </div>`;
 
-  $('#ph-acciones').innerHTML =
-    `<button class="btn btn-orange" id="nuevo">+ Enrolar panelista</button>`;
+  $('#ph-acciones').innerHTML = `
+    <button class="btn btn-outline" id="cargar">Cargar panelistas</button>
+    <button class="btn btn-orange" id="nuevo">+ Enrolar panelista</button>`;
   $('#nuevo').onclick = () => abrirAlta(paneles);
+  $('#cargar').onclick = () => abrirCarga();
 
   let temporizador;
   $('#q').oninput = (e) => {
@@ -47,7 +50,13 @@ export async function render(main, ctx) {
     filtro.q = e.target.value;
     temporizador = setTimeout(cargarTabla, 280);
   };
-  $('#f-panel').onchange = (e) => { filtro.panel_id = e.target.value; cargarTabla(); };
+  // R3.13.e — «sin panel» es la gente que entró por una carga externa y a la
+  // que nadie incorporó todavía. Sin filtro se mezcla con el resto.
+  $('#f-panel').onchange = (e) => {
+    filtro.sin_panel = e.target.value === '__sin__';
+    filtro.panel_id = filtro.sin_panel ? '' : e.target.value;
+    cargarTabla();
+  };
 
   await cargarTabla();
 }
@@ -58,11 +67,14 @@ async function cargarTabla() {
   contenedor.innerHTML = cargando('20vh');
   const { items, total } = await api.panelistas.listar({
     q: filtro.q, panel_id: filtro.panel_id, limite: 100,
+    sin_panel: filtro.sin_panel ? '1' : '',
   });
 
   if (!items.length) {
     contenedor.innerHTML = vacio(
-      filtro.q ? 'Ningún panelista coincide con la búsqueda.' : 'Todavía no hay panelistas enrolados.',
+      filtro.sin_panel ? 'Todos los individuos pertenecen a algún panel.'
+        : filtro.q ? 'Ningún panelista coincide con la búsqueda.'
+        : 'Todavía no hay panelistas enrolados.',
       '👤');
     return;
   }
@@ -97,6 +109,77 @@ async function cargarTabla() {
 }
 
 /* ── Alta ───────────────────────────────────────────────────────── */
+
+/* ── R3.13 · Cargar panelistas sin panel ────────────────────────── */
+
+/* Incorporar individuos con sus respuestas y hacerlos miembros de un panel
+   eran, hasta acá, la misma operación: la única forma de cargar gente con
+   respuestas era desde una encuesta, y toda encuesta tiene panel. Este flujo
+   las separa. Sirve para bases que llegan de afuera —un ómnibus, un estudio
+   de terceros, una base histórica— cuya gente no es panelista: no fue
+   reclutada, no se la va a convocar, y meterla en un panel distorsionaría su
+   composición, su brecha y su muestreo.
+
+   Lo único propio de este paso es el nombre de la carga: es lo que después
+   dice de dónde salieron esos datos. El resto del flujo es la misma pantalla
+   de ingesta de siempre. */
+function abrirCarga() {
+  const caja = modal({
+    titulo: 'Cargar panelistas',
+    ancho: '600px',
+    cuerpo: `
+      <div id="carga-alerta"></div>
+      <div class="aviso destacado">
+        <h4>Esta gente no queda en ningún panel</h4>
+        <p>Los individuos de esta carga se incorporan con sus respuestas y sus
+        demográficos, pero <strong>no se asocian a ningún panel</strong>: no se
+        los puede convocar y no afectan los indicadores de ninguno.</p>
+        <p>Después podés sumarlos a un panel desde el resultado de una
+        consulta, sin volver a cargar los datos.</p>
+      </div>
+
+      <div class="form-group" style="margin-top:1.25rem">
+        <label>Nombre de la carga</label>
+        <input type="text" name="nombre" id="carga-nombre"
+               placeholder="Ómnibus agosto 2026" />
+        <div class="field-hint">Identifica el origen de estos datos. Es lo que
+          después permite saber de qué base salió cada respuesta.</div>
+      </div>
+      <div class="form-group">
+        <label>Descripción (opcional)</label>
+        <textarea class="finput" name="descripcion"
+                  placeholder="Ola de agosto del ómnibus, muestra nacional 1.000 casos."></textarea>
+      </div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Continuar', clase: 'btn-orange', onClick: seguirConLaCarga },
+    ],
+  });
+  return caja;
+}
+
+async function seguirConLaCarga(caja) {
+  const datos = leerFormulario(caja);
+  const alerta$ = $('#carga-alerta', caja);
+  alerta$.innerHTML = '';
+  if (!(datos.nombre || '').trim()) {
+    alerta$.innerHTML = alerta('Poné un nombre para la carga: es lo que después '
+      + 'identifica de dónde salieron estos datos.');
+    return;
+  }
+  try {
+    const carga = await api.cargas.crear(datos.nombre.trim(), datos.descripcion);
+    cerrarModal();
+    // La pantalla de ingesta vive en Encuestas y es la misma para los dos
+    // destinos; se importa acá para no arrastrar ese módulo en cada carga de
+    // la pantalla de panelistas.
+    const { abrirCargaDePanelistas } = await import('./encuestas.js');
+    abrirCargaDePanelistas(carga, cargarTabla);
+  } catch (error) {
+    alerta$.innerHTML = alerta(error.message);
+  }
+}
+
 
 function abrirAlta(paneles) {
   const caja = modal({

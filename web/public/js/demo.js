@@ -87,9 +87,10 @@ const bd = {
   bonos: [],
   inscripciones: [],       // solicitudes de la landing, todavía no personas
   textosConsentimiento: [],
+  cargas: [],              // R3.13 — lotes incorporados sin panel
   secuencias: {
     panel: 1, encuesta: 1, revision: 1, consentimiento: 1, semantica: 1,
-    guardada: 1, auditoria: 1, reident: 1,
+    guardada: 1, auditoria: 1, reident: 1, carga: 1,
   },
 };
 
@@ -170,6 +171,42 @@ function sembrar() {
   // la que deja ver el muestreo de la Fase 3 haciendo lo suyo, priorizando
   // la brecha contra un objetivo cargado.
   crearEncuesta(nacional.id, 'Ola 3 — Movilidad urbana', '2026-10-10');
+
+  // R3.13 — una carga externa ya hecha: gente incorporada con sus respuestas
+  // que **no** es panelista. Sin esto el filtro «sin panel» de la pantalla de
+  // panelistas no tendría nada que mostrar, que es justamente el caso que el
+  // requisito existe para resolver.
+  const omnibus = {
+    id: siguiente('carga'), nombre: 'Ómnibus agosto 2026',
+    descripcion: 'Estudio de terceros. Esta gente no es panelista.',
+    ref_estudio: uuid(), creado_en: diasAtras(25), creado_por: 'demo',
+  };
+  bd.cargas.push(omnibus);
+  const EXTERNOS = [
+    ['1.234.567-8', 'Karina Bentancur', 'F', '1983-05-11', 'Durazno', 'k.bentancur@correo.uy', '1', 'La compro por costumbre, siempre la misma'],
+    ['2.345.678-9', 'Leonardo Ferreira', 'M', '1977-10-02', 'Montevideo', 'l.ferreira@correo.uy', '3', 'Me la recomendó un amigo y me quedé con esa'],
+    ['3.456.789-0', 'Mariana Olivera', 'F', '1996-03-19', 'Florida', 'm.olivera@correo.uy', '2', 'Es la que consigo cerca de casa'],
+  ];
+  EXTERNOS.forEach(([documento, nombre, sexo, fechaNacimiento, localidad, email], i) => {
+    const idPersona = uuid();
+    bd.personas.push({
+      id_persona: idPersona, documento, nombre, sexo,
+      fecha_nacimiento: fechaNacimiento, localidad, email, celular: null,
+      contacto: null, observaciones: null, creado_en: diasAtras(25),
+    });
+    // La finalidad obligatoria de una carga es el uso semántico; el contacto
+    // no se pide y por eso no lo tienen: son consultables y no convocables.
+    otorgar(idPersona, 'uso_semantico', VERSION, diasAtras(25));
+  });
+  ingestarCarga(omnibus.id, {
+    columna_id: 'documento',
+    tipo_identificador: 'documento',
+    preguntas: [
+      { codigo: 'Q1', texto: '¿Qué marca compra habitualmente?', tipo: 'cerrada', opciones: { 1: 'La de siempre', 2: 'La más barata', 3: 'La que le recomiendan' }, orden: 1 },
+      { codigo: 'Q2', texto: '¿Por qué elige esa marca?', tipo: 'abierta', orden: 2 },
+    ],
+    filas: EXTERNOS.map(([documento, , , , , , q1, q2]) => ({ documento, Q1: q1, Q2: q2 })),
+  });
 
   // La calidad de la ola ya fieldeada: la mayoría bien, un par marcados. Sin
   // esto la liquidación de puntos no tendría nada que mostrar, y la revisión
@@ -368,6 +405,26 @@ function convocar(encuestaId, cuerpo) {
 
 function ingestar(encuestaId, cuerpo) {
   const encuesta = bd.encuestas.find((e) => e.id === encuestaId);
+  if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
+  return ingestarEn(encuesta, cuerpo, { sinPanel: false });
+}
+
+/* R3.13 — la misma ingesta, contra una carga en vez de una encuesta. Del
+   lado semántico no cambia nada: una carga tiene su `ref_estudio` igual que
+   una encuesta. Lo que cambia es que no hay panel al que incorporar ni ola
+   que participar. */
+function ingestarCarga(cargaId, cuerpo) {
+  const carga = bd.cargas.find((c) => c.id === cargaId);
+  if (!carga) throw new ErrorDemo('No existe la carga.', 404);
+  const resultado = ingestarEn(carga, cuerpo, { sinPanel: true });
+  resultado.carga_id = cargaId;
+  resultado.sin_panel = true;
+  delete resultado.encuesta_id;
+  return resultado;
+}
+
+function ingestarEn(encuesta, cuerpo, { sinPanel }) {
+  const encuestaId = encuesta.id;
   const columnaId = cuerpo.columna_id || 'id_en_origen';
   const filas = cuerpo.filas || [];
 
@@ -492,7 +549,10 @@ function ingestar(encuestaId, cuerpo) {
   let participacionesNuevas = 0;
   let participacionesActualizadas = 0;
 
-  ingestados.forEach((idPersona) => {
+  // R3.13 — en una carga sin panel esto no corre: no hay panel al que
+  // incorporar y no hubo ola que participar. Es exactamente lo que ese flujo
+  // existe para no hacer.
+  if (!sinPanel) ingestados.forEach((idPersona) => {
     const membresia = bd.membresias.find(
       (m) => m.panel_id === encuesta.panel_id && m.id_persona === idPersona);
     if (!membresia) {
@@ -563,11 +623,13 @@ function ingestar(encuestaId, cuerpo) {
     sin_mapear_detalle: [...new Set(sinMapear)].map(
       (i) => ({ id_en_origen: i, motivo: motivos[i] })),
     sin_consentimiento: [...sinConsentimiento],
-    membresias_nuevas: membresiasNuevas,
-    membresias_existentes: membresiasExistentes,
-    membresias_en_baja: membresiasEnBaja,
-    participaciones_nuevas: participacionesNuevas,
-    participaciones_actualizadas: participacionesActualizadas,
+    ...(sinPanel ? {} : {
+      membresias_nuevas: membresiasNuevas,
+      membresias_existentes: membresiasExistentes,
+      membresias_en_baja: membresiasEnBaja,
+      participaciones_nuevas: participacionesNuevas,
+      participaciones_actualizadas: participacionesActualizadas,
+    }),
   };
 }
 
@@ -630,6 +692,12 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
         .filter((m) => m.panel_id === panelId && m.estado === 'activo')
         .map((m) => m.id_persona));
       items = items.filter((p) => miembros.has(p.id_persona));
+    }
+    // R3.13.e — los que entraron por una carga y no son miembros de ningún
+    // panel. Sin este filtro se mezclan con los panelistas y no hay forma de
+    // ver a quiénes falta incorporar.
+    if (['1', 'true'].includes(String(consulta.sin_panel || ''))) {
+      items = items.filter((p) => !p.paneles);
     }
     return { total: items.length, items };
   }
@@ -951,6 +1019,25 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
 
   if (metodo === 'POST' && partes[0] === 'encuestas' && partes[2] === 'ingesta') {
     return ingestar(Number(partes[1]), cuerpo);
+  }
+
+  /* R3.13 — cargas: incorporar individuos con sus respuestas, sin panel. */
+  if (metodo === 'POST' && clave === 'POST /cargas') {
+    const nombre = (cuerpo.nombre || '').trim();
+    if (!nombre) throw new ErrorDemo('La carga necesita un nombre.', 400);
+    const carga = {
+      id: siguiente('carga'), nombre,
+      descripcion: (cuerpo.descripcion || '').trim() || null,
+      ref_estudio: uuid(), creado_en: ahora(), creado_por: 'demo',
+    };
+    bd.cargas.push(carga);
+    return carga;
+  }
+
+  if (clave === 'GET /cargas') return { items: [...bd.cargas].reverse() };
+
+  if (metodo === 'POST' && partes[0] === 'cargas' && partes[2] === 'ingesta') {
+    return ingestarCarga(Number(partes[1]), cuerpo);
   }
 
   if (metodo === 'GET' && partes[0] === 'encuestas' && partes[2] === 'cruce') {

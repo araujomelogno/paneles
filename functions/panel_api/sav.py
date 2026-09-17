@@ -521,7 +521,9 @@ CAMPOS_PATRONIMICOS = (
 # no puede estar en el panel, y sin uso semántico sus respuestas no pueden
 # ingestarse. Declarar las dos obliga a mirar el cuestionario de campo y
 # decir dónde está cada una, que es exactamente lo que faltaba.
-FINALIDADES_EVIDENCIABLES = ("contacto_participacion", "uso_semantico")
+CONTACTO = "contacto_participacion"
+SEMANTICO = "uso_semantico"
+FINALIDADES_EVIDENCIABLES = (CONTACTO, SEMANTICO)
 
 
 def _texto_comparable(valor):
@@ -536,8 +538,13 @@ def _texto_comparable(valor):
     return str(valor).strip().lower() if valor is not None else ""
 
 
-def normalizar_evidencia(evidencia):
+def normalizar_evidencia(evidencia, obligatorias=None):
     """Valida la declaración de evidencia de consentimiento y la deja canónica.
+
+    `obligatorias` dice qué finalidades hay que declarar sí o sí. Por defecto
+    las dos, que es lo que pide R3.9 para el alta desde una encuesta. La carga
+    sin panel (R3.13) invierte la exigencia y pasa solo `uso_semantico`: ver
+    `crear_individuos`.
 
     Forma esperada, una entrada por finalidad:
 
@@ -572,7 +579,9 @@ def normalizar_evidencia(evidencia):
             f"Finalidad desconocida en la evidencia: {sorted(desconocidas)}.",
             {"finalidades_validas": list(FINALIDADES_EVIDENCIABLES)},
         )
-    faltantes = [f for f in FINALIDADES_EVIDENCIABLES if f not in evidencia]
+    obligatorias = (
+        FINALIDADES_EVIDENCIABLES if obligatorias is None else tuple(obligatorias))
+    faltantes = [f for f in obligatorias if f not in evidencia]
     if faltantes:
         raise DatosInvalidos(
             f"Falta declarar la evidencia de consentimiento para "
@@ -583,6 +592,8 @@ def normalizar_evidencia(evidencia):
 
     normalizada = {}
     for finalidad in FINALIDADES_EVIDENCIABLES:
+        if finalidad not in evidencia:
+            continue    # opcional y no declarada: no hay nada que validar
         regla = evidencia[finalidad] or {}
         variable = str(regla.get("variable") or "").strip()
         version = str(regla.get("version_texto") or "").strip()
@@ -649,7 +660,8 @@ def _otorgar_si_falta(conn, id_persona, finalidad, version):
 
 def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
                      evidencia_consentimiento, actor=None, panel_id=None,
-                     opciones_por_variable=None):
+                     opciones_por_variable=None,
+                     finalidad_obligatoria=CONTACTO):
     """Da de alta a la gente del archivo, con el dedup de R1.2 y con la
     evidencia de consentimiento que trae el propio archivo.
 
@@ -662,9 +674,23 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
     queda inservible sin que nada falle.
 
     `evidencia_consentimiento`: ver `normalizar_evidencia`. Es obligatorio.
-    Quien no evidencia el consentimiento de contacto **no se crea**: la
-    ingesta no puede ser una puerta lateral para poblar la bóveda sin base
-    legal, que es justo lo que el alta manual (R1.1) impide.
+    Quien no evidencia la finalidad obligatoria **no se crea**: la ingesta no
+    puede ser una puerta lateral para poblar la bóveda sin base legal, que es
+    justo lo que el alta manual (R1.1) impide.
+
+    `finalidad_obligatoria` dice cuál es esa finalidad, y **no es la misma en
+    los dos flujos**:
+
+    - Desde una encuesta (R3.9) es `contacto_participacion`: esa persona es
+      un panelista al que se va a seguir convocando.
+    - En una carga sin panel (R3.13) es `uso_semantico`: son personas que
+      **no** se van a contactar y cuyos datos se incorporan para análisis.
+      Exigir consentimiento de contacto sería pedir base legal para algo que
+      no se va a hacer, y no exigir el de uso semántico dejaría sin base lo
+      único que sí se va a hacer.
+
+    La otra finalidad sigue siendo opcional y, si viene declarada y la fila la
+    evidencia, se registra igual.
 
     La ingesta tampoco puede crear duplicados que el alta manual habría
     evitado (R3.9), así que pasa por el mismo `dedup.resolver`. Un caso
@@ -687,7 +713,8 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
             "archivo: sin eso no se pueden vincular las respuestas."
         )
 
-    evidencia = normalizar_evidencia(evidencia_consentimiento)
+    evidencia = normalizar_evidencia(
+        evidencia_consentimiento, obligatorias=(finalidad_obligatoria,))
 
     # Que la variable declarada exista en el archivo. Un typo acá haría que
     # ninguna fila evidencie consentimiento y que la importación termine con
@@ -719,11 +746,12 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
             for finalidad, regla in evidencia.items()
         }
 
-        # Sin consentimiento de contacto no hay persona. Es la regla que
-        # cierra el agujero legal: no se crea, no se registra alias, no
-        # queda nada a medias.
-        if not consintio["contacto_participacion"]:
-            regla = evidencia["contacto_participacion"]
+        # Sin la finalidad obligatoria no hay persona. Es la regla que cierra
+        # el agujero legal: no se crea, no se registra alias, no queda nada a
+        # medias. Cuál es la obligatoria depende de para qué se está
+        # incorporando a esa gente —ver el docstring—.
+        if not consintio.get(finalidad_obligatoria):
+            regla = evidencia[finalidad_obligatoria]
             sin_consentimiento.append({
                 "id_en_origen": id_en_origen,
                 "variable": regla["variable"],
@@ -746,7 +774,9 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
         consentimientos = [
             {"finalidad": finalidad,
              "version_texto": evidencia[finalidad]["version_texto"]}
-            for finalidad in FINALIDADES_EVIDENCIABLES if consintio[finalidad]
+            # `.get`: la finalidad opcional puede no estar declarada, y en
+            # ese caso no hay evidencia que registrar.
+            for finalidad in FINALIDADES_EVIDENCIABLES if consintio.get(finalidad)
         ]
 
         # Si ya conocemos ese id en esta plataforma, no hay nada que
@@ -849,8 +879,13 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
 
     conn_boveda.commit()
 
-    solo_contacto = [
-        c for c in creados + reutilizados if not c["consintio"]["uso_semantico"]
+    # Quienes evidenciaron la finalidad obligatoria pero no la otra. Qué
+    # significa eso depende de cuál era cada una, así que el aviso lo dice.
+    otra_finalidad = next(
+        f for f in FINALIDADES_EVIDENCIABLES if f != finalidad_obligatoria)
+    sin_la_otra = [
+        c for c in creados + reutilizados
+        if not c["consintio"].get(otra_finalidad)
     ]
     return {
         "creados": creados,
@@ -867,33 +902,40 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
             "sin_datos_suficientes": len(sin_datos),
             "sin_consentimiento": len(sin_consentimiento),
         },
+        "finalidad_obligatoria": finalidad_obligatoria,
         "aviso_sin_consentimiento": (
             {
                 "personas": len(sin_consentimiento),
-                "variable": evidencia["contacto_participacion"]["variable"],
+                "finalidad": finalidad_obligatoria,
+                "variable": evidencia[finalidad_obligatoria]["variable"],
                 "valores_afirmativos":
-                    evidencia["contacto_participacion"]["valores_afirmativos"],
+                    evidencia[finalidad_obligatoria]["valores_afirmativos"],
                 "mensaje": (
                     f"{len(sin_consentimiento)} fila(s) no evidencian el "
-                    f"consentimiento de contacto en la variable "
-                    f"«{evidencia['contacto_participacion']['variable']}»: "
-                    f"no se creó ninguna persona con ellas y sus respuestas "
-                    f"no se van a poder vincular a nadie. Si eso es un error "
+                    f"consentimiento de «{finalidad_obligatoria}» en la "
+                    f"variable «{evidencia[finalidad_obligatoria]['variable']}»: "
+                    f"no se creó ninguna persona con ellas. Si eso es un error "
                     f"de codificación del archivo, corregí el valor "
                     f"afirmativo declarado y volvé a importar."
                 ),
             } if sin_consentimiento else None
         ),
-        "aviso_sin_uso_semantico": (
+        "aviso_sin_la_otra_finalidad": (
             {
-                "personas": len(solo_contacto),
+                "personas": len(sin_la_otra),
+                "finalidad": otra_finalidad,
                 "mensaje": (
-                    f"{len(solo_contacto)} persona(s) consintieron el contacto "
-                    f"pero no el uso semántico. Están en el panel y se las "
-                    f"puede convocar; sus respuestas no se ingestan al store "
-                    f"semántico, que es el gate de R1.3 haciendo su trabajo."
+                    f"{len(sin_la_otra)} persona(s) no evidencian "
+                    f"«{otra_finalidad}». "
+                    + ("Están en el panel y se las puede convocar; sus "
+                       "respuestas no se ingestan al store semántico, que es "
+                       "el gate de R1.3 haciendo su trabajo."
+                       if otra_finalidad == SEMANTICO else
+                       "Sus respuestas se incorporan igual, pero no se las va "
+                       "a poder convocar nunca: el gate de R1.3 sigue "
+                       "aplicando.")
                 ),
-            } if solo_contacto else None
+            } if sin_la_otra else None
         ),
     }
 

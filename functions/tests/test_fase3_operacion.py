@@ -383,7 +383,7 @@ def test_una_misma_variable_puede_cubrir_las_dos_finalidades(conn_boveda,
     )
 
     assert resultado["resumen"]["creados"] == 2      # Ana y Beto
-    assert resultado["aviso_sin_uso_semantico"] is None, (
+    assert resultado["aviso_sin_la_otra_finalidad"] is None, (
         "con una sola variable, quien consiente el contacto consiente las dos"
     )
     finalidades = {
@@ -472,7 +472,7 @@ def test_cada_finalidad_se_evalua_por_separado(conn_boveda, archivo_sav):
             (beto["id_persona"],))
     ]
     assert finalidades == ["contacto_participacion"]
-    assert resultado["aviso_sin_uso_semantico"]["personas"] == 1
+    assert resultado["aviso_sin_la_otra_finalidad"]["personas"] == 1
 
 
 def test_quien_no_consiente_el_uso_semantico_no_se_ingesta(

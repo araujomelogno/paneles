@@ -525,8 +525,15 @@ def ficha(conn, id_persona):
     }
 
 
-def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0):
-    """Listado de panelistas para la grilla de administración."""
+def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
+           sin_panel=False):
+    """Listado de panelistas para la grilla de administración.
+
+    `sin_panel` (R3.13.e) deja solo a quienes no son miembros de ningún
+    panel: la gente que entró por una carga externa y a la que nadie
+    incorporó todavía. Sin este filtro se mezcla con el resto y no hay forma
+    de encontrarla.
+    """
     condiciones = []
     params = []
     if busqueda:
@@ -541,6 +548,11 @@ def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0):
             "and m.panel_id = %s and m.estado = 'activo')"
         )
         params.append(panel_id)
+    if sin_panel:
+        condiciones.append(
+            "not exists (select 1 from membresia m where m.id_persona = p.id_persona "
+            "and m.estado = 'activo')"
+        )
     donde = ("where " + " and ".join(condiciones)) if condiciones else ""
 
     total = db.una(

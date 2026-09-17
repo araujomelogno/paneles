@@ -50,6 +50,7 @@ MIGRACIONES_BOVEDA = (
         "participacion.calidad_motivo_revision",
     )),
     ("0006_participacion_por_importacion.sql", ("participacion.origen",)),
+    ("0007_carga_sin_panel.sql", ("carga",)),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -86,6 +87,7 @@ PARA_QUE = {
     "encuesta.puntos_participacion": "los puntos que otorga ese estudio",
     "panel.origen": "distinguir un panel armado a mano de uno creado desde una consulta",
     "participacion.origen": "distinguir a quien convocó el sistema de quien respondió en campo y se incorporó al ingestar",
+    "carga": "incorporar individuos con sus respuestas sin meterlos en ningún panel",
 }
 
 
