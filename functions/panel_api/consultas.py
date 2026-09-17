@@ -149,7 +149,7 @@ def _entero(valor, por_defecto, maximo):
     return max(1, min(n, maximo))
 
 
-def normalizar_criterio(crudo, orden):
+def normalizar_criterio(crudo, orden, dimensiones=None, catalogo_por_clave=None):
     """Un criterio, en cualquiera de sus formas de entrada, a forma canónica.
 
     Se acepta un string suelto como atajo de un criterio semántico: es la
@@ -165,7 +165,8 @@ def normalizar_criterio(crudo, orden):
         tipo = "demografico" if crudo.get("dimension") else "semantico"
 
     if tipo == "demografico":
-        criterio = demografia.normalizar_criterio(crudo)
+        criterio = demografia.normalizar_criterio(
+            crudo, dimensiones=dimensiones, catalogo_por_clave=catalogo_por_clave)
         criterio["orden"] = orden
         criterio["peso"] = float(crudo.get("peso") or 1)
         return criterio
@@ -198,13 +199,26 @@ def normalizar_criterio(crudo, orden):
     }
 
 
-def normalizar_definicion(cruda):
-    """Valida y completa el cuerpo de `POST /consultas`."""
+def normalizar_definicion(cruda, conn=None):
+    """Valida y completa el cuerpo de `POST /consultas`.
+
+    R3.14 — con `conn` a mano, las dimensiones demográficas admitidas salen
+    del catálogo de atributos; sin él se validan contra el núcleo. Quien
+    ejecuta o guarda una consulta siempre tiene conexión, así que en la
+    práctica se valida contra el catálogo.
+    """
     cruda = cruda or {}
     crudos = cruda.get("criterios")
     if crudos is None and cruda.get("texto"):
         crudos = [cruda["texto"]]
-    criterios = [normalizar_criterio(c, i) for i, c in enumerate(crudos or [])]
+    por_clave = demografia.catalogo(conn) if conn is not None else None
+    dimensiones = (
+        set(por_clave) | set(demografia.DIMENSIONES_BASE) if por_clave else None)
+    criterios = [
+        normalizar_criterio(c, i, dimensiones=dimensiones,
+                            catalogo_por_clave=por_clave)
+        for i, c in enumerate(crudos or [])
+    ]
     if not criterios:
         raise DatosInvalidos("La consulta necesita al menos un criterio.")
 
@@ -644,7 +658,7 @@ def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None):
     perezosa: si la consulta es puramente demográfica, este método no la
     toca, y esa es exactamente la garantía de R2.4.
     """
-    definicion = normalizar_definicion(definicion_cruda)
+    definicion = normalizar_definicion(definicion_cruda, ctx.boveda)
     reloj = _Reloj()
     degradaciones = []
 
@@ -819,6 +833,12 @@ def a_csv(resultado):
 # las observaciones. No es una omisión: la fecha exacta es un identificador
 # fino y las observaciones son texto libre donde suele terminar cayendo dato
 # sensible. El tramo etario da la información demográfica sin el identificador.
+#
+# R3.14.e — la lista es **fija** y no crece con el catálogo. Que un admin
+# defina un atributo nuevo no puede hacer que empiece a salir solo en los
+# archivos que dejan el sistema, y menos si es una categoría especial. Sumar
+# un atributo a esta exportación es una decisión explícita, no un efecto
+# secundario de haber ampliado el vocabulario.
 CAMPOS_IDENTIFICADOS = (
     "id_persona", "nombre", "documento", "email", "celular", "contacto",
     "sexo", "localidad", "tramo_etario",
@@ -923,7 +943,7 @@ def guardar(conn, nombre, definicion_cruda, descripcion=None, actor=None):
     nombre = (nombre or "").strip()
     if not nombre:
         raise DatosInvalidos("La consulta guardada necesita un nombre.")
-    definicion = normalizar_definicion(definicion_cruda)
+    definicion = normalizar_definicion(definicion_cruda, conn)
 
     fila = db.una(
         conn,

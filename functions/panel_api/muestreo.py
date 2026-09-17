@@ -138,14 +138,18 @@ def _candidatos(conn, panel_id, encuesta_id, dimension, umbrales):
     Una sola consulta y no una por persona: un panel de veinte mil miembros
     haría veinte mil viajes.
     """
-    columna = demografia.DIMENSIONES[dimension]
+    # R3.14.f — el muestreo se construye **directamente sobre el catálogo**.
+    # La dimensión de cuota puede ser cualquier atributo activo, no las tres
+    # columnas fijas de antes, y quien no tiene el dato cae en «(sin dato)»:
+    # no se lo puede usar para cerrar una brecha de esa dimensión, porque no
+    # se sabe a qué categoría pertenece.
     return db.todas(
         conn,
-        f"""
+        """
         select
             m.id_persona,
             p.estado                                     as estado_persona,
-            coalesce({columna}::text, '(sin dato)')      as categoria,
+            coalesce(va.valor, '(sin dato)')             as categoria,
             -- Convocatorias dentro de la ventana.
             --
             -- Solo las que emitió el sistema. Desde el addendum de R3.9 la
@@ -171,13 +175,14 @@ def _candidatos(conn, panel_id, encuesta_id, dimension, umbrales):
                                                          as respondidas
           from membresia m
           join persona p       on p.id_persona = m.id_persona
-          left join v_demografia d on d.id_persona = m.id_persona
+          left join v_atributo_persona va
+                 on va.id_persona = m.id_persona and va.atributo = %s
           left join participacion pa on pa.id_persona = m.id_persona
          where m.panel_id = %s and m.estado = 'activo'
-         group by m.id_persona, p.estado, {columna}
+         group by m.id_persona, p.estado, va.valor
         """,
         (umbrales["ventana_dias"], encuesta_id, encuesta_id, encuesta_id,
-         encuesta_id, encuesta_id, panel_id),
+         encuesta_id, encuesta_id, dimension, panel_id),
     )
 
 
@@ -235,10 +240,11 @@ def proponer(conn, encuesta_id, dimension="sexo", cantidad=100, estado="activo")
     )
     if not encuesta:
         raise NoEncontrado(f"No existe la encuesta {encuesta_id}.")
-    if dimension not in demografia.DIMENSIONES_CATEGORICAS:
+    categoricas = demografia.categoricas(conn)
+    if dimension not in categoricas:
         raise DatosInvalidos(
             f"«{dimension}» no es una dimensión de cuota.",
-            {"dimensiones_validas": list(demografia.DIMENSIONES_CATEGORICAS)},
+            {"dimensiones_validas": list(categoricas)},
         )
     try:
         cantidad = int(cantidad)

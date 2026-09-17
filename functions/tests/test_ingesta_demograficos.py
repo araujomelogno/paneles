@@ -164,8 +164,12 @@ def test_un_campo_ya_cargado_con_otro_valor_no_se_pisa(ctx, conn_boveda):
     assert campos == {"localidad", "sexo"}
     discrepancia = next(
         d for d in resultado["discrepancias_demograficas"] if d["campo"] == "localidad")
-    assert discrepancia["en_boveda"] == "salto"
-    assert discrepancia["en_el_archivo"] == "montevideo"
+    # R3.14 — la discrepancia se informa con la **categoría canónica**, no con
+    # el texto del archivo en minúsculas: desde que sexo y localidad viven en
+    # el catálogo, lo comparado son dos categorías, y nombrarlas por su clave
+    # es lo que permite buscarlas después.
+    assert discrepancia["en_boveda"] == "Salto"
+    assert discrepancia["en_el_archivo"] == "Montevideo"
     assert discrepancia["id_persona"] == persona
 
 
@@ -242,7 +246,11 @@ def test_el_analisis_sugiere_pero_no_decide(tmp_path):
     analisis = sav.analizar(ruta)
     sugeridas = {s["codigo"]: s["campo"] for s in analisis["demograficas_sugeridas"]}
 
-    assert sugeridas == {"SEXO": "sexo", "EDAD": sav.SOLO_EXCLUIR}
+    # R3.14.g — `EDAD` ya tiene dónde ir: es un atributo del catálogo, y el
+    # tramo se calcula envejeciendo la edad declarada desde la fecha de
+    # referencia de la carga. Antes se sugería «no guardar» porque la bóveda
+    # no la modelaba y la única salida era tirarla.
+    assert sugeridas == {"SEXO": "sexo", "EDAD": "edad"}
     assert any(a["tipo"] == "demograficas_a_confirmar" for a in analisis["avisos"])
     # Y la propuesta sigue sin incluir nada por su cuenta.
     assert all(v["incluir"] is False for v in analisis["variables"])
@@ -280,16 +288,26 @@ def test_una_variable_cualquiera_no_se_sugiere(tmp_path):
 # ── El código crudo no llega a la bóveda ─────────────────────────────
 
 def test_el_codigo_de_spss_se_traduce_antes_de_guardarlo(ctx, ola):
-    """Sin esto, `persona.sexo` se llena de «1» y «2», la composición por
-    sexo queda inservible y el muestreo por cuota también — y nada falla,
-    que es lo peor que puede pasar."""
+    """Sin esto, el sexo se guarda como «1» y «2», la composición por sexo
+    queda inservible y el muestreo por cuota también — y nada falla, que es lo
+    peor que puede pasar.
+
+    R3.14 — el valor ya no vive en `persona.sexo` sino en el catálogo, y la
+    traducción tiene ahora dos pasos: el código a su etiqueta («2» →
+    «Femenino») y la etiqueta a la categoría canónica («Femenino» → `F`).
+    """
     _ingestar(ctx, ola, [FILA])
 
     fila = db.una(
-        ctx.boveda, "select sexo from persona where id_persona = %s",
+        ctx.boveda,
+        "select v.valor, v.valor_crudo from v_atributo_persona v "
+        "where v.id_persona = %s and v.atributo = 'sexo'",
         (ola["persona"],))
-    assert fila["sexo"] == "F"
-    assert fila["sexo"] != "2"
+    assert fila["valor"] == "F"
+    assert fila["valor"] != "2"
+    # Y el crudo queda guardado: es lo que permite recalcular si el mapeo
+    # estaba mal (R3.14.c).
+    assert fila["valor_crudo"] is not None
 
 
 @pytest.mark.parametrize("etiqueta,esperado", [

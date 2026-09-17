@@ -69,6 +69,10 @@ def resolver(conn, revision_id, decision, id_persona=None, actor=None):
     fila = _tomar_pendiente(conn, revision_id)
     datos = fila["datos"] if isinstance(fila["datos"], dict) else json.loads(fila["datos"])
     persona_datos = datos.get("persona") or {}
+    # R3.14 — el alta guardó sus atributos del catálogo junto a la PII. Se
+    # escriben al resolver, no antes: mientras la revisión está pendiente no
+    # existe ninguna persona a la que atárselos.
+    valores_atributos = datos.get("atributos") or {}
     consentimientos = datos.get("consentimientos") or []
     panel_id = datos.get("panel_id")
     origen = datos.get("origen")
@@ -88,10 +92,16 @@ def resolver(conn, revision_id, decision, id_persona=None, actor=None):
                 {"candidatos": sorted(candidatos)},
             )
         personas._completar_faltantes(conn, id_persona, persona_datos)
+        # Al fusionar rige la regla de siempre: completar lo vacío, no pisar
+        # lo que la persona ya tenía cargado.
+        personas._fijar_atributos(
+            conn, id_persona, valores_atributos, origen="alta", pisar=False)
         destino = id_persona
         estado_final = "fusionada"
     elif decision == "crear":
         destino = personas._crear(conn, persona_datos)
+        personas._fijar_atributos(
+            conn, destino, valores_atributos, origen="alta", pisar=True)
         estado_final = "creada"
     else:
         raise DatosInvalidos(

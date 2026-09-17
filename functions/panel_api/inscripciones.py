@@ -348,7 +348,8 @@ def aprobar(conn, inscripcion_id, actor, panel_id=None):
         "panel_id": panel_id if panel_id is not None else fila["panel_id"],
         "origen": fila["origen"],
     }
-    resultado = personas.alta(conn, cuerpo, actor=actor)
+    resultado = personas.alta(conn, cuerpo, actor=actor,
+                              origen_atributo="inscripcion")
 
     if resultado["estado"] == "revision":
         # El caso ambiguo no se fusiona solo (R1.2): queda en la cola de

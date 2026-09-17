@@ -127,7 +127,7 @@ def listar_miembros(conn, panel_id, estado="activo", limite=200, desplazamiento=
         conn,
         """
         select m.id_persona, m.estado, m.fecha_alta,
-               p.nombre, p.email, p.sexo, p.localidad, d.tramo_etario,
+               p.nombre, p.email, d.sexo, d.localidad, d.tramo_etario,
                exists (select 1 from consentimiento c
                         where c.id_persona = p.id_persona
                           and c.finalidad = 'contacto_participacion'

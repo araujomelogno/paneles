@@ -101,7 +101,8 @@ def ingestar(conn_boveda, conn_semantica, carga_id, preguntas, filas,
     registrar de esas dos.
     """
     carga = obtener(conn_boveda, carga_id)
-    demograficas = sav.normalizar_demograficas(demograficas)
+    demograficas = sav.normalizar_demograficas(
+        demograficas, campos_validos=sav.campos_demograficos(conn_boveda))
 
     # R3.9.d — lo marcado como demográfico no se ingesta como pregunta; su
     # valor va a la ficha. El filtro corre acá y no solo en la pantalla: es

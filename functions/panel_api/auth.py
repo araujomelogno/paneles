@@ -55,6 +55,13 @@ PERMISOS = {
     # R3.7 — publicar el texto de consentimiento. Es una decisión de
     # cumplimiento antes que de operación: la comparten admin y dpo.
     "publicar_consentimiento": {"admin", "dpo"},
+    # R3.14 — administrar el vocabulario de segmentadores. Solo admin, y con
+    # permiso propio: definir un atributo decide con qué se puede segmentar al
+    # panel entero, y marcar uno como categoría especial toca una obligación
+    # legal. No es una tarea más de operación, y por eso no la comparte con
+    # `gestionar_paneles`.
+    "gestionar_atributos": {"admin"},
+
     # R3.10 — exportar el resultado con datos personales. Se separa de
     # `reidentificar` a propósito: ver una lista en pantalla y llevarse un
     # archivo con nombres y documentos no son el mismo riesgo, y la spec

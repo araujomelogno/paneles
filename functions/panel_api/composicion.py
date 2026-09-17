@@ -33,24 +33,28 @@ universo cargado a dos decimales no suma exactamente 1 casi nunca (0,52 +
 punto porcentual de desvío. Más que eso es un error de carga."""
 
 
-def _validar_objetivos(objetivos):
+def _validar_objetivos(objetivos, categoricas=None):
     """Deja los objetivos en forma canónica y verifica cada dimensión.
 
     La validación es por dimensión, no sobre el total: cargar solo `sexo`
     tiene que poder hacerse, y entonces el total del panel es 1, no 2.
+
+    R3.14 — `categoricas` son las dimensiones de cuota admitidas, que salen
+    del catálogo de atributos. Sin ellas se valida contra el núcleo.
     """
     if not objetivos:
         raise DatosInvalidos("No hay objetivos para cargar.")
+    categoricas = list(categoricas or demografia.DIMENSIONES_CATEGORICAS)
 
     por_dimension = {}
     for crudo in objetivos:
         if not isinstance(crudo, dict):
             raise DatosInvalidos(f"Objetivo mal formado: {crudo!r}.")
         dimension = (crudo.get("dimension") or "").strip().lower()
-        if dimension not in demografia.DIMENSIONES_CATEGORICAS:
+        if dimension not in categoricas:
             raise DatosInvalidos(
                 f"Dimensión desconocida para composición: {dimension!r}.",
-                {"dimensiones_validas": list(demografia.DIMENSIONES_CATEGORICAS)},
+                {"dimensiones_validas": list(categoricas)},
             )
         categoria = str(crudo.get("categoria") or "").strip()
         if not categoria:
@@ -107,7 +111,7 @@ def guardar_objetivo(conn, panel_id, objetivos):
     """
     if not db.una(conn, "select 1 from panel where id = %s", (panel_id,)):
         raise NoEncontrado(f"No existe el panel {panel_id}.")
-    por_dimension = _validar_objetivos(objetivos)
+    por_dimension = _validar_objetivos(objetivos, demografia.categoricas(conn))
 
     for dimension, categorias in por_dimension.items():
         db.ejecutar(
@@ -177,22 +181,35 @@ def borrar_objetivo(conn, panel_id, dimension=None):
     return {"panel_id": panel_id, "dimension": dimension, "borradas": n}
 
 
+SIN_DATO = "(sin dato)"
+"""Cómo se nombra a quien no tiene valor para la dimensión.
+
+R3.14.d — se informa **aparte**, nunca dentro de una categoría: si los sin
+dato engrosaran una categoría real, la brecha de esa categoría mentiría y la
+cuota se cerraría con gente que no se sabe si corresponde."""
+
+
 def _observada(conn, panel_id, dimension, estado="activo"):
-    """Cuántos miembros hay en cada categoría de una dimensión."""
-    columna = demografia.DIMENSIONES[dimension]
+    """Cuántos miembros hay en cada categoría de una dimensión.
+
+    R3.14 — la dimensión puede ser cualquier atributo del catálogo, así que
+    el conteo va contra `v_atributo_persona` y no contra columnas fijas. Quien
+    no tiene valor no tiene fila en la vista: cae en `(sin dato)`.
+    """
     filas = db.todas(
         conn,
-        f"""
-        select coalesce({columna}::text, '(sin dato)') as categoria,
+        """
+        select coalesce(va.valor, %s) as categoria,
                count(*)::int as observados
           from membresia m
           join persona p on p.id_persona = m.id_persona
-          left join v_demografia d on d.id_persona = p.id_persona
+          left join v_atributo_persona va
+                 on va.id_persona = p.id_persona and va.atributo = %s
          where m.panel_id = %s and (%s::text is null or m.estado = %s::text)
          group by 1
          order by 1
         """,
-        (panel_id, estado, estado),
+        (SIN_DATO, dimension, panel_id, estado, estado),
     )
     return {f["categoria"]: f["observados"] for f in filas}
 
@@ -214,10 +231,21 @@ def _dimension(conn, panel_id, dimension, objetivos, total, estado):
     del_objetivo = objetivos.get(dimension) or {}
     hay_objetivo = bool(del_objetivo)
 
+    # R3.14.d — los «sin dato» salen de la lista de categorías y se informan
+    # aparte. Dejarlos adentro tenía dos efectos, los dos malos: aparecían
+    # como una categoría de cuota que nadie cargó, y su peso en el
+    # denominador bajaba la proporción observada de todas las demás, con lo
+    # cual la brecha marcaba un déficit que no existía.
+    sin_dato = observada.pop(SIN_DATO, 0)
+    con_dato = sum(observada.values())
+
     categorias = []
     for categoria in sorted(set(observada) | set(del_objetivo)):
         observados = observada.get(categoria, 0)
-        proporcion = (observados / total) if total else 0.0
+        # La composición se compara contra el universo **entre quienes tienen
+        # el dato**: es la única base sobre la que las proporciones suman 1 y
+        # la comparación significa algo.
+        proporcion = (observados / con_dato) if con_dato else 0.0
         fila = {
             "categoria": categoria,
             "observados": observados,
@@ -228,6 +256,8 @@ def _dimension(conn, panel_id, dimension, objetivos, total, estado):
         }
         if hay_objetivo and categoria in del_objetivo:
             objetivo = del_objetivo[categoria]
+            # El faltante, en cambio, se cuenta contra el panel entero: es
+            # gente que hay que sumar, y el panel es del tamaño que es.
             esperados = round(objetivo * total)
             fila.update({
                 "proporcion_objetivo": round(objetivo, 4),
@@ -247,6 +277,14 @@ def _dimension(conn, panel_id, dimension, objetivos, total, estado):
             f"composición es descriptiva y la brecha no se puede calcular."
         ),
         "categorias": categorias,
+        "con_dato": con_dato,
+        "sin_dato": sin_dato,
+        "proporcion_sin_dato": round(sin_dato / total, 4) if total else 0.0,
+        "aviso_sin_dato": (
+            f"{sin_dato} miembro(s) no tienen «{dimension}» cargado. No se "
+            f"cuentan en ninguna categoría: las proporciones de arriba son "
+            f"sobre los {con_dato} que sí lo tienen."
+        ) if sin_dato else None,
         # Índice de disimilitud: la mitad de la suma de las diferencias
         # absolutas. Se lee como «qué fracción del panel habría que mover de
         # categoría para calzar con el universo». 0 = calza exacto.
@@ -267,32 +305,34 @@ def cruce(conn, panel_id, dimension_a, dimension_b, estado="activo"):
     celda por combinación, y `objetivo_composicion` guarda marginales. El
     cruce es descriptivo por diseño, y lo dice.
     """
+    categoricas = demografia.categoricas(conn)
     for dimension in (dimension_a, dimension_b):
-        if dimension not in demografia.DIMENSIONES_CATEGORICAS:
+        if dimension not in categoricas:
             raise DatosInvalidos(
                 f"Dimensión desconocida para composición: {dimension!r}.",
-                {"dimensiones_validas": list(demografia.DIMENSIONES_CATEGORICAS)},
+                {"dimensiones_validas": list(categoricas)},
             )
     if dimension_a == dimension_b:
         raise DatosInvalidos("El cruce necesita dos dimensiones distintas.")
 
-    columna_a = demografia.DIMENSIONES[dimension_a]
-    columna_b = demografia.DIMENSIONES[dimension_b]
     total = contar_miembros(conn, panel_id, estado)
     filas = db.todas(
         conn,
-        f"""
-        select coalesce({columna_a}::text, '(sin dato)') as a,
-               coalesce({columna_b}::text, '(sin dato)') as b,
+        """
+        select coalesce(va.valor, %s) as a,
+               coalesce(vb.valor, %s) as b,
                count(*)::int as observados
           from membresia m
           join persona p on p.id_persona = m.id_persona
-          left join v_demografia d on d.id_persona = p.id_persona
+          left join v_atributo_persona va
+                 on va.id_persona = p.id_persona and va.atributo = %s
+          left join v_atributo_persona vb
+                 on vb.id_persona = p.id_persona and vb.atributo = %s
          where m.panel_id = %s and (%s::text is null or m.estado = %s::text)
          group by 1, 2
          order by 1, 2
         """,
-        (panel_id, estado, estado),
+        (SIN_DATO, SIN_DATO, dimension_a, dimension_b, panel_id, estado, estado),
     )
     return {
         "panel_id": panel_id,
@@ -321,14 +361,13 @@ def composicion(conn, panel_id, dimensiones=None, estado="activo",
     if not db.una(conn, "select 1 from panel where id = %s", (panel_id,)):
         raise NoEncontrado(f"No existe el panel {panel_id}.")
 
-    pedidas = [
-        d.strip().lower() for d in (dimensiones or demografia.DIMENSIONES_CATEGORICAS)
-    ]
-    desconocidas = [d for d in pedidas if d not in demografia.DIMENSIONES_CATEGORICAS]
+    categoricas = demografia.categoricas(conn)
+    pedidas = [d.strip().lower() for d in (dimensiones or categoricas)]
+    desconocidas = [d for d in pedidas if d not in categoricas]
     if desconocidas:
         raise DatosInvalidos(
             f"Dimensiones desconocidas: {desconocidas}.",
-            {"dimensiones_validas": list(demografia.DIMENSIONES_CATEGORICAS)},
+            {"dimensiones_validas": list(categoricas)},
         )
 
     objetivos = obtener_objetivo(conn, panel_id)["dimensiones"]

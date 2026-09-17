@@ -237,19 +237,45 @@ def _avisos_de_texto(codigo, etiqueta):
 # A qué campo de `persona` puede apuntar una variable marcada. Es la lista
 # de `personas.CAMPOS_PERSONA` menos `observaciones`, que es texto libre y no
 # un segmentador.
+# Los campos de `persona` a los que puede apuntar una variable del archivo.
+# Son los patronímicos y de contacto, más la fecha de nacimiento.
+#
+# R3.14 — `sexo` y `localidad` **salieron de acá**: ahora son atributos del
+# catálogo, igual que cualquier segmentador que un admin defina. La lista de
+# destinos válidos es esta más las claves activas del catálogo, y se arma con
+# `campos_demograficos(conn)`.
 CAMPOS_DEMOGRAFICOS = (
     "nombre", "documento", "email", "celular",
-    "sexo", "fecha_nacimiento", "localidad", "contacto",
+    "fecha_nacimiento", "contacto",
 )
 
 # Marcar sin campo: la variable se excluye del store semántico y no se
-# guarda en ningún lado. Hace falta para las demográficas que la bóveda no
-# modela —`EDAD` es el caso típico: la bóveda guarda fecha de nacimiento y
-# deriva el tramo, así que una columna de edad no tiene dónde ir— y para
-# cualquier segmentador que no se quiera conservar. Sin esta opción, esas
-# variables solo tendrían la salida de quedar como pregunta, que es
-# justamente lo que hay que evitar.
+# guarda en ningún lado. Desde R3.14 hace falta menos seguido —un segmentador
+# que antes no tenía dónde ir ahora se define en el catálogo— pero sigue
+# siendo la salida para una variable que no se quiere conservar. Sin esta
+# opción, esas variables solo tendrían la salida de quedar como pregunta, que
+# es justamente lo que hay que evitar.
 SOLO_EXCLUIR = "(no guardar)"
+
+
+def campos_demograficos(conn=None):
+    """Los destinos válidos de una variable marcada como demográfica.
+
+    Los campos de `persona` más las claves activas del catálogo (R3.14.c).
+    Sin `conn` devuelve solo los campos fijos, que es lo que se puede validar
+    sin tocar la base.
+    """
+    from . import atributos as _atributos
+
+    if conn is None:
+        # Sin base, el núcleo: `sexo`, `localidad`, `tramo_etario` y `edad`
+        # siempre existen —los siembra la migración y no se pueden borrar ni
+        # desactivar—, así que validar contra ellos sin conexión es correcto.
+        return list(CAMPOS_DEMOGRAFICOS) + list(_atributos.CLAVES_DEL_NUCLEO)
+    return list(CAMPOS_DEMOGRAFICOS) + [
+        a["clave"] for a in _atributos.listar(conn, solo_activos=True,
+                                              con_categorias=False)
+    ]
 
 # Qué nombres de variable sugerir para cada campo. Es una sugerencia y nada
 # más: se confirma o se corrige, nunca se aplica sola. Una variable puede ser
@@ -264,12 +290,22 @@ SUGERENCIAS_DEMOGRAFICAS = (
     ("fecha_nacimiento", r"^(fnac|fec_nac|fecha_nac|nacim|birth|fdn)"),
     ("sexo", r"^(sexo|sex|genero|género)"),
     ("localidad", r"^(loc|localidad|depto|departamento|ciudad|barrio|zona)"),
-    (SOLO_EXCLUIR, r"^(edad|age|tramo|nse|nivel_socio)"),
+    # R3.14 — `edad` y `tramo` ya tienen dónde ir: son atributos del catálogo.
+    # `nse` se sugiere solo si el catálogo lo tiene definido, y de eso se
+    # encarga `_sugerir_demografica` con las claves que le pasen.
+    ("edad", r"^(edad|age)"),
+    ("tramo_etario", r"^(tramo|rango_?edad)"),
 )
 
 
-def _sugerir_demografica(codigo, etiqueta):
-    """Qué campo parece traer esta variable, o None si no parece demográfica."""
+def _sugerir_demografica(codigo, etiqueta, claves_del_catalogo=()):
+    """Qué campo parece traer esta variable, o None si no parece demográfica.
+
+    Además de los patrones fijos, se prueba **la clave de cada atributo del
+    catálogo** contra el nombre de la variable: si un admin definió
+    `nivel_educativo`, una variable que se llame así se sugiere sola, sin que
+    haya que tocar esta lista nunca más.
+    """
     import re
 
     for campo, patron in SUGERENCIAS_DEMOGRAFICAS:
@@ -279,10 +315,15 @@ def _sugerir_demografica(codigo, etiqueta):
         # dejan el sentido solo en el variable label.
         if re.search(patron, (etiqueta or "").strip(), re.IGNORECASE):
             return campo
+    normalizado = re.sub(r"[^a-z0-9]+", "_", (codigo or "").lower()).strip("_")
+    for clave in claves_del_catalogo:
+        if normalizado == clave or normalizado.startswith(clave + "_"):
+            return clave
     return None
 
 
-def normalizar_demograficas(demograficas, codigos_del_archivo=None):
+def normalizar_demograficas(demograficas, codigos_del_archivo=None,
+                            campos_validos=None):
     """Valida el marcado de variables demográficas y lo deja canónico.
 
     Forma esperada: `{"SEXO": "sexo", "EDAD": "(no guardar)"}` — la variable
@@ -297,7 +338,7 @@ def normalizar_demograficas(demograficas, codigos_del_archivo=None):
             {"ejemplo": {"SEXO": "sexo", "EDAD": SOLO_EXCLUIR}},
         )
 
-    validos = set(CAMPOS_DEMOGRAFICOS) | {SOLO_EXCLUIR}
+    validos = set(campos_validos or campos_demograficos()) | {SOLO_EXCLUIR}
     normalizado = {}
     for variable, campo in demograficas.items():
         codigo = str(variable).strip()
@@ -309,7 +350,10 @@ def normalizar_demograficas(demograficas, codigos_del_archivo=None):
             destino = SOLO_EXCLUIR
         if destino not in validos:
             raise DatosInvalidos(
-                f"«{destino}» no es un campo demográfico de la bóveda.",
+                f"«{destino}» no es un campo demográfico de la bóveda ni un "
+                f"atributo activo del catálogo. Los atributos se definen en "
+                f"Configuración → Atributos demográficos; no se crean al "
+                f"vuelo durante una carga.",
                 {"variable": codigo, "campos_validos": sorted(validos)},
             )
         normalizado[codigo] = destino
@@ -389,11 +433,15 @@ def mapeo_por_campo(demograficas):
     }
 
 
-def analizar(archivo):
+def analizar(archivo, claves_del_catalogo=()):
     """Lee el `.sav` y devuelve la metadata precargada, para editar y confirmar.
 
-    No escribe nada: es la pantalla previa.
+    No escribe nada: es la pantalla previa. `claves_del_catalogo` son los
+    atributos activos (R3.14): sirven para sugerir el marcado y viajan de
+    vuelta en la respuesta, que es de donde la pantalla arma el desplegable
+    de campo demográfico.
     """
+    claves_del_catalogo = tuple(claves_del_catalogo or ())
     datos, meta = _leer(archivo)
     etiquetas = dict(zip(meta.column_names, meta.column_labels or []))
     value_labels = meta.variable_value_labels or {}
@@ -418,7 +466,8 @@ def analizar(archivo):
             "incluir": False,
             # Sugerencia de marcado demográfico, para confirmar o corregir.
             # `null` significa «no parece demográfica», no «no lo es».
-            "demografica_sugerida": _sugerir_demografica(codigo, etiqueta),
+            "demografica_sugerida": _sugerir_demografica(
+                codigo, etiqueta, claves_del_catalogo),
         })
 
     con_avisos = [v["codigo"] for v in variables if v["avisos"]]
@@ -431,6 +480,10 @@ def analizar(archivo):
         "variables": variables,
         "candidatas_a_id": _candidatas_a_id(datos, meta),
         "demograficas_sugeridas": sugeridas,
+        # Qué se puede elegir en la columna «qué es esta variable». Viene del
+        # servidor y no de una lista escrita en la pantalla, porque el
+        # catálogo lo define un admin y cambia sin que nadie toque el front.
+        "campos_demograficos": list(CAMPOS_DEMOGRAFICOS) + list(claves_del_catalogo),
         "avisos": (
             [{
                 "tipo": "textos_a_revisar",
