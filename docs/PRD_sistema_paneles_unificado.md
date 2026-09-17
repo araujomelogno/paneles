@@ -199,7 +199,7 @@ Criterios de aceptación:
 
 **R4.5 — Envío de encuestas por WhatsApp Flow.** Una encuesta puede configurarse con un Flow de WhatsApp publicado y su plantilla aprobada; al convocar, se ofrece enviarlo por WhatsApp a los convocados que cumplan **los dos ejes** y tengan celular válido. El sistema **solo envía**: las respuestas se bajan de Meta y se ingestan por el flujo de siempre. Cada envío lleva el `id_persona` como `flow_token`, para que esa ingesta mapee directo.
 
-> **Detalle en `SPEC_R4.4_R4.5_canal_whatsapp_flow.md`.**
+> **Detalle completo en `SPEC_fase4.md`.**
 
 > **Descartado: espejo de segmentadores al store semántico.** Figuraba como requisito condicional (copiar sexo, localidad y tramo etario al store semántico para que la consulta mixta no tuviera que abrir la bóveda). Se descarta por tres razones: la mayoría de las consultas son **puramente demográficas** y ya se resuelven enteras en la bóveda sin tocar embeddings; el puente por conjuntos de `id_persona` (R2.5) cubre el caso mixto sin duplicar nada; y con el catálogo de atributos configurable (R3.14) el conjunto a espejar deja de ser fijo y crece, lo que multiplicaría los cuasi-identificadores del lado semántico — justo el riesgo mosaico que el diseño evita. **El store semántico se mantiene como contenido puro.**
 

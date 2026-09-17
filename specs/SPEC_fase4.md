@@ -78,19 +78,54 @@ La landing de Fase 3 acepta cualquier envío. Esto le agrega verificación y con
 
 ### R4.4 — Preferencias de canal de contacto (P0)
 
-Detalle completo en `SPEC_R4.4_R4.5_canal_whatsapp_flow.md`. Resumen:
+**El modelo.** Por persona y canal (`whatsapp`, `email`, `telefono`, `sms`) se registra si lo acepta, desde cuándo, por qué vía y con qué versión de texto. Es un eje **distinto** del consentimiento por finalidad:
 
-Por persona y canal (`whatsapp`, `email`, `telefono`, `sms`) se registra si lo acepta, con evidencia de cuándo y cómo. Es un eje **distinto** del consentimiento por finalidad: `contacto_participacion` responde «¿puedo contactarla?», la preferencia responde «¿por dónde?». **Para contactar por un canal hacen falta los dos.**
+> **La regla de los dos ejes.** `contacto_participacion` responde *«¿puedo contactarla?»*; la preferencia de canal responde *«¿por dónde?»*. Para enviar por un canal hacen falta **los dos**: consentimiento de finalidad vigente **y** preferencia de ese canal activa. Falta cualquiera, no se envía.
 
-Se captura en los tres caminos de alta ya construidos en Fase 3 —alta manual, ingesta con creación de individuos, landing— agregando la captura sin rehacerlos, con test de no regresión en cada uno.
+Esto existe porque la política de mensajería de WhatsApp exige **opt-in previo** para los mensajes que inicia el negocio, y mandar sin él lleva a bloqueos y a la suspensión de la cuenta. El consentimiento que ya tenemos autoriza a contactar, pero no dice por qué canal: alguien pudo aceptar que lo llamen por teléfono y no querer mensajes en su WhatsApp personal.
 
-- [ ] El celular se normaliza a E.164 en todos los caminos de alta.
+- Dada una persona, entonces puede tener una preferencia por canal, con estado activo o revocado, fecha y origen.
+- Dada una preferencia de `whatsapp`, entonces se guarda además la **versión del texto** con que se obtuvo el opt-in: es lo que hace demostrable qué aceptó, igual que en el consentimiento.
+- Dada una revocación, entonces queda registrada con su fecha y la persona deja de ser elegible para ese canal, sin afectar los otros.
+- Dado el canal `whatsapp`, entonces requiere **celular cargado** y en formato internacional válido (E.164, ej. `+59899123456`); si no, la preferencia no puede activarse.
+- [ ] El celular se normaliza a E.164 al guardarlo, en todos los caminos de alta.
+
+**Captura en los tres caminos de alta.** Los tres ya están construidos en Fase 3: se les **agrega** la captura, conservando su comportamiento actual.
+
+- **Alta manual (pantalla de panelistas):** al enrolar se pueden marcar los canales aceptados. Es un campo del formulario, no un paso aparte.
+- **Ingesta con creación de individuos (sobre R3.9 modo «crear» y R3.13):** se declara **qué variable del archivo evidencia el opt-in de cada canal** y qué valor cuenta como afirmativo, con el mismo mecanismo que la evidencia de consentimiento. Si no se declara, los individuos se crean **sin** preferencias y no son contactables por ningún canal hasta que se registren.
+- **Landing (sobre R4.3):** el formulario incluye la elección de canales, con su propia casilla para WhatsApp. El texto tiene que decir con claridad que va a recibir mensajes de WhatsApp de Equipos, y esa versión de texto es la que se guarda.
+
+- Dado cualquiera de los tres caminos, entonces la preferencia queda con su origen registrado (`alta_manual`, `ingesta`, `landing`).
+- Dada una persona que ya existe y llega por otro camino con una preferencia nueva, entonces se registra sin sobrescribir las de otros canales.
+
+> **Por qué también en la landing.** Es el único lugar donde la persona da su opt-in **de primera mano**, que es la forma más sólida frente a la exigencia de Meta y frente a URCDP. Las otras dos vías registran evidencia de un opt-in obtenido en otro lado.
 
 ### R4.5 — Envío de encuestas por WhatsApp Flow (P0)
 
-Detalle completo en `SPEC_R4.4_R4.5_canal_whatsapp_flow.md`. Resumen:
+El sistema **solo envía**: el analista baja las respuestas de Meta y las ingesta por el flujo de siempre. Sin webhook, sin recepción, sin cambios en el modelo de ingesta. Tampoco se crean ni editan Flows ni plantillas desde el sistema: se crean en Meta y acá se referencian por id.
 
-Una encuesta puede configurarse con un Flow publicado y su plantilla aprobada; al convocar se ofrece enviarlo por WhatsApp a quienes cumplan los dos ejes y tengan celular válido. El sistema **solo envía**. Cada envío lleva el `id_persona` como `flow_token`, para que la ingesta posterior mapee directo.
+**Configuración en la encuesta**
+- Dada la edición de una encuesta, entonces puede marcarse como **encuesta de WhatsApp Flow** e indicar el **Flow** (id o nombre, ya publicado en Meta) y la **plantilla de mensaje** aprobada que lo contiene.
+- Dada una encuesta marcada como Flow, entonces el sistema valida contra la API de Meta que el Flow esté **publicado** y la plantilla **aprobada** antes de permitir convocar.
+- Dada una plantilla no aprobada o un Flow no publicado, entonces la convocatoria por WhatsApp se bloquea con el motivo, en vez de fallar al enviar.
+
+> **Por qué validar antes.** Las plantillas requieren aprobación de Meta y la revisión demora; un Flow válido no hace enviable una plantilla rechazada. No se puede configurar la encuesta y convocar el mismo día.
+
+**Envío en la convocatoria**
+- Dada una convocatoria de una encuesta de Flow, entonces se ofrece la opción de **enviar por WhatsApp**; no es automático.
+- Dado el envío, entonces se envía solo a quienes cumplen **los dos ejes** —`contacto_participacion` vigente y preferencia `whatsapp` activa— y además tienen celular válido.
+- Dadas las personas que no cumplen, entonces quedan fuera y se informan **discriminadas por motivo** (sin consentimiento, sin preferencia de WhatsApp, sin celular, celular inválido).
+- Dado cada envío, entonces se pasa como **`flow_token` el `id_persona`** de esa persona.
+- Dado el resultado, entonces se registra por persona el estado del envío (enviado, fallido con su error) y queda visible en la participación.
+- Dado un envío fallido, entonces se puede reintentar sin re-enviar a quienes ya recibieron.
+- [ ] La convocatoria se registra igual que siempre (`participacion`); el envío es una acción **sobre** esa convocatoria, no la reemplaza.
+
+> **Por qué el `flow_token` con el `id_persona`.** El envío admite un token por destinatario que vuelve con los datos del Flow. Poniendo ahí el `id_persona`, cuando el analista baje las respuestas de Meta ese token viene como una columna más y la ingesta mapea **directo**, sin PII y sin adivinar. Es la misma idea de la precarga de R3.12, por otro canal, y cuesta cero ahora. *Verificar que el token aparezca en el export que va a usar el analista.*
+
+**Credenciales**
+- Las credenciales de la API (token, `phone_number_id`, `WABA_ID`) van a Secret Manager, nunca al repositorio.
+- [ ] La configuración de Meta es a nivel sistema, no por encuesta.
 
 ---
 
@@ -151,9 +186,9 @@ Las reglas de R3.1 priorizan brechas y excluyen sobre-convocados. Eso alcanza cu
 
 ## 5. Cambios de esquema
 
-- **`preferencia_canal`** (R4.4): por persona y canal, con estado, evidencia y origen.
-- **`encuesta`** (R4.5): configuración de Flow, nullable.
-- **`participacion`** (R4.5): estado de envío por WhatsApp, nullable.
+- **`preferencia_canal`** (R4.4): `id`, `id_persona`, `canal` (`whatsapp`|`email`|`telefono`|`sms`), `estado` (`activa`|`revocada`), `version_texto`, `origen`, `otorgado_en`, `revocado_en`; única por `(id_persona, canal)`.
+- **`encuesta`** (R4.5): configuración de Flow (`flow_id`, `plantilla`, `idioma`), nullables.
+- **`participacion`** (R4.5): estado de envío por WhatsApp (`enviado_en`, `envio_estado`, `envio_error`), nullables.
 - **`persona_atributo`** (R4.1.a): historial. Agregar vigencia (`desde`, `hasta`) y conservar los valores anteriores, en vez de sobrescribir. La unicidad pasa a ser por persona, atributo **y** vigencia; el valor actual es el de vigencia abierta.
 - **`serie`** y **`serie_pregunta`** (R4.1.b): agrupación declarada de preguntas de distintas olas, con su mapeo de categorías.
 - **Verificaciones de contacto** (R4.3): registro de códigos emitidos, su estado y vencimiento.
@@ -176,8 +211,14 @@ Todas aditivas salvo el historial de atributos, que requiere migrar los valores 
 - [ ] Un envío automatizado se bloquea (test).
 - [ ] Quien aprueba ve los candidatos parecidos; el documento exacto se resuelve solo y el resto se propone (test).
 - [ ] Se registran preferencias de canal en los tres caminos de alta, y los tres siguen funcionando igual para quien no declara canales (test de no regresión).
+- [ ] Un celular inválido impide activar la preferencia de WhatsApp, y se normaliza a E.164 al guardarlo (test).
+- [ ] Una preferencia revocada excluye del canal sin afectar los otros (test).
+- [ ] Una persona creada por ingesta sin declararse la evidencia queda sin preferencias y no es contactable (test).
+- [ ] Una encuesta se configura como Flow y el sistema valida Flow publicado y plantilla aprobada antes de convocar (test).
 - [ ] El envío por WhatsApp excluye a quien no cumple los dos ejes, informando por motivo (test de cada motivo).
 - [ ] Cada envío lleva el `id_persona` como `flow_token` (test).
+- [ ] Los fallos de envío quedan registrados y son reintentables sin duplicar (test).
+- [ ] Las credenciales de Meta no están en el repositorio.
 
 **Bloque 4B**
 - [ ] Cambiar el valor de un atributo conserva el anterior con su vigencia (test).
