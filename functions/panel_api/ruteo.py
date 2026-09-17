@@ -12,6 +12,7 @@ from . import (
     atributos,
     auditoria,
     bajas,
+    desafio,
     calidad,
     cargas,
     composicion,
@@ -24,12 +25,15 @@ from . import (
     paneles,
     participacion,
     personas,
+    preferencias,
     premios,
     puntos,
     revision,
     sav,
     semantica,
     usuarios,
+    verificacion_contacto,
+    whatsapp,
 )
 from .errores import DatosInvalidos, ErrorApi, NoEncontrado
 
@@ -76,6 +80,12 @@ def resolver(metodo, camino):
 PUBLICAS = frozenset({
     ("GET", "/inscripciones/formulario"),
     ("POST", "/inscripciones"),
+    # R4.3 — pedir y comprobar el código de verificación son parte del mismo
+    # formulario público: si necesitaran token, la verificación sería
+    # imposible desde la landing. Las dos están protegidas por su propio
+    # límite de tasa y por el desafío anti-automatización.
+    ("POST", "/inscripciones/verificacion"),
+    ("POST", "/inscripciones/verificacion/comprobar"),
 })
 
 
@@ -805,11 +815,41 @@ def inscribirse(ctx, actor, params, cuerpo, consulta):
     return 201, inscripciones.inscribir(ctx.boveda, cuerpo)
 
 
+@ruta("POST", "/inscripciones/verificacion", None, requisito="R4.3")
+def pedir_verificacion(ctx, actor, params, cuerpo, consulta):
+    """R4.3 — emite el código de un solo uso que verifica un contacto.
+
+    El desafío anti-automatización se valida **acá** y no al inscribir: el
+    envío de códigos es lo que cuesta plata y lo que puede molestar a un
+    tercero, así que es lo que hay que proteger.
+    """
+    origen = (cuerpo.get("origen_ip") or "").strip() or None
+    desafio.validar(cuerpo.get("desafio_token"), origen=origen)
+    return 200, verificacion_contacto.pedir_codigo(
+        ctx.boveda, cuerpo.get("canal"), cuerpo.get("destino"), origen=origen)
+
+
+@ruta("POST", "/inscripciones/verificacion/comprobar", None, requisito="R4.3")
+def comprobar_verificacion(ctx, actor, params, cuerpo, consulta):
+    return 200, verificacion_contacto.verificar(
+        ctx.boveda, cuerpo.get("canal"), cuerpo.get("destino"),
+        cuerpo.get("codigo"))
+
+
 @ruta("GET", "/inscripciones", "aprobar_inscripciones", requisito="R3.7")
 def listar_inscripciones(ctx, actor, params, cuerpo, consulta):
     return 200, {"items": inscripciones.listar(
         ctx.boveda, consulta.get("estado", "pendiente")
     )}
+
+
+@ruta("GET", "/inscripciones/<inscripcion_id>", "aprobar_inscripciones",
+      requisito="R4.3")
+def ver_inscripcion(ctx, actor, params, cuerpo, consulta):
+    """La inscripción con sus **candidatos parecidos** (R4.3): quien aprueba
+    los ve sin tener que buscarlos a mano, que es la única forma de que
+    efectivamente los mire."""
+    return 200, inscripciones.obtener(ctx.boveda, _entero(params["inscripcion_id"]))
 
 
 @ruta("POST", "/inscripciones/<inscripcion_id>/aprobar", "aprobar_inscripciones",
@@ -818,6 +858,9 @@ def aprobar_inscripcion(ctx, actor, params, cuerpo, consulta):
     return 200, inscripciones.aprobar(
         ctx.boveda, int(params["inscripcion_id"]), actor,
         panel_id=cuerpo.get("panel_id"),
+        # R4.3 — la fusión con un candidato parecido la declara quien aprueba.
+        # El sistema no la decide solo: un homónimo fusionado no se deshace.
+        id_persona=cuerpo.get("id_persona"),
     )
 
 
@@ -1212,6 +1255,96 @@ def fijar_atributo_de_persona(ctx, actor, params, cuerpo, consulta):
         fecha_referencia=(cuerpo or {}).get("fecha_referencia"))
     ctx.boveda.commit()
     return 200, salida
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Fase 4 · 4A — Contacto
+# ════════════════════════════════════════════════════════════════════
+
+@ruta("GET", "/panelistas/<id_persona>/canales", "leer", requisito="R4.4")
+def canales_de_persona(ctx, actor, params, cuerpo, consulta):
+    return 200, {"items": preferencias.listar(ctx.boveda, params["id_persona"])}
+
+
+@ruta("PUT", "/panelistas/<id_persona>/canales/<canal>", "gestionar_canales",
+      requisito="R4.4")
+def fijar_canal(ctx, actor, params, cuerpo, consulta):
+    """Registra que esta persona acepta ese canal, con el texto con que lo
+    aceptó. Sin ese texto, «aceptó recibir WhatsApp» es una afirmación sin
+    respaldo."""
+    salida = preferencias.otorgar(
+        ctx.boveda, params["id_persona"], params["canal"],
+        version_texto=(cuerpo or {}).get("version_texto"),
+        origen=(cuerpo or {}).get("origen") or "edicion")
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("DELETE", "/panelistas/<id_persona>/canales/<canal>", "gestionar_canales",
+      requisito="R4.4")
+def revocar_canal(ctx, actor, params, cuerpo, consulta):
+    """Deja de ser elegible para ese canal, sin afectar los otros.
+
+    Es la mitigación mínima del riesgo de cumplimiento que anota la spec: sin
+    canal de entrada, un «STOP» o un bloqueo en WhatsApp no llega al sistema,
+    así que la revocación tiene que poder hacerse a mano."""
+    salida = preferencias.revocar(ctx.boveda, params["id_persona"], params["canal"])
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("PUT", "/encuestas/<encuesta_id>/flow", "fieldear", requisito="R4.5")
+def configurar_flow(ctx, actor, params, cuerpo, consulta):
+    salida = encuestas.configurar_flow(
+        ctx.boveda, _entero(params["encuesta_id"]),
+        flow_id=(cuerpo or {}).get("flow_id"),
+        plantilla=(cuerpo or {}).get("plantilla"),
+        idioma=(cuerpo or {}).get("idioma"))
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("GET", "/encuestas/<encuesta_id>/flow", "leer", requisito="R4.5")
+def estado_flow(ctx, actor, params, cuerpo, consulta):
+    """Valida contra Meta que el Flow esté publicado y la plantilla aprobada.
+
+    Se consulta **antes** de convocar: una plantilla rechazada no se arregla
+    sola y descubrirlo al enviar significa haber convocado a gente a la que no
+    se le puede mandar nada."""
+    return 200, encuestas.estado_flow(ctx.boveda, _entero(params["encuesta_id"]))
+
+
+@ruta("GET", "/encuestas/<encuesta_id>/whatsapp", "leer", requisito="R4.5")
+def destinatarios_whatsapp(ctx, actor, params, cuerpo, consulta):
+    """A quiénes se les puede enviar y a quiénes no, discriminado por motivo."""
+    return 200, encuestas.destinatarios_whatsapp(
+        ctx.boveda, _entero(params["encuesta_id"]))
+
+
+@ruta("POST", "/encuestas/<encuesta_id>/whatsapp", "enviar_whatsapp",
+      requisito="R4.5")
+def enviar_whatsapp(ctx, actor, params, cuerpo, consulta):
+    """Manda el Flow. No es automático al convocar: es una acción explícita.
+
+    Reintentar no reenvía a quien ya recibió."""
+    return 200, encuestas.enviar_por_whatsapp(
+        ctx.boveda, _entero(params["encuesta_id"]),
+        ids_persona=(cuerpo or {}).get("ids_persona"))
+
+
+@ruta("GET", "/diagnostico/contacto", "cumplimiento", requisito="R4.3, R4.5")
+def diagnostico_contacto(ctx, actor, params, cuerpo, consulta):
+    """Qué tan endurecida está la landing y si el canal de WhatsApp está listo.
+
+    Va junto al resto del diagnóstico de Cumplimiento porque las tres cosas
+    que informa —proveedor de códigos, desafío y credenciales de Meta— son
+    condiciones para poder anunciar la landing y para poder enviar, y su
+    ausencia no puede ser una sorpresa."""
+    return 200, {
+        "verificacion": verificacion_contacto.diagnostico(),
+        "desafio": desafio.diagnostico(),
+        "whatsapp": whatsapp.diagnostico(),
+    }
 
 
 @ruta("GET", "/yo", None)

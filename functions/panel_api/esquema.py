@@ -60,6 +60,14 @@ MIGRACIONES_BOVEDA = (
         # con el DDL real lo exige.
         "v_demografia",
     )),
+    ("0009_fase4_contacto.sql", (
+        "preferencia_canal", "verificacion_contacto",
+        "inscripcion.celular_verificado", "inscripcion.email_verificado",
+        "inscripcion.canales", "inscripcion.version_texto_canales",
+        "encuesta.flow_id", "encuesta.flow_plantilla", "encuesta.flow_idioma",
+        "participacion.enviado_en", "participacion.envio_estado",
+        "participacion.envio_error",
+    )),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -102,6 +110,13 @@ PARA_QUE = {
     "persona_atributo": "el valor de cada persona para cada segmentador, canónico y crudo",
     "atributo_auditoria": "quién tocó el vocabulario de segmentación y cuándo",
     "v_atributo_persona": "el valor efectivo de cada atributo, con la precedencia del tramo etario",
+    # ── Fase 4 ──
+    "preferencia_canal": "por qué canal acepta cada persona que la contacten",
+    "verificacion_contacto": "los códigos de un solo uso que endurecen la landing",
+    "inscripcion.celular_verificado": "saber que el celular es de quien se inscribió",
+    "inscripcion.canales": "los canales que el titular aceptó de primera mano",
+    "encuesta.flow_id": "configurar una encuesta como WhatsApp Flow",
+    "participacion.envio_estado": "reintentar solo los envíos fallidos",
 }
 
 

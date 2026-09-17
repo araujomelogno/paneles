@@ -43,7 +43,7 @@ De ahí salen las tres reglas del modo:
 import io
 
 from . import db, dedup, ingesta
-from .errores import DatosInvalidos
+from .errores import Conflicto, DatosInvalidos
 
 # Un variable label de SPSS con menos de esto es casi seguro un código, no
 # una pregunta. No se rechaza: se marca para que alguien lo mire.
@@ -420,6 +420,15 @@ def valor_demografico(campo, crudo, opciones=None):
     # 2 · La forma que espera la bóveda, donde hay una.
     if campo == "sexo":
         return SEXO_CANONICO.get(texto.lower(), texto)
+    if campo == "celular":
+        # R4.4 — E.164 en los tres caminos de alta. Un celular guardado como
+        # «099 123 456» no se puede usar para enviar, y el formato local no es
+        # comparable entre archivos. Si no se puede normalizar se guarda como
+        # vino: el dato sigue sirviendo para llamar, y lo que no va a poder es
+        # activar WhatsApp, que es exactamente lo correcto.
+        from . import preferencias
+
+        return preferencias.normalizar_celular(texto) or texto
     return texto
 
 
@@ -679,6 +688,69 @@ def normalizar_evidencia(evidencia, obligatorias=None):
     return normalizada
 
 
+def normalizar_evidencia_canales(evidencia):
+    """R4.4 — qué variable del archivo evidencia el opt-in de cada canal.
+
+    Mismo mecanismo que la evidencia de consentimiento, y a propósito: es la
+    misma pregunta —«¿qué respondió esta persona en campo?»— sobre otro eje.
+    Forma esperada:
+
+        {"whatsapp": {"variable": "OPTIN_WA", "valor_afirmativo": "1",
+                      "version_texto": "optin-wa-2026-09"}}
+
+    **Es opcional.** Si no se declara, los individuos se crean sin
+    preferencias y no son contactables por ningún canal hasta que se
+    registren. Eso es deliberado: un opt-in que nadie evidenció no se inventa.
+    """
+    if not evidencia:
+        return {}
+    if not isinstance(evidencia, dict):
+        raise DatosInvalidos(
+            "La evidencia de canales es un objeto «canal → regla».",
+            {"ejemplo": {"whatsapp": {"variable": "OPTIN_WA",
+                                      "valor_afirmativo": "1",
+                                      "version_texto": "optin-wa-2026-09"}}})
+
+    from . import preferencias
+
+    desconocidos = set(evidencia) - set(preferencias.CANALES)
+    if desconocidos:
+        raise DatosInvalidos(
+            f"Canal desconocido en la evidencia: {sorted(desconocidos)}.",
+            {"canales_validos": list(preferencias.CANALES)})
+
+    normalizada = {}
+    for canal, regla in evidencia.items():
+        regla = regla or {}
+        variable = str(regla.get("variable") or "").strip()
+        crudos = regla.get("valor_afirmativo")
+        if isinstance(crudos, (str, int, float)) or crudos is None:
+            crudos = [crudos]
+        valores = {_texto_comparable(v) for v in crudos
+                   if v is not None and str(v).strip() != ""}
+        if not variable:
+            raise DatosInvalidos(
+                f"Falta la variable que evidencia el opt-in de «{canal}».")
+        if not valores:
+            raise DatosInvalidos(
+                f"Falta el valor afirmativo del opt-in de «{canal}»: sin él no "
+                f"se puede saber qué respuesta cuenta como aceptación.")
+        version = str(regla.get("version_texto") or "").strip()
+        if canal == preferencias.WHATSAPP and not version:
+            # Solo WhatsApp la exige: es el canal donde hay que poder
+            # demostrar ante Meta qué aceptó la persona (R4.4).
+            raise DatosInvalidos(
+                "Falta la versión del texto del opt-in de WhatsApp. Es lo que "
+                "lo hace demostrable: tiene que identificar el texto que se "
+                "leyó en campo.")
+        normalizada[canal] = {
+            "variable": variable,
+            "valores_afirmativos": sorted(valores),
+            "version_texto": version or None,
+        }
+    return normalizada
+
+
 def _consintio(fila, regla):
     return _texto_comparable(fila.get(regla["variable"])) in set(
         regla["valores_afirmativos"]
@@ -714,7 +786,8 @@ def _otorgar_si_falta(conn, id_persona, finalidad, version):
 def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
                      evidencia_consentimiento, actor=None, panel_id=None,
                      opciones_por_variable=None,
-                     finalidad_obligatoria=CONTACTO):
+                     finalidad_obligatoria=CONTACTO,
+                     evidencia_canales=None):
     """Da de alta a la gente del archivo, con el dedup de R1.2 y con la
     evidencia de consentimiento que trae el propio archivo.
 
@@ -768,6 +841,11 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
 
     evidencia = normalizar_evidencia(
         evidencia_consentimiento, obligatorias=(finalidad_obligatoria,))
+    # R4.4 — el opt-in de canal es opcional y viaja igual que el
+    # consentimiento: declarando qué variable lo evidencia. Sin declararlo,
+    # los individuos se crean sin preferencias y no son contactables por
+    # ningún canal hasta que alguien las registre.
+    canales = normalizar_evidencia_canales(evidencia_canales)
 
     # Que la variable declarada exista en el archivo. Un typo acá haría que
     # ninguna fila evidencie consentimiento y que la importación termine con
@@ -776,7 +854,9 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
     for fila in filas:
         columnas.update(fila)
     ausentes = sorted({
-        r["variable"] for r in evidencia.values() if r["variable"] not in columnas
+        r["variable"]
+        for r in list(evidencia.values()) + list(canales.values())
+        if r["variable"] not in columnas
     })
     if ausentes and columnas:
         raise DatosInvalidos(
@@ -788,6 +868,28 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
     creados, reutilizados, en_revision = [], [], []
     sin_datos, sin_consentimiento = [], []
     otorgados = {finalidad: 0 for finalidad in FINALIDADES_EVIDENCIABLES}
+    preferencias_registradas = {canal: 0 for canal in canales}
+    preferencias_rechazadas = []
+
+    def registrar_canales(id_persona, fila):
+        """Los canales que esta fila evidencia. Un canal que no se puede
+        activar —WhatsApp sin celular válido— no voltea el alta: se informa."""
+        if not canales:
+            return
+        from . import preferencias as prefs
+
+        for canal, regla in canales.items():
+            if not _consintio(fila, regla):
+                continue
+            try:
+                prefs.otorgar(conn_boveda, id_persona, canal,
+                              version_texto=regla["version_texto"],
+                              origen="ingesta")
+                preferencias_registradas[canal] += 1
+            except (Conflicto, DatosInvalidos) as error:
+                preferencias_rechazadas.append({
+                    "id_persona": str(id_persona), "canal": canal,
+                    "motivo": error.mensaje})
 
     for fila in filas:
         id_en_origen = str(fila.get(columna_id) or "").strip()
@@ -841,6 +943,7 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
                 if _otorgar_si_falta(conn_boveda, id_persona,
                                      entrada["finalidad"], entrada["version_texto"]):
                     otorgados[entrada["finalidad"]] += 1
+            registrar_canales(id_persona, fila)
             reutilizados.append({
                 "id_en_origen": id_en_origen, "id_persona": str(id_persona),
                 "motivo": "alias_origen",
@@ -893,6 +996,7 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
                 if _otorgar_si_falta(conn_boveda, id_persona,
                                      entrada["finalidad"], entrada["version_texto"]):
                     otorgados[entrada["finalidad"]] += 1
+            registrar_canales(id_persona, fila)
             reutilizados.append({
                 "id_en_origen": id_en_origen, "id_persona": id_persona,
                 "motivo": resolucion.motivo,
@@ -925,6 +1029,7 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
                 "on conflict do nothing",
                 (panel_id, id_persona),
             )
+        registrar_canales(id_persona, fila)
         creados.append({
             "id_en_origen": id_en_origen, "id_persona": id_persona,
             "consintio": consintio,
@@ -948,6 +1053,13 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
         "sin_consentimiento": sin_consentimiento,
         "evidencia_declarada": evidencia,
         "consentimientos_registrados": otorgados,
+        # R4.4 — qué preferencias de canal dejó registradas el archivo, y
+        # cuáles no se pudieron activar (típicamente WhatsApp sin celular
+        # válido). Sin esto, una base entera puede quedar sin poder recibir
+        # nada y nadie se entera hasta que falla el envío.
+        "evidencia_canales_declarada": canales,
+        "preferencias_registradas": preferencias_registradas,
+        "preferencias_rechazadas": preferencias_rechazadas,
         "resumen": {
             "creados": len(creados),
             "reutilizados": len(reutilizados),

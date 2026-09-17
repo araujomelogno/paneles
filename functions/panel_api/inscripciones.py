@@ -34,8 +34,9 @@ la plataforma sin login:
 
 import json
 
-from . import consentimiento as consent, db, dedup
-from .errores import DatosInvalidos, NoEncontrado
+from . import (consentimiento as consent, db, dedup, preferencias,
+               verificacion_contacto as verificacion)
+from .errores import Conflicto, DatosInvalidos, NoEncontrado
 
 PENDIENTE = "pendiente"
 APROBADA = "aprobada"
@@ -160,6 +161,13 @@ def _limpiar(datos):
         valor = str(valor).strip()
         if valor:
             limpio[campo] = valor
+    # R4.4 — E.164 desde la puerta de entrada. Si acá entrara «099 123 456»,
+    # la persona quedaría creada con un celular que no sirve para enviar.
+    if limpio.get("celular"):
+        limpio["celular"] = (
+            preferencias.normalizar_celular(limpio["celular"]) or limpio["celular"])
+    if limpio.get("email"):
+        limpio["email"] = limpio["email"].lower()
     return limpio
 
 
@@ -229,6 +237,37 @@ def inscribir(conn, cuerpo):
             {"version_vigente": texto["version"]},
         )
 
+    # ── R4.3 · Sin contacto verificado no hay inscripción ──
+    #
+    # Va **antes de cualquier escritura**, igual que el consentimiento: lo que
+    # no se puede es guardar los datos «mientras tanto». Un contacto sin
+    # verificar significa que quien completó el formulario no probó tener
+    # acceso a ese correo ni a ese teléfono, y eso cubre dos casos distintos y
+    # los dos malos: un dato inventado, que ensucia la cola de aprobación, y
+    # —peor— el dato de otra persona, que es inscribir a alguien sin que se
+    # entere.
+    #
+    # Va después del consentimiento y no antes: es el chequeo más caro (toca
+    # la base) y el consentimiento es la condición más fundamental, así que
+    # quien envía sin aceptar tiene que enterarse de eso primero.
+    verificado_email = verificacion.esta_verificado(
+        conn, verificacion.EMAIL, datos["email"])
+    if not verificado_email:
+        raise Conflicto(
+            "Todavía no verificamos tu correo. Pedí el código, ingresalo y "
+            "volvé a enviar el formulario.",
+            {"motivo": "email_sin_verificar", "campo": "email"})
+
+    verificado_celular = False
+    if datos.get("celular"):
+        verificado_celular = verificacion.esta_verificado(
+            conn, verificacion.CELULAR, datos["celular"])
+        if not verificado_celular:
+            raise Conflicto(
+                "Todavía no verificamos tu celular. Pedí el código, "
+                "ingresalo y volvé a enviar el formulario.",
+                {"motivo": "celular_sin_verificar", "campo": "celular"})
+
     # La resolución de identidad de R1.2, igual que un alta interna. El
     # resultado se guarda para que quien apruebe lo vea; afuera no se dice.
     resolucion = dedup.resolver(conn, datos)
@@ -236,22 +275,41 @@ def inscribir(conn, cuerpo):
     if resolucion.accion == dedup.REUTILIZA:
         id_previa = str(resolucion.id_persona)
 
+    # R4.4 — los canales que la persona eligió de primera mano. Es el único
+    # camino donde el opt-in lo da el titular en el momento, que es la forma
+    # más sólida frente a Meta y frente a URCDP; las otras dos vías registran
+    # evidencia de un opt-in obtenido en otro lado.
+    canales = [
+        c for c in dict.fromkeys(cuerpo.get("canales") or [])
+        if c in preferencias.CANALES
+    ]
     db.ejecutar(
         conn,
         """
         insert into inscripcion
                (nombre, documento, email, celular, fecha_nacimiento, sexo,
                 localidad, finalidades, version_texto, resolucion,
-                id_persona_previa, panel_id, origen)
-        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                id_persona_previa, panel_id, origen,
+                canales, version_texto_canales,
+                celular_verificado, email_verificado)
+        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s)
         on conflict do nothing
         """,
         (datos["nombre"], datos.get("documento"), datos.get("email"),
          datos.get("celular"), datos.get("fecha_nacimiento"), datos.get("sexo"),
          datos.get("localidad"), list(finalidades), version,
          resolucion.accion, id_previa, cuerpo.get("panel_id"),
-         (cuerpo.get("origen") or "landing")),
+         (cuerpo.get("origen") or "landing"),
+         canales, (cuerpo.get("version_texto_canales") or "").strip() or version,
+         verificado_celular, verificado_email),
     )
+    # Las verificaciones se consumen: un código verificado vale para **una**
+    # inscripción. Sin esto, el mismo código serviría para inscribir a diez
+    # personas distintas con el mismo contacto.
+    verificacion.consumir(conn, verificacion.EMAIL, datos["email"])
+    if datos.get("celular"):
+        verificacion.consumir(conn, verificacion.CELULAR, datos["celular"])
     conn.commit()
     # `on conflict do nothing` cubre el reenvío del mismo correo con una
     # inscripción pendiente. Se responde igual: quien reenvía no tiene por
@@ -271,6 +329,10 @@ def _serializar(fila):
         ),
         "sexo": fila["sexo"], "localidad": fila["localidad"],
         "finalidades": list(fila["finalidades"]),
+        "canales": list(fila["canales"] or []),
+        "version_texto_canales": fila["version_texto_canales"],
+        "celular_verificado": fila["celular_verificado"],
+        "email_verificado": fila["email_verificado"],
         "version_texto": fila["version_texto"],
         "acepto_en": fila["acepto_en"].isoformat(),
         "resolucion": fila["resolucion"],
@@ -288,6 +350,91 @@ def _serializar(fila):
     }
 
 
+def candidatos_parecidos(conn, inscripcion):
+    """R4.3 — quiénes de la bóveda podrían ser esta misma persona.
+
+    La landing es el único camino donde alguien se inscribe **solo**, sin que
+    nadie del equipo controle qué escribe. Es donde más probable es que la
+    misma persona se anote dos veces con datos levemente distintos: el correo
+    del trabajo una vez y el personal la otra, el nombre con y sin el segundo
+    apellido.
+
+    Por eso acá se busca más ancho que en el dedup de R1.2, y por eso el
+    resultado **se propone y no se fusiona**: cada coincidencia trae con qué
+    coincidió, y decide quien aprueba. La única que se resuelve sola es el
+    documento exacto, y esa ya la resuelve R1.2 sin cambios.
+    """
+    condiciones, parametros, motivos = [], [], []
+
+    def agregar(sql, valor, motivo):
+        condiciones.append(f"({sql})")
+        parametros.append(valor)
+        motivos.append(motivo)
+
+    if inscripcion.get("documento"):
+        agregar("p.documento = %s", inscripcion["documento"], "documento")
+    if inscripcion.get("email"):
+        agregar("lower(p.email) = lower(%s)", inscripcion["email"], "email")
+    if inscripcion.get("celular"):
+        agregar("p.celular = %s", inscripcion["celular"], "celular")
+    if inscripcion.get("nombre") and inscripcion.get("fecha_nacimiento"):
+        agregar("lower(p.nombre) = lower(%s) and p.fecha_nacimiento = %s::date",
+                inscripcion["nombre"], "nombre_fecha_nacimiento")
+        parametros.append(inscripcion["fecha_nacimiento"])
+    if not condiciones:
+        return []
+
+    filas = db.todas(
+        conn,
+        f"""
+        select p.id_persona, p.nombre, p.documento, p.email, p.celular,
+               p.fecha_nacimiento, p.creado_en,
+               (select count(*) from membresia m
+                 where m.id_persona = p.id_persona and m.estado = 'activo')::int
+                                                              as paneles
+          from persona p
+         where {' or '.join(condiciones)}
+         order by p.creado_en
+         limit 20
+        """,
+        tuple(parametros),
+    )
+
+    salida = []
+    for fila in filas:
+        coincide = []
+        if inscripcion.get("documento") and fila["documento"] == inscripcion["documento"]:
+            coincide.append("documento")
+        if inscripcion.get("email") and (fila["email"] or "").lower() == \
+                inscripcion["email"].lower():
+            coincide.append("email")
+        if inscripcion.get("celular") and fila["celular"] == inscripcion["celular"]:
+            coincide.append("celular")
+        if (inscripcion.get("nombre") and inscripcion.get("fecha_nacimiento")
+                and (fila["nombre"] or "").lower() == inscripcion["nombre"].lower()
+                and fila["fecha_nacimiento"]
+                and fila["fecha_nacimiento"].isoformat()
+                == str(inscripcion["fecha_nacimiento"])[:10]):
+            coincide.append("nombre_fecha_nacimiento")
+        salida.append({
+            "id_persona": str(fila["id_persona"]),
+            "nombre": fila["nombre"],
+            "documento": fila["documento"],
+            "email": fila["email"],
+            "celular": fila["celular"],
+            "paneles": fila["paneles"],
+            "creado_en": fila["creado_en"].isoformat(),
+            "coincide_por": coincide,
+            # El documento exacto es la única coincidencia fuerte; el resto
+            # son pistas. La distinción está acá y no en la pantalla para que
+            # no haya dos criterios distintos de «esto es la misma persona».
+            "resuelve_solo": "documento" in coincide,
+        })
+    # Primero los que más coinciden: quien aprueba mira arriba.
+    salida.sort(key=lambda c: (-len(c["coincide_por"]), c["creado_en"]))
+    return salida
+
+
 def listar(conn, estado=PENDIENTE, limite=200):
     filas = db.todas(
         conn,
@@ -302,18 +449,29 @@ def listar(conn, estado=PENDIENTE, limite=200):
     return [_serializar(f) for f in filas]
 
 
-def obtener(conn, inscripcion_id):
+def obtener(conn, inscripcion_id, con_candidatos=True):
     fila = db.una(conn, "select * from inscripcion where id = %s", (inscripcion_id,))
     if not fila:
         raise NoEncontrado(f"No existe la inscripción {inscripcion_id}.")
-    return _serializar(fila)
+    salida = _serializar(fila)
+    if con_candidatos:
+        # R4.3 — quien aprueba ve los parecidos sin tener que buscarlos a
+        # mano, que es la única forma de que efectivamente los mire.
+        salida["candidatos"] = candidatos_parecidos(conn, salida)
+    return salida
 
 
-def aprobar(conn, inscripcion_id, actor, panel_id=None):
+def aprobar(conn, inscripcion_id, actor, panel_id=None, id_persona=None):
     """Convierte una inscripción en panelista.
 
     Recién acá se crea la persona, y con ella el consentimiento que el
     titular dio en su momento, con la versión que aceptó —no la vigente hoy—.
+
+    `id_persona` es la decisión de R4.3: quien aprueba vio los candidatos
+    parecidos y dice «esta inscripción es de esta persona». El sistema no lo
+    decide solo —salvo por documento exacto, que es R1.2 sin cambios—, porque
+    una coincidencia de correo o de nombre y fecha puede ser un homónimo, y
+    fusionar a dos personas distintas no se deshace.
     """
     from . import personas
 
@@ -337,8 +495,51 @@ def aprobar(conn, inscripcion_id, actor, panel_id=None):
         if valor is None:
             continue
         datos[campo] = valor.isoformat() if hasattr(valor, "isoformat") else valor
+    if id_persona:
+        # Fusión declarada por quien aprueba. Se completa lo que falte de esa
+        # ficha, se le registran el consentimiento y los canales que el
+        # titular dio en la landing, y no se crea ninguna persona nueva.
+        from . import personas as _personas
+
+        if not db.una(conn, "select 1 from persona where id_persona = %s",
+                      (id_persona,)):
+            raise NoEncontrado(f"No existe la persona {id_persona}.")
+        _personas._completar_faltantes(conn, id_persona, datos)
+        for finalidad in fila["finalidades"]:
+            consent.otorgar(conn, id_persona, finalidad, fila["version_texto"])
+        preferencias.registrar_varias(
+            conn, id_persona, list(fila["canales"] or []),
+            version_texto=fila["version_texto_canales"] or fila["version_texto"],
+            origen="landing")
+        destino = panel_id if panel_id is not None else fila["panel_id"]
+        if destino:
+            from . import paneles as _paneles
+
+            _paneles.agregar_miembro(conn, destino, id_persona)
+        db.ejecutar(
+            conn,
+            """
+            update inscripcion
+               set estado = 'aprobada', id_persona = %s, resuelto_por = %s,
+                   resuelto_en = now(), panel_id = coalesce(%s, panel_id)
+             where id = %s
+            """,
+            (id_persona, getattr(actor, "uid", None), panel_id, inscripcion_id))
+        conn.commit()
+        return {
+            "estado": "aprobada",
+            "inscripcion_id": inscripcion_id,
+            "id_persona": str(id_persona),
+            "persona": "fusionada",
+            "panel_id": destino,
+        }
+
     cuerpo = {
         "persona": datos,
+        # R4.4 — los canales que eligió en el formulario se convierten en
+        # preferencias recién acá, cuando la persona existe.
+        "canales": list(fila["canales"] or []),
+        "version_texto_canales": fila["version_texto_canales"] or fila["version_texto"],
         # La versión que aceptó el titular, no la de hoy: es lo que hace que
         # cambiar el texto no altere consentimientos anteriores (R3.7).
         "consentimientos": [

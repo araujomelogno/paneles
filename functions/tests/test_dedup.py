@@ -115,7 +115,10 @@ def test_reutilizar_completa_faltantes_pero_no_pisa_lo_que_ya_estaba(conn_boveda
         (primera["id_persona"],),
     )
     assert fila["nombre"] == "Elena Rodríguez"   # no se pisa
-    assert fila["celular"] == "099888777"        # sí se completa
+    # R4.4 — el celular se guarda en E.164 en los tres caminos de alta: un
+    # número en formato local no sirve para enviar ni es comparable entre
+    # archivos. Se completa igual que antes; lo que cambió es cómo se guarda.
+    assert fila["celular"] == "+59899888777"     # sí se completa
 
 
 def test_alta_sin_dato_identificatorio_se_rechaza(conn_boveda):

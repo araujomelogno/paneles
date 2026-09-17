@@ -55,6 +55,17 @@ PERMISOS = {
     # R3.7 — publicar el texto de consentimiento. Es una decisión de
     # cumplimiento antes que de operación: la comparten admin y dpo.
     "publicar_consentimiento": {"admin", "dpo"},
+    # ── Fase 4 ──
+    # R4.4 — registrar y revocar por qué canal se puede contactar a alguien.
+    # Va con quien ya podía enrolar: es parte de la ficha de la persona, no
+    # una capacidad aparte.
+    "gestionar_canales": {"admin", "operaciones"},
+    # R4.5 — mandar la encuesta por WhatsApp. Es dinero (cada conversación se
+    # cobra) y es reputación del número emisor: un envío masivo mal dirigido
+    # quema el canal para todos. Por eso no lo tiene el analista, que sí puede
+    # fieldear e ingestar.
+    "enviar_whatsapp": {"admin", "operaciones"},
+
     # R3.14 — administrar el vocabulario de segmentadores. Solo admin, y con
     # permiso propio: definir un atributo decide con qué se puede segmentar al
     # panel entero, y marcar uno como categoría especial toca una obligación
