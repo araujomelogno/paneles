@@ -135,6 +135,28 @@ async function renderDetalle(main, encuestaId) {
       </div>
       <div class="card-body tight"><div id="participacion">${cargando('20vh')}</div></div>
     </div>
+    <!-- R4.5 — el canal de WhatsApp. La tarjeta existe siempre, porque es
+         donde se configura; el envío aparece cuando hay Flow. -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-header-title">WhatsApp Flow</span>
+        <div class="toolbar">
+          <button class="btn btn-outline btn-sm" id="configurar-flow">
+            ${encuesta.es_flow ? 'Editar configuración' : 'Configurar'}</button>
+          ${encuesta.es_flow
+            ? '<button class="btn btn-orange btn-sm" id="enviar-wa">Enviar por WhatsApp</button>'
+            : ''}
+        </div>
+      </div>
+      <div class="card-body"><div id="flow" class="muted small">
+        ${encuesta.es_flow
+          ? cargando('12vh')
+          : `Esta encuesta no se envía por WhatsApp. Se configura con un Flow
+             ya publicado en Meta y su plantilla aprobada; el sistema
+             <strong>solo envía</strong>: las respuestas se bajan de Meta y se
+             ingestan por el flujo de siempre.`}
+      </div></div>
+    </div>
     <div class="card">
       <div class="card-header"><span class="card-header-title">Cruce entre stores</span>
         <button class="btn btn-outline btn-sm" id="verificar">Verificar</button></div>
@@ -148,6 +170,9 @@ async function renderDetalle(main, encuestaId) {
     ${encuesta.estado !== 'cerrada'
       ? `<button class="btn btn-dark" id="cerrar">Cerrar encuesta</button>` : ''}`;
   $('#volver').onclick = () => contexto.irA('encuestas');
+  $('#configurar-flow').onclick = () => abrirConfiguracionFlow(encuesta);
+  if ($('#enviar-wa')) $('#enviar-wa').onclick = () => abrirEnvioWhatsapp(encuesta);
+  if (encuesta.es_flow) cargarEstadoFlow(encuesta.id);
   $('#cerrar')?.addEventListener('click', async () => {
     const ok = await confirmar({
       titulo: 'Cerrar la encuesta',
@@ -1180,6 +1205,161 @@ function abrirIngesta(destino, alTerminar) {
     }
   }
 }
+
+/* ── R4.5 · WhatsApp Flow ───────────────────────────────────────── */
+
+const MOTIVOS_EXCLUSION = {
+  sin_consentimiento: 'sin consentimiento de contacto vigente',
+  sin_preferencia_whatsapp: 'no aceptó recibir WhatsApp',
+  sin_celular: 'sin celular cargado',
+  celular_invalido: 'el celular cargado no es un número válido',
+  no_existe: 'la persona ya no existe',
+};
+
+async function cargarEstadoFlow(encuestaId) {
+  const caja = $('#flow');
+  if (!caja) return;
+  try {
+    const [estado, destinatarios] = await Promise.all([
+      api.flow.estado(encuestaId),
+      api.flow.destinatarios(encuestaId).catch(() => null),
+    ]);
+    caja.innerHTML = `
+      <div class="alert ${estado.puede_enviar ? 'alert-success' : 'alert-warn'}">
+        ${estado.puede_enviar
+          ? 'El Flow está publicado y la plantilla aprobada: se puede enviar.'
+          : `No se puede enviar todavía:<ul>${
+              estado.motivos.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>`}
+      </div>
+      <dl class="kv">
+        <dt>Flow</dt><dd class="mono">${esc(estado.flow_id || '—')}
+          ${estado.flow ? `<span class="badge badge-off">${esc(estado.flow.estado)}</span>` : ''}</dd>
+        <dt>Plantilla</dt><dd class="mono">${esc(estado.plantilla || '—')}
+          ${estado.plantilla_estado
+            ? `<span class="badge badge-off">${esc(estado.plantilla_estado)}</span>` : ''}</dd>
+      </dl>
+      ${destinatarios ? pintarDestinatarios(destinatarios) : ''}`;
+  } catch (error) {
+    caja.innerHTML = `<div class="alert alert-error">${esc(error.message)}</div>`;
+  }
+}
+
+function pintarDestinatarios(destinatarios) {
+  const excluidos = Object.entries(destinatarios.excluidos || {});
+  return `
+    <div class="resultado" style="margin-top:1rem">
+      <div class="r"><div class="r-num">${destinatarios.convocados}</div>
+        <div class="r-label">Convocados</div></div>
+      <div class="r"><div class="r-num">${destinatarios.destinatarios.length}</div>
+        <div class="r-label">Se les puede enviar</div></div>
+      <div class="r"><div class="r-num">${destinatarios.ya_enviados.length}</div>
+        <div class="r-label">Ya recibieron</div></div>
+      <div class="r"><div class="r-num">${destinatarios.excluidos_total}</div>
+        <div class="r-label">Quedan fuera</div></div>
+    </div>
+    ${excluidos.length ? `
+      <div class="small" style="margin-top:.75rem">
+        <strong>Por qué quedan fuera.</strong> Cada motivo se arregla distinto:
+        <ul>${excluidos.map(([motivo, ids]) =>
+          `<li>${ids.length} — ${esc(MOTIVOS_EXCLUSION[motivo] || motivo)}</li>`
+        ).join('')}</ul>
+      </div>` : ''}`;
+}
+
+function abrirConfiguracionFlow(encuesta) {
+  const caja = modal({
+    titulo: 'Enviar esta encuesta por WhatsApp',
+    ancho: '620px',
+    cuerpo: `
+      <div id="flow-alerta"></div>
+      <div class="aviso">
+        <h4>El Flow se crea en Meta, no acá</h4>
+        <p>El sistema <strong>solo envía</strong>. El Flow y la plantilla se
+        arman y se publican en Meta; acá se referencian por su id. Las
+        respuestas se bajan de Meta y se ingestan por el flujo de siempre.</p>
+        <p>La plantilla necesita <strong>aprobación de Meta</strong> y la
+        revisión demora: no se puede configurar la encuesta y convocar el
+        mismo día.</p>
+      </div>
+      <div class="form-group" style="margin-top:1.25rem">
+        <label>Id del Flow</label>
+        <input type="text" name="flow_id" placeholder="1234567890"
+               value="${esc(encuesta.flow_id || '')}" />
+        <div class="field-hint">Tiene que estar <strong>publicado</strong>.</div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Plantilla de mensaje</label>
+          <input type="text" name="plantilla" placeholder="invitacion_ola"
+                 value="${esc(encuesta.flow_plantilla || '')}" />
+          <div class="field-hint">La aprobada que contiene el Flow.</div></div>
+        <div class="form-group"><label>Idioma</label>
+          <input type="text" name="idioma" placeholder="es"
+                 value="${esc(encuesta.flow_idioma || 'es')}" /></div>
+      </div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Guardar', clase: 'btn-orange', onClick: async (c) => {
+          const datos = leerFormulario(c);
+          try {
+            await api.flow.configurar(encuesta.id, {
+              flow_id: datos.flow_id, plantilla: datos.plantilla,
+              idioma: datos.idioma });
+            cerrarModal();
+            toast('Configuración guardada.', 'ok');
+            contexto.irA('encuestas', { encuestaId: encuesta.id });
+          } catch (error) {
+            $('#flow-alerta', c).innerHTML = alerta(error.message);
+          }
+        } },
+    ],
+  });
+  return caja;
+}
+
+async function abrirEnvioWhatsapp(encuesta) {
+  const destinatarios = await api.flow.destinatarios(encuesta.id);
+  const caja = modal({
+    titulo: 'Enviar por WhatsApp',
+    ancho: '620px',
+    cuerpo: `
+      <div id="envio-alerta"></div>
+      <div class="aviso destacado">
+        <h4>Se envía a quienes cumplen los dos ejes</h4>
+        <p>Consentimiento de contacto vigente <strong>y</strong> preferencia
+        de WhatsApp activa, más un celular válido. Falta cualquiera de los
+        tres y esa persona queda fuera.</p>
+        <p>Reintentar <strong>no reenvía</strong> a quien ya recibió: un
+        mensaje duplicado quema el canal y la paciencia.</p>
+      </div>
+      ${pintarDestinatarios(destinatarios)}`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: `Enviar a ${destinatarios.destinatarios.length}`,
+        clase: 'btn-orange', onClick: async (c) => {
+          const enCurso = bloquearModal(c);
+          try {
+            const salida = await api.flow.enviar(encuesta.id);
+            enCurso.soltar();
+            cerrarModal();
+            mostrarResultado('Envío terminado', [
+              ['Enviados', salida.enviados],
+              ['Fallidos', salida.fallidos, true],
+              ['Quedaron fuera', salida.excluidos_total, true],
+            ], salida.fallidos
+              ? `${salida.fallidos} envío(s) fallaron. Se pueden reintentar: `
+                + 'el reintento no le vuelve a mandar a quien ya recibió.'
+              : '');
+            await cargarEstadoFlow(encuesta.id);
+          } catch (error) {
+            enCurso.soltar();
+            $('#envio-alerta', c).innerHTML = alerta(error.message);
+          }
+        } },
+    ],
+  });
+  return caja;
+}
+
 
 async function verificarCruce(encuestaId) {
   const contenedor = $('#cruce');

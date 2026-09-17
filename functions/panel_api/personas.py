@@ -617,6 +617,11 @@ def ficha(conn, id_persona):
     # hace visible la precisión del dato (R3.14.g).
     del_catalogo = atributos.valores_de(conn, id_persona)
     por_clave = {a["clave"]: a for a in del_catalogo}
+    # R4.4 — por dónde acepta que la contacten, con el texto con que lo
+    # aceptó. Va en la ficha porque es parte de lo que el sistema sabe de esa
+    # persona, y porque es donde se revoca cuando alguien pide que no le
+    # escriban más.
+    canales = preferencias.listar(conn, id_persona)
     paneles_de = db.todas(
         conn,
         """
@@ -676,6 +681,7 @@ def ficha(conn, id_persona):
                 por_clave.get("tramo_etario") or {}).get("procedencia"),
         },
         "atributos": del_catalogo,
+        "canales": canales,
         "paneles": [
             {
                 "panel_id": p["id"],

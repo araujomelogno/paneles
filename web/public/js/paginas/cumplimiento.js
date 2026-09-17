@@ -36,6 +36,17 @@ export async function render(main, ctx) {
           <div class="card-body"><div id="esquema">${cargando('12vh')}</div></div>
         </div>
 
+        <!-- R4.3/R4.5 — las tres condiciones externas del bloque de
+             contacto. Van acá porque su ausencia no es un detalle técnico:
+             sin proveedor de códigos la landing no se puede anunciar, y sin
+             credenciales de Meta no se puede enviar. -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-header-title">Contacto: landing y WhatsApp</span>
+            <button class="btn btn-outline btn-sm" id="ver-contacto">Revisar</button></div>
+          <div class="card-body"><div id="contacto">${cargando('12vh')}</div></div>
+        </div>
+
         <div class="card">
           <div class="card-header"><span class="card-header-title">Bajas con borrado semántico pendiente</span>
             <button class="btn btn-outline btn-sm" id="reintentar">Reintentar</button></div>
@@ -84,14 +95,55 @@ export async function render(main, ctx) {
 
   $('#auditar').onclick = cargarAuditoria;
   $('#ver-esquema').onclick = cargarEsquema;
+  $('#ver-contacto').onclick = cargarContacto;
   $('#reintentar').onclick = reintentar;
-  await Promise.all([cargarAuditoria(), cargarEsquema(), cargarPendientes()]);
+  await Promise.all([cargarAuditoria(), cargarEsquema(), cargarContacto(),
+                     cargarPendientes()]);
 }
 
 /* Las migraciones se aplican a mano contra cada instancia de Cloud SQL. Una
    que no se aplicó no se nota hasta que alguien entra a la pantalla que la
    necesitaba, y ahí falla con un error del servidor que no dice nada. Este
    panel lo adelanta. */
+async function cargarContacto() {
+  const contenedor = $('#contacto');
+  if (!contenedor) return;
+  contenedor.innerHTML = cargando('12vh');
+  try {
+    const estado = await api.cumplimiento.contacto();
+    const avisos = [
+      ...estado.verificacion.avisos,
+      ...estado.desafio.avisos,
+      ...estado.whatsapp.avisos,
+    ];
+    contenedor.innerHTML = `
+      ${avisos.length
+        ? `<div class="alert alert-warn">
+             <strong>Hay cosas sin configurar.</strong>
+             <ul style="margin:.4rem 0 0 1.1rem">
+               ${avisos.map((a) => `<li>${esc(a)}</li>`).join('')}</ul>
+           </div>`
+        : `<div class="alert alert-success">La landing está endurecida y el
+             canal de WhatsApp está configurado.</div>`}
+      <dl class="kv">
+        <dt>Envío de códigos</dt>
+        <dd>${estado.verificacion.envia_de_verdad
+          ? `sí, por <code>${esc(estado.verificacion.proveedor_envio)}</code>`
+          : '<span class="muted">sin proveedor: el código vuelve en la respuesta</span>'}</dd>
+        <dt>Desafío anti-bot</dt>
+        <dd>${estado.desafio.activo
+          ? `<code>${esc(estado.desafio.proveedor)}</code>`
+          : '<span class="muted">sin configurar</span>'}</dd>
+        <dt>WhatsApp</dt>
+        <dd>${estado.whatsapp.configurado
+          ? 'credenciales presentes'
+          : `<span class="muted">faltan ${estado.whatsapp.faltan.join(', ')}</span>`}</dd>
+      </dl>`;
+  } catch (error) {
+    contenedor.innerHTML = alerta(error.message);
+  }
+}
+
 async function cargarEsquema() {
   const contenedor = $('#esquema');
   if (!contenedor) return;

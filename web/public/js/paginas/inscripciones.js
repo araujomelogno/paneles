@@ -95,12 +95,54 @@ async function pintarInscripciones(cuerpo, estadoPedido) {
   });
 }
 
-function aprobar(id, paneles) {
+const COINCIDENCIAS = {
+  documento: 'documento',
+  email: 'correo',
+  celular: 'celular',
+  nombre_fecha_nacimiento: 'nombre y fecha de nacimiento',
+};
+
+async function aprobar(id, paneles) {
+  // R4.3 — la inscripción con sus candidatos parecidos. La landing es el
+  // único camino donde alguien se inscribe solo, sin que nadie del equipo
+  // controle qué escribe: es donde más probable es que la misma persona se
+  // anote dos veces con datos levemente distintos.
+  const inscripcion = await api.inscripciones.ver(id);
+  const candidatos = inscripcion.candidatos || [];
+
   modal({
     titulo: 'Aprobar la inscripción',
+    ancho: candidatos.length ? '680px' : undefined,
     cuerpo: `
       <p>Recién al aprobar se crea la persona en la bóveda, con el
       consentimiento que dio en su momento y la versión de texto que aceptó.</p>
+      ${inscripcion.canales?.length ? `
+        <div class="small muted">Aceptó que la contacten por
+        <strong>${inscripcion.canales.map(esc).join(', ')}</strong>, de primera
+        mano en el formulario.</div>` : ''}
+      ${candidatos.length ? `
+        <div class="aviso" style="margin:1rem 0">
+          <h4>Hay ${candidatos.length} panelista(s) parecido(s)</h4>
+          <p>Se <strong>proponen</strong>, no se fusionan: una coincidencia de
+          correo o de nombre y fecha puede ser un homónimo, y fusionar a dos
+          personas distintas no se deshace. La única que el sistema resuelve
+          sola es el documento exacto.</p>
+        </div>
+        <div class="form-group">
+          <label>¿Es alguna de estas personas?</label>
+          <select class="fselect" name="id_persona">
+            <option value="">No, es alguien nuevo</option>
+            ${candidatos.map((c) => `
+              <option value="${esc(c.id_persona)}">
+                ${esc(c.nombre || c.id_persona.slice(0, 8))} —
+                coincide por ${c.coincide_por.map((m) => COINCIDENCIAS[m] || m).join(', ')}
+                ${c.paneles ? ` · ${c.paneles} panel(es)` : ''}
+              </option>`).join('')}
+          </select>
+          <div class="field-hint">Si elegís una, no se crea nadie nuevo: se
+            completa esa ficha y se le registran el consentimiento y los
+            canales que dio en la landing.</div>
+        </div>` : ''}
       <div class="form-group"><label>Sumar al panel</label>
         <select class="fselect" name="panel_id">
           <option value="">— ninguno por ahora —</option>
@@ -111,12 +153,16 @@ function aprobar(id, paneles) {
       {
         texto: 'Aprobar', clase: 'btn-primary',
         onClick: async (contenedor) => {
-          const { panel_id: panelId } = leerFormulario(contenedor);
+          const { panel_id: panelId, id_persona: idPersona } =
+            leerFormulario(contenedor);
           try {
-            const r = await api.inscripciones.aprobar(id, panelId ? Number(panelId) : null);
+            const r = await api.inscripciones.aprobar(
+              id, panelId ? Number(panelId) : null, idPersona || null);
             cerrarModal();
             if (r.estado === 'revision') {
               toast('Quedó en la cola de revisión de altas: la coincidencia es ambigua.', 'aviso');
+            } else if (r.persona === 'fusionada') {
+              toast('Aprobada y fusionada con el panelista que elegiste.', 'ok');
             } else {
               toast(r.persona === 'reutilizada'
                 ? 'Aprobada. Ya existía: se reutilizó su id_persona.'

@@ -89,6 +89,7 @@ const bd = {
   textosConsentimiento: [],
   cargas: [],              // R3.13 — lotes incorporados sin panel
   atributos: [],           // R3.14 — el catálogo de segmentadores
+  canales: [],             // R4.4 — preferencias de canal por persona
   secuencias: {
     panel: 1, encuesta: 1, revision: 1, consentimiento: 1, semantica: 1,
     guardada: 1, auditoria: 1, reident: 1, carga: 1, atributo: 1,
@@ -188,6 +189,16 @@ function sembrar() {
       contacto: null, observaciones: null, creado_en: diasAtras(120 - i * 7),
     });
     bd.alias.push({ id_persona: idPersona, origen: 'dooblo', id_en_origen: `R-${String(i + 1).padStart(3, '0')}` });
+    // R4.4 — el celular en E.164, y los canales que aceptó. Los primeros seis
+    // aceptaron WhatsApp: alcanza para que el envío tenga a quién mandarle y
+    // para que se vea a quién deja afuera.
+    bd.personas[bd.personas.length - 1].celular =
+      '+598' + String(celular || '').replace(/\D/g, '').replace(/^0/, '');
+    ['email', ...(i < 6 ? ['whatsapp'] : [])].forEach((canal) => bd.canales.push({
+      id_persona: idPersona, canal, estado: 'activa', activa: true,
+      version_texto: 'optin-2026-01', origen: 'alta_manual',
+      otorgado_en: diasAtras(120 - i * 7), revocado_en: null,
+    }));
     finalidades.forEach((finalidad) => otorgar(idPersona, finalidad, VERSION, diasAtras(120 - i * 7)));
     agregarMiembro(nacional.id, idPersona);
     const edad = new Date().getFullYear() - Number(fechaNacimiento.slice(0, 4));
@@ -824,6 +835,8 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
         procedencia_tramo: persona.fecha_nacimiento ? 'derivado' : null,
       },
       atributos: atributosDe(persona),
+      // R4.4 — por dónde acepta que la contacten.
+      canales: bd.canales.filter((c) => c.id_persona === persona.id_persona),
       paneles: bd.membresias.filter((m) => m.id_persona === persona.id_persona).map((m) => ({
         panel_id: m.panel_id,
         nombre: bd.paneles.find((p) => p.id === m.panel_id)?.nombre,
@@ -1123,6 +1136,135 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
 
   if (metodo === 'POST' && partes[0] === 'encuestas' && partes[2] === 'ingesta') {
     return ingestar(Number(partes[1]), cuerpo);
+  }
+
+  /* R4.4 — preferencias de canal. */
+  if (metodo === 'GET' && partes[0] === 'panelistas' && partes[2] === 'canales') {
+    return { items: bd.canales.filter((c) => c.id_persona === partes[1]) };
+  }
+  if (partes[0] === 'panelistas' && partes[2] === 'canales' && partes.length === 4) {
+    const idPersona = partes[1];
+    const canal = partes[3];
+    const persona = bd.personas.find((p) => p.id_persona === idPersona);
+    if (!persona) throw new ErrorDemo('No existe la persona.', 404);
+    const existente = bd.canales.find(
+      (c) => c.id_persona === idPersona && c.canal === canal);
+
+    if (metodo === 'PUT') {
+      // R4.4 — WhatsApp exige celular en formato internacional válido: sin
+      // número no hay a quién mandarle.
+      if ((canal === 'whatsapp' || canal === 'sms')
+          && !/^\+\d{8,15}$/.test(persona.celular || '')) {
+        throw new ErrorDemo(
+          `Para activar «${canal}» hace falta un celular en formato `
+          + `internacional válido. El que tiene cargado es ${persona.celular}.`,
+          409);
+      }
+      const preferencia = existente || {
+        id_persona: idPersona, canal, otorgado_en: ahora(),
+      };
+      Object.assign(preferencia, {
+        estado: 'activa', activa: true,
+        version_texto: cuerpo.version_texto || null,
+        origen: cuerpo.origen || 'edicion',
+        otorgado_en: ahora(), revocado_en: null,
+      });
+      if (!existente) bd.canales.push(preferencia);
+      return preferencia;
+    }
+
+    if (metodo === 'DELETE') {
+      if (!existente) {
+        throw new ErrorDemo(
+          `La persona no tiene preferencia registrada para «${canal}».`, 404);
+      }
+      Object.assign(existente,
+                    { estado: 'revocada', activa: false, revocado_en: ahora() });
+      return existente;
+    }
+  }
+
+  /* R4.5 — el canal de WhatsApp de una encuesta. */
+  if (partes[0] === 'encuestas' && partes[2] === 'flow') {
+    const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
+    if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
+    if (metodo === 'PUT') {
+      Object.assign(encuesta, {
+        flow_id: (cuerpo.flow_id || '').trim() || null,
+        flow_plantilla: (cuerpo.plantilla || '').trim() || null,
+        flow_idioma: (cuerpo.idioma || '').trim() || null,
+      });
+      encuesta.es_flow = !!(encuesta.flow_id && encuesta.flow_plantilla);
+      return encuesta;
+    }
+    // La copia demo no llama a Meta: responde como si el Flow estuviera
+    // publicado y la plantilla aprobada, que es el caso que interesa recorrer.
+    return {
+      encuesta_id: encuesta.id, es_flow: !!encuesta.es_flow,
+      flow_id: encuesta.flow_id, plantilla: encuesta.flow_plantilla,
+      idioma: encuesta.flow_idioma,
+      puede_enviar: !!encuesta.es_flow,
+      motivos: encuesta.es_flow
+        ? [] : ['La encuesta no está configurada como Flow.'],
+      flow: encuesta.es_flow ? { estado: 'PUBLISHED' } : undefined,
+      plantilla_estado: encuesta.es_flow ? 'APPROVED' : undefined,
+    };
+  }
+
+  if (partes[0] === 'encuestas' && partes[2] === 'whatsapp') {
+    const encuestaId = Number(partes[1]);
+    const convocados = bd.participaciones.filter((p) => p.encuesta_id === encuestaId);
+    const excluidos = {};
+    const destinatarios = [];
+    const yaEnviados = [];
+    convocados.forEach((p) => {
+      const persona = bd.personas.find((x) => x.id_persona === p.id_persona);
+      const excluir = (motivo) => {
+        (excluidos[motivo] = excluidos[motivo] || []).push(p.id_persona);
+      };
+      if (!vigente(p.id_persona, 'contacto_participacion')) return excluir('sin_consentimiento');
+      const preferencia = bd.canales.find(
+        (c) => c.id_persona === p.id_persona && c.canal === 'whatsapp' && c.activa);
+      if (!preferencia) return excluir('sin_preferencia_whatsapp');
+      if (!persona?.celular) return excluir('sin_celular');
+      if (!/^\+\d{8,15}$/.test(persona.celular)) return excluir('celular_invalido');
+      if (p.envio_estado === 'enviado') { yaEnviados.push(p.id_persona); return; }
+      destinatarios.push(p.id_persona);
+    });
+    const seleccion = {
+      encuesta_id: encuestaId, convocados: convocados.length,
+      destinatarios, ya_enviados: yaEnviados, excluidos,
+      excluidos_total: Object.values(excluidos).reduce((n, v) => n + v.length, 0),
+    };
+    if (metodo === 'GET') return seleccion;
+
+    // El envío. Reintentar no le vuelve a mandar a quien ya recibió.
+    destinatarios.forEach((idPersona) => {
+      const participacion = convocados.find((p) => p.id_persona === idPersona);
+      Object.assign(participacion,
+                    { enviado_en: ahora(), envio_estado: 'enviado' });
+    });
+    return {
+      ...seleccion, enviados: destinatarios.length, fallidos: 0,
+      detalle: destinatarios.map((i) => ({ id_persona: i, estado: 'enviado' })),
+    };
+  }
+
+  if (clave === 'GET /diagnostico/contacto') {
+    return {
+      verificacion: { proveedor_envio: 'ninguno', envia_de_verdad: false,
+                      sal_configurada: false,
+                      avisos: ['Sin proveedor de envío: el código vuelve en la '
+                               + 'respuesta y la verificación no prueba nada. '
+                               + 'La landing no se puede anunciar así.'] },
+      desafio: { proveedor: 'ninguno', activo: false,
+                 avisos: ['Sin desafío configurado: la landing no distingue un '
+                          + 'envío automatizado de una persona.'] },
+      whatsapp: { configurado: false, faltan: ['token', 'phone_number_id'],
+                  avisos: ['Sin credenciales de WhatsApp: una encuesta se puede '
+                           + 'configurar como Flow, pero el envío queda '
+                           + 'deshabilitado.'] },
+    };
   }
 
   /* R3.14 — el catálogo de atributos demográficos. */

@@ -156,6 +156,10 @@ export const cumplimiento = {
   /* Qué migraciones están aplicadas en cada base. Devuelve 500 cuando falta
      alguna, con el detalle en el cuerpo: la página lo lee de ahí. */
   esquema: () => GET('/diagnostico/esquema'),
+  // R4.3/R4.5 — si la landing está endurecida y si el canal de WhatsApp está
+  // listo. Va acá porque su ausencia es una condición para no anunciar la
+  // landing, no un detalle técnico.
+  contacto: () => GET('/diagnostico/contacto'),
 };
 
 export const encuestas = {
@@ -272,7 +276,11 @@ export const canjes = {
 
 export const inscripciones = {
   listar: (estadoInscripcion = 'pendiente') => GET('/inscripciones', { estado: estadoInscripcion }),
-  aprobar: (id, panelId) => POST(`/inscripciones/${id}/aprobar`, { panel_id: panelId }),
+  // R4.3 — con sus candidatos parecidos, para poder resolver sin buscar a mano.
+  ver: (id) => GET(`/inscripciones/${id}`),
+  aprobar: (id, panelId, idPersona) =>
+    POST(`/inscripciones/${id}/aprobar`,
+         { panel_id: panelId, id_persona: idPersona }),
   rechazar: (id, motivo) => POST(`/inscripciones/${id}/rechazar`, { motivo }),
   textos: (finalidad) => GET('/textos-consentimiento', finalidad ? { finalidad } : {}),
   publicarTexto: (finalidad, version, cuerpo) =>
@@ -285,6 +293,32 @@ export const sav = {
           { archivo_base64: archivoBase64 }, opciones),
   ingestar: (encuestaId, cuerpo, opciones) =>
     subir(`/encuestas/${encuestaId}/sav/ingesta`, cuerpo, opciones),
+};
+
+/* R4.4 — por qué canal acepta cada persona que la contacten.
+
+   Es un eje distinto del consentimiento por finalidad: ese dice si se la
+   puede contactar, este dice por dónde. Para enviar hacen falta los dos. */
+export const canales = {
+  deLaPersona: (idPersona) => GET(`/panelistas/${idPersona}/canales`),
+  otorgar: (idPersona, canal, versionTexto) =>
+    PUT(`/panelistas/${idPersona}/canales/${canal}`,
+        { version_texto: versionTexto, origen: 'edicion' }),
+  revocar: (idPersona, canal) =>
+    pedir('DELETE', `/panelistas/${idPersona}/canales/${canal}`),
+};
+
+/* R4.5 — el envío de una encuesta por WhatsApp Flow. El sistema solo envía:
+   las respuestas se bajan de Meta y se ingestan por el flujo de siempre. */
+export const flow = {
+  configurar: (encuestaId, cuerpo) => PUT(`/encuestas/${encuestaId}/flow`, cuerpo),
+  // Valida contra Meta que el Flow esté publicado y la plantilla aprobada.
+  // Se consulta antes de convocar, no al enviar.
+  estado: (encuestaId) => GET(`/encuestas/${encuestaId}/flow`),
+  destinatarios: (encuestaId) => GET(`/encuestas/${encuestaId}/whatsapp`),
+  enviar: (encuestaId, idsPersona) =>
+    POST(`/encuestas/${encuestaId}/whatsapp`,
+         idsPersona ? { ids_persona: idsPersona } : {}),
 };
 
 /* R3.14 — el catálogo de atributos demográficos.
