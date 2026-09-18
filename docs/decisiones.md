@@ -75,6 +75,7 @@ restricción real del sistema.
 | [D39](#d39) | Guardar un solo valor vigente por atributo era un número mal calculado | 4 |
 | [D40](#d40) | La comparabilidad entre olas la declara el analista, no el sistema | 4 |
 | [D41](#d41) | El optimizador propone y explica; no es un solver | 4 |
+| [D42](#d42) | De WhatsApp se elige la plantilla, y nada más | 4 |
 
 ---
 
@@ -1807,6 +1808,65 @@ convocar a los más convocados.
 
 ---
 
+<a id="d42"></a>
+## D42 · De WhatsApp se elige la plantilla, y nada más
+
+**El problema.** La pantalla pedía tres datos para configurar una encuesta
+como Flow: el id del Flow, el nombre de la plantilla y el idioma. Los tres son
+**el mismo dato**. Una plantilla de Meta se identifica por el par
+`(nombre, idioma)` y lleva el `flow_id` adentro, en su botón de Flow.
+
+Pedirlos por separado tenía dos consecuencias, y la segunda es la grave:
+
+1. Había que ir a Meta, buscar el id del Flow y copiarlo a mano. Un número de
+   diez dígitos transcrito entre dos pantallas.
+2. **Nada impedía que se contradijeran.** Se podía configurar la plantilla `X`
+   con el `flow_id` de la `Y`, o la plantilla en español con el idioma `pt_BR`.
+   El sistema lo guardaba sin chistar y eso recién se descubría al validar
+   contra Meta —o, si nadie validaba, al enviar.
+
+Un formulario que permite escribir una combinación imposible no es un
+formulario incompleto: es uno que delega en el usuario una verificación que la
+fuente de verdad ya podía hacer.
+
+**La decisión.** Se lista `GET /{waba_id}/message_templates`, se filtran las
+aprobadas **que tienen un botón de Flow**, y se elige una. El idioma y el
+`flow_id` salen de ella.
+
+**Las que no tienen botón de Flow no se ofrecen.** Están aprobadas y no sirven
+para convocar a un cuestionario: mandan un mensaje y nada más. Ofrecerlas
+sería ofrecer un callejón sin salida, así que se filtran y se dice cuántas
+había, para que «la lista está vacía» tenga una explicación.
+
+**Una plantilla en dos idiomas no se elige sola.** El mismo nombre en `es` y
+en `pt_BR` son dos plantillas distintas, se aprueban por separado y pueden
+estar en estados distintos. Cuando la configuración guardada no alcanza para
+desambiguar, el sistema lo informa con los idiomas disponibles en vez de tomar
+la primera: elegir por su cuenta sería elegir en qué idioma se le habla a la
+gente.
+
+**El `flow_id` se sigue guardando, pero ya no se escribe.** Se resuelve de la
+plantilla y se persiste por dos motivos: queda registrado qué Flow usó esa ola
+aunque la plantilla cambie después, y el envío no depende de que Meta conteste
+para saber qué se configuró. El envío en sí **no lo usa**: el mensaje
+referencia la plantilla y el Flow viene adentro de su botón, que es la razón
+de fondo por la que configurarlo aparte nunca tuvo sentido.
+
+**Lo que esto vuelve obligatorio.** `WHATSAPP_WABA_ID` pasa de «hace falta
+para validar» a «hace falta para configurar»: sin él no hay lista y la
+encuesta no se puede marcar como Flow. El token necesita además el permiso
+`whatsapp_business_management`, no solo `whatsapp_business_messaging`.
+
+> **Por qué esto no cambia el alcance.** El sistema **sigue solo enviando**.
+> No crea Flows ni plantillas —se siguen armando en Meta— ni recibe
+> respuestas. Lo único que cambió es que, en vez de pedir que le transcriban
+> lo que Meta ya sabe, lo va a buscar.
+
+**Dónde vive.** `whatsapp.listar_plantillas`, `whatsapp.candidatas`,
+`encuestas.configurar_flow`, `web/public/js/paginas/encuestas.js`.
+
+---
+
 ## Anexo · Decisiones que no se tomaron
 
 Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
@@ -1822,6 +1882,7 @@ Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 | Versionar el conjunto de categorías de un atributo | No se hizo: alcanza con no permitir cambiar claves. Cambiar categorías usadas en cuotas históricas rompe la comparabilidad entre olas, y eso queda como riesgo anotado | [D36](#d36) |
 | Historial de un atributo que cambia con el tiempo (ocupación, ingresos) | **Resuelto en R4.1.a:** cada valor vale en un intervalo y el anterior se conserva | [D39](#d39) |
 | Eliminar `persona.sexo` y `persona.localidad` | Pendiente de una migración posterior: quedaron obsoletas, no se escriben ni se leen, y se borran una vez verificado que nada las usa | [D36](#d36) |
+| Crear Flows o plantillas desde el sistema | **No se hace, y no cambió.** Se arman en Meta; el sistema los lista y elige, nunca los crea | [D42](#d42) |
 | Recibir webhooks de WhatsApp | **No se hizo.** Sin canal de entrada, un bloqueo o un «STOP» no llega al sistema. Mitigación: revocación manual y revisión de los reportes de Meta. Si el volumen crece, deja de ser opcional | [D37](#d37) |
 | Opt-in de WhatsApp de los panelistas ya enrolados | **Pendiente, y es legal.** Nadie se lo pidió: hay que obtenerlo antes de poder mandarles | [D37](#d37) |
 | Transferencia de celulares a Meta | **A revisar antes del primer envío real.** Es compartir datos personales con un tercero fuera del país | [D37](#d37) |

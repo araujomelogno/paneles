@@ -157,7 +157,7 @@ crean tablas y agregan columnas nullables o con default.
 | `verificacion_contacto` | Los códigos de un solo uso que endurecen la landing. El código va **hasheado** y la IP también (R4.3) |
 | `inscripcion.celular_verificado` / `email_verificado` | Qué verificó cada inscripción. `false` en las anteriores a esta migración, que no pasaron por verificación |
 | `inscripcion.canales` | Los canales que el titular aceptó de primera mano en el formulario. Se convierten en preferencias al aprobar |
-| `encuesta.flow_id` / `flow_plantilla` / `flow_idioma` | Configurar una encuesta como WhatsApp Flow (R4.5) |
+| `encuesta.flow_plantilla` / `flow_idioma` / `flow_id` | Qué plantilla de WhatsApp usa la encuesta (R4.5). Lo único que se elige es la plantilla; el idioma y el `flow_id` se resuelven de ella y se guardan para dejar registrado qué Flow usó esa ola |
 | `participacion.enviado_en` / `envio_estado` / `envio_error` | El estado del envío por persona, para reintentar solo los fallidos |
 | `persona_atributo.desde` / `hasta` | El historial: desde y hasta cuándo valió cada valor (R4.1.a) |
 | `f_atributo_persona(momento)` | La única implementación de la resolución de atributos, ahora a una fecha. `v_atributo_persona` es esta función en `now()` |
@@ -235,16 +235,24 @@ Verificar: `firebase functions:secrets:access WHATSAPP_TOKEN`.
 La configuración es **a nivel sistema, no por encuesta**: hay un número
 emisor y es el mismo para todas.
 
-Sin ellas, una encuesta se puede configurar como Flow pero el envío queda
-deshabilitado y la pantalla lo dice. Sin `WHATSAPP_WABA_ID` en particular no
-se puede comprobar que la plantilla esté aprobada, y por eso el envío también
-se bloquea: enviar con una plantilla rechazada falla persona por persona.
+**`WHATSAPP_WABA_ID` no es opcional.** Es de donde sale la lista de plantillas
+de la cuenta, y la pantalla de la encuesta no pide un id de Flow ni un idioma:
+se elige una plantilla de esa lista y de ella salen los dos. Sin el WABA_ID la
+lista viene vacía, la encuesta no se puede configurar como Flow y la pantalla
+lo dice con ese motivo.
+
+> **Qué permisos necesita el token.** Leer las plantillas exige
+> `whatsapp_business_management`; enviar, `whatsapp_business_messaging`. Un
+> token con solo el segundo envía pero no puede listar, y la pantalla queda
+> sin nada que ofrecer sin que sea evidente por qué.
 
 **Antes del primer envío hacen falta, además del token:**
 
 - Cuenta de WhatsApp Business **verificada**.
 - El **Flow publicado** en Meta (no en borrador).
-- La **plantilla aprobada** que lo contiene. La revisión de Meta demora, así
+- La **plantilla aprobada** con un **botón de Flow**. Una plantilla aprobada
+  sin ese botón no aparece en la lista: sirve para mandar un mensaje, no para
+  convocar a un cuestionario. La revisión de Meta demora, así
   que conviene mandarla a aprobar apenas se sepa el texto: **no se puede
   configurar la encuesta y convocar el mismo día**.
 

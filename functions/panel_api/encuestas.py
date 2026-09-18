@@ -46,7 +46,11 @@ def _serializar(fila):
         "flow_id": fila.get("flow_id"),
         "flow_plantilla": fila.get("flow_plantilla"),
         "flow_idioma": fila.get("flow_idioma"),
-        "es_flow": bool(fila.get("flow_id") and fila.get("flow_plantilla")),
+        # Una encuesta es de Flow por tener plantilla elegida. El `flow_id`
+        # se resuelve de ella y puede faltar si Meta no contestó al
+        # configurar; eso no la vuelve «no Flow», la vuelve no enviable
+        # todavía, que es lo que informa `estado_flow`.
+        "es_flow": bool(fila.get("flow_plantilla")),
     }
 
 
@@ -650,18 +654,42 @@ def verificar_cruce(conn_boveda, conn_semantica, encuesta_id):
 # reemplaza. Por eso el estado del envío vive en `participacion` y no en una
 # tabla aparte, y por eso se puede convocar sin enviar y enviar después.
 
-def configurar_flow(conn, encuesta_id, flow_id=None, plantilla=None,
-                    idioma=None):
-    """Marca la encuesta como de WhatsApp Flow. No valida contra Meta: eso lo
-    hace `estado_flow`, porque una plantilla recién mandada a aprobar puede
-    tardar días y la configuración tiene que poder guardarse igual."""
+def configurar_flow(conn, encuesta_id, plantilla=None, idioma=None,
+                    entorno=None, pedir=None):
+    """Marca la encuesta como de WhatsApp Flow eligiendo **una plantilla**.
+
+    Lo único que se elige es la plantilla; el idioma y el `flow_id` salen de
+    ella. Pedir los tres por separado era pedir tres veces el mismo dato y
+    dejar que se contradigan: nada impedía configurar una plantilla con el
+    Flow de otra, y eso recién se descubría al validar o al enviar.
+
+    El `flow_id` se guarda igual, resuelto de la plantilla, por dos motivos:
+    queda registrado qué Flow usó esa ola aunque después la plantilla cambie,
+    y el envío no depende de que Meta conteste para saber qué se configuró.
+
+    **No falla si Meta no contesta.** Una plantilla recién mandada a aprobar
+    puede tardar días, y la configuración tiene que poder guardarse igual: lo
+    que no se pudo resolver queda en `null` y `estado_flow` lo informa.
+    """
+    from . import whatsapp
+
     obtener(conn, encuesta_id)
+    plantilla = (plantilla or "").strip() or None
+    idioma = (idioma or "").strip() or None
+    flow_id = None
+
+    if plantilla:
+        encontrada = whatsapp.buscar_plantilla(
+            plantilla, idioma, entorno=entorno, pedir=pedir)
+        if encontrada:
+            idioma = encontrada["idioma"]
+            flow_id = encontrada["flow_id"]
+
     db.ejecutar(
         conn,
         "update encuesta set flow_id = %s, flow_plantilla = %s, flow_idioma = %s "
         "where id = %s",
-        ((flow_id or "").strip() or None, (plantilla or "").strip() or None,
-         (idioma or "").strip() or None, encuesta_id),
+        (flow_id, plantilla, idioma, encuesta_id),
     )
     return obtener(conn, encuesta_id)
 
@@ -681,7 +709,7 @@ def estado_flow(conn, encuesta_id, entorno=None, pedir=None):
                 "puede_enviar": False,
                 "motivos": ["La encuesta no está configurada como Flow."]}
     salida = whatsapp.validar_configuracion(
-        encuesta["flow_id"], encuesta["flow_plantilla"], encuesta["flow_idioma"],
+        encuesta["flow_plantilla"], encuesta["flow_idioma"],
         entorno=entorno, pedir=pedir)
     salida.update({"encuesta_id": encuesta_id, "es_flow": True})
     return salida
@@ -763,8 +791,7 @@ def enviar_por_whatsapp(conn, encuesta_id, ids_persona=None, entorno=None,
         try:
             resultado = (enviar or whatsapp.enviar_flow)(
                 celulares.get(id_persona),
-                encuesta["flow_id"], encuesta["flow_plantilla"],
-                encuesta["flow_idioma"],
+                encuesta["flow_plantilla"], encuesta["flow_idioma"],
                 # R4.5 — el `flow_token` **es** el `id_persona`: es lo que
                 # vuelve con las respuestas y lo que hace que la ingesta
                 # mapee directo, sin PII y sin adivinar.

@@ -1333,11 +1333,21 @@ def revocar_canal(ctx, actor, params, cuerpo, consulta):
     return 200, salida
 
 
+@ruta("GET", "/whatsapp/plantillas", "leer", requisito="R4.5")
+def plantillas_de_whatsapp(ctx, actor, params, cuerpo, consulta):
+    """Las plantillas aprobadas de la cuenta que tienen un botón de Flow.
+
+    Es lo que alimenta el selector de la encuesta. Cada una trae su idioma y
+    su `flow_id` adentro: no hay nada más que elegir."""
+    return 200, whatsapp.listar_plantillas(
+        solo_con_flow=not _bandera(consulta.get("todas")))
+
+
 @ruta("PUT", "/encuestas/<encuesta_id>/flow", "fieldear", requisito="R4.5")
 def configurar_flow(ctx, actor, params, cuerpo, consulta):
+    """Elige la plantilla. El idioma y el Flow salen de ella."""
     salida = encuestas.configurar_flow(
         ctx.boveda, _entero(params["encuesta_id"]),
-        flow_id=(cuerpo or {}).get("flow_id"),
         plantilla=(cuerpo or {}).get("plantilla"),
         idioma=(cuerpo or {}).get("idioma"))
     ctx.boveda.commit()

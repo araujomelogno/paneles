@@ -17,6 +17,8 @@ real de R4.4 no es que los canales no se registren, es que agregar la captura
 rompa un alta que venía funcionando.
 """
 
+import json
+
 import pytest
 
 from panel_api import (
@@ -52,12 +54,33 @@ def _verificar(conn, canal, destino):
                                   pedido["codigo_sin_enviar"])
 
 
-def _ola_flow(conn, nombre="Ola WhatsApp"):
+def _ola_flow(conn, nombre="Ola WhatsApp", plantilla="invitacion_ola",
+              pedir=None):
+    """Una encuesta configurada como Flow.
+
+    Se elige **solo la plantilla**: el idioma y el `flow_id` salen de ella.
+    Por eso configurar toca Meta, y por eso hay que inyectarle la respuesta.
+    """
     panel = paneles.crear(conn, "Panel")
     encuesta = encuestas.crear(conn, panel["id"], nombre)
-    encuestas.configurar_flow(conn, encuesta["id"], flow_id="FLOW-1",
-                              plantilla="invitacion_ola", idioma="es")
+    encuestas.configurar_flow(conn, encuesta["id"], plantilla=plantilla,
+                              entorno=ENTORNO_META, pedir=pedir or _meta_ok)
     return panel, encuestas.obtener(conn, encuesta["id"])
+
+
+def _plantilla(nombre="invitacion_ola", idioma="es", estado="APPROVED",
+               flow_id="FLOW-1"):
+    """Una plantilla como la devuelve Meta: el idioma y el Flow van adentro."""
+    botones = [{"type": "FLOW", "text": "Responder", "flow_id": flow_id}] \
+        if flow_id else [{"type": "URL", "text": "Ver", "url": "https://x"}]
+    return {
+        "name": nombre, "language": idioma, "status": estado,
+        "category": "MARKETING",
+        "components": [
+            {"type": "BODY", "text": "Te invitamos a responder."},
+            {"type": "BUTTONS", "buttons": botones},
+        ],
+    }
 
 
 def _meta_ok(url, datos=None, token=None, metodo=None):
@@ -65,8 +88,7 @@ def _meta_ok(url, datos=None, token=None, metodo=None):
     para no salir a la red: lo que se prueba es nuestra lógica, no la de
     Meta."""
     if "message_templates" in url:
-        return {"data": [{"name": "invitacion_ola", "language": "es",
-                          "status": "APPROVED"}]}
+        return {"data": [_plantilla()]}
     if "/messages" in url:
         return {"messages": [{"id": "wamid.TEST"}]}
     return {"id": "FLOW-1", "name": "Invitación", "status": "PUBLISHED"}
@@ -481,6 +503,167 @@ def test_la_landing_registra_los_canales_de_primera_mano(conn_boveda, con_texto,
     assert activos == {"whatsapp", "email"}
 
 
+# ── R4.5 · Elegir la plantilla (y nada más) ──────────────────────────
+
+def test_solo_se_listan_las_plantillas_que_sirven_para_convocar(conn_boveda):
+    """Una plantilla aprobada sin botón de Flow no sirve para convocar a un
+    cuestionario por más aprobada que esté: ofrecerla sería ofrecer un
+    callejón sin salida."""
+    def meta(url, datos=None, token=None, metodo=None):
+        return {"data": [
+            _plantilla("con_flow", "es"),
+            _plantilla("sin_flow", "es", flow_id=None),
+            _plantilla("rechazada", "es", estado="REJECTED"),
+        ]}
+
+    salida = whatsapp.listar_plantillas(entorno=ENTORNO_META, pedir=meta)
+    assert [p["nombre"] for p in salida["plantillas"]] == ["con_flow"]
+    assert salida["sin_flow"] == 1
+
+
+def test_cada_plantilla_trae_su_idioma_y_su_flow_adentro(conn_boveda):
+    """Es la razón por la que no se piden aparte."""
+    def meta(url, datos=None, token=None, metodo=None):
+        return {"data": [_plantilla("invitacion", "pt_BR", flow_id="FLOW-9")]}
+
+    plantilla = whatsapp.listar_plantillas(
+        entorno=ENTORNO_META, pedir=meta)["plantillas"][0]
+    assert plantilla["idioma"] == "pt_BR"
+    assert plantilla["flow_id"] == "FLOW-9"
+    assert plantilla["texto_boton"] == "Responder"
+    assert plantilla["cuerpo"] == "Te invitamos a responder."
+
+
+def test_el_listado_sigue_la_paginacion_de_meta(conn_boveda):
+    """Sin seguir el cursor, una cuenta con muchas plantillas mostraría solo
+    las primeras cien y las que faltan parecerían no existir."""
+    def meta(url, datos=None, token=None, metodo=None):
+        if "cursor" not in url:
+            return {"data": [_plantilla("primera")],
+                    "paging": {"next": "https://graph.facebook.com/x?cursor=2"}}
+        return {"data": [_plantilla("segunda")]}
+
+    salida = whatsapp.listar_plantillas(entorno=ENTORNO_META, pedir=meta)
+    assert [p["nombre"] for p in salida["plantillas"]] == ["primera", "segunda"]
+
+
+def test_sin_credenciales_el_listado_lo_dice_en_vez_de_romperse(conn_boveda):
+    salida = whatsapp.listar_plantillas(entorno={}, pedir=_meta_ok)
+    assert salida["plantillas"] == []
+    assert salida["configurado"] is False
+    assert "waba_id" in salida["faltan"]
+
+
+def test_configurar_la_encuesta_resuelve_el_idioma_y_el_flow(conn_boveda):
+    """Lo único que se elige es la plantilla. Pedir los tres por separado era
+    pedir tres veces el mismo dato y dejar que se contradigan."""
+    panel = paneles.crear(conn_boveda, "Panel")
+    encuesta = encuestas.crear(conn_boveda, panel["id"], "Ola")
+
+    def meta(url, datos=None, token=None, metodo=None):
+        return {"data": [_plantilla("invitacion", "pt_BR", flow_id="FLOW-7")]}
+
+    salida = encuestas.configurar_flow(
+        conn_boveda, encuesta["id"], plantilla="invitacion",
+        entorno=ENTORNO_META, pedir=meta)
+
+    assert salida["flow_plantilla"] == "invitacion"
+    assert salida["flow_idioma"] == "pt_BR"
+    assert salida["flow_id"] == "FLOW-7"
+    assert salida["es_flow"] is True
+
+
+def test_una_plantilla_en_varios_idiomas_no_se_elige_sola(conn_boveda):
+    """El mismo nombre en dos idiomas son dos plantillas distintas, aprobadas
+    por separado. Adivinar sería elegir en qué idioma se le habla a la gente."""
+    def meta(url, datos=None, token=None, metodo=None):
+        if "message_templates" in url:
+            return {"data": [_plantilla("invitacion", "es"),
+                             _plantilla("invitacion", "pt_BR")]}
+        return {"id": "FLOW-1", "status": "PUBLISHED"}
+
+    panel = paneles.crear(conn_boveda, "Panel")
+    encuesta = encuestas.crear(conn_boveda, panel["id"], "Ola")
+    encuestas.configurar_flow(conn_boveda, encuesta["id"],
+                              plantilla="invitacion",
+                              entorno=ENTORNO_META, pedir=meta)
+
+    estado = encuestas.estado_flow(conn_boveda, encuesta["id"],
+                                   entorno=ENTORNO_META, pedir=meta)
+    assert estado["puede_enviar"] is False
+    assert any("una por idioma" in m for m in estado["motivos"])
+    assert estado["idiomas_disponibles"] == ["es", "pt_BR"]
+
+    # Con el idioma elegido, resuelve.
+    encuestas.configurar_flow(conn_boveda, encuesta["id"],
+                              plantilla="invitacion", idioma="pt_BR",
+                              entorno=ENTORNO_META, pedir=meta)
+    assert encuestas.estado_flow(
+        conn_boveda, encuesta["id"], entorno=ENTORNO_META,
+        pedir=meta)["puede_enviar"] is True
+
+
+def test_una_plantilla_sin_boton_de_flow_no_sirve_para_convocar(conn_boveda):
+    def meta(url, datos=None, token=None, metodo=None):
+        if "message_templates" in url:
+            return {"data": [_plantilla("aviso", "es", flow_id=None)]}
+        return {"id": "FLOW-1", "status": "PUBLISHED"}
+
+    panel = paneles.crear(conn_boveda, "Panel")
+    encuesta = encuestas.crear(conn_boveda, panel["id"], "Ola")
+    encuestas.configurar_flow(conn_boveda, encuesta["id"], plantilla="aviso",
+                              entorno=ENTORNO_META, pedir=meta)
+    estado = encuestas.estado_flow(conn_boveda, encuesta["id"],
+                                   entorno=ENTORNO_META, pedir=meta)
+    assert estado["puede_enviar"] is False
+    assert any("botón de Flow" in m for m in estado["motivos"])
+
+
+def test_la_configuracion_se_guarda_aunque_meta_no_conteste(conn_boveda):
+    """Una plantilla recién mandada a aprobar puede tardar días: la
+    configuración tiene que poder guardarse igual y decir qué falta."""
+    def meta_caida(url, datos=None, token=None, metodo=None):
+        raise Conflicto("Meta no responde.", {"status": 503})
+
+    panel = paneles.crear(conn_boveda, "Panel")
+    encuesta = encuestas.crear(conn_boveda, panel["id"], "Ola")
+    salida = encuestas.configurar_flow(
+        conn_boveda, encuesta["id"], plantilla="invitacion_ola",
+        entorno=ENTORNO_META, pedir=meta_caida)
+
+    assert salida["flow_plantilla"] == "invitacion_ola"
+    assert salida["flow_id"] is None
+    # Sigue siendo una encuesta de Flow: no es que no lo sea, es que todavía
+    # no se puede enviar, y eso lo dice el estado.
+    assert salida["es_flow"] is True
+    estado = encuestas.estado_flow(conn_boveda, encuesta["id"],
+                                   entorno=ENTORNO_META, pedir=meta_caida)
+    assert estado["puede_enviar"] is False
+
+
+def test_el_envio_no_necesita_el_flow_id(conn_boveda):
+    """El mensaje referencia la plantilla; el Flow viene adentro de su botón.
+    Es la razón de fondo por la que configurarlo aparte nunca tuvo sentido."""
+    cuerpos = []
+
+    def pedir(url, datos=None, token=None, metodo=None):
+        if "/messages" in url:
+            cuerpos.append(datos)
+            return {"messages": [{"id": "wamid.1"}]}
+        return _meta_ok(url, datos, token, metodo)
+
+    whatsapp.enviar_flow("+59899111111", "invitacion_ola", "es",
+                         flow_token="ID-PERSONA",
+                         entorno=ENTORNO_META, pedir=pedir)
+
+    plantilla = cuerpos[0]["template"]
+    assert plantilla["name"] == "invitacion_ola"
+    assert plantilla["language"]["code"] == "es"
+    accion = plantilla["components"][0]["parameters"][0]["action"]
+    assert accion["flow_token"] == "ID-PERSONA"
+    assert "flow_id" not in json.dumps(cuerpos[0])
+
+
 # ── R4.5 · Envío por WhatsApp Flow ───────────────────────────────────
 
 def test_no_se_puede_convocar_por_whatsapp_con_la_plantilla_sin_aprobar(conn_boveda):
@@ -490,8 +673,7 @@ def test_no_se_puede_convocar_por_whatsapp_con_la_plantilla_sin_aprobar(conn_bov
 
     def meta_pendiente(url, datos=None, token=None, metodo=None):
         if "message_templates" in url:
-            return {"data": [{"name": "invitacion_ola", "language": "es",
-                              "status": "PENDING"}]}
+            return {"data": [_plantilla(estado="PENDING")]}
         return {"id": "FLOW-1", "status": "PUBLISHED"}
 
     estado = encuestas.estado_flow(conn_boveda, encuesta["id"],
@@ -505,9 +687,8 @@ def test_un_flow_sin_publicar_tambien_bloquea(conn_boveda):
 
     def meta_borrador(url, datos=None, token=None, metodo=None):
         if "message_templates" in url:
-            return {"data": [{"name": "invitacion_ola", "language": "es",
-                              "status": "APPROVED"}]}
-        return {"id": "FLOW-1", "status": "DRAFT"}
+            return {"data": [_plantilla()]}
+        return {"id": "FLOW-1", "name": "Invitación", "status": "DRAFT"}
 
     estado = encuestas.estado_flow(conn_boveda, encuesta["id"],
                                    entorno=ENTORNO_META, pedir=meta_borrador)
@@ -550,7 +731,7 @@ def test_cada_envio_lleva_el_id_persona_como_flow_token(conn_boveda):
 
     enviados = []
 
-    def enviar(destino, flow_id, plantilla, idioma, flow_token, **kwargs):
+    def enviar(destino, plantilla, idioma, flow_token, **kwargs):
         enviados.append({"destino": destino, "flow_token": flow_token})
         return {"message_id": "wamid.1"}
 
@@ -577,7 +758,7 @@ def test_reintentar_no_reenvia_a_quien_ya_recibio(conn_boveda):
 
     intentos = []
 
-    def enviar(destino, flow_id, plantilla, idioma, flow_token, **kwargs):
+    def enviar(destino, plantilla, idioma, flow_token, **kwargs):
         intentos.append(flow_token)
         if flow_token == otro:
             raise Conflicto("Meta rechazó el mensaje.")
@@ -608,7 +789,7 @@ def test_un_fallo_por_persona_no_voltea_el_envio_entero(conn_boveda):
 
     llamadas = {"n": 0}
 
-    def enviar(destino, flow_id, plantilla, idioma, flow_token, **kwargs):
+    def enviar(destino, plantilla, idioma, flow_token, **kwargs):
         llamadas["n"] += 1
         if llamadas["n"] == 2:
             raise Conflicto("Número inválido.")
