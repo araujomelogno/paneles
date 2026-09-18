@@ -70,6 +70,8 @@ restricción real del sistema.
 | [D34](#d34) | El identificador viaja al campo en vez de adivinarlo a la vuelta | 3 |
 | [D35](#d35) | Incorporar individuos y hacerlos panelistas son dos cosas distintas | 3 |
 | [D36](#d36) | Los segmentadores son un catálogo, no una lista en el código | 3 |
+| [D37](#d37) | Poder contactar y poder contactar por un canal son dos permisos | 4 |
+| [D38](#d38) | La landing verifica el contacto antes de existir la inscripción | 4 |
 
 ---
 
@@ -1533,6 +1535,112 @@ y la solapa de atributos en `web/public/js/paginas/configuracion.js`.
 
 ---
 
+<a id="d37"></a>
+## D37 · Poder contactar y poder contactar por un canal son dos permisos
+
+**El problema.** El sistema tenía un solo eje de permiso para contactar:
+`contacto_participacion`. Eso responde *«¿puedo contactarla?»* y no dice nada
+de *«¿por dónde?»*. Alguien pudo aceptar que lo llamen por teléfono y no
+querer mensajes en su WhatsApp personal, y con un solo eje esa distinción no
+existe.
+
+Del lado de afuera el problema es más duro. La política de mensajería de
+WhatsApp exige **opt-in previo** para los mensajes que inicia el negocio.
+Mandar sin él no es una infracción abstracta: la gente bloquea, el *quality
+rating* del número baja y Meta termina restringiendo la cuenta. El canal se
+quema con el primer envío masivo a gente que no lo pidió, y no se recupera
+fácil.
+
+**La decisión.** `preferencia_canal`, un eje aparte. Para enviar por un canal
+hacen falta **los dos**: consentimiento de finalidad vigente y preferencia de
+ese canal activa. Falta cualquiera, no se envía.
+
+**Los cuatro motivos de exclusión se informan por separado**, y eso no es
+prolijidad: se arreglan distinto. A quien le falta el consentimiento hay que
+pedírselo; a quien le falta la preferencia hay que ofrecerle el canal; a quien
+le falta el celular hay que cargárselo; y a quien lo tiene inválido hay que
+corregírselo. Un «no se pudo enviar a 340 personas» agrupado no le sirve a
+nadie.
+
+**El opt-in guarda con qué texto se obtuvo**, igual que el consentimiento. Sin
+eso, «aceptó recibir WhatsApp» es una afirmación sin respaldo, y es
+exactamente lo que hay que poder mostrar si Meta o la propia persona lo
+reclaman.
+
+**E.164 en los tres caminos de alta, y la normalización en un solo lugar.**
+Un celular guardado como «099 123 456» no se puede usar para enviar y no es
+comparable entre archivos. La conversión vive en `preferencias.normalizar_celular`
+y la usan el alta manual, la ingesta y la landing: tres implementaciones
+distintas del mismo formato es cómo se terminan teniendo tres formatos.
+
+**Un celular que no se puede normalizar no voltea el alta.** Se guarda como
+vino. El resto de los datos de esa persona sirven igual, y lo único que no va
+a poder es activar WhatsApp —que es precisamente lo correcto—. Al revés, un
+número mal tipeado impediría enrolar a alguien, y eso es peor que quedarse sin
+un canal.
+
+**Lo que no se hizo, y hay que saberlo.** No hay canal de entrada: si alguien
+bloquea el número o responde «STOP», el sistema no se entera. La mitigación es
+la revocación manual desde la ficha y la revisión periódica de los reportes de
+Meta. Si el volumen crece, recibir webhooks deja de ser opcional.
+
+**Dónde vive.** `db/boveda/0009_fase4_contacto.sql`,
+`functions/panel_api/preferencias.py`, y la captura enhebrada en
+`personas.py` (alta manual), `sav.py` (ingesta) e `inscripciones.py`
+(landing).
+
+---
+
+<a id="d38"></a>
+## D38 · La landing verifica el contacto antes de que exista la inscripción
+
+**El problema.** La landing de Fase 3 aceptaba cualquier envío. Nadie
+comprobaba que el correo o el celular fueran de quien se estaba inscribiendo,
+y eso deja entrar dos cosas distintas y las dos malas: datos inventados, que
+ensucian la cola de aprobación, y **datos ajenos**, que es inscribir a alguien
+sin que se entere.
+
+**La decisión.** Un código de un solo uso, y la inscripción **no existe** hasta
+que se verifica. No es una casilla más del formulario: es una precondición de
+escribir, igual que el consentimiento.
+
+**Cuatro cosas que valen la pena:**
+
+| | |
+|---|---|
+| **El código se guarda hasheado** | Un código en claro en la base es una credencial de un solo uso al alcance de cualquiera que lea la tabla, y alcanza para inscribir a nombre de otro |
+| **La IP también** | Para limitar la tasa por origen alcanza con saber que dos pedidos vinieron del mismo lado; de cuál no hace falta, y guardarlo sería juntar un dato personal más en una superficie pública |
+| **Los intentos se agotan** | Sin eso, seis dígitos se adivinan por fuerza bruta en minutos |
+| **Hay dos límites de tasa, no uno** | Por origen, que frena el uso de la landing como oráculo; y **por destino**, que es el que protege a la persona del otro lado: sin él, la landing sirve para bombardear a un número ajeno |
+
+**El desafío anti-automatización va antes de emitir el código, no antes de
+inscribir.** El envío de códigos es lo que cuesta plata y lo que puede
+molestar a un tercero, así que es lo que hay que proteger. Dejarlo para el
+final protegería la tabla y no el bolsillo ni al vecino.
+
+**Sin proveedor configurado, el sistema no finge.** El código vuelve en la
+respuesta y lo dice con todas las letras; el desafío no bloquea y el
+diagnóstico de Cumplimiento lo informa. Una landing sin verificación real es
+una decisión que alguien tiene que tomar a sabiendas, no un olvido silencioso.
+Es el mismo patrón de degradación visible del reranker y de la verificación
+con Claude.
+
+**El dedup se refuerza acá y no en el alta.** La landing es el único camino
+donde la persona se inscribe sola, sin que nadie del equipo controle qué
+escribe: es donde más probable es que la misma persona se anote dos veces, con
+el correo del trabajo una vez y el personal la otra. Por eso quien aprueba ve
+los candidatos parecidos —por documento, correo, celular o nombre y fecha— y
+por eso **se proponen y no se fusionan**: una coincidencia de correo o de
+nombre puede ser un homónimo, y fusionar a dos personas distintas no se
+deshace. La única que se resuelve sola sigue siendo el documento exacto, que
+es R1.2 sin cambios.
+
+**Dónde vive.** `functions/panel_api/verificacion_contacto.py`,
+`functions/panel_api/desafio.py`, `inscripciones.candidatos_parecidos`, y del
+lado público `web/public/inscribirse.html`.
+
+---
+
 ## Anexo · Decisiones que no se tomaron
 
 Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
@@ -1548,6 +1656,9 @@ Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 | Versionar el conjunto de categorías de un atributo | No se hizo: alcanza con no permitir cambiar claves. Cambiar categorías usadas en cuotas históricas rompe la comparabilidad entre olas, y eso queda como riesgo anotado | [D36](#d36) |
 | Historial de un atributo que cambia con el tiempo (ocupación, ingresos) | Se guarda un solo valor vigente. El historial se cruza con el análisis longitudinal de Fase 4 | [D36](#d36) |
 | Eliminar `persona.sexo` y `persona.localidad` | Pendiente de una migración posterior: quedaron obsoletas, no se escriben ni se leen, y se borran una vez verificado que nada las usa | [D36](#d36) |
+| Recibir webhooks de WhatsApp | **No se hizo.** Sin canal de entrada, un bloqueo o un «STOP» no llega al sistema. Mitigación: revocación manual y revisión de los reportes de Meta. Si el volumen crece, deja de ser opcional | [D37](#d37) |
+| Opt-in de WhatsApp de los panelistas ya enrolados | **Pendiente, y es legal.** Nadie se lo pidió: hay que obtenerlo antes de poder mandarles | [D37](#d37) |
+| Transferencia de celulares a Meta | **A revisar antes del primer envío real.** Es compartir datos personales con un tercero fuera del país | [D37](#d37) |
 | Embeber un demográfico cuando es el objeto del estudio | Sin override: la marca excluye sin excepción. Habilitarlo reintroduce el espejado que el diseño descarta | [D33](#d33) |
 | Base legal del alta por SAV | **Resuelta:** la evidencia viaja en el archivo y declararla es obligatorio. Lo que queda es de campo: que el cuestionario incluya la pregunta | [D25](#d25) |
 | Texto de consentimiento de la landing | Pendiente del DPO; el sistema lo trata como dato | [D24](#d24) |

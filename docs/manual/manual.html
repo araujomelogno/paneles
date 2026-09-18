@@ -33,11 +33,11 @@
       <ul><li>Ingreso · Recuperación de contraseña · Cuentas sin habilitar</li></ul></li>
     <li><a href="#s3"><span><span class="num">3</span> Panelistas</span></a>
       <ul><li>Buscar · Enrolar · Duplicados · Revisión de altas · La ficha ·
-      Cargar panelistas sin panel</li></ul></li>
+      Cargar panelistas sin panel · Canales de contacto</li></ul></li>
     <li><a href="#s4"><span><span class="num">4</span> Paneles</span></a>
       <ul><li>Crear · Agregar miembros · Dar de baja una membresía</li></ul></li>
     <li><a href="#s5"><span><span class="num">5</span> Encuestas</span></a>
-      <ul><li>Crear una ola · Convocar · Exportar la muestra · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Verificar el cruce</li></ul></li>
+      <ul><li>Crear una ola · Convocar · Exportar la muestra · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Enviar por WhatsApp · Verificar el cruce</li></ul></li>
     <li><a href="#s6"><span><span class="num">6</span> Consultas</span></a>
       <ul><li>Buscar por significado · El ranking y la evidencia ·
       Exclusiones · Reidentificación · Modos · Consultas guardadas</li></ul></li>
@@ -476,6 +476,110 @@
     <p>Cargar, consultar y recién entonces crear el panel con quienes interesen.
     Así se incorpora únicamente a quien corresponde, en lugar de sumar la base
     completa a un panel y depurarla después.</p>
+  </div>
+
+  <h3><span class="n">3.7</span> Canales de contacto</h3>
+
+  <p>El consentimiento de <i>contacto y participación</i> responde una
+  pregunta: <strong>si</strong> se puede contactar a esa persona. No responde
+  la otra: <strong>por dónde</strong>. Alguien puede aceptar que lo llamen por
+  teléfono y no querer recibir mensajes en su WhatsApp personal.</p>
+
+  <p>Por eso la ficha tiene una tarjeta aparte, <i>Canales de contacto</i>, con
+  los cuatro canales que el sistema maneja: WhatsApp, correo electrónico,
+  teléfono y SMS.</p>
+
+  <div class="aviso grave">
+    <div class="t">La regla de los dos ejes</div>
+    <p>Para enviar por un canal hacen falta <strong>los dos</strong>: el
+    consentimiento de contacto vigente <strong>y</strong> la preferencia de ese
+    canal activa. Si falta cualquiera de los dos, esa persona no recibe nada
+    por ese canal.</p>
+  </div>
+
+  <figure>
+    <img src="capturas/52-canales-ficha.jpg" alt="Canales de contacto de un panelista" />
+    <figcaption><b>Canales de una persona.</b> La columna <i>Texto aceptado</i>
+    identifica con qué texto se obtuvo cada autorización: es lo que la vuelve
+    demostrable.</figcaption>
+  </figure>
+
+  <p>Los canales se registran en los tres caminos por los que entra una
+  persona: al enrolarla a mano, al crearla desde un archivo de campo —declarando
+  qué variable evidencia la autorización, igual que con el consentimiento— y en
+  el formulario público, donde la propia persona los elige.</p>
+
+  <div class="aviso">
+    <div class="t">WhatsApp necesita un celular válido</div>
+    <p>El canal de WhatsApp exige un celular en formato internacional
+    (<code>+59899123456</code>). El sistema convierte los números escritos en
+    formato local, pero si el dato cargado no es un teléfono, la autorización
+    de WhatsApp no se puede activar y la pantalla lo informa. El alta se
+    completa igual: lo único que queda pendiente es ese canal.</p>
+  </div>
+
+  <h4>Cuando alguien pide que no le escriban más</h4>
+
+  <p>Se revoca el canal desde esta misma tarjeta. La revocación queda
+  registrada con su fecha y <strong>no afecta a los demás canales</strong> ni
+  al consentimiento de contacto: son decisiones distintas.</p>
+
+  <div class="aviso info">
+    <div class="t">Un pedido por WhatsApp no llega solo</div>
+    <p>El sistema envía mensajes de WhatsApp pero no recibe respuestas. Si una
+    persona bloquea el número o responde «STOP», ese pedido <strong>no llega
+    automáticamente</strong>: hay que revocarle el canal a mano desde acá. Los
+    reportes de Meta permiten detectar estos casos y conviene revisarlos
+    periódicamente.</p>
+  </div>
+
+  <h3><span class="n">3.8</span> El formulario público de inscripción</h3>
+
+  <p>Además del alta interna, una persona puede inscribirse por su cuenta desde
+  un formulario público. Esas solicitudes no crean panelistas: quedan en la
+  bandeja de <i>Inscripciones</i> hasta que alguien las aprueba, y recién ahí se
+  crea la persona.</p>
+
+  <h4>Verificación del contacto</h4>
+
+  <p>Quien se inscribe debe <strong>verificar su correo electrónico</strong>
+  con un código de un solo uso, y también su celular si lo declara. Sin esa
+  verificación la solicitud <strong>no llega a la bandeja</strong>.</p>
+
+  <figure>
+    <img src="capturas/51-landing-verificacion.jpg" alt="Formulario público con verificación" />
+    <figcaption><b>El formulario público.</b> Cada contacto tiene su botón de
+    verificación. Debajo del consentimiento, la persona elige por qué canales
+    acepta que la contacten.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Por qué se verifica</div>
+    <p>Un contacto sin verificar abarca dos situaciones y ambas son
+    problemáticas: un dato inventado, que ensucia la bandeja, y —más grave— el
+    dato de otra persona, que equivale a inscribir a alguien sin su
+    conocimiento. Los códigos vencen, la cantidad de intentos es limitada y
+    también lo es la cantidad de códigos que se pueden pedir.</p>
+  </div>
+
+  <h4>Al aprobar: los panelistas parecidos</h4>
+
+  <p>Este es el único camino en el que la persona completa sus datos sin que
+  nadie del equipo lo supervise, de modo que es donde resulta más probable que
+  alguien se inscriba dos veces con datos levemente distintos. Por eso, al
+  aprobar, la pantalla muestra los <strong>panelistas ya existentes que se le
+  parecen</strong> —por documento, correo, celular, o nombre y fecha de
+  nacimiento— indicando por cuál de esos datos coincide cada uno.</p>
+
+  <div class="aviso grave">
+    <div class="t">Se proponen, no se fusionan</div>
+    <p>Salvo la coincidencia exacta de documento, que el sistema resuelve solo,
+    <strong>la decisión es de quien aprueba</strong>. Una coincidencia de
+    correo o de nombre y fecha puede corresponder a un homónimo, y unificar dos
+    personas distintas no tiene vuelta atrás.</p>
+    <p>Si se indica que es la misma persona, no se crea ningún registro nuevo:
+    se completan los datos que faltaban en su ficha y se le registran el
+    consentimiento y los canales que declaró en el formulario.</p>
   </div>
 </section>
 
@@ -942,7 +1046,74 @@
     los consentimientos ya registrados no se duplican.</p>
   </div>
 
-  <h3><span class="n">5.6</span> Verificar el cruce entre las dos bases</h3>
+  <h3><span class="n">5.6</span> Enviar la encuesta por WhatsApp</h3>
+
+  <p>Una encuesta puede configurarse para enviarse como un <strong>Flow de
+  WhatsApp</strong>. El sistema <strong>solamente envía</strong>: las
+  respuestas se descargan de Meta y se ingestan por el procedimiento habitual
+  (sección 5.4). No recibe respuestas ni permite crear los Flows.</p>
+
+  <div class="aviso">
+    <div class="t">El Flow y la plantilla se crean en Meta</div>
+    <p>El Flow y la plantilla de mensaje se arman y se publican en la
+    plataforma de Meta; en esta pantalla solo se los referencia por su
+    identificador. La plantilla requiere <strong>aprobación de Meta</strong> y
+    la revisión demora: no es posible configurar la encuesta y convocar el
+    mismo día.</p>
+  </div>
+
+  <p>El sistema comprueba contra Meta que el Flow esté publicado y la plantilla
+  aprobada <strong>antes</strong> de permitir el envío. Si algo falta, lo
+  indica con su motivo en lugar de dejar enviar y fallar mensaje por
+  mensaje.</p>
+
+  <h4>A quiénes se envía</h4>
+
+  <p>Solo a quienes cumplen <strong>los dos ejes</strong> —consentimiento de
+  contacto vigente y autorización de WhatsApp activa (sección 3.7)— y además
+  tienen un celular válido. Quienes no cumplen quedan fuera, y la pantalla
+  informa <strong>por qué motivo cada uno</strong>.</p>
+
+  <figure>
+    <img src="capturas/53-envio-whatsapp.jpg" alt="Envío de una encuesta por WhatsApp" />
+    <figcaption><b>Antes de enviar.</b> Los motivos se detallan por separado
+    porque se resuelven de manera distinta: a unos hay que pedirles el
+    consentimiento, a otros ofrecerles el canal y a otros cargarles el
+    celular.</figcaption>
+  </figure>
+
+  <table class="tabla-roles">
+    <tr><th style="width:34%">Motivo</th><th>Cómo se resuelve</th></tr>
+    <tr><td class="destacado">Sin consentimiento de contacto</td>
+      <td>Corresponde solicitarlo: sin él no se puede contactar a esa persona
+      por ningún medio.</td></tr>
+    <tr><td class="destacado">No aceptó recibir WhatsApp</td>
+      <td>Tiene consentimiento de contacto, pero no autorizó ese canal. Hay
+      que ofrecérselo y registrarlo en su ficha.</td></tr>
+    <tr><td class="destacado">Sin celular cargado</td>
+      <td>Autorizó el canal pero su ficha no tiene número. Se completa desde
+      Panelistas.</td></tr>
+    <tr><td class="destacado">Celular inválido</td>
+      <td>El dato cargado no es un número de teléfono utilizable. Se corrige
+      en la ficha.</td></tr>
+  </table>
+
+  <div class="aviso info">
+    <div class="t">Reintentar no duplica mensajes</div>
+    <p>Si algún envío falla, se puede reintentar: el sistema envía únicamente a
+    quienes no recibieron el mensaje. Un mensaje duplicado deteriora la
+    reputación del número emisor, y esa reputación es la que determina si Meta
+    permite seguir enviando.</p>
+  </div>
+
+  <div class="aviso">
+    <div class="t">El envío no reemplaza a la convocatoria</div>
+    <p>La convocatoria se registra igual que siempre y el envío es una acción
+    <strong>sobre</strong> ella. Es posible convocar sin enviar, y enviar más
+    tarde.</p>
+  </div>
+
+  <h3><span class="n">5.7</span> Verificar el cruce entre las dos bases</h3>
 
   <p>La opción <strong>Verificar</strong> comprueba que lo que quedó del lado
   semántico se corresponda con lo convocado del lado de la bóveda. Es la

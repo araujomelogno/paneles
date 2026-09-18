@@ -199,6 +199,21 @@ Criterios de aceptación:
 
 **R4.5 — Envío de encuestas por WhatsApp Flow.** Una encuesta puede configurarse con un Flow de WhatsApp publicado y su plantilla aprobada; al convocar, se ofrece enviarlo por WhatsApp a los convocados que cumplan **los dos ejes** y tengan celular válido. El sistema **solo envía**: las respuestas se bajan de Meta y se ingestan por el flujo de siempre. Cada envío lleva el `id_persona` como `flow_token`, para que esa ingesta mapee directo.
 
+Criterios de aceptación del bloque 4A (R4.3, R4.4, R4.5):
+- Dada una inscripción de la landing, entonces el correo —y el celular si lo declara— se verifican con un **código de un solo uso** antes de que la inscripción exista. Sin verificar, **no llega a la cola de aprobación**.
+- Dados los códigos, entonces vencen, cuentan los intentos y están limitados por tasa **por origen y por destino**; se guardan hasheados, igual que el origen.
+- Dado un envío automatizado, entonces se bloquea con un desafío, que se valida **antes de emitir el código** —que es lo que cuesta plata y lo que puede molestar a un tercero—.
+- Dada una inscripción en la cola, entonces quien aprueba ve los **candidatos parecidos** (por documento, correo, celular o nombre y fecha). El documento exacto se resuelve solo; el resto **se propone y no se fusiona**.
+- Dada una persona y un canal, entonces la preferencia se registra con **el texto con que se obtuvo**, su origen y su fecha; revocarla no afecta a los otros canales.
+- Dado el canal `whatsapp`, entonces exige **celular en E.164**; el celular se normaliza en los tres caminos de alta, y uno que no se puede normalizar **no voltea el alta**.
+- Dado un envío, entonces salen solo quienes cumplen los dos ejes y tienen celular válido, y los excluidos se informan **discriminados por motivo**: sin consentimiento, sin preferencia, sin celular, celular inválido.
+- Dada una encuesta de Flow, entonces el sistema valida contra Meta que el Flow esté **publicado** y la plantilla **aprobada** antes de permitir convocar, en vez de fallar al enviar.
+- Dado un envío fallido, entonces se puede reintentar **sin reenviar a quien ya recibió**.
+
+> **Por qué la preferencia de canal es un eje aparte.** El consentimiento autoriza a contactar pero no dice por qué medio: alguien pudo aceptar que lo llamen y no querer mensajes en su WhatsApp personal. Y del lado de Meta, la política de mensajería exige opt-in previo para los mensajes que inicia el negocio; mandar sin él lleva a bloqueos, baja el *quality rating* y termina en la restricción de la cuenta. El canal se quema con el primer envío masivo a gente que no lo pidió.
+
+> **Por qué la verificación va antes de que exista la inscripción.** Un contacto sin verificar cubre dos casos y los dos son malos: un dato inventado, que ensucia la cola de aprobación, y —peor— el dato de otra persona, que es inscribir a alguien sin que se entere. Por eso es una precondición de escribir, no una casilla más del formulario.
+
 > **Detalle completo en `SPEC_fase4.md`.**
 
 > **Descartado: espejo de segmentadores al store semántico.** Figuraba como requisito condicional (copiar sexo, localidad y tramo etario al store semántico para que la consulta mixta no tuviera que abrir la bóveda). Se descarta por tres razones: la mayoría de las consultas son **puramente demográficas** y ya se resuelven enteras en la bóveda sin tocar embeddings; el puente por conjuntos de `id_persona` (R2.5) cubre el caso mixto sin duplicar nada; y con el catálogo de atributos configurable (R3.14) el conjunto a espejar deja de ser fijo y crece, lo que multiplicaría los cuasi-identificadores del lado semántico — justo el riesgo mosaico que el diseño evita. **El store semántico se mantiene como contenido puro.**

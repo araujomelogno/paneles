@@ -1,10 +1,11 @@
 # Manual de usuario
 
 `Manual_de_usuario.pdf` es el entregable: paso a paso de cada tarea, con
-capturas de la aplicación real. Cubre las **fases 1 y 2**, más tres cosas de la
-fase 3: la ingesta de archivos `.sav` con alta de panelistas (R3.9), la carga
-de individuos sin asociarlos a ningún panel (R3.13) y el catálogo de atributos
-demográficos (R3.14).
+capturas de la aplicación real. Cubre las **fases 1 y 2**, tres cosas de la
+fase 3 —la ingesta de archivos `.sav` con alta de panelistas (R3.9), la carga
+de individuos sin panel (R3.13) y el catálogo de atributos demográficos
+(R3.14)— y el bloque de contacto de la **fase 4**: canales, formulario público
+endurecido y envío por WhatsApp (R4.3, R4.4, R4.5).
 
 ## Cómo se rehace
 
@@ -59,6 +60,11 @@ de atributos de la ficha (R3.14)— también se toman aparte, con el mismo
 recorrido que `capturar.mjs`: se agregaron después y no hacía falta rehacer
 las 44 para sumarlas.
 
+Las 51 a 53 son del bloque 4A. La 51 —el formulario público con la
+verificación— **no se puede tomar de la copia en modo demo**: la landing habla
+con la API real y `demo.js` no la cubre. Se toma levantando un servidor mínimo
+contra el ruteo real y un Postgres de pruebas.
+
 ### 3 · Optimizar
 
 Salen en PNG a 2× para que se lean nítidas; en el PDF entran a ~1×, así que
@@ -92,7 +98,7 @@ node docs/manual/generar_pdf.mjs
 | `portada.html` | Portada, a sangre |
 | `manual.html` | Índice y las doce secciones |
 | `estilo.css` | Estilos, compartidos por los dos |
-| `capturas/` | Las 50 capturas |
+| `capturas/` | Las 53 capturas |
 | `tipografia/` | Montserrat local, para que el PDF salga igual sin red |
 | `preparar_demo.sh` | Arma y sirve la copia en modo demo |
 | `capturar.mjs` | Toma las capturas |
