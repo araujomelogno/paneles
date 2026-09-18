@@ -21,6 +21,14 @@ aparecen los huecos que cada dimensión por separado esconde (un panel puede
 tener bien el sexo y bien la edad, y no tener ninguna mujer de más de 65).
 
 Todo pasa en la bóveda: los atributos demográficos son autoritativos acá.
+
+**R4.1.a — la composición a fecha.** Con `momento`, la composición se calcula
+con los atributos que estaban vigentes entonces y con la membresía que existía
+entonces. Es una corrección, no un extra: sin historial, recalcular la
+composición de una ola del año pasado la calculaba con la demografía de hoy y
+devolvía un número que no era el de esa ola, sin avisar de nada. Una cuota que
+cerró con 30 % de menores de 35 puede mostrar 22 % un año después sin que nadie
+se haya ido del panel, solo porque esa gente cumplió años.
 """
 
 from . import db, demografia
@@ -189,12 +197,34 @@ dato engrosaran una categoría real, la brecha de esa categoría mentiría y la
 cuota se cerraría con gente que no se sabe si corresponde."""
 
 
-def _observada(conn, panel_id, dimension, estado="activo"):
+_MEMBRESIA_VIGENTE = """(
+     case when %s::timestamptz is null
+          -- Sin fecha: el estado de hoy, que es el comportamiento de siempre.
+          then (%s::text is null or m.estado = %s::text)
+          -- R4.1.a — a una fecha pasada, «activo» no es el estado de hoy sino
+          -- el de entonces. Alguien que se dio de baja el año pasado **estaba**
+          -- en el panel el año anterior, y contarlo como baja al recalcular esa
+          -- ola la deja con menos gente de la que tuvo.
+          else m.fecha_alta <= %s::timestamptz
+               and (%s::text is distinct from 'activo'
+                    or m.fecha_baja is null or %s::timestamptz < m.fecha_baja)
+     end)"""
+
+
+def _params_membresia(estado, momento):
+    return (momento, estado, estado, momento, estado, momento)
+
+
+def _observada(conn, panel_id, dimension, estado="activo", momento=None):
     """Cuántos miembros hay en cada categoría de una dimensión.
 
     R3.14 — la dimensión puede ser cualquier atributo del catálogo, así que
-    el conteo va contra `v_atributo_persona` y no contra columnas fijas. Quien
-    no tiene valor no tiene fila en la vista: cae en `(sin dato)`.
+    el conteo va contra la resolución de atributos y no contra columnas fijas.
+    Quien no tiene valor no tiene fila: cae en `(sin dato)`.
+
+    R4.1.a — con `momento`, el valor de cada persona es el que estaba vigente
+    entonces, y la membresía también: quien se incorporó después no estaba en
+    el panel ese día y no tiene por qué contarse en su composición.
     """
     filas = db.todas(
         conn,
@@ -203,31 +233,33 @@ def _observada(conn, panel_id, dimension, estado="activo"):
                count(*)::int as observados
           from membresia m
           join persona p on p.id_persona = m.id_persona
-          left join v_atributo_persona va
+          left join f_atributo_persona(coalesce(%s::timestamptz, now())) va
                  on va.id_persona = p.id_persona and va.atributo = %s
-         where m.panel_id = %s and (%s::text is null or m.estado = %s::text)
+         where m.panel_id = %s
+           and """ + _MEMBRESIA_VIGENTE + """
          group by 1
          order by 1
         """,
-        (SIN_DATO, dimension, panel_id, estado, estado),
+        (SIN_DATO, momento, dimension, panel_id) + _params_membresia(estado, momento),
     )
     return {f["categoria"]: f["observados"] for f in filas}
 
 
-def contar_miembros(conn, panel_id, estado="activo"):
+def contar_miembros(conn, panel_id, estado="activo", momento=None):
     fila = db.una(
         conn,
         """
-        select count(*)::int as n from membresia
-         where panel_id = %s and (%s::text is null or estado = %s::text)
+        select count(*)::int as n from membresia m
+         where m.panel_id = %s and """ + _MEMBRESIA_VIGENTE + """
         """,
-        (panel_id, estado, estado),
+        (panel_id,) + _params_membresia(estado, momento),
     )
     return fila["n"]
 
 
-def _dimension(conn, panel_id, dimension, objetivos, total, estado):
-    observada = _observada(conn, panel_id, dimension, estado)
+def _dimension(conn, panel_id, dimension, objetivos, total, estado,
+               momento=None):
+    observada = _observada(conn, panel_id, dimension, estado, momento)
     del_objetivo = objetivos.get(dimension) or {}
     hay_objetivo = bool(del_objetivo)
 
@@ -294,7 +326,8 @@ def _dimension(conn, panel_id, dimension, objetivos, total, estado):
     }
 
 
-def cruce(conn, panel_id, dimension_a, dimension_b, estado="activo"):
+def cruce(conn, panel_id, dimension_a, dimension_b, estado="activo",
+          momento=None):
     """P1 — composición por el cruce de dos dimensiones.
 
     Es donde aparecen los huecos que las marginales esconden: un panel puede
@@ -315,7 +348,7 @@ def cruce(conn, panel_id, dimension_a, dimension_b, estado="activo"):
     if dimension_a == dimension_b:
         raise DatosInvalidos("El cruce necesita dos dimensiones distintas.")
 
-    total = contar_miembros(conn, panel_id, estado)
+    total = contar_miembros(conn, panel_id, estado, momento)
     filas = db.todas(
         conn,
         """
@@ -324,15 +357,16 @@ def cruce(conn, panel_id, dimension_a, dimension_b, estado="activo"):
                count(*)::int as observados
           from membresia m
           join persona p on p.id_persona = m.id_persona
-          left join v_atributo_persona va
+          left join f_atributo_persona(coalesce(%s::timestamptz, now())) va
                  on va.id_persona = p.id_persona and va.atributo = %s
-          left join v_atributo_persona vb
+          left join f_atributo_persona(coalesce(%s::timestamptz, now())) vb
                  on vb.id_persona = p.id_persona and vb.atributo = %s
-         where m.panel_id = %s and (%s::text is null or m.estado = %s::text)
+         where m.panel_id = %s and """ + _MEMBRESIA_VIGENTE + """
          group by 1, 2
          order by 1, 2
         """,
-        (SIN_DATO, SIN_DATO, dimension_a, dimension_b, panel_id, estado, estado),
+        (SIN_DATO, SIN_DATO, momento, dimension_a, momento, dimension_b,
+         panel_id) + _params_membresia(estado, momento),
     )
     return {
         "panel_id": panel_id,
@@ -356,8 +390,13 @@ def cruce(conn, panel_id, dimension_a, dimension_b, estado="activo"):
 
 
 def composicion(conn, panel_id, dimensiones=None, estado="activo",
-                cruce_de=None):
-    """R2.3 — composición del panel, con brecha si hay objetivo cargado."""
+                cruce_de=None, momento=None):
+    """R2.3 — composición del panel, con brecha si hay objetivo cargado.
+
+    R4.1.a — con `momento` la composición es la de esa fecha: los atributos
+    que estaban vigentes y la membresía que existía. Sin `momento`, idéntica
+    a la de siempre.
+    """
     if not db.una(conn, "select 1 from panel where id = %s", (panel_id,)):
         raise NoEncontrado(f"No existe el panel {panel_id}.")
 
@@ -371,7 +410,7 @@ def composicion(conn, panel_id, dimensiones=None, estado="activo",
         )
 
     objetivos = obtener_objetivo(conn, panel_id)["dimensiones"]
-    total = contar_miembros(conn, panel_id, estado)
+    total = contar_miembros(conn, panel_id, estado, momento)
 
     salida = {
         "panel_id": panel_id,
@@ -379,10 +418,25 @@ def composicion(conn, panel_id, dimensiones=None, estado="activo",
         "miembros": total,
         "objetivo_cargado": bool(objetivos),
         "dimensiones": [
-            _dimension(conn, panel_id, dimension, objetivos, total, estado)
+            _dimension(conn, panel_id, dimension, objetivos, total, estado,
+                       momento)
             for dimension in pedidas
         ],
     }
+    if momento:
+        salida["momento"] = str(momento)
+        salida["retroactiva"] = True
+        # El objetivo de composición **no** se historiza: `objetivo_composicion`
+        # guarda el universo de referencia vigente, y cargar uno nuevo pisa al
+        # anterior. Así que la brecha de una composición retroactiva compara la
+        # foto de entonces contra el universo de hoy. Decirlo es la diferencia
+        # entre un número que se entiende y uno que engaña.
+        salida["aviso_objetivo"] = (
+            "La composición es la de esa fecha, pero la brecha se calcula "
+            "contra el universo de referencia cargado **hoy**: los objetivos "
+            "no se historizan."
+        ) if objetivos else None
     if cruce_de:
-        salida["cruce"] = cruce(conn, panel_id, cruce_de[0], cruce_de[1], estado)
+        salida["cruce"] = cruce(conn, panel_id, cruce_de[0], cruce_de[1], estado,
+                                momento)
     return salida

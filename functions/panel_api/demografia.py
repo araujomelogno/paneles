@@ -134,17 +134,22 @@ def normalizar_criterio(crudo, dimensiones=None, catalogo_por_clave=None):
     }
 
 
-def condiciones(criterios, alias="p", catalogo_por_clave=None):
+def condiciones(criterios, alias="p", catalogo_por_clave=None, momento=None):
     """`[criterio]` → `(fragmentos_sql, parametros)`. Sin interpolar valores.
 
-    R3.14 — cada criterio se resuelve contra `v_atributo_persona`, que es el
+    R3.14 — cada criterio se resuelve contra `f_atributo_persona`, que es el
     único lugar donde vive el valor efectivo de un atributo. Un filtro por
     `sexo` y uno por `nivel_educativo` se arman igual: no hay camino aparte
     para los segmentadores «de fábrica».
 
-    Una persona **sin valor** para el atributo no tiene fila en la vista, así
-    que no entra en ningún filtro positivo. Es lo que hace que «sin dato» no
-    se cuele como una categoría más.
+    Una persona **sin valor** para el atributo no tiene fila, así que no entra
+    en ningún filtro positivo. Es lo que hace que «sin dato» no se cuele como
+    una categoría más.
+
+    R4.1.a — con `momento`, el filtro se resuelve con los valores vigentes en
+    esa fecha: «quiénes vivían en Salto cuando salimos a campo» deja de ser la
+    misma pregunta que «quiénes viven en Salto hoy». Sin `momento`, idéntico
+    a antes.
     """
     fragmentos, parametros = [], []
     for criterio in criterios:
@@ -173,10 +178,12 @@ def condiciones(criterios, alias="p", catalogo_por_clave=None):
             argumentos = [dimension, valor]
 
         fragmentos.append(
-            f"exists (select 1 from v_atributo_persona va "
+            f"exists (select 1 from "
+            f"f_atributo_persona(coalesce(%s::timestamptz, now())) va "
             f"where va.id_persona = {alias}.id_persona and va.atributo = %s "
             f"and {interno})"
         )
+        parametros.append(momento)
         parametros.extend(argumentos)
     return fragmentos, parametros
 

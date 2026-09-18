@@ -21,13 +21,20 @@ RAIZ = pathlib.Path(__file__).resolve().parents[2]
 # ── La lista declarada no se puede desactualizar ─────────────────────
 
 def _objetos_del_ddl(sql):
-    """Tablas, vistas y columnas agregadas que declara un archivo de migración."""
+    """Tablas, vistas, funciones y columnas que declara un archivo de migración."""
     objetos = set()
     for nombre in re.findall(
         r"create\s+(?:or\s+replace\s+)?(?:table|view)\s+(?:if\s+not\s+exists\s+)?"
         r"([a-z_][a-z0-9_]*)", sql, re.I,
     ):
         objetos.add(nombre.lower())
+    # Desde R4.1.a hay lógica de esquema en una función: `f_atributo_persona`
+    # resuelve el valor de cada atributo a una fecha, y las dos vistas son
+    # llamadas suyas. Se declara con `()` para distinguirla de una relación.
+    for nombre in re.findall(
+        r"create\s+(?:or\s+replace\s+)?function\s+([a-z_][a-z0-9_]*)", sql, re.I,
+    ):
+        objetos.add(f"{nombre.lower()}()")
     # Un `alter table` puede agregar varias columnas en una sentencia —que es
     # la forma buena de escribirlo, porque reescribe la tabla una sola vez—,
     # así que hay que leer la sentencia entera y no solo su primer add.

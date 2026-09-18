@@ -100,6 +100,14 @@ select current_database() as base, e.migracion, e.objeto
             and not a.attisdropped
             and c.relname = e.relacion
             and (e.columna is null or a.attname = e.columna))
+   -- Un objeto declarado con `()` al final es una función, no una relación.
+   and not exists (
+         select 1
+           from pg_catalog.pg_proc pr
+           join pg_catalog.pg_namespace pn on pn.oid = pr.pronamespace
+          where pn.nspname = 'public'
+            and right(e.relacion, 2) = '()'
+            and pr.proname = left(e.relacion, length(e.relacion) - 2))
  order by e.migracion, e.objeto;"""
 
 

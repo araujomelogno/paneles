@@ -206,6 +206,10 @@ def test_un_valor_existente_distinto_no_se_pisa_y_se_informa(conn_boveda, nse):
 
 
 def test_una_persona_tiene_un_solo_valor_vigente_por_atributo(conn_boveda, nse):
+    """R3.14.b sigue valiendo, con la precisión que trae R4.1.a: hay un solo
+    valor **vigente**, y el anterior queda como historia en vez de perderse.
+    Antes del historial esta prueba contaba filas; contarlas ahora sería medir
+    justo lo que R4.1.a vino a cambiar."""
     id_persona = _persona(conn_boveda, "6-6")
     atributos.fijar(conn_boveda, id_persona, "nse", "alto", origen="edicion")
     atributos.fijar(conn_boveda, id_persona, "nse", "bajo", origen="edicion")
@@ -213,8 +217,13 @@ def test_una_persona_tiene_un_solo_valor_vigente_por_atributo(conn_boveda, nse):
         conn_boveda,
         "select count(*)::int as n from persona_atributo pa "
         "join atributo_demografico a on a.id = pa.atributo_id "
-        "where pa.id_persona = %s and a.clave = 'nse'", (id_persona,))
+        "where pa.id_persona = %s and a.clave = 'nse' and pa.hasta is null",
+        (id_persona,))
     assert fila["n"] == 1
+
+    vigente = next(v for v in atributos.valores_de(conn_boveda, id_persona)
+                   if v["clave"] == "nse")
+    assert vigente["valor"] == "bajo"
 
 
 # ── R3.14.h · Corregir un mapeo sin recargar ─────────────────────────

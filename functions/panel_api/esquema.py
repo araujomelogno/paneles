@@ -68,6 +68,15 @@ MIGRACIONES_BOVEDA = (
         "participacion.enviado_en", "participacion.envio_estado",
         "participacion.envio_error",
     )),
+    ("0010_fase4_historial_atributos.sql", (
+        "persona_atributo.desde", "persona_atributo.hasta",
+        # La función es lo que importa de esta migración: es la única
+        # implementación de la resolución de atributos, y las dos vistas son
+        # llamadas suyas. Si faltara, las columnas estarían y todo lo que
+        # segmenta seguiría roto.
+        "f_atributo_persona()",
+        "v_atributo_persona", "v_demografia",
+    )),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -117,6 +126,8 @@ PARA_QUE = {
     "inscripcion.canales": "los canales que el titular aceptó de primera mano",
     "encuesta.flow_id": "configurar una encuesta como WhatsApp Flow",
     "participacion.envio_estado": "reintentar solo los envíos fallidos",
+    "persona_atributo.desde": "el historial de atributos: desde cuándo vale cada valor",
+    "f_atributo_persona()": "resolver el valor de cada atributo a una fecha; es de lo que cuelgan la composición, las cuotas, el muestreo y los filtros",
 }
 
 
@@ -153,6 +164,21 @@ def _presentes(conn):
     )
     relaciones = {f["table_name"].lower() for f in filas}
     columnas = {f'{f["table_name"].lower()}.{f["column_name"].lower()}' for f in filas}
+
+    # Las funciones se declaran con `()` al final. Desde R4.1.a hay lógica de
+    # esquema que vive en una función y no en una vista, y una migración que
+    # se diera por aplicada porque están las columnas dejaría sin detectar
+    # justo la parte de la que cuelga todo lo que segmenta.
+    for fila in db.todas(
+        conn,
+        """
+        select p.proname as nombre
+          from pg_catalog.pg_proc p
+          join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+         where n.nspname = 'public'
+        """,
+    ):
+        relaciones.add(f'{fila["nombre"].lower()}()')
     return relaciones, columnas
 
 

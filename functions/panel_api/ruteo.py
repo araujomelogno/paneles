@@ -18,6 +18,7 @@ from . import (
     composicion,
     consentimiento,
     consultas,
+    db,
     encuestas,
     esquema,
     inscripciones,
@@ -538,6 +539,28 @@ def listar_reidentificaciones(ctx, actor, params, cuerpo, consulta):
 #  Composición y universo de referencia (R2.2, R2.3 + P1)
 # ════════════════════════════════════════════════════════════════════
 
+def _momento(ctx, consulta):
+    """R4.1.a — a qué fecha se pide la composición.
+
+    Se puede pedir por fecha (`?momento=2025-03-01`) o por ola
+    (`?encuesta=12`), que es como lo piensa un analista: no «al 1 de marzo»
+    sino «como estaba cuando salimos a campo con esa encuesta». La fecha de
+    campo de la encuesta es la que manda; si no la tiene cargada se usa cuándo
+    se creó, que es lo más cerca que hay.
+    """
+    if consulta.get("momento"):
+        return str(consulta["momento"])
+    if not consulta.get("encuesta"):
+        return None
+    fila = db.una(
+        ctx.boveda,
+        "select nombre, fecha_campo, creado_en from encuesta where id = %s",
+        (_entero(consulta["encuesta"]),))
+    if not fila:
+        raise NoEncontrado(f"No existe la encuesta {consulta['encuesta']}.")
+    return str(fila["fecha_campo"] or fila["creado_en"])
+
+
 @ruta("GET", "/paneles/<panel_id>/composicion", "leer", requisito="R2.3")
 def ver_composicion(ctx, actor, params, cuerpo, consulta):
     dimensiones = consulta.get("dimensiones")
@@ -556,6 +579,7 @@ def ver_composicion(ctx, actor, params, cuerpo, consulta):
         dimensiones=dimensiones or None,
         estado=consulta.get("estado", "activo"),
         cruce_de=cruce_de or None,
+        momento=_momento(ctx, consulta),
     )
 
 
@@ -1243,7 +1267,17 @@ def auditoria_atributos(ctx, actor, params, cuerpo, consulta):
 
 @ruta("GET", "/panelistas/<id_persona>/atributos", "leer", requisito="R3.14")
 def atributos_de_persona(ctx, actor, params, cuerpo, consulta):
-    return 200, {"items": atributos.valores_de(ctx.boveda, params["id_persona"])}
+    return 200, {"items": atributos.valores_de(
+        ctx.boveda, params["id_persona"],
+        momento=_momento(ctx, consulta))}
+
+
+@ruta("GET", "/panelistas/<id_persona>/atributos/historial", "leer",
+      requisito="R4.1.a")
+def historial_de_atributos(ctx, actor, params, cuerpo, consulta):
+    """Todos los valores que tuvo la persona, con su vigencia."""
+    return 200, {"items": atributos.historial_de(
+        ctx.boveda, params["id_persona"], consulta.get("clave"))}
 
 
 @ruta("PUT", "/panelistas/<id_persona>/atributos/<clave>", "enrolar",
@@ -1252,7 +1286,10 @@ def fijar_atributo_de_persona(ctx, actor, params, cuerpo, consulta):
     salida = atributos.fijar(
         ctx.boveda, params["id_persona"], params["clave"],
         (cuerpo or {}).get("valor"), origen="edicion",
-        fecha_referencia=(cuerpo or {}).get("fecha_referencia"))
+        fecha_referencia=(cuerpo or {}).get("fecha_referencia"),
+        # R4.1.a — para cargar un cambio que ya ocurrió. Sin esto, el
+        # historial diría que la persona cambió el día que alguien lo editó.
+        vigencia_desde=(cuerpo or {}).get("vigencia_desde"))
     ctx.boveda.commit()
     return 200, salida
 
