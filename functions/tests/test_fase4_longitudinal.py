@@ -12,7 +12,8 @@ import datetime
 import pytest
 
 from panel_api import (
-    atributos, composicion, db, demografia, paneles, personas,
+    atributos, composicion, db, demografia, encuestas, longitudinal, paneles,
+    personas, series,
 )
 from panel_api.errores import Conflicto, DatosInvalidos, NoEncontrado
 
@@ -343,3 +344,321 @@ def test_una_consulta_a_fecha_filtra_por_el_valor_de_entonces(
         "select count(*)::int as n from persona p where " + donde_hoy[0],
         tuple(parametros_hoy))
     assert fila_hoy["n"] == 0
+
+
+# ════════════════════════════════════════════════════════════════════
+#  R4.1.b — Series comparables entre olas
+# ════════════════════════════════════════════════════════════════════
+
+P_OLA1 = {"codigo": "P1", "texto": "¿Cómo evalúa la situación económica del país?",
+          "tipo": "cerrada",
+          "opciones": {"1": "Buena", "2": "Regular", "3": "Mala"}, "orden": 1}
+P_OLA2 = {"codigo": "Q7",
+          "texto": "¿Cómo calificaría hoy la situación económica del país?",
+          "tipo": "cerrada",
+          "opciones": {"A": "Buena", "B": "Ni buena ni mala", "C": "Mala"},
+          "orden": 1}
+P_DISTINTA = {"codigo": "P9", "texto": "¿Qué marca de yerba compra?",
+              "tipo": "cerrada",
+              "opciones": {"1": "Canarias", "2": "Sara"}, "orden": 2}
+
+
+@pytest.fixture
+def dos_olas(conn_boveda, conn_semantica, proveedor):
+    """Dos olas que preguntan lo mismo con otras palabras y otras opciones.
+
+    Es el caso que R4.1.b existe para resolver: el sistema no canoniza, así
+    que sin una serie declarada las dos preguntas son dos cosas distintas.
+    """
+    panel = paneles.crear(conn_boveda, "Panel de opinión")["id"]
+    gente = {}
+    for indice, documento in enumerate(["s-1", "s-2", "s-3", "s-4"]):
+        id_persona = _persona(conn_boveda, documento)
+        paneles.agregar_miembro(conn_boveda, panel, id_persona)
+        gente[documento] = id_persona
+
+    olas = {}
+    for nombre, fecha, pregunta, respuestas in [
+        ("Ola 1", "2025-03-01", P_OLA1,
+         {"s-1": "Buena", "s-2": "Mala", "s-3": "Regular", "s-4": "Buena"}),
+        ("Ola 2", "2026-03-01", P_OLA2,
+         # s-1 empeora, s-2 mejora, s-3 se queda igual, s-4 no participa.
+         {"s-1": "Mala", "s-2": "Buena", "s-3": "Ni buena ni mala"}),
+    ]:
+        encuesta = encuestas.crear(conn_boveda, panel, nombre, fecha)
+        ids = [gente[d] for d in respuestas]
+        encuestas.convocar(conn_boveda, encuesta["id"], ids_persona=ids)
+        encuestas.ingestar(
+            conn_boveda, conn_semantica, encuesta["id"],
+            [pregunta, P_DISTINTA],
+            [{"id_persona": str(gente[d]), pregunta["codigo"]: valor,
+              "P9": "Canarias"}
+             for d, valor in respuestas.items()],
+            columna_id="id_persona", tipo_identificador="id_persona",
+            proveedor=proveedor)
+        olas[nombre] = encuesta
+
+    return {"panel": panel, "gente": gente, "olas": olas}
+
+
+def _pregunta_id(conn_semantica, codigo, ola):
+    fila = db.una(
+        conn_semantica,
+        "select p.id from pregunta p join cuestionario c on c.id = p.cuestionario_id "
+        " where p.codigo = %s and c.nombre = %s", (codigo, ola))
+    return fila["id"]
+
+
+@pytest.fixture
+def serie_economia(conn_semantica, conn_boveda, dos_olas, actor):
+    creada = series.crear(
+        conn_semantica, conn_boveda,
+        {"clave": "situacion_economica", "nombre": "Situación económica",
+         "categorias": [{"clave": "buena", "etiqueta": "Buena"},
+                        {"clave": "intermedia", "etiqueta": "Ni buena ni mala"},
+                        {"clave": "mala", "etiqueta": "Mala"}]},
+        actor=actor("analista"))
+    series.agregar_pregunta(
+        conn_semantica, conn_boveda, "situacion_economica",
+        _pregunta_id(conn_semantica, "P1", "Ola 1"),
+        mapeo={"1": "buena", "2": "intermedia", "3": "mala"},
+        actor=actor("analista"))
+    series.agregar_pregunta(
+        conn_semantica, conn_boveda, "situacion_economica",
+        _pregunta_id(conn_semantica, "Q7", "Ola 2"),
+        mapeo={"A": "buena", "B": "intermedia", "C": "mala"},
+        actor=actor("analista"))
+    return creada
+
+
+def test_una_serie_declara_que_dos_preguntas_son_la_misma_medicion(
+        conn_semantica, serie_economia):
+    serie = series.obtener(conn_semantica, "situacion_economica")
+    assert [p["codigo"] for p in serie["preguntas"]] == ["P1", "Q7"]
+    assert [p["ola"] for p in serie["preguntas"]] == ["Ola 1", "Ola 2"]
+    # Las opciones de cada ola, distintas entre sí, llegan al mismo vocabulario.
+    assert serie["preguntas"][0]["mapeo"] == {"1": "buena", "2": "intermedia",
+                                              "3": "mala"}
+    assert serie["preguntas"][1]["mapeo"] == {"A": "buena", "B": "intermedia",
+                                              "C": "mala"}
+    assert all(not p["sin_mapear"] for p in serie["preguntas"])
+
+
+def test_el_sistema_sugiere_candidatas_pero_no_las_agrega_solo(
+        conn_semantica, conn_boveda, dos_olas, proveedor, actor):
+    """El punto del DoD: propone, y nadie entra sin que alguien la acepte."""
+    series.crear(
+        conn_semantica, conn_boveda,
+        {"clave": "economia", "nombre": "Economía",
+         "categorias": [{"clave": "buena", "etiqueta": "Buena"}]},
+        actor=actor("analista"))
+    series.agregar_pregunta(
+        conn_semantica, conn_boveda, "economia",
+        _pregunta_id(conn_semantica, "P1", "Ola 1"), actor=actor("analista"))
+
+    sugeridas = series.sugerir(conn_semantica, "economia", proveedor=proveedor,
+                               distancia_maxima=1.0)
+    codigos = [s["codigo"] for s in sugeridas["sugerencias"]]
+
+    assert sugeridas["propone_no_agrega"] is True
+    assert "Q7" in codigos, "la pregunta equivalente de la otra ola"
+    # La más parecida es la equivalente, no la de yerba.
+    assert codigos[0] == "Q7"
+    # Y sugerir no agregó nada.
+    assert len(series.obtener(conn_semantica, "economia")["preguntas"]) == 1
+
+
+def test_la_sugerencia_no_propone_preguntas_de_una_ola_ya_cubierta(
+        conn_semantica, serie_economia, proveedor):
+    """Proponer otra pregunta de una ola que la serie ya tiene duplicaría a
+    esa gente al comparar."""
+    sugeridas = series.sugerir(conn_semantica, "situacion_economica",
+                               proveedor=proveedor, distancia_maxima=1.0)
+    assert sugeridas["sugerencias"] == []
+
+
+def test_aceptar_una_sugerencia_queda_marcada_como_tal(
+        conn_semantica, conn_boveda, dos_olas, proveedor, actor):
+    series.crear(
+        conn_semantica, conn_boveda,
+        {"clave": "eco2", "nombre": "Economía", "categorias": []},
+        actor=actor("analista"))
+    series.agregar_pregunta(
+        conn_semantica, conn_boveda, "eco2",
+        _pregunta_id(conn_semantica, "P1", "Ola 1"), actor=actor("analista"))
+    sugerida = series.sugerir(conn_semantica, "eco2", proveedor=proveedor,
+                              distancia_maxima=1.0)["sugerencias"][0]
+    series.agregar_pregunta(
+        conn_semantica, conn_boveda, "eco2", sugerida["pregunta_id"],
+        origen="sugerida_aceptada", actor=actor("analista"))
+
+    serie = series.obtener(conn_semantica, "eco2")
+    origenes = {p["codigo"]: p["origen"] for p in serie["preguntas"]}
+    assert origenes == {"P1": "declarada", "Q7": "sugerida_aceptada"}
+
+
+def test_una_serie_es_editable_sin_rehacer_las_olas(
+        conn_semantica, conn_boveda, serie_economia, actor):
+    series.editar(conn_semantica, conn_boveda, "situacion_economica",
+                  {"nombre": "Situación económica del país"},
+                  actor=actor("analista"))
+    series.mapear(
+        conn_semantica, conn_boveda, "situacion_economica",
+        _pregunta_id(conn_semantica, "Q7", "Ola 2"),
+        {"B": "mala"}, actor=actor("analista"))
+
+    serie = series.obtener(conn_semantica, "situacion_economica")
+    assert serie["nombre"] == "Situación económica del país"
+    q7 = next(p for p in serie["preguntas"] if p["codigo"] == "Q7")
+    assert q7["mapeo"]["B"] == "mala"
+
+
+def test_cada_cambio_de_una_serie_queda_auditado_en_la_boveda(
+        conn_semantica, conn_boveda, serie_economia, actor):
+    """La serie vive del lado semántico porque es contenido. Quién la editó
+    no: eso es una persona, y ninguna persona se escribe de ese lado."""
+    series.editar(conn_semantica, conn_boveda, "situacion_economica",
+                  {"descripcion": "Serie de referencia"}, actor=actor("analista"))
+    rastro = series.auditoria(conn_boveda, "situacion_economica")
+
+    assert [r["accion"] for r in rastro][-1] == "alta"
+    assert "pregunta_agregada" in {r["accion"] for r in rastro}
+    assert all(r["actor"] == "analista@equipos.com.uy" for r in rastro)
+
+    # Y del lado semántico no hay ninguna columna que nombre a una persona.
+    columnas = db.todas(
+        conn_semantica,
+        "select column_name from information_schema.columns "
+        " where left(table_name, 5) = 'serie'")
+    assert not {c["column_name"] for c in columnas} & {
+        "actor_email", "creada_por", "agregada_por", "email", "nombre_actor"}
+
+
+def test_una_opcion_no_mapeada_se_informa_en_vez_de_esconderse(
+        conn_semantica, conn_boveda, dos_olas, actor):
+    series.crear(
+        conn_semantica, conn_boveda,
+        {"clave": "parcial", "nombre": "Parcial",
+         "categorias": [{"clave": "buena", "etiqueta": "Buena"}]},
+        actor=actor("analista"))
+    serie = series.agregar_pregunta(
+        conn_semantica, conn_boveda, "parcial",
+        _pregunta_id(conn_semantica, "P1", "Ola 1"),
+        mapeo={"1": "buena"}, actor=actor("analista"))
+    assert serie["preguntas"][0]["sin_mapear"] == ["2", "3"]
+
+
+def test_no_se_puede_mapear_a_una_categoria_que_no_existe(
+        conn_semantica, conn_boveda, dos_olas, actor):
+    series.crear(conn_semantica, conn_boveda,
+                 {"clave": "sin_categorias", "nombre": "Sin categorías",
+                  "categorias": []},
+                 actor=actor("analista"))
+    with pytest.raises(DatosInvalidos):
+        series.agregar_pregunta(
+            conn_semantica, conn_boveda, "sin_categorias",
+            _pregunta_id(conn_semantica, "P1", "Ola 1"),
+            mapeo={"1": "inventada"}, actor=actor("analista"))
+
+
+def test_agregar_dos_preguntas_de_la_misma_ola_avisa(
+        conn_semantica, conn_boveda, dos_olas, actor):
+    """No se bloquea —un cuestionario puede preguntar lo mismo dos veces—,
+    pero al comparar olas esa gente se contaría dos veces."""
+    series.crear(conn_semantica, conn_boveda,
+                 {"clave": "dup", "nombre": "Dup", "categorias": []},
+                 actor=actor("analista"))
+    series.agregar_pregunta(
+        conn_semantica, conn_boveda, "dup",
+        _pregunta_id(conn_semantica, "P1", "Ola 1"), actor=actor("analista"))
+    salida = series.agregar_pregunta(
+        conn_semantica, conn_boveda, "dup",
+        _pregunta_id(conn_semantica, "P9", "Ola 1"), actor=actor("analista"))
+    assert "dos veces" in salida["aviso"]
+
+
+# ════════════════════════════════════════════════════════════════════
+#  R4.1.c — Vista longitudinal
+# ════════════════════════════════════════════════════════════════════
+
+def test_la_linea_de_tiempo_muestra_las_olas_y_las_respuestas(
+        conn_boveda, conn_semantica, dos_olas, actor):
+    id_persona = dos_olas["gente"]["s-1"]
+    linea = longitudinal.de_persona(
+        conn_boveda, conn_semantica, id_persona, actor=actor("operaciones"))
+
+    assert [o["encuesta"] for o in linea["olas"]] == ["Ola 1", "Ola 2"]
+    assert [o["fecha_campo"] for o in linea["olas"]] == ["2025-03-01",
+                                                         "2026-03-01"]
+    respuestas = {o["encuesta"]: {r["codigo"]: r["respuesta"]
+                                  for r in o["respuestas"]}
+                  for o in linea["olas"]}
+    assert respuestas["Ola 1"]["P1"] == "Buena"
+    assert respuestas["Ola 2"]["Q7"] == "Mala"
+    assert linea["aviso"] is None
+
+
+def test_ver_la_linea_de_tiempo_queda_registrado_como_reidentificacion(
+        conn_boveda, conn_semantica, dos_olas, actor):
+    """Es justo la operación que deshace la seudonimización: hacerla más
+    cómoda sin registrarla sería aflojar el diseño por la puerta de atrás."""
+    id_persona = dos_olas["gente"]["s-1"]
+    longitudinal.de_persona(conn_boveda, conn_semantica, id_persona,
+                            actor=actor("operaciones"))
+    fila = db.una(
+        conn_boveda,
+        "select motivo, contexto, actor_email from reidentificacion "
+        " where id_persona = %s order by creado_en desc limit 1",
+        (str(id_persona),))
+    assert fila is not None
+    assert fila["contexto"]["vista"] == "longitudinal"
+    assert fila["actor_email"] == "operaciones@equipos.com.uy"
+
+
+def test_una_persona_de_una_sola_ola_se_muestra_como_tal(
+        conn_boveda, conn_semantica, dos_olas, actor):
+    """Sin inventar continuidad."""
+    linea = longitudinal.de_persona(
+        conn_boveda, conn_semantica, dos_olas["gente"]["s-4"],
+        actor=actor("operaciones"))
+    assert len(linea["olas"]) == 1
+    assert "una sola ola" in linea["aviso"]
+
+
+def test_las_transiciones_muestran_el_movimiento_entre_categorias(
+        conn_semantica, serie_economia):
+    """s-1 empeora, s-2 mejora, s-3 se queda igual. s-4 no está en la
+    segunda ola y por eso no entra en la matriz."""
+    matriz = longitudinal.transiciones(conn_semantica, "situacion_economica")
+
+    celdas = {(c["desde"], c["hasta"]): c["personas"] for c in matriz["celdas"]}
+    assert celdas[("buena", "mala")] == 1        # s-1
+    assert celdas[("mala", "buena")] == 1        # s-2
+    assert celdas[("intermedia", "intermedia")] == 1   # s-3
+    assert matriz["en_las_dos_olas"] == 3
+    assert matriz["estables"] == 1
+    assert matriz["se_movieron"] == 2
+    assert matriz["desde"]["ola"] == "Ola 1" and matriz["hasta"]["ola"] == "Ola 2"
+
+
+def test_quien_esta_en_una_sola_ola_no_entra_en_la_matriz(
+        conn_semantica, serie_economia):
+    """Ponerla en la diagonal diría que no cambió, que es una afirmación que
+    nadie hizo."""
+    matriz = longitudinal.transiciones(conn_semantica, "situacion_economica")
+    assert matriz["solo_en_una"]["solo_al_inicio"] == 1   # s-4
+    assert matriz["solo_en_una"]["solo_al_final"] == 0
+    assert "diagonal" in matriz["solo_en_una"]["aviso"]
+
+
+def test_una_serie_de_una_sola_ola_no_puede_mostrar_movimiento(
+        conn_semantica, conn_boveda, dos_olas, actor):
+    series.crear(conn_semantica, conn_boveda,
+                 {"clave": "sola", "nombre": "Sola", "categorias": []},
+                 actor=actor("analista"))
+    series.agregar_pregunta(
+        conn_semantica, conn_boveda, "sola",
+        _pregunta_id(conn_semantica, "P1", "Ola 1"), actor=actor("analista"))
+    with pytest.raises(DatosInvalidos) as error:
+        longitudinal.transiciones(conn_semantica, "sola")
+    assert "dos olas" in str(error.value.mensaje)

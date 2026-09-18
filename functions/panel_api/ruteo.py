@@ -22,7 +22,9 @@ from . import (
     encuestas,
     esquema,
     inscripciones,
+    longitudinal,
     muestreo,
+    optimizador,
     paneles,
     participacion,
     personas,
@@ -32,6 +34,7 @@ from . import (
     revision,
     sav,
     semantica,
+    series,
     usuarios,
     verificacion_contacto,
     whatsapp,
@@ -1382,6 +1385,182 @@ def diagnostico_contacto(ctx, actor, params, cuerpo, consulta):
         "desafio": desafio.diagnostico(),
         "whatsapp": whatsapp.diagnostico(),
     }
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Fase 4 · 4B — Inteligencia
+# ════════════════════════════════════════════════════════════════════
+
+# ── R4.1.b · Series comparables ──────────────────────────────────────
+
+@ruta("GET", "/series", "leer", requisito="R4.1.b")
+def listar_series(ctx, actor, params, cuerpo, consulta):
+    return 200, {"items": series.listar(
+        ctx.semantica, incluir_inactivas=_bandera(consulta.get("inactivas")))}
+
+
+@ruta("POST", "/series", "gestionar_series", requisito="R4.1.b")
+def crear_serie(ctx, actor, params, cuerpo, consulta):
+    salida = series.crear(ctx.semantica, ctx.boveda, cuerpo or {}, actor=actor)
+    ctx.semantica.commit()
+    ctx.boveda.commit()
+    return 201, salida
+
+
+@ruta("GET", "/series/<clave>", "leer", requisito="R4.1.b")
+def ver_serie(ctx, actor, params, cuerpo, consulta):
+    return 200, series.obtener(ctx.semantica, params["clave"])
+
+
+@ruta("PATCH", "/series/<clave>", "gestionar_series", requisito="R4.1.b")
+def editar_serie(ctx, actor, params, cuerpo, consulta):
+    salida = series.editar(ctx.semantica, ctx.boveda, params["clave"],
+                           cuerpo or {}, actor=actor)
+    ctx.semantica.commit()
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("POST", "/series/<clave>/categorias", "gestionar_series",
+      requisito="R4.1.b")
+def agregar_categoria_de_serie(ctx, actor, params, cuerpo, consulta):
+    salida = series.agregar_categoria(ctx.semantica, ctx.boveda, params["clave"],
+                                      cuerpo or {}, actor=actor)
+    ctx.semantica.commit()
+    ctx.boveda.commit()
+    return 201, salida
+
+
+@ruta("POST", "/series/<clave>/preguntas", "gestionar_series",
+      requisito="R4.1.b")
+def agregar_pregunta_a_serie(ctx, actor, params, cuerpo, consulta):
+    """Declara que esta pregunta es la misma medición que las otras.
+
+    El sistema puede haberla sugerido, pero agregarla es siempre un acto de
+    una persona: por eso esto es un POST y no un efecto de pedir sugerencias.
+    """
+    cuerpo = cuerpo or {}
+    if not cuerpo.get("pregunta_id"):
+        raise DatosInvalidos("Falta `pregunta_id`.")
+    salida = series.agregar_pregunta(
+        ctx.semantica, ctx.boveda, params["clave"],
+        _entero(cuerpo["pregunta_id"]), mapeo=cuerpo.get("mapeo"),
+        origen=cuerpo.get("origen") or "declarada", actor=actor)
+    ctx.semantica.commit()
+    ctx.boveda.commit()
+    return 201, salida
+
+
+@ruta("DELETE", "/series/<clave>/preguntas/<pregunta_id>", "gestionar_series",
+      requisito="R4.1.b")
+def quitar_pregunta_de_serie(ctx, actor, params, cuerpo, consulta):
+    salida = series.quitar_pregunta(
+        ctx.semantica, ctx.boveda, params["clave"],
+        _entero(params["pregunta_id"]), actor=actor)
+    ctx.semantica.commit()
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("PUT", "/series/<clave>/preguntas/<pregunta_id>/mapeo",
+      "gestionar_series", requisito="R4.1.b")
+def mapear_opciones(ctx, actor, params, cuerpo, consulta):
+    salida = series.mapear(
+        ctx.semantica, ctx.boveda, params["clave"],
+        _entero(params["pregunta_id"]), (cuerpo or {}).get("mapeo") or {},
+        actor=actor)
+    ctx.semantica.commit()
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("GET", "/series/<clave>/sugerencias", "gestionar_series",
+      requisito="R4.1.b")
+def sugerencias_de_serie(ctx, actor, params, cuerpo, consulta):
+    """Preguntas candidatas de otras olas. **Propone; no agrega ninguna.**"""
+    salida = series.sugerir(
+        ctx.semantica, params["clave"],
+        pregunta_id=consulta.get("pregunta_id"),
+        proveedor=ctx.embeddings)
+    # El embedding del texto de cada pregunta se cachea la primera vez: vale
+    # la pena persistirlo aunque la ruta sea de lectura.
+    ctx.semantica.commit()
+    return 200, salida
+
+
+@ruta("GET", "/series/<clave>/auditoria", "leer", requisito="R4.1.b")
+def auditoria_de_serie(ctx, actor, params, cuerpo, consulta):
+    return 200, {"items": series.auditoria(ctx.boveda, params["clave"])}
+
+
+# ── R4.1.c · Vista longitudinal ──────────────────────────────────────
+
+@ruta("GET", "/panelistas/<id_persona>/longitudinal", "reidentificar",
+      requisito="R4.1.c")
+def linea_de_tiempo(ctx, actor, params, cuerpo, consulta):
+    """En qué olas participó y qué contestó en cada una.
+
+    Pide `reidentificar` y no `leer`: ver la línea de tiempo de una persona
+    identificada es justo la operación que deshace la seudonimización. Queda
+    registrada (R3.10), y el módulo lo hace por su cuenta para que ninguna
+    ruta se pueda olvidar."""
+    salida = longitudinal.de_persona(
+        ctx.boveda, ctx.semantica, params["id_persona"], actor=actor)
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("GET", "/series/<clave>/transiciones", "leer", requisito="R4.1.c")
+def transiciones_de_serie(ctx, actor, params, cuerpo, consulta):
+    """Cuántas personas pasaron de cada categoría a cada otra entre dos olas.
+
+    No reidentifica: son conteos sobre `id_persona`."""
+    return 200, longitudinal.transiciones(
+        ctx.semantica, params["clave"],
+        desde=consulta.get("desde"), hasta=consulta.get("hasta"))
+
+
+# ── R4.2 · Optimizador de muestreo ───────────────────────────────────
+
+@ruta("GET", "/encuestas/<encuesta_id>/optimizar", "muestrear",
+      requisito="R4.2")
+def optimizar_muestra(ctx, actor, params, cuerpo, consulta):
+    """La selección que mejor cierra la brecha respetando lo duro.
+
+    **Propone.** Convocar sigue siendo una acción explícita, igual que con las
+    reglas de R3.1."""
+    return 200, optimizador.optimizar(
+        ctx.boveda, _entero(params["encuesta_id"]),
+        dimension=consulta.get("dimension", "sexo"),
+        cantidad=consulta.get("cantidad", 100),
+        estado=consulta.get("estado", "activo"),
+        canal=consulta.get("canal"))
+
+
+@ruta("GET", "/encuestas/<encuesta_id>/optimizar/comparar", "muestrear",
+      requisito="R4.2")
+def comparar_metodos(ctx, actor, params, cuerpo, consulta):
+    """La misma pregunta por los dos métodos, para poder justificar el cambio."""
+    return 200, optimizador.comparar(
+        ctx.boveda, _entero(params["encuesta_id"]),
+        dimension=consulta.get("dimension", "sexo"),
+        cantidad=consulta.get("cantidad", 100),
+        estado=consulta.get("estado", "activo"),
+        canal=consulta.get("canal"))
+
+
+@ruta("GET", "/paneles/<panel_id>/pesos-optimizador", "leer", requisito="R4.2")
+def ver_pesos(ctx, actor, params, cuerpo, consulta):
+    return 200, optimizador.obtener_pesos(ctx.boveda, _entero(params["panel_id"]))
+
+
+@ruta("PUT", "/paneles/<panel_id>/pesos-optimizador", "configurar_optimizador",
+      requisito="R4.2")
+def guardar_pesos(ctx, actor, params, cuerpo, consulta):
+    salida = optimizador.guardar_pesos(
+        ctx.boveda, _entero(params["panel_id"]), cuerpo or {}, actor=actor)
+    ctx.boveda.commit()
+    return 200, salida
 
 
 @ruta("GET", "/yo", None)

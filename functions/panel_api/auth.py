@@ -65,6 +65,15 @@ PERMISOS = {
     # quema el canal para todos. Por eso no lo tiene el analista, que sí puede
     # fieldear e ingestar.
     "enviar_whatsapp": {"admin", "operaciones"},
+    # R4.1.b — declarar que dos preguntas de olas distintas son la misma
+    # medición. Es una decisión metodológica, así que es del analista tanto
+    # como de operaciones. El dpo no: no es su trabajo y una serie mal armada
+    # cambia lo que dicen los resultados.
+    "gestionar_series": {"admin", "operaciones", "analista"},
+    # R4.2 — cambiar cuánto pesa la fatiga frente a la cuota. Va con
+    # `muestrear`, que es de quien decide a quién invitar: aflojar el peso de
+    # la fatiga es decidir quemar un poco más al panel.
+    "configurar_optimizador": {"admin", "operaciones"},
 
     # R3.14 — administrar el vocabulario de segmentadores. Solo admin, y con
     # permiso propio: definir un atributo decide con qué se puede segmentar al

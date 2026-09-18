@@ -77,12 +77,17 @@ MIGRACIONES_BOVEDA = (
         "f_atributo_persona()",
         "v_atributo_persona", "v_demografia",
     )),
+    ("0011_fase4_inteligencia.sql", ("serie_auditoria", "peso_optimizador")),
 )
 
 MIGRACIONES_SEMANTICA = (
     ("0001_init.sql", ("cuestionario", "individuo", "pregunta", "respuesta")),
     ("0002_vista_procedencia.sql", ("v_respuesta_estudio",)),
     ("0003_hash_texto.sql", ("respuesta.hash_texto",)),
+    ("0004_series.sql", (
+        "serie", "serie_categoria", "serie_pregunta", "serie_mapeo",
+        "pregunta.embedding_texto",
+    )),
 )
 
 STORES = {
@@ -128,6 +133,11 @@ PARA_QUE = {
     "participacion.envio_estado": "reintentar solo los envíos fallidos",
     "persona_atributo.desde": "el historial de atributos: desde cuándo vale cada valor",
     "f_atributo_persona()": "resolver el valor de cada atributo a una fecha; es de lo que cuelgan la composición, las cuotas, el muestreo y los filtros",
+    "serie": "declarar que preguntas de distintas olas son la misma medición",
+    "serie_mapeo": "llevar las opciones de cada pregunta a las categorías comunes de la serie",
+    "pregunta.embedding_texto": "sugerir preguntas candidatas de otras olas por similitud",
+    "serie_auditoria": "quién tocó una serie y cuándo; la serie vive del lado semántico, el nombre de quien la editó nunca",
+    "peso_optimizador": "cuánto pesa la fatiga frente a la cuota al optimizar una muestra",
 }
 
 
