@@ -90,9 +90,13 @@ const bd = {
   cargas: [],              // R3.13 — lotes incorporados sin panel
   atributos: [],           // R3.14 — el catálogo de segmentadores
   canales: [],             // R4.4 — preferencias de canal por persona
+  series: [],              // R4.1.b — series comparables entre olas
+  auditoriaSeries: [],     // R4.1.b — el rastro va en la bóveda, no del lado semántico
+  pesosOptimizador: {},    // R4.2 — por panel; vacío = rigen los defaults
   secuencias: {
     panel: 1, encuesta: 1, revision: 1, consentimiento: 1, semantica: 1,
     guardada: 1, auditoria: 1, reident: 1, carga: 1, atributo: 1,
+    serie: 1,
   },
 };
 
@@ -237,6 +241,47 @@ function sembrar() {
         id_en_origen: bd.alias.find((a) => a.id_persona === p.id_persona).id_en_origen,
         P1: respuestas[i % respuestas.length][0],
         P2: respuestas[i % respuestas.length][1],
+      })),
+  });
+
+  /* R4.1 — una segunda ola de la **misma** gente que vuelve a preguntar lo
+     mismo, con otra redacción y otras opciones. Es lo que hace demostrable
+     todo el bloque longitudinal: sin dos olas comparables, una serie no tiene
+     qué comparar y la matriz de transiciones no tiene qué mostrar.
+
+     La redacción distinta no es un detalle de color: es exactamente el
+     problema que R4.1.b resuelve. Si las dos olas preguntaran con las mismas
+     palabras y las mismas opciones, declarar una serie no haría falta. */
+  const olaSeguimiento = crearEncuesta(
+    nacional.id, 'Ola 4 — Consumo de bebidas (seguimiento)', '2027-02-20');
+  convocar(olaSeguimiento.id, { todo_el_panel: true });
+  olaSeguimiento.estado = 'cerrada';
+  const respuestasSeguimiento = [
+    ['A', 'Sigo con el fernet, no lo cambio'],
+    ['C', 'Me pasé a la cerveza este verano'],
+    ['C', 'Dejé el fernet, me caía mal'],
+    ['B', 'El whisky sigue siendo lo mío'],
+    ['C', 'Cerveza, como siempre'],
+    ['A', 'Fernet toda la vida'],
+    ['B', 'Whisky los fines de semana'],
+    ['A', 'Me pasé al fernet, me lo hicieron probar'],
+    ['C', 'Ahora tomo cerveza'],
+    ['C', 'Cerveza, por el precio'],
+  ];
+  ingestar(olaSeguimiento.id, {
+    preguntas: [
+      { codigo: 'B1', texto: '¿Cuál es hoy su bebida de consumo habitual?',
+        tipo: 'cerrada',
+        opciones: { A: 'Fernet con cola', B: 'Whisky', C: 'Cerveza' }, orden: 1 },
+      { codigo: 'B2', texto: '¿Cambió algo respecto del año pasado?',
+        tipo: 'abierta', orden: 2 },
+    ],
+    filas: bd.participaciones
+      .filter((p) => p.encuesta_id === olaSeguimiento.id)
+      .map((p, i) => ({
+        id_en_origen: bd.alias.find((a) => a.id_persona === p.id_persona).id_en_origen,
+        B1: respuestasSeguimiento[i % respuestasSeguimiento.length][0],
+        B2: respuestasSeguimiento[i % respuestasSeguimiento.length][1],
       })),
   });
 
@@ -2161,7 +2206,742 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     };
   }
 
+  // ══ Fase 4 · 4B — Inteligencia ═══════════════════════════════
+
+  /* R4.1.a — el historial de atributos. En la demo los valores nunca
+     cambiaron, así que cada uno tiene una sola fila abierta con `desde`
+     vacío: es el primer valor conocido, que es exactamente lo que el backend
+     devuelve para lo que venía de antes del historial. */
+  if (metodo === 'GET' && partes[0] === 'panelistas'
+      && partes[2] === 'atributos' && partes[3] === 'historial') {
+    const persona = bd.personas.find((p) => p.id_persona === partes[1]);
+    if (!persona) throw new ErrorDemo('No existe la persona.', 404);
+    return {
+      items: atributosDe(persona)
+        .filter((a) => a.tipo !== 'derivado')
+        .filter((a) => !consulta.clave || a.clave === consulta.clave)
+        .map((a) => ({ ...a, desde: null, hasta: null, vigente: true })),
+    };
+  }
+
+  /* R4.1.b — las preguntas del corpus, para elegir la primera de una serie. */
+  if (clave === 'GET /preguntas') {
+    const serie = consulta.serie
+      ? bd.series.find((s) => s.clave === consulta.serie) : null;
+    const yaEstan = new Set((serie?.preguntas || []).map((p) => p.pregunta_id));
+    return {
+      items: bd.semantica.preguntas
+        .filter((q) => !consulta.cuestionario
+          || q.cuestionario_id === Number(consulta.cuestionario))
+        .map((q) => {
+          const cuestionario = bd.semantica.cuestionarios
+            .find((c) => c.id === q.cuestionario_id);
+          return {
+            pregunta_id: q.id, codigo: q.codigo, texto: q.texto, tipo: q.tipo,
+            opciones: q.opciones, cuestionario_id: q.cuestionario_id,
+            ola: cuestionario?.nombre, fecha_campo: cuestionario?.fecha_campo,
+            ya_en_la_serie: yaEstan.has(q.id),
+          };
+        }),
+    };
+  }
+
+  /* R4.1.b — series. */
+  if (clave === 'GET /series') {
+    return {
+      items: bd.series
+        .filter((s) => s.activa || consulta.inactivas)
+        .map((s) => ({
+          id: s.id, clave: s.clave, nombre: s.nombre,
+          descripcion: s.descripcion, activa: s.activa,
+          preguntas: s.preguntas.length, categorias: s.categorias.length,
+          creada_en: s.creada_en,
+        })),
+    };
+  }
+
+  if (metodo === 'POST' && clave === 'POST /series') {
+    const claveNueva = (cuerpo.clave || '').trim().toLowerCase();
+    if (!/^[a-z][a-z0-9_]{1,48}$/.test(claveNueva)) {
+      throw new ErrorDemo(
+        'La clave de una serie va en minúsculas, empieza con letra y admite '
+        + 'letras, números y guion bajo.', 400);
+    }
+    if (bd.series.some((s) => s.clave === claveNueva)) {
+      throw new ErrorDemo(`Ya existe una serie con la clave «${claveNueva}».`, 409);
+    }
+    const serie = {
+      id: siguiente('serie'), clave: claveNueva,
+      nombre: (cuerpo.nombre || '').trim(), descripcion: null, activa: true,
+      creada_en: ahora(),
+      categorias: (cuerpo.categorias || []).map((c, i) => ({
+        id: i + 1, clave: c.clave, etiqueta: c.etiqueta || c.clave,
+        orden: (i + 1) * 10,
+      })),
+      preguntas: [],
+    };
+    bd.series.push(serie);
+    auditarSerie(serie.clave, 'alta', { nombre: serie.nombre });
+    return serieCompleta(serie);
+  }
+
+  if (partes[0] === 'series' && partes.length >= 2) {
+    const serie = bd.series.find((s) => s.clave === partes[1]);
+    if (!serie) throw new ErrorDemo(`No existe la serie «${partes[1]}».`, 404);
+
+    if (metodo === 'GET' && partes.length === 2) return serieCompleta(serie);
+
+    if (metodo === 'PATCH' && partes.length === 2) {
+      ['nombre', 'descripcion'].forEach((campo) => {
+        if (campo in cuerpo) serie[campo] = (cuerpo[campo] || '').trim() || null;
+      });
+      if ('activa' in cuerpo) serie.activa = Boolean(cuerpo.activa);
+      auditarSerie(serie.clave, serie.activa === false ? 'baja' : 'edicion', cuerpo);
+      return serieCompleta(serie);
+    }
+
+    if (metodo === 'POST' && partes[2] === 'categorias') {
+      serie.categorias.push({
+        id: serie.categorias.length + 1, clave: cuerpo.clave,
+        etiqueta: cuerpo.etiqueta || cuerpo.clave,
+        orden: (serie.categorias.length + 1) * 10,
+      });
+      auditarSerie(serie.clave, 'categoria', cuerpo);
+      return serieCompleta(serie);
+    }
+
+    if (metodo === 'POST' && partes[2] === 'preguntas') {
+      const preguntaId = Number(cuerpo.pregunta_id);
+      const pregunta = bd.semantica.preguntas.find((q) => q.id === preguntaId);
+      if (!pregunta) throw new ErrorDemo('No existe la pregunta.', 404);
+      const cuestionario = bd.semantica.cuestionarios
+        .find((c) => c.id === pregunta.cuestionario_id);
+      const yaDeEsaOla = serie.preguntas
+        .filter((p) => p.cuestionario_id === pregunta.cuestionario_id);
+      let fila = serie.preguntas.find((p) => p.pregunta_id === preguntaId);
+      if (!fila) {
+        fila = { pregunta_id: preguntaId, cuestionario_id: pregunta.cuestionario_id,
+                 mapeo: {}, origen: cuerpo.origen || 'declarada' };
+        serie.preguntas.push(fila);
+      } else { fila.origen = cuerpo.origen || fila.origen; }
+      if (cuerpo.mapeo) fila.mapeo = { ...fila.mapeo, ...cuerpo.mapeo };
+      auditarSerie(serie.clave, 'pregunta_agregada',
+                   { pregunta_id: preguntaId, ola: cuestionario?.nombre });
+      const salida = serieCompleta(serie);
+      if (yaDeEsaOla.length) {
+        salida.aviso = `La serie ya tenía ${yaDeEsaOla.length} pregunta(s) de la `
+          + `ola «${cuestionario?.nombre}». Al comparar entre olas, esa gente `
+          + 'se contaría dos veces.';
+      }
+      return salida;
+    }
+
+    if (metodo === 'DELETE' && partes[2] === 'preguntas') {
+      const preguntaId = Number(partes[3]);
+      serie.preguntas = serie.preguntas.filter((p) => p.pregunta_id !== preguntaId);
+      auditarSerie(serie.clave, 'pregunta_quitada', { pregunta_id: preguntaId });
+      return serieCompleta(serie);
+    }
+
+    if (metodo === 'PUT' && partes[2] === 'preguntas' && partes[4] === 'mapeo') {
+      const preguntaId = Number(partes[3]);
+      const fila = serie.preguntas.find((p) => p.pregunta_id === preguntaId);
+      if (!fila) throw new ErrorDemo('Esa pregunta no está en la serie.', 404);
+      const validas = new Set(serie.categorias.map((c) => c.clave));
+      const desconocidas = Object.values(cuerpo.mapeo || {})
+        .filter((c) => c && !validas.has(c));
+      if (desconocidas.length) {
+        throw new ErrorDemo(
+          `La serie no tiene las categorías ${desconocidas.join(', ')}.`, 400);
+      }
+      fila.mapeo = { ...(cuerpo.mapeo || {}) };
+      auditarSerie(serie.clave, 'mapeo', { pregunta_id: preguntaId });
+      return serieCompleta(serie);
+    }
+
+    /* Sugerencias. En la demo el parecido se calcula con palabras
+       compartidas en vez de embeddings: alcanza para que la pantalla se
+       comporte igual, que es lo que la demo tiene que mostrar. */
+    if (metodo === 'GET' && partes[2] === 'sugerencias') {
+      const cubiertas = new Set(serie.preguntas.map((p) => p.cuestionario_id));
+      const referencia = serie.preguntas
+        .map((p) => bd.semantica.preguntas.find((q) => q.id === p.pregunta_id))
+        .filter(Boolean);
+      if (!referencia.length) {
+        return { serie: serie.clave, propone_no_agrega: true, sugerencias: [],
+                 motivo: 'La serie no tiene todavía ninguna pregunta: sin una '
+                   + 'de referencia no hay contra qué comparar. Agregá la '
+                   + 'primera a mano y de ahí en más el sistema propone las '
+                   + 'de las otras olas.' };
+      }
+      const sugerencias = bd.semantica.preguntas
+        .filter((q) => !cubiertas.has(q.cuestionario_id))
+        .map((q) => {
+          const distancia = Math.min(...referencia.map((r) => 1 - parecido(r.texto, q.texto)));
+          const cuestionario = bd.semantica.cuestionarios
+            .find((c) => c.id === q.cuestionario_id);
+          return {
+            pregunta_id: q.id, codigo: q.codigo, texto: q.texto, tipo: q.tipo,
+            opciones: q.opciones, cuestionario_id: q.cuestionario_id,
+            ola: cuestionario?.nombre, fecha_campo: cuestionario?.fecha_campo,
+            distancia: Number(distancia.toFixed(4)),
+          };
+        })
+        /* El umbral de la demo es más flojo que el del backend a propósito:
+           acá el parecido es Jaccard de palabras y allá es coseno sobre
+           embeddings, que reconoce «bebida de consumo habitual» y «bebida que
+           consume habitualmente» como casi lo mismo y Jaccard no. Con el
+           umbral del backend la demo no propondría nada y la pantalla
+           parecería rota. */
+        .filter((s) => s.distancia <= 0.9)
+        .sort((a, b) => a.distancia - b.distancia)
+        .slice(0, 20);
+      return { serie: serie.clave, propone_no_agrega: true, sugerencias };
+    }
+
+    if (metodo === 'GET' && partes[2] === 'auditoria') {
+      return { items: bd.auditoriaSeries
+        .filter((r) => r.serie === serie.clave).slice().reverse() };
+    }
+
+    if (metodo === 'GET' && partes[2] === 'transiciones') {
+      return transicionesDemo(serie);
+    }
+  }
+
+  /* R4.1.c — la línea de tiempo de una persona. */
+  if (metodo === 'GET' && partes[0] === 'panelistas' && partes[2] === 'longitudinal') {
+    const persona = bd.personas.find((p) => p.id_persona === partes[1]);
+    if (!persona) throw new ErrorDemo('No existe la persona.', 404);
+    const olas = bd.participaciones
+      .filter((p) => p.id_persona === persona.id_persona)
+      .map((p) => {
+        const encuesta = bd.encuestas.find((e) => e.id === p.encuesta_id);
+        const panel = bd.paneles.find((x) => x.id === encuesta?.panel_id);
+        return { participacion: p, encuesta, panel };
+      })
+      .filter((o) => o.encuesta)
+      .sort((a, b) => String(a.encuesta.fecha_campo || '')
+        .localeCompare(String(b.encuesta.fecha_campo || '')));
+    bd.reidentificaciones.push({
+      id: siguiente('reident'), id_persona: persona.id_persona,
+      motivo: 'ficha', contexto: { vista: 'longitudinal', olas: olas.length },
+      actor_email: 'demo@equipos.com.uy', creado_en: ahora(),
+    });
+    return {
+      id_persona: persona.id_persona, nombre: persona.nombre,
+      estado: persona.estado,
+      olas: olas.map(({ participacion, encuesta, panel }) => ({
+        encuesta_id: encuesta.id, encuesta: encuesta.nombre,
+        panel: panel?.nombre, panel_id: panel?.id,
+        fecha_campo: encuesta.fecha_campo,
+        convocado_en: participacion.convocado_en,
+        respondio: participacion.respondio,
+        respondio_en: participacion.respondio_en || null,
+        calidad_estado: participacion.calidad_estado || 'pendiente',
+        origen: participacion.origen, ref_estudio: encuesta.ref_estudio,
+        respuestas: respuestasDe(persona.id_persona, encuesta.ref_estudio),
+      })),
+      aviso: olas.length === 1
+        ? 'Esta persona participó en una sola ola: no hay evolución que '
+          + 'mostrar todavía.' : null,
+    };
+  }
+
+  /* R4.2 — pesos del optimizador. */
+  if (partes[0] === 'paneles' && partes[2] === 'pesos-optimizador') {
+    const panelId = Number(partes[1]);
+    if (metodo === 'PUT') {
+      const nuevos = { ...PESOS_DEMO, ...(bd.pesosOptimizador[panelId] || {}) };
+      ['peso_brecha', 'peso_fatiga', 'peso_equidad'].forEach((k) => {
+        if (k in cuerpo) {
+          const valor = Number(cuerpo[k]);
+          if (Number.isNaN(valor)) throw new ErrorDemo(`«${k}» tiene que ser un número.`, 400);
+          if (valor < 0) {
+            throw new ErrorDemo(
+              `«${k}» no puede ser negativo: un peso negativo invertiría el `
+              + 'sentido de la restricción.', 400);
+          }
+          nuevos[k] = valor;
+        }
+      });
+      bd.pesosOptimizador[panelId] = nuevos;
+      return { ...nuevos, configurados: true,
+               actualizado_por: 'demo@equipos.com.uy', actualizado_en: ahora() };
+    }
+    const guardados = bd.pesosOptimizador[panelId];
+    return guardados
+      ? { ...guardados, configurados: true,
+          actualizado_por: 'demo@equipos.com.uy', actualizado_en: ahora() }
+      : { ...PESOS_DEMO, configurados: false };
+  }
+
+  if (metodo === 'GET' && partes[0] === 'encuestas' && partes[2] === 'optimizar') {
+    return partes[3] === 'comparar'
+      ? compararDemo(Number(partes[1]), consulta)
+      : optimizarDemo(Number(partes[1]), consulta);
+  }
+
   throw new ErrorDemo(`El modo demo no implementa ${clave}.`, 404);
+}
+
+/* ── Fase 4 · 4B · ayudantes de la demo ─────────────────────────── */
+
+const PESOS_DEMO = { peso_brecha: 10.0, peso_fatiga: 1.0, peso_equidad: 0.5 };
+
+/* La categoría de una persona en la dimensión de cuota. Misma resolución que
+   usa el muestreo por reglas, para que los dos métodos vean lo mismo. */
+function categoriaEnDimension(persona, dimension) {
+  if (dimension === 'sexo') return persona.sexo || '(sin dato)';
+  if (dimension === 'tramo_etario') {
+    return tramoEtario(persona.fecha_nacimiento) || '(sin dato)';
+  }
+  if (dimension === 'localidad') return persona.localidad || '(sin dato)';
+  return (persona.atributos || {})[dimension] || '(sin dato)';
+}
+
+/* Los candidatos que pasan todas las restricciones duras. Las blandas no
+   filtran acá: se penalizan después, que es justamente la diferencia entre
+   el optimizador y las reglas. */
+function elegiblesDemo(encuesta, dimension, umbrales) {
+  const elegibles = [];
+  const excluidos = [];
+  const conteo = {};
+  bd.membresias
+    .filter((m) => m.panel_id === encuesta.panel_id && m.estado === 'activo')
+    .map((m) => bd.personas.find((p) => p.id_persona === m.id_persona))
+    .filter(Boolean)
+    .forEach((persona) => {
+      const convocatorias = bd.participaciones.filter((pa) =>
+        pa.id_persona === persona.id_persona && pa.encuesta_id !== encuesta.id);
+      const yaEnEsta = bd.participaciones.some((pa) =>
+        pa.id_persona === persona.id_persona && pa.encuesta_id === encuesta.id);
+      const consiente = bd.consentimientos.some((c) =>
+        c.id_persona === persona.id_persona
+        && c.finalidad === 'contacto_participacion' && c.estado === 'vigente');
+
+      let motivo = null;
+      if (!consiente) motivo = 'sin_consentimiento';
+      else if (yaEnEsta) motivo = 'ya_convocado_a_esta_encuesta';
+      else if (convocatorias.length >= umbrales.max_convocatorias_ventana) {
+        motivo = 'demasiadas_convocatorias_recientes';
+      }
+
+      const fila = {
+        id_persona: persona.id_persona,
+        categoria: categoriaEnDimension(persona, dimension),
+        recientes: convocatorias.length,
+        totales: convocatorias.length,
+        respondidas: convocatorias.filter((c) => c.respondio).length,
+      };
+      if (motivo) {
+        conteo[motivo] = (conteo[motivo] || 0) + 1;
+        excluidos.push({
+          id_persona: fila.id_persona, categoria: fila.categoria, motivo,
+          explicacion: EXPLICACIONES_MUESTREO[motivo] || motivo,
+          convocatorias_recientes: fila.recientes,
+          convocatorias_totales: fila.totales,
+        });
+      } else { elegibles.push(fila); }
+    });
+  return { elegibles, excluidos, conteo };
+}
+
+/* Cuántas personas de cada categoría querría tener la muestra. Con universo
+   cargado, su proporción por el tamaño; sin él, el reparto proporcional a los
+   elegibles, que es lo más neutro que se puede hacer sin inventar un
+   universo. */
+function objetivosDemo(panelId, dimension, cantidad, elegibles) {
+  const cargados = bd.objetivos.filter((o) =>
+    o.panel_id === panelId && o.dimension === dimension);
+  if (cargados.length) {
+    const objetivos = {};
+    cargados.forEach((o) => {
+      objetivos[o.categoria] = Math.round(o.proporcion_objetivo * cantidad);
+    });
+    return { objetivos, hay_objetivo: true };
+  }
+  const porCategoria = {};
+  elegibles.forEach((c) => {
+    porCategoria[c.categoria] = (porCategoria[c.categoria] || 0) + 1;
+  });
+  const total = Object.values(porCategoria).reduce((s, n) => s + n, 0) || 1;
+  const objetivos = {};
+  Object.entries(porCategoria).forEach(([categoria, n]) => {
+    objetivos[categoria] = Math.round((n / total) * cantidad);
+  });
+  return { objetivos, hay_objetivo: false };
+}
+
+function auditarSerie(serie, accion, detalle) {
+  bd.auditoriaSeries.push({
+    serie, accion, detalle: detalle || {},
+    actor: 'demo@equipos.com.uy', creado_en: ahora(),
+  });
+}
+
+function serieCompleta(serie) {
+  return {
+    id: serie.id, clave: serie.clave, nombre: serie.nombre,
+    descripcion: serie.descripcion, activa: serie.activa,
+    creada_en: serie.creada_en, categorias: serie.categorias,
+    preguntas: serie.preguntas.map((fila) => {
+      const pregunta = bd.semantica.preguntas.find((q) => q.id === fila.pregunta_id);
+      const cuestionario = bd.semantica.cuestionarios
+        .find((c) => c.id === fila.cuestionario_id);
+      const opciones = pregunta?.opciones || {};
+      return {
+        id: fila.pregunta_id, pregunta_id: fila.pregunta_id,
+        codigo: pregunta?.codigo, texto: pregunta?.texto, tipo: pregunta?.tipo,
+        opciones, origen: fila.origen, ola: cuestionario?.nombre,
+        cuestionario_id: fila.cuestionario_id,
+        ref_estudio: cuestionario?.ref_estudio,
+        fecha_campo: cuestionario?.fecha_campo, mapeo: fila.mapeo,
+        sin_mapear: Object.keys(opciones).filter((o) => !fila.mapeo[o]),
+      };
+    }),
+  };
+}
+
+/* Parecido por palabras compartidas (Jaccard). En el backend esto es
+   similitud de embeddings; acá alcanza con que ordene igual para que la
+   pantalla se comporte igual. */
+function parecido(a, b) {
+  const palabras = (texto) => new Set(String(texto || '').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zñ\s]/g, ' ').split(/\s+/)
+    .filter((p) => p.length > 3)
+    // Una raíz corta, para que «consume» y «consumo» cuenten como la misma
+    // palabra. Es la aproximación más barata a lo que el coseno sobre
+    // embeddings hace de verdad.
+    .map((p) => p.slice(0, 5)));
+  const unos = palabras(a);
+  const otros = palabras(b);
+  if (!unos.size || !otros.size) return 0;
+  const comunes = [...unos].filter((p) => otros.has(p)).length;
+  return comunes / (unos.size + otros.size - comunes);
+}
+
+function respuestasDe(idPersona, refEstudio) {
+  const cuestionario = bd.semantica.cuestionarios
+    .find((c) => c.ref_estudio === refEstudio);
+  const individuo = bd.semantica.individuos.find((i) => i.id_persona === idPersona);
+  if (!cuestionario || !individuo) return [];
+  return bd.semantica.preguntas
+    .filter((q) => q.cuestionario_id === cuestionario.id)
+    .map((q) => {
+      const respuesta = bd.semantica.respuestas
+        .find((r) => r.pregunta_id === q.id && r.individuo_id === individuo.id);
+      return respuesta
+        ? { codigo: q.codigo, texto: q.texto, tipo: q.tipo,
+            respuesta: respuesta.valor_texto }
+        : null;
+    })
+    .filter(Boolean);
+}
+
+const SIN_MAPEAR_DEMO = '(sin mapear)';
+const SIN_RESPUESTA_DEMO = '(no respondió)';
+
+function categoriaDemo(valor, opciones, mapeo) {
+  if (valor == null || String(valor).trim() === '') return SIN_RESPUESTA_DEMO;
+  const texto = String(valor).trim();
+  let clave = texto;
+  Object.entries(opciones || {}).forEach(([opcion, etiqueta]) => {
+    if (String(etiqueta).trim().toLowerCase() === texto.toLowerCase()) clave = opcion;
+  });
+  return mapeo[clave] || mapeo[texto] || SIN_MAPEAR_DEMO;
+}
+
+function transicionesDemo(serie) {
+  const completa = serieCompleta(serie);
+  if (completa.preguntas.length < 2) {
+    throw new ErrorDemo(
+      `La serie «${serie.clave}» tiene ${completa.preguntas.length} pregunta(s): `
+      + 'para ver un movimiento hacen falta dos olas.', 400);
+  }
+  /* Mismo orden que el backend: por fecha de campo, y las que no la tienen
+     al final. Ponerlas primero haría que «la primera ola» de una serie fuera
+     la que menos se sabe cuándo pasó. */
+  const ordenadas = completa.preguntas.slice().sort((a, b) =>
+    String(a.fecha_campo || '9999').localeCompare(String(b.fecha_campo || '9999')));
+  const origen = ordenadas[0];
+  const destino = ordenadas[ordenadas.length - 1];
+
+  const leer = (pregunta) => {
+    const salida = {};
+    bd.semantica.respuestas
+      .filter((r) => r.pregunta_id === pregunta.pregunta_id)
+      .forEach((r) => {
+        const individuo = bd.semantica.individuos.find((i) => i.id === r.individuo_id);
+        if (individuo) {
+          salida[individuo.id_persona] =
+            categoriaDemo(r.valor_texto, pregunta.opciones, pregunta.mapeo);
+        }
+      });
+    return salida;
+  };
+
+  const antes = leer(origen);
+  const despues = leer(destino);
+  const enLasDos = Object.keys(antes).filter((id) => id in despues);
+  const matriz = {};
+  enLasDos.forEach((id) => {
+    const cl = `${antes[id]}→${despues[id]}`;
+    matriz[cl] = (matriz[cl] || 0) + 1;
+  });
+  const categorias = completa.categorias.map((c) => c.clave);
+  const estables = categorias.reduce(
+    (suma, c) => suma + (matriz[`${c}→${c}`] || 0), 0);
+
+  return {
+    serie: serie.clave,
+    desde: { cuestionario_id: origen.cuestionario_id, ola: origen.ola,
+             fecha_campo: origen.fecha_campo, codigo: origen.codigo },
+    hasta: { cuestionario_id: destino.cuestionario_id, ola: destino.ola,
+             fecha_campo: destino.fecha_campo, codigo: destino.codigo },
+    categorias,
+    en_las_dos_olas: enLasDos.length,
+    celdas: Object.entries(matriz).map(([cl, personas]) => {
+      const [desde, hasta] = cl.split('→');
+      return { desde, hasta, personas };
+    }),
+    estables,
+    se_movieron: enLasDos.length - estables,
+    solo_en_una: {
+      solo_al_inicio: Object.keys(antes).filter((id) => !(id in despues)).length,
+      solo_al_final: Object.keys(despues).filter((id) => !(id in antes)).length,
+      aviso: 'No entran en la matriz: no hay un «de dónde» o un «a dónde» para '
+        + 'ellas, y ponerlas en la diagonal diría que no cambiaron.',
+    },
+    sin_mapear: enLasDos.filter((id) =>
+      antes[id] === SIN_MAPEAR_DEMO || despues[id] === SIN_MAPEAR_DEMO).length,
+  };
+}
+
+/* El optimizador de la demo: el mismo voraz del backend, sobre los datos de
+   memoria. Se replica en vez de simplificarse porque lo que la pantalla
+   tiene que mostrar —el «por qué entró» de cada uno— sale justamente de la
+   cuenta. */
+function optimizarDemo(encuestaId, consulta, topeVentana) {
+  const encuesta = bd.encuestas.find((e) => e.id === encuestaId);
+  if (!encuesta) throw new ErrorDemo(`No existe la encuesta ${encuestaId}.`, 404);
+  const dimension = consulta.dimension || 'sexo';
+  const cantidad = Number(consulta.cantidad) || 100;
+  if (cantidad <= 0) throw new ErrorDemo('«cantidad» tiene que ser mayor que cero.', 400);
+
+  const umbrales = { ...UMBRALES_DEFAULT, ...(bd.umbralesFatiga[encuesta.panel_id] || {}) };
+  if (topeVentana != null) umbrales.max_convocatorias_ventana = topeVentana;
+  const pesos = { ...PESOS_DEMO, ...(bd.pesosOptimizador[encuesta.panel_id] || {}) };
+
+  const { elegibles, excluidos, conteo } = elegiblesDemo(encuesta, dimension, umbrales);
+  const objetivos = objetivosDemo(encuesta.panel_id, dimension, cantidad, elegibles);
+  const hayObjetivo = objetivos.hay_objetivo;
+
+  const promedio = elegibles.length
+    ? elegibles.reduce((s, c) => s + c.totales, 0) / elegibles.length : 0;
+  const restantes = [...elegibles];
+  const seleccion = [];
+  const contados = {};
+  const escala = Math.max(1, cantidad);
+
+  while (restantes.length && seleccion.length < cantidad) {
+    let mejor = null;
+    let mejorClave = null;
+    let detalle = null;
+    restantes.forEach((c) => {
+      const deficit = (objetivos.objetivos[c.categoria] || 0) - (contados[c.categoria] || 0);
+      const aporte = pesos.peso_brecha * (2 * deficit - 1) / escala;
+      const fatiga = pesos.peso_fatiga
+        * Math.min(1, c.recientes / Math.max(1, umbrales.max_convocatorias_ventana));
+      const equidad = pesos.peso_equidad * (c.totales / (1 + promedio));
+      const puntaje = aporte - fatiga - equidad;
+      const cl = [puntaje, -c.recientes, -c.totales, c.respondidas, c.id_persona];
+      if (!mejorClave || comparaClaves(cl, mejorClave) > 0) {
+        mejor = c; mejorClave = cl;
+        detalle = { deficit, aporte, fatiga, equidad, puntaje };
+      }
+    });
+    if (hayObjetivo && detalle.deficit <= 0) break;
+    restantes.splice(restantes.indexOf(mejor), 1);
+    contados[mejor.categoria] = (contados[mejor.categoria] || 0) + 1;
+    seleccion.push({
+      id_persona: mejor.id_persona, categoria: mejor.categoria,
+      orden: seleccion.length + 1,
+      convocatorias_recientes: mejor.recientes,
+      convocatorias_totales: mejor.totales,
+      respuestas_previas: mejor.respondidas,
+      porque: {
+        deficit_del_segmento_al_entrar: detalle.deficit,
+        aporte_a_la_brecha: Number(detalle.aporte.toFixed(4)),
+        costo_fatiga: Number(detalle.fatiga.toFixed(4)),
+        costo_equidad: Number(detalle.equidad.toFixed(4)),
+        puntaje: Number(detalle.puntaje.toFixed(4)),
+      },
+    });
+  }
+
+  const elegidos = new Set(seleccion.map((p) => p.id_persona));
+  elegibles.filter((c) => !elegidos.has(c.id_persona)).forEach((c) => {
+    conteo.cuota_del_segmento_ya_cubierta =
+      (conteo.cuota_del_segmento_ya_cubierta || 0) + 1;
+    excluidos.push({
+      id_persona: c.id_persona, categoria: c.categoria,
+      motivo: 'cuota_del_segmento_ya_cubierta',
+      explicacion: 'su segmento ya alcanzó el objetivo',
+      convocatorias_recientes: c.recientes, convocatorias_totales: c.totales,
+    });
+  });
+
+  const sinCubrir = {};
+  Object.entries(objetivos.objetivos).forEach(([categoria, objetivo]) => {
+    const falta = objetivo - (contados[categoria] || 0);
+    if (falta > 0) sinCubrir[categoria] = falta;
+  });
+
+  const totalObjetivo = Object.values(objetivos.objetivos).reduce((s, n) => s + n, 0);
+  const alcanzable = hayObjetivo
+    ? Math.min(cantidad, totalObjetivo || cantidad) : cantidad;
+  const factible = seleccion.length >= alcanzable && !Object.keys(sinCubrir).length;
+
+  const salida = {
+    encuesta: { id: encuesta.id, nombre: encuesta.nombre,
+                panel_id: encuesta.panel_id, estado: encuesta.estado },
+    metodo: 'optimizador', dimension, canal: consulta.canal || null,
+    cantidad_pedida: cantidad, umbrales, pesos,
+    brecha_disponible: hayObjetivo, objetivos: objetivos.objetivos,
+    propuesta: seleccion, elegibles: elegibles.length, excluidos,
+    resumen_exclusiones: Object.entries(conteo)
+      .sort((a, b) => b[1] - a[1])
+      .map(([motivo, personas]) => ({
+        motivo, personas,
+        explicacion: EXPLICACIONES_MUESTREO[motivo] || motivo,
+      })),
+    factible, sin_cubrir: factible ? {} : sinCubrir, convoca: false,
+  };
+  if (factible) { salida.alternativas = []; return salida; }
+  if (topeVentana != null) { salida.alternativas = []; return salida; }
+
+  salida.motivo = seleccion.length < cantidad
+    ? `No se puede llenar la cuota pedida sin violar una restricción: hay `
+      + `${elegibles.length} persona(s) elegibles y se pidieron ${cantidad}.`
+    : `Se llegó al tamaño pedido pero quedaron categorías sin cubrir: no hay `
+      + `elegibles suficientes en ${Object.keys(sinCubrir).sort().join(', ')}.`;
+  salida.elige_el_sistema = false;
+  salida.alternativas = alternativasDemo(
+    encuestaId, consulta, umbrales, elegibles, seleccion, cantidad,
+    objetivos, sinCubrir, hayObjetivo);
+  return salida;
+}
+
+function comparaClaves(a, b) {
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] === b[i]) continue;
+    return a[i] > b[i] ? 1 : -1;
+  }
+  return 0;
+}
+
+function alternativasDemo(encuestaId, consulta, umbrales, elegibles, seleccion,
+                          cantidad, objetivos, sinCubrir, hayObjetivo) {
+  const alternativas = [{
+    opcion: 'reducir_el_tamano',
+    descripcion: `Armar la muestra con ${seleccion.length} personas en vez de `
+      + `${cantidad}, sin tocar los umbrales ni aceptar brecha.`,
+    tamano: seleccion.length,
+    cuesta: `${cantidad - seleccion.length} persona(s) menos de muestra`,
+  }];
+
+  const tope = umbrales.max_convocatorias_ventana;
+  for (const paso of [1, 2, 3]) {
+    const relajado = optimizarDemo(encuestaId, consulta, tope + paso);
+    const suma = relajado.elegibles - elegibles.length;
+    // Si mover el tope no hace elegible a nadie, nadie quedaba afuera por
+    // fatiga: se dice una vez en vez de repetir tres «0 personas más».
+    if (!suma) {
+      alternativas.push({
+        opcion: 'aflojar_la_fatiga',
+        descripcion: 'Subir el tope de la ventana no cambia nada: nadie está '
+          + 'quedando afuera por fatiga.',
+        max_convocatorias_ventana: tope + paso,
+        tamano: relajado.propuesta.length, elegibles: relajado.elegibles,
+        sin_cubrir: relajado.sin_cubrir,
+        cuesta: 'Nada, y tampoco aporta nada: el cuello de botella no es la fatiga.',
+        alcanza: false,
+      });
+      break;
+    }
+    const alcanza = relajado.propuesta.length >= cantidad
+      && !Object.keys(relajado.sin_cubrir).length;
+    alternativas.push({
+      opcion: 'aflojar_la_fatiga',
+      descripcion: `Subir el tope de la ventana de ${tope} a ${tope + paso} convocatorias.`,
+      max_convocatorias_ventana: tope + paso,
+      tamano: relajado.propuesta.length, elegibles: relajado.elegibles,
+      sin_cubrir: relajado.sin_cubrir,
+      cuesta: `${suma} persona(s) más pasan a ser convocables, a costa de `
+        + 'molestar más seguido a quienes ya venían siendo convocados.',
+      alcanza,
+    });
+    if (alcanza) break;
+  }
+
+  if (hayObjetivo && Object.keys(sinCubrir).length) {
+    const total = seleccion.length || 1;
+    const desvio = Object.entries(objetivos.objetivos).reduce((suma, [categoria, objetivo]) =>
+      suma + Math.abs(
+        seleccion.filter((p) => p.categoria === categoria).length / total
+        - objetivo / Math.max(1, cantidad)), 0) / 2;
+    alternativas.push({
+      opcion: 'aceptar_la_brecha',
+      descripcion: 'Convocar igual y asumir que la muestra no calza con el '
+        + 'universo de referencia.',
+      sin_cubrir: sinCubrir, disimilitud: Number(desvio.toFixed(4)),
+      cuesta: `La muestra queda a ${(desvio * 100).toFixed(1)} puntos de `
+        + 'disimilitud del universo: habría que mover esa fracción de categoría '
+        + 'para que calce.',
+    });
+  }
+  return alternativas;
+}
+
+async function compararDemo(encuestaId, consulta) {
+  // Por la misma puerta que usa la pantalla: así los dos métodos se comparan
+  // sobre exactamente lo mismo, sin una segunda implementación de las reglas
+  // que se pueda separar de la primera.
+  const porReglas = await responder('POST', `/encuestas/${encuestaId}/muestreo`, {
+    dimension: consulta.dimension || 'sexo',
+    cantidad: Number(consulta.cantidad) || 100,
+  });
+  const optimizada = optimizarDemo(encuestaId, consulta);
+  const idsReglas = new Set(porReglas.propuesta.map((p) => p.id_persona));
+  const idsOptimo = new Set(optimizada.propuesta.map((p) => p.id_persona));
+
+  const porCategoria = (propuesta) => {
+    const salida = {};
+    propuesta.forEach((p) => { salida[p.categoria] = (salida[p.categoria] || 0) + 1; });
+    return salida;
+  };
+  const fatigaMedia = (propuesta) => (propuesta.length
+    ? Number((propuesta.reduce((s, p) => s + p.convocatorias_recientes, 0)
+      / propuesta.length).toFixed(3)) : 0);
+
+  return {
+    encuesta_id: encuestaId, dimension: consulta.dimension || 'sexo',
+    cantidad_pedida: Number(consulta.cantidad) || 100,
+    reglas: { metodo: 'reglas (R3.1)', personas: idsReglas.size,
+              por_categoria: porCategoria(porReglas.propuesta),
+              fatiga_media: fatigaMedia(porReglas.propuesta) },
+    optimizador: { metodo: 'optimizador (R4.2)', personas: idsOptimo.size,
+                   por_categoria: porCategoria(optimizada.propuesta),
+                   fatiga_media: fatigaMedia(optimizada.propuesta),
+                   factible: optimizada.factible },
+    en_las_dos: [...idsReglas].filter((i) => idsOptimo.has(i)).length,
+    solo_en_reglas: [...idsReglas].filter((i) => !idsOptimo.has(i)).sort(),
+    solo_en_optimizador: [...idsOptimo].filter((i) => !idsReglas.has(i)).sort(),
+    coinciden: idsReglas.size === idsOptimo.size
+      && [...idsReglas].every((i) => idsOptimo.has(i)),
+  };
 }
 
 /* ══════════════════════════════════════════════════════════════════

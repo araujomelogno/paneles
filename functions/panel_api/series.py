@@ -388,6 +388,46 @@ def mapear(conn, boveda, clave_o_id, pregunta_id, mapeo, actor=None):
     return obtener(conn, serie["id"])
 
 
+def preguntas_disponibles(conn, clave_o_id=None, cuestionario_id=None):
+    """Las preguntas del corpus, para poder armar una serie desde la pantalla.
+
+    Existe porque la primera pregunta de una serie no se puede sugerir: sin
+    una de referencia no hay contra qué comparar. Sin esto, una serie recién
+    creada quedaba sin forma de arrancar desde la interfaz.
+
+    Las que ya están en la serie vienen marcadas en vez de filtradas: verlas
+    tachadas dice más que no verlas.
+    """
+    ya_en_la_serie = set()
+    if clave_o_id:
+        ya_en_la_serie = {p["pregunta_id"]
+                          for p in obtener(conn, clave_o_id)["preguntas"]}
+
+    filas = db.todas(
+        conn,
+        """
+        select p.id, p.codigo, p.texto, p.tipo, p.opciones,
+               c.id as cuestionario_id, c.nombre as ola, c.fecha_campo
+          from pregunta p
+          join cuestionario c on c.id = p.cuestionario_id
+         where (%s::bigint is null or c.id = %s::bigint)
+         order by c.fecha_campo nulls last, c.id, p.orden nulls last, p.codigo
+        """,
+        (cuestionario_id, cuestionario_id),
+    )
+    return [
+        {
+            "pregunta_id": f["id"], "codigo": f["codigo"], "texto": f["texto"],
+            "tipo": f["tipo"], "opciones": f["opciones"],
+            "cuestionario_id": f["cuestionario_id"], "ola": f["ola"],
+            "fecha_campo": (f["fecha_campo"].isoformat()
+                            if f["fecha_campo"] else None),
+            "ya_en_la_serie": f["id"] in ya_en_la_serie,
+        }
+        for f in filas
+    ]
+
+
 # ── Sugerencias: propone, no agrega ──────────────────────────────────
 
 def _asegurar_embeddings(conn, preguntas, proveedor=None):

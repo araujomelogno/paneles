@@ -1488,6 +1488,19 @@ def sugerencias_de_serie(ctx, actor, params, cuerpo, consulta):
     return 200, salida
 
 
+@ruta("GET", "/preguntas", "leer", requisito="R4.1.b")
+def preguntas_del_corpus(ctx, actor, params, cuerpo, consulta):
+    """Las preguntas de todas las olas, para armar una serie.
+
+    La primera pregunta de una serie no se puede sugerir —sin una de
+    referencia no hay contra qué comparar—, así que tiene que poder elegirse
+    de una lista."""
+    return 200, {"items": series.preguntas_disponibles(
+        ctx.semantica, clave_o_id=consulta.get("serie"),
+        cuestionario_id=_entero(consulta["cuestionario"])
+                        if consulta.get("cuestionario") else None)}
+
+
 @ruta("GET", "/series/<clave>/auditoria", "leer", requisito="R4.1.b")
 def auditoria_de_serie(ctx, actor, params, cuerpo, consulta):
     return 200, {"items": series.auditoria(ctx.boveda, params["clave"])}

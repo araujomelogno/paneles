@@ -433,6 +433,29 @@ def _factibilidad(conn, encuesta_id, dimension, cantidad, estado, pesos, canal,
             conn, encuesta_id, dimension=dimension, cantidad=cantidad,
             estado=estado, pesos=pesos, canal=canal,
             max_convocatorias_ventana=tope + paso, con_alternativas=False)
+        suma = relajado["elegibles"] - len(elegibles)
+
+        # Si mover el tope no hace elegible a nadie, nadie estaba quedando
+        # afuera por fatiga y esta alternativa no existe. Se dice una vez, en
+        # vez de repetir tres pasos que dicen todos «0 personas más».
+        if not suma:
+            alternativas.append({
+                "opcion": "aflojar_la_fatiga",
+                "descripcion": (
+                    "Subir el tope de la ventana no cambia nada: nadie está "
+                    "quedando afuera por fatiga."),
+                "max_convocatorias_ventana": tope + paso,
+                "tamano": len(relajado["propuesta"]),
+                "elegibles": relajado["elegibles"],
+                "sin_cubrir": relajado["sin_cubrir"],
+                "cuesta": "Nada, y tampoco aporta nada: el cuello de botella "
+                          "no es la fatiga.",
+                "alcanza": False,
+            })
+            break
+
+        alcanza = (len(relajado["propuesta"]) >= cantidad
+                   and not relajado["sin_cubrir"])
         alternativas.append({
             "opcion": "aflojar_la_fatiga",
             "descripcion": (
@@ -443,13 +466,11 @@ def _factibilidad(conn, encuesta_id, dimension, cantidad, estado, pesos, canal,
             "elegibles": relajado["elegibles"],
             "sin_cubrir": relajado["sin_cubrir"],
             "cuesta": (
-                f"{relajado['elegibles'] - len(elegibles)} persona(s) más "
-                f"pasan a ser convocables, a costa de molestar más seguido a "
-                f"quienes ya venían siendo convocados."),
-            "alcanza": len(relajado["propuesta"]) >= cantidad
-                       and not relajado["sin_cubrir"],
+                f"{suma} persona(s) más pasan a ser convocables, a costa de "
+                f"molestar más seguido a quienes ya venían siendo convocados."),
+            "alcanza": alcanza,
         })
-        if len(relajado["propuesta"]) >= cantidad and not relajado["sin_cubrir"]:
+        if alcanza:
             break
 
     # 3 · Aceptar la brecha: quedarse con lo que hay y saber cuánto se desvía.

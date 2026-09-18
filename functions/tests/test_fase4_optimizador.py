@@ -365,3 +365,24 @@ def test_una_dimension_que_no_es_de_cuota_se_rechaza(conn_boveda, panel_tenso):
 def test_una_encuesta_que_no_existe_se_rechaza(conn_boveda):
     with pytest.raises(NoEncontrado):
         optimizador.optimizar(conn_boveda, 99999)
+
+
+def test_si_aflojar_la_fatiga_no_suma_a_nadie_se_dice_una_vez(conn_boveda):
+    """Repetir tres pasos que dicen todos «0 personas más» es ruido: cuando
+    el cuello de botella no es la fatiga, la alternativa se informa una vez
+    y con ese motivo."""
+    panel = paneles.crear(conn_boveda, "Panel chico y fresco")["id"]
+    for i in range(2):
+        id_persona = _persona(conn_boveda, f"ch-{i}", "F")
+        paneles.agregar_miembro(conn_boveda, panel, id_persona)
+    encuesta = encuestas.crear(conn_boveda, panel, "Ola chica", "2026-10-01")
+
+    salida = optimizador.optimizar(
+        conn_boveda, encuesta["id"], dimension="sexo", cantidad=50)
+    aflojar = [a for a in salida["alternativas"]
+               if a["opcion"] == "aflojar_la_fatiga"]
+
+    assert salida["factible"] is False
+    assert len(aflojar) == 1
+    assert "no cambia nada" in aflojar[0]["descripcion"]
+    assert "no es la fatiga" in aflojar[0]["cuesta"]

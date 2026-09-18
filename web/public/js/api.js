@@ -382,3 +382,75 @@ export const exportacion = {
 
 export const panelDesdeConsulta = (nombre, resultado, definicion, descripcion) =>
   POST('/paneles/desde-consulta', { nombre, resultado, definicion, descripcion });
+
+/* ── Fase 4 · 4B — Inteligencia ─────────────────────────────────────── */
+
+/* R4.1.a — el historial de atributos.
+
+   `deLaPersona` sin `momento` sigue devolviendo los valores vigentes, que es
+   el comportamiento de siempre. Con `momento` devuelve los de esa fecha, y
+   ahí los derivados también: la edad en una ola de 2024 es la de 2024. */
+export const historial = {
+  deLaPersona: (idPersona, clave) =>
+    GET(`/panelistas/${idPersona}/atributos/historial`, clave ? { clave } : {}),
+  atributosA: (idPersona, momento) =>
+    GET(`/panelistas/${idPersona}/atributos`, { momento }),
+  /* La composición de una ola pasada. Se puede pedir por fecha o por
+     encuesta, que es como lo piensa un analista: no «al 1 de marzo» sino
+     «como estaba cuando salimos a campo». */
+  composicionDe: (panelId, { momento, encuesta, dimensiones }) =>
+    GET(`/paneles/${panelId}/composicion`, {
+      momento, encuesta, dimensiones: (dimensiones || []).join(',') || undefined,
+    }),
+};
+
+/* R4.1.b — series comparables entre olas.
+
+   `sugerencias` **propone**: nada entra a la serie hasta que alguien llama a
+   `agregarPregunta`. Por eso son dos llamadas y no una. */
+export const series = {
+  listar: (inactivas) => GET('/series', inactivas ? { inactivas: '1' } : {}),
+  ver: (clave) => GET(`/series/${clave}`),
+  crear: (cuerpo) => POST('/series', cuerpo),
+  editar: (clave, cambios) => PATCH(`/series/${clave}`, cambios),
+  agregarCategoria: (clave, categoria) =>
+    POST(`/series/${clave}/categorias`, categoria),
+  agregarPregunta: (clave, preguntaId, mapeo, origen) =>
+    POST(`/series/${clave}/preguntas`,
+         { pregunta_id: preguntaId, mapeo, origen }),
+  quitarPregunta: (clave, preguntaId) =>
+    pedir('DELETE', `/series/${clave}/preguntas/${preguntaId}`),
+  mapear: (clave, preguntaId, mapeo) =>
+    PUT(`/series/${clave}/preguntas/${preguntaId}/mapeo`, { mapeo }),
+  sugerencias: (clave, preguntaId) =>
+    GET(`/series/${clave}/sugerencias`,
+        preguntaId ? { pregunta_id: preguntaId } : {}),
+  transiciones: (clave, desde, hasta) =>
+    GET(`/series/${clave}/transiciones`, { desde, hasta }),
+  auditoria: (clave) => GET(`/series/${clave}/auditoria`),
+  /* Las preguntas del corpus, para elegir la primera de una serie. La
+     primera no se puede sugerir: sin una de referencia no hay contra qué
+     comparar. */
+  preguntasDisponibles: (clave) => GET('/preguntas', clave ? { serie: clave } : {}),
+};
+
+/* R4.1.c — la línea de tiempo de una persona.
+
+   Es una reidentificación y el backend la registra: no hay que hacer nada
+   acá, pero conviene saberlo antes de llamarla desde cualquier lado. */
+export const longitudinal = {
+  dePersona: (idPersona) => GET(`/panelistas/${idPersona}/longitudinal`),
+};
+
+/* R4.2 — optimizador de muestreo. Propone; convocar sigue siendo explícito. */
+export const optimizador = {
+  optimizar: (encuestaId, { dimension, cantidad, canal, estado }) =>
+    GET(`/encuestas/${encuestaId}/optimizar`,
+        { dimension, cantidad, canal, estado }),
+  comparar: (encuestaId, { dimension, cantidad, canal }) =>
+    GET(`/encuestas/${encuestaId}/optimizar/comparar`,
+        { dimension, cantidad, canal }),
+  pesos: (panelId) => GET(`/paneles/${panelId}/pesos-optimizador`),
+  guardarPesos: (panelId, pesos) =>
+    PUT(`/paneles/${panelId}/pesos-optimizador`, pesos),
+};

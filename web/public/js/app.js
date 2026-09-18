@@ -19,6 +19,7 @@ import * as pagConfiguracion from './paginas/configuracion.js';
 import * as pagMuestreo from './paginas/muestreo.js';
 import * as pagGamificacion from './paginas/gamificacion.js';
 import * as pagInscripciones from './paginas/inscripciones.js';
+import * as pagLongitudinal from './paginas/longitudinal.js';
 
 const CDN = 'https://www.gstatic.com/firebasejs/10.7.0';
 const cfg = window.firebaseConfig || {};
@@ -40,6 +41,8 @@ const PERMISOS = {
   muestrear: ['admin', 'operaciones'],
   gamificacion: ['admin', 'operaciones'],
   aprobar_inscripciones: ['admin', 'operaciones'],
+  // Fase 4
+  gestionar_series: ['admin', 'operaciones', 'analista'],
 };
 
 const puede = (rol, permiso) => (PERMISOS[permiso] || []).includes(rol);
@@ -52,6 +55,7 @@ const PAGINAS = [
   { id: 'composicion',   icono: '📐', etiqueta: 'Composición',  modulo: pagComposicion,  permiso: 'leer' },
   { id: 'participacion', icono: '📈', etiqueta: 'Participación', modulo: pagParticipacion, permiso: 'leer' },
   { id: 'muestreo',      icono: '🎯', etiqueta: 'Muestreo',      modulo: pagMuestreo,     permiso: 'muestrear' },
+  { id: 'longitudinal',  icono: '📉', etiqueta: 'Longitudinal',  modulo: pagLongitudinal, permiso: 'gestionar_series' },
   { id: 'gamificacion',  icono: '🎁', etiqueta: 'Puntos y premios', modulo: pagGamificacion, permiso: 'gamificacion' },
   { id: 'inscripciones', icono: '📥', etiqueta: 'Inscripciones', modulo: pagInscripciones, permiso: 'aprobar_inscripciones' },
   { id: 'revisiones',    icono: '🔀', etiqueta: 'Revisión de altas', modulo: pagRevisiones, permiso: 'leer' },
