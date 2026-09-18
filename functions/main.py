@@ -45,6 +45,18 @@ SECRETOS = [
     # Fase 2 los crea, con valor vacío si todavía no hay clave.
     "RERANKER_API_KEY",   # cross-encoder de reranking (R2.8)
     "CLAUDE_API_KEY",     # verificación de evidencia (R2.9)
+    # ── Fase 4 ──
+    # Un secreto que está en Secret Manager pero no figura acá **no llega al
+    # runtime**: `firebase deploy` solo monta los declarados. El síntoma es
+    # desconcertante, porque el sistema se degrada como si no estuviera
+    # configurado —«sin `WHATSAPP_TOKEN` no se pueden listar las plantillas»—
+    # justo después de haberlo cargado. `test_main.py` comprueba que esta
+    # lista cubra todo lo que el código lee.
+    "VERIFICACION_SAL",           # R4.3 — con qué se hashean códigos y orígenes
+    "DESAFIO_SECRETO",            # R4.3 — clave del desafío anti-automatización
+    "WHATSAPP_TOKEN",             # R4.5 — token de la app de Meta
+    "WHATSAPP_PHONE_NUMBER_ID",   # R4.5 — el número emisor
+    "WHATSAPP_WABA_ID",           # R4.5 — de acá sale la lista de plantillas
 ]
 
 PREFIJO = "/api"
