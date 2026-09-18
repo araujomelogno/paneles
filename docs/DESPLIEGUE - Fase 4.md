@@ -1,26 +1,40 @@
-# Despliegue — Fase 4 · Bloque 4A (Contacto)
+# Despliegue — Fase 4
 
 **Sistema:** Gestión de paneles y consulta semántica · Equipos Consultores
-**Cubre:** R4.3 (endurecimiento de la landing), R4.4 (preferencias de canal),
-R4.5 (envío por WhatsApp Flow)
+**Cubre:** los cinco requisitos de la fase, en dos bloques independientes.
+
+| Bloque | Requisitos | Tema |
+|---|---|---|
+| **4A — Contacto** | R4.3, R4.4, R4.5 | Endurecer la entrada y contactar por el canal aceptado |
+| **4B — Inteligencia** | R4.1, R4.2 | Explotar el tiempo y decidir bajo tensión |
+
 **Precondición:** Fase 3 desplegada, con las migraciones 0005 a 0008 aplicadas
+
+> **Se puede desplegar todo junto o por bloque.** Los dos son independientes:
+> 4A no toca nada de lo que usa 4B y al revés. Lo que **no** conviene es
+> aplicar las migraciones a medias, porque el diagnóstico de esquema informa
+> por archivo y una migración a medio aplicar se ve como faltante.
 
 ---
 
 ## 0 · Qué cambia
 
-Este bloque cierra la puerta de entrada y abre un canal de salida.
+La Fase 4 cierra la puerta de entrada, abre un canal de salida y empieza a
+explotar el tiempo acumulado.
 
 | Qué | Dónde | Riesgo si se saltea |
 |---|---|---|
-| Una migración nueva en la bóveda | `db/boveda/0009_fase4_contacto.sql` | La landing, la ficha y la pantalla de encuestas fallan con `relation … does not exist` |
+| Tres migraciones nuevas: dos en la bóveda y una en la semántica | `0009`, `0010`, `0011` y `semantica/0004` | La landing, la ficha, las encuestas y la composición fallan con `relation … does not exist` o `function … does not exist` |
+| **La composición retroactiva pasa a estar bien calculada** | R4.1.a | Sin la 0010, recalcular la composición de una ola pasada la sigue calculando con la demografía de hoy: un número incorrecto que no avisa |
 | **La landing deja de aceptar envíos sin verificar** | R4.3 | Nada se rompe, pero **nadie más se puede inscribir** hasta que haya proveedor de códigos. Es el cambio con más consecuencia operativa del bloque |
 | Un eje de permiso nuevo para contactar | R4.4 | Los panelistas existentes quedan **sin preferencias**, o sea no contactables por ningún canal, hasta que se registren |
 | Credenciales de Meta y de un proveedor de códigos | ver §3 | Sin ellas se puede configurar todo pero no enviar nada, y la landing no verifica de verdad |
-| Nada en el store semántico | — | — |
+| Una pantalla nueva, «Longitudinal» | R4.1 | Las series y la evolución entre olas no se pueden usar |
+| El optimizador, junto a las reglas en Muestreo | R4.2 | Las reglas de R3.1 siguen funcionando: 4B no las reemplaza |
 
-**El store semántico no cambia.** Ninguna migración del lado semántico y el
-pipeline de consulta queda exactamente igual.
+**El pipeline de consulta no cambia.** La 0004 del store semántico agrega las
+tablas de series y una columna de embedding para el texto de las preguntas,
+pero la consulta semántica resuelve exactamente igual que antes.
 
 > **Lo que este bloque deliberadamente no hace.** El sistema **solo envía** por
 > WhatsApp: no recibe respuestas, no procesa webhooks y no crea Flows ni
@@ -32,8 +46,9 @@ pipeline de consulta queda exactamente igual.
 
 ## 1 · Antes de empezar: las tres definiciones legales
 
-Ninguna bloquea aplicar la migración. Las tres bloquean **usar** lo que
-habilita.
+Son del bloque 4A. Ninguna bloquea aplicar las migraciones; las tres bloquean
+**usar** el canal de WhatsApp. El bloque 4B no tiene definiciones legales
+pendientes: no manda nada afuera ni cambia qué datos se guardan.
 
 ### 1.1 · El opt-in de WhatsApp de los panelistas ya enrolados — *bloqueante para enviar*
 
@@ -76,20 +91,63 @@ opere.
 
 ---
 
-## 2 · La migración
+## 2 · Las migraciones
 
-Una sola, y solo en la bóveda.
+Tres en la bóveda y una en el store semántico. **En este orden.**
 
 ```bash
 cloud-sql-proxy gestion-paneles:southamerica-east1:paneles-boveda --port 5432 &
 export DSN_BOVEDA="$(scripts/dsn_local.sh boveda)"
 
+# Bloque 4A
 psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 -f db/boveda/0009_fase4_contacto.sql
+# Bloque 4B
+psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 -f db/boveda/0010_fase4_historial_atributos.sql
+psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 -f db/boveda/0011_fase4_inteligencia.sql
 ```
 
-**Es aditiva y se puede aplicar con la app andando:** crea dos tablas y agrega
-columnas nullables (o con default) a tres. No reescribe ninguna fila
-existente ni toma locks largos.
+```bash
+cloud-sql-proxy gestion-paneles:southamerica-east1:paneles-semantica --port 5433 &
+export DSN_SEMANTICA="$(scripts/dsn_local.sh semantica)"
+
+psql "$DSN_SEMANTICA" -v ON_ERROR_STOP=1 -f db/semantica/0004_series.sql
+```
+
+**Tres de las cuatro son aditivas** y se pueden aplicar con la app andando:
+crean tablas y agregan columnas nullables o con default.
+
+> ### La 0010 es la excepción: leerla antes de aplicarla
+>
+> Es la única migración **no aditiva** de la fase. Hace tres cosas que
+> conviene entender antes de correrla:
+>
+> 1. **Agrega `desde`/`hasta` a `persona_atributo` y reescribe todas sus
+>    filas** para ponerles `desde = '-infinity'`. En una tabla de cientos de
+>    miles de filas eso es un `UPDATE` completo: **aplicarla en ventana**, no
+>    en el pico de uso.
+> 2. **Reemplaza el índice único** `persona_atributo_unico` por uno parcial
+>    sobre la vigencia abierta, y agrega una restricción de exclusión que
+>    necesita la extensión **`btree_gist`**. La migración la crea con
+>    `create extension if not exists`; en Cloud SQL está disponible, pero el
+>    usuario que aplica la migración tiene que poder crear extensiones.
+> 3. **Recrea `v_atributo_persona` y `v_demografia`** sobre una función nueva,
+>    `f_atributo_persona(momento)`. Los dos `drop view` van antes de los
+>    `create`, así que **entre esas dos sentencias las vistas no existen**:
+>    toda la app que segmenta falla durante ese instante. Es corto, pero es
+>    otra razón para aplicarla en ventana.
+>
+> **Lo que la 0010 no rompe:** las vistas conservan su nombre y sus columnas,
+> así que composición, consultas, muestreo, cuotas, bonos, ficha y
+> exportaciones siguen andando sin cambios. Eso está cubierto por pruebas de
+> no regresión.
+>
+> **Revertirla no es trivial** (habría que volver a un solo valor por
+> atributo, y eso pierde el historial que se haya acumulado). Tomar un backup
+> de `persona_atributo` antes:
+>
+> ```bash
+> pg_dump "$DSN_BOVEDA" -t persona_atributo > persona_atributo_pre_0010.sql
+> ```
 
 ### 2.1 · Qué crea
 
@@ -101,6 +159,12 @@ existente ni toma locks largos.
 | `inscripcion.canales` | Los canales que el titular aceptó de primera mano en el formulario. Se convierten en preferencias al aprobar |
 | `encuesta.flow_id` / `flow_plantilla` / `flow_idioma` | Configurar una encuesta como WhatsApp Flow (R4.5) |
 | `participacion.enviado_en` / `envio_estado` / `envio_error` | El estado del envío por persona, para reintentar solo los fallidos |
+| `persona_atributo.desde` / `hasta` | El historial: desde y hasta cuándo valió cada valor (R4.1.a) |
+| `f_atributo_persona(momento)` | La única implementación de la resolución de atributos, ahora a una fecha. `v_atributo_persona` es esta función en `now()` |
+| `serie_auditoria` | Quién tocó una serie y cuándo. La serie vive del lado semántico; el nombre de quien la editó, nunca (R4.1.b) |
+| `peso_optimizador` | Cuánto pesa la fatiga frente a la cuota, por panel (R4.2) |
+| `serie`, `serie_categoria`, `serie_pregunta`, `serie_mapeo` *(semántica)* | Las series comparables entre olas (R4.1.b) |
+| `pregunta.embedding_texto` *(semántica)* | El texto de la pregunta embebido, para sugerir candidatas. Se llena solo, la primera vez que se piden sugerencias |
 
 ### 2.2 · Verificar
 
@@ -109,8 +173,23 @@ export DSN_SEMANTICA="$(scripts/dsn_local.sh semantica)"
 python3 scripts/verificar_esquema.py
 ```
 
-Tienen que salir las ocho migraciones de la bóveda y las tres de la semántica,
-todas con tilde.
+Tienen que salir las **once** migraciones de la bóveda y las **cuatro** de la
+semántica, todas con tilde. El diagnóstico ahora también verifica funciones y
+no solo tablas y vistas: sin eso la 0010 se daría por aplicada con las
+columnas puestas y `f_atributo_persona` ausente, que es justo de lo que cuelga
+todo lo que segmenta.
+
+Y una comprobación que vale la pena hacer a mano, porque es la que prueba que
+la corrección de R4.1.a quedó bien:
+
+```sql
+-- Toda persona con algún atributo cargado tiene que tener exactamente un
+-- valor vigente por atributo, y ninguna vigencia solapada. Si esto devuelve
+-- filas, la migración no terminó bien.
+select id_persona, atributo_id, count(*)
+  from persona_atributo where hasta is null
+ group by 1, 2 having count(*) > 1;
+```
 
 ---
 
@@ -192,6 +271,14 @@ variables de entorno en la consola de GCP.
 |---|---|---|
 | `gestionar_canales` | admin, operaciones | Registrar y revocar por qué canal se puede contactar a alguien. Va con quien ya podía enrolar: es parte de la ficha, no una capacidad aparte |
 | `enviar_whatsapp` | admin, operaciones | **No lo tiene el analista.** Cada conversación se cobra y un envío mal dirigido quema el canal para todos. El analista fieldea, ingesta y consulta, pero no manda |
+| `gestionar_series` | admin, operaciones, **analista** | Declarar que dos preguntas de olas distintas son la misma medición es una decisión metodológica: es del analista tanto como de operaciones. El dpo no, y no es por jerarquía: no es su trabajo y una serie mal armada cambia lo que dicen los resultados |
+| `configurar_optimizador` | admin, operaciones | Cambiar cuánto pesa la fatiga frente a la cuota. Va con `muestrear`, que es de quien decide a quién invitar: aflojar el peso de la fatiga es decidir quemar un poco más al panel |
+
+**La línea de tiempo de una persona pide `reidentificar`, no `leer`.** Verla es
+la operación que deshace la seudonimización, y queda registrada como tal
+(R3.10). Que sea más cómoda de mirar no la hace menos reidentificación: hacerla
+fácil sin registrarla habría sido aflojar el diseño de dos stores por la puerta
+de atrás.
 
 ---
 
@@ -287,7 +374,12 @@ Después de desplegar, en este orden:
 
 Infraestructura:
 
-- [ ] `db/boveda/0009_fase4_contacto.sql` aplicada.
+- [ ] `db/boveda/0009_fase4_contacto.sql` aplicada *(4A)*.
+- [ ] Backup de `persona_atributo` tomado *(antes de la 0010)*.
+- [ ] `db/boveda/0010_fase4_historial_atributos.sql` aplicada **en ventana**,
+      y la comprobación de §2.2 sin filas *(4B)*.
+- [ ] `db/boveda/0011_fase4_inteligencia.sql` aplicada *(4B)*.
+- [ ] `db/semantica/0004_series.sql` aplicada *(4B)*.
 - [ ] `firebase deploy` completo.
 - [ ] `VERIFICACION_SAL` configurada (no es opcional en producción).
 - [ ] `VERIFICACION_ENVIO_PROVEEDOR` apuntando a un proveedor real —**sin
@@ -310,6 +402,18 @@ Definiciones pendientes:
 
 Avisos al equipo:
 
+- [ ] **Que la composición de una ola pasada ahora se puede pedir a fecha, y
+      que el número que daba antes estaba mal.** Es el aviso más importante
+      de 4B: quien haya reportado una composición retroactiva desde que existe
+      el sistema la reportó con la demografía de hoy.
+- [ ] Que la brecha de una composición retroactiva se calcula contra el
+      universo de referencia de **hoy**: los objetivos no se historizan, y la
+      respuesta lo dice.
+- [ ] Que hace falta un dueño del vocabulario de series, por el mismo motivo
+      que con los segmentadores: sin responsable, cada equipo arma las suyas y
+      las comparaciones dejan de ser comparables entre equipos.
+- [ ] Que los pesos del optimizador tienen defaults **documentados pero no
+      medidos** contra los datos de Equipos, igual que los umbrales de fatiga.
 - [ ] Que la landing ahora pide verificación, y qué pasa si el proveedor no
       está configurado.
 - [ ] Que los panelistas existentes no son contactables por WhatsApp hasta

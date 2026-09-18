@@ -4,8 +4,15 @@
 capturas de la aplicación real. Cubre las **fases 1 y 2**, tres cosas de la
 fase 3 —la ingesta de archivos `.sav` con alta de panelistas (R3.9), la carga
 de individuos sin panel (R3.13) y el catálogo de atributos demográficos
-(R3.14)— y el bloque de contacto de la **fase 4**: canales, formulario público
-endurecido y envío por WhatsApp (R4.3, R4.4, R4.5).
+(R3.14)— y la **fase 4** completa: el bloque de contacto (canales, formulario
+público endurecido y envío por WhatsApp; R4.3, R4.4, R4.5) y el de
+inteligencia (series comparables entre olas, evolución, la historia de una
+persona y el optimizador de muestreo; R4.1, R4.2).
+
+La sección de **Muestreo** se escribió recién ahora, con el optimizador: la
+pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
+de reglas se documenta breve, porque lo que se agregó en esta fase es el
+optimizador.
 
 ## Cómo se rehace
 
@@ -65,6 +72,16 @@ verificación— **no se puede tomar de la copia en modo demo**: la landing habl
 con la API real y `demo.js` no la cubre. Se toma levantando un servidor mínimo
 contra el ruteo real y un Postgres de pruebas.
 
+Las 54 a 59 son del bloque 4B: las sugerencias de una serie, la serie con sus
+dos olas mapeadas, la matriz de evolución, la línea de tiempo de una persona,
+el optimizador con su comparación contra las reglas y las tres alternativas
+ante una cuota infactible. Se toman de la copia en modo demo, **armando la
+serie desde la pantalla**: crear la serie, agregar la primera pregunta a mano,
+mapear sus opciones, buscar candidatas y aceptar la equivalente de la otra ola.
+La demo trae una cuarta ola del mismo panel que vuelve a preguntar lo mismo con
+otra redacción y otras opciones, que es lo que hace demostrable todo el
+bloque.
+
 ### 3 · Optimizar
 
 Salen en PNG a 2× para que se lean nítidas; en el PDF entran a ~1×, así que
@@ -96,9 +113,9 @@ node docs/manual/generar_pdf.mjs
 |---|---|
 | `Manual_de_usuario.pdf` | El entregable |
 | `portada.html` | Portada, a sangre |
-| `manual.html` | Índice y las doce secciones |
+| `manual.html` | Índice y las catorce secciones |
 | `estilo.css` | Estilos, compartidos por los dos |
-| `capturas/` | Las 53 capturas |
+| `capturas/` | Las 59 capturas |
 | `tipografia/` | Montserrat local, para que el PDF salga igual sin red |
 | `preparar_demo.sh` | Arma y sirve la copia en modo demo |
 | `capturar.mjs` | Toma las capturas |
