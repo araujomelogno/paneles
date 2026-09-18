@@ -1,4 +1,4 @@
-/* Muestreo por reglas (R3.1).
+/* Muestreo: reglas (R3.1) y optimizador (R4.2).
 
    Esta pantalla es la que convierte la composición —que solo mira— en una
    decisión. Por eso tiene dos partes que pesan lo mismo:
@@ -10,6 +10,16 @@
    doscientos no sirve para decidir. Y los avisos —«este segmento tiene
    brecha y no hay a quién ofrecer»— van arriba de todo, porque son
    justamente lo que una lista más corta taparía.
+
+   Desde R4.2 hay dos métodos y **conviven a propósito**. Las reglas alcanzan
+   cuando hay holgura; el optimizador negocia cuando cerrar la cuota y cuidar
+   a la gente se contradicen. Los dos botones están uno al lado del otro, y
+   «Comparar» muestra la diferencia: es lo que permite justificar ante alguien
+   por qué esta vez se usó el otro método.
+
+   Cuando el optimizador no puede, la pantalla no muestra una lista más corta
+   y ya: muestra las tres salidas con su número —reducir, aflojar la fatiga,
+   aceptar la brecha— y no elige ninguna.
 */
 
 import * as api from '../api.js';
@@ -55,14 +65,20 @@ export async function render(main, ctx) {
         <div class="form-group" style="align-self:end">
           <button class="btn btn-primary" id="proponer">Proponer</button></div>
         <div class="form-group" style="align-self:end">
+          <button class="btn" id="optimizar">Optimizar (R4.2)</button></div>
+        <div class="form-group" style="align-self:end">
           <button class="btn" id="umbrales">Umbrales de fatiga…</button></div>
+        <div class="form-group" style="align-self:end">
+          <button class="btn" id="pesos">Pesos del optimizador…</button></div>
       </div>
     </div></div>
     <div id="cuerpo"></div>`;
 
   $('#panel').onchange = (e) => { panelActual = Number(e.target.value); cargarEncuestas(); };
   $('#proponer').onclick = proponer;
+  $('#optimizar').onclick = optimizar;
   $('#umbrales').onclick = abrirUmbrales;
+  $('#pesos').onclick = abrirPesos;
   await cargarEncuestas();
 }
 
@@ -208,6 +224,175 @@ async function abrirUmbrales() {
             await api.muestreo.guardarUmbrales(panelActual, datos);
             cerrarModal();
             toast('Umbrales guardados.', 'ok');
+          } catch (error) { toast(error.message, 'error'); }
+        },
+      },
+    ],
+  });
+}
+
+/* ── R4.2 · Optimizador ─────────────────────────────────────────────── */
+
+async function optimizar() {
+  if (!encuestaActual) { toast('Elegí una encuesta abierta.', 'error'); return; }
+  $('#cuerpo').innerHTML = cargando('20vh');
+  try {
+    const salida = await api.optimizador.optimizar(encuestaActual, {
+      dimension: $('#dimension').value,
+      cantidad: Number($('#cantidad').value) || 100,
+    });
+    ultimaPropuesta = salida;
+    pintarOptimizada(salida);
+  } catch (error) {
+    $('#cuerpo').innerHTML = alerta(error.message);
+  }
+}
+
+function pintarOptimizada(salida) {
+  $('#cuerpo').innerHTML = `
+    ${alerta('Es una sugerencia: nadie fue convocado. El optimizador propone; '
+             + 'convocar sigue siendo una acción explícita.', 'info')}
+    ${salida.factible ? '' : infactible(salida)}
+    <div class="card"><div class="card-head">
+        <h3>Optimizada · ${salida.propuesta.length} de ${salida.cantidad_pedida} pedidos</h3>
+        <button class="btn" id="comparar">Comparar con las reglas</button>
+        <button class="btn btn-primary" id="convocar" ${salida.propuesta.length ? '' : 'disabled'}>
+          Convocar a estos ${salida.propuesta.length}</button>
+      </div>
+      <div class="card-body" style="padding:0">${tablaOptimizada(salida)}</div>
+    </div>
+    <div id="comparacion"></div>
+    ${exclusiones(salida)}`;
+
+  $('#comparar').onclick = comparar;
+  if (salida.propuesta.length) {
+    $('#convocar').onclick = () => confirmarConvocatoria(salida);
+  }
+}
+
+/* Las tres salidas, con su número. El sistema no elige ninguna: elegir entre
+   menos muestra, más fatiga y más brecha es una decisión de negocio. */
+function infactible(salida) {
+  return `<div class="card"><div class="card-head">
+      <h3>No se puede cerrar la cuota</h3></div>
+    <div class="card-body">
+      <p>${esc(salida.motivo)}</p>
+      <table class="tabla"><thead><tr>
+        <th>Alternativa</th><th>Qué pasa</th><th>Qué cuesta</th>
+      </tr></thead><tbody>
+      ${salida.alternativas.map((a) => `<tr>
+        <td><strong>${esc(ALTERNATIVAS[a.opcion] || a.opcion)}</strong></td>
+        <td class="tenue">${esc(a.descripcion)}</td>
+        <td class="tenue">${esc(a.cuesta)}</td>
+      </tr>`).join('')}
+      </tbody></table>
+      <p class="tenue">El sistema no elige entre las tres: menos muestra, más
+      fatiga y más brecha son costos distintos y los paga el estudio.</p>
+    </div></div>`;
+}
+
+const ALTERNATIVAS = {
+  reducir_el_tamano: 'Reducir el tamaño',
+  aflojar_la_fatiga: 'Aflojar la fatiga',
+  aceptar_la_brecha: 'Aceptar la brecha',
+};
+
+function tablaOptimizada(salida) {
+  if (!salida.propuesta.length) {
+    return vacio('Ninguna persona quedó elegible. Mirá las exclusiones.', '🚫');
+  }
+  return `<table class="tabla"><thead><tr>
+      <th>#</th><th>Persona</th><th>${esc(DIMENSIONES[salida.dimension] || salida.dimension)}</th>
+      <th>Convocatorias</th><th>Por qué entró</th>
+    </tr></thead><tbody>
+    ${salida.propuesta.map((p) => `<tr>
+      <td>${p.orden}</td>
+      <td class="mono">${esc(p.id_persona.slice(0, 8))}…</td>
+      <td>${token(p.categoria)}</td>
+      <td>${p.convocatorias_recientes} recientes · ${p.convocatorias_totales} en total</td>
+      <td class="tenue">Al segmento le faltaban
+        ${p.porque.deficit_del_segmento_al_entrar} ·
+        aporta ${p.porque.aporte_a_la_brecha} ·
+        cuesta ${(p.porque.costo_fatiga + p.porque.costo_equidad).toFixed(2)}
+        (${p.porque.costo_fatiga.toFixed(2)} de fatiga,
+         ${p.porque.costo_equidad.toFixed(2)} de equidad)</td>
+    </tr>`).join('')}
+    </tbody></table>`;
+}
+
+async function comparar() {
+  const caja = $('#comparacion');
+  caja.innerHTML = cargando('15vh');
+  try {
+    const c = await api.optimizador.comparar(encuestaActual, {
+      dimension: $('#dimension').value,
+      cantidad: Number($('#cantidad').value) || 100,
+    });
+    const categorias = [...new Set([
+      ...Object.keys(c.reglas.por_categoria),
+      ...Object.keys(c.optimizador.por_categoria),
+    ])].sort();
+    caja.innerHTML = `<div class="card"><div class="card-head">
+        <h3>Los dos métodos, sobre la misma pregunta</h3></div>
+      <div class="card-body">
+        ${c.coinciden ? alerta(
+          'Las dos selecciones son idénticas: en este caso hay holgura y el '
+          + 'optimizador no aporta nada sobre las reglas. La diferencia '
+          + 'aparece en segmentos escasos y muy convocados.', 'info') : ''}
+        <table class="tabla"><thead><tr>
+          <th>Método</th><th>Personas</th>
+          ${categorias.map((k) => `<th>${esc(k)}</th>`).join('')}
+          <th>Fatiga media</th>
+        </tr></thead><tbody>
+          <tr><td>Reglas (R3.1)</td><td>${c.reglas.personas}</td>
+            ${categorias.map((k) => `<td>${c.reglas.por_categoria[k] || 0}</td>`).join('')}
+            <td>${c.reglas.fatiga_media}</td></tr>
+          <tr><td>Optimizador (R4.2)</td><td>${c.optimizador.personas}</td>
+            ${categorias.map((k) => `<td>${c.optimizador.por_categoria[k] || 0}</td>`).join('')}
+            <td>${c.optimizador.fatiga_media}</td></tr>
+        </tbody></table>
+        <p class="tenue">${c.en_las_dos} en las dos ·
+          ${c.solo_en_reglas.length} solo en reglas ·
+          ${c.solo_en_optimizador.length} solo en el optimizador.</p>
+      </div></div>`;
+  } catch (error) { caja.innerHTML = alerta(error.message); }
+}
+
+async function abrirPesos() {
+  const actuales = await api.optimizador.pesos(panelActual);
+  modal({
+    titulo: 'Pesos del optimizador',
+    ancho: 560,
+    cuerpo: `
+      <p class="tenue">Cuánto vale cerrar la cuota frente a cuidar a la gente.
+      ${actuales.configurados
+        ? `Última edición: ${esc(actuales.actualizado_por || '—')}.`
+        : 'Ahora rigen los valores por defecto documentados en R4.2.'}</p>
+      <div class="form-group"><label>Cerrar la brecha de cuota</label>
+        <input class="finput" name="peso_brecha" type="number" min="0" step="0.5"
+               value="${actuales.peso_brecha}">
+        <span class="tenue">La escala contra la que se leen los otros dos.</span></div>
+      <div class="form-group"><label>Costo de la fatiga</label>
+        <input class="finput" name="peso_fatiga" type="number" min="0" step="0.5"
+               value="${actuales.peso_fatiga}">
+        <span class="tenue">Cuánto cuesta volver a convocar a alguien que ya
+        viene siendo convocado. Bajarlo es decidir quemar un poco más al
+        panel.</span></div>
+      <div class="form-group"><label>Costo del desbalance de rotación</label>
+        <input class="finput" name="peso_equidad" type="number" min="0" step="0.5"
+               value="${actuales.peso_equidad}">
+        <span class="tenue">Distinto de la fatiga: alguien puede estar lejos
+        del umbral y aun así ser siempre el elegido de su celda.</span></div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn', onClick: cerrarModal },
+      {
+        texto: 'Guardar', clase: 'btn-primary',
+        onClick: async (contenedor) => {
+          try {
+            await api.optimizador.guardarPesos(
+              panelActual, leerFormulario(contenedor));
+            cerrarModal();
+            toast('Pesos guardados.', 'ok');
           } catch (error) { toast(error.message, 'error'); }
         },
       },

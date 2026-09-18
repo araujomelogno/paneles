@@ -60,12 +60,34 @@ MIGRACIONES_BOVEDA = (
         # con el DDL real lo exige.
         "v_demografia",
     )),
+    ("0009_fase4_contacto.sql", (
+        "preferencia_canal", "verificacion_contacto",
+        "inscripcion.celular_verificado", "inscripcion.email_verificado",
+        "inscripcion.canales", "inscripcion.version_texto_canales",
+        "encuesta.flow_id", "encuesta.flow_plantilla", "encuesta.flow_idioma",
+        "participacion.enviado_en", "participacion.envio_estado",
+        "participacion.envio_error",
+    )),
+    ("0010_fase4_historial_atributos.sql", (
+        "persona_atributo.desde", "persona_atributo.hasta",
+        # La función es lo que importa de esta migración: es la única
+        # implementación de la resolución de atributos, y las dos vistas son
+        # llamadas suyas. Si faltara, las columnas estarían y todo lo que
+        # segmenta seguiría roto.
+        "f_atributo_persona()",
+        "v_atributo_persona", "v_demografia",
+    )),
+    ("0011_fase4_inteligencia.sql", ("serie_auditoria", "peso_optimizador")),
 )
 
 MIGRACIONES_SEMANTICA = (
     ("0001_init.sql", ("cuestionario", "individuo", "pregunta", "respuesta")),
     ("0002_vista_procedencia.sql", ("v_respuesta_estudio",)),
     ("0003_hash_texto.sql", ("respuesta.hash_texto",)),
+    ("0004_series.sql", (
+        "serie", "serie_categoria", "serie_pregunta", "serie_mapeo",
+        "pregunta.embedding_texto",
+    )),
 )
 
 STORES = {
@@ -102,6 +124,20 @@ PARA_QUE = {
     "persona_atributo": "el valor de cada persona para cada segmentador, canónico y crudo",
     "atributo_auditoria": "quién tocó el vocabulario de segmentación y cuándo",
     "v_atributo_persona": "el valor efectivo de cada atributo, con la precedencia del tramo etario",
+    # ── Fase 4 ──
+    "preferencia_canal": "por qué canal acepta cada persona que la contacten",
+    "verificacion_contacto": "los códigos de un solo uso que endurecen la landing",
+    "inscripcion.celular_verificado": "saber que el celular es de quien se inscribió",
+    "inscripcion.canales": "los canales que el titular aceptó de primera mano",
+    "encuesta.flow_id": "configurar una encuesta como WhatsApp Flow",
+    "participacion.envio_estado": "reintentar solo los envíos fallidos",
+    "persona_atributo.desde": "el historial de atributos: desde cuándo vale cada valor",
+    "f_atributo_persona()": "resolver el valor de cada atributo a una fecha; es de lo que cuelgan la composición, las cuotas, el muestreo y los filtros",
+    "serie": "declarar que preguntas de distintas olas son la misma medición",
+    "serie_mapeo": "llevar las opciones de cada pregunta a las categorías comunes de la serie",
+    "pregunta.embedding_texto": "sugerir preguntas candidatas de otras olas por similitud",
+    "serie_auditoria": "quién tocó una serie y cuándo; la serie vive del lado semántico, el nombre de quien la editó nunca",
+    "peso_optimizador": "cuánto pesa la fatiga frente a la cuota al optimizar una muestra",
 }
 
 
@@ -138,6 +174,21 @@ def _presentes(conn):
     )
     relaciones = {f["table_name"].lower() for f in filas}
     columnas = {f'{f["table_name"].lower()}.{f["column_name"].lower()}' for f in filas}
+
+    # Las funciones se declaran con `()` al final. Desde R4.1.a hay lógica de
+    # esquema que vive en una función y no en una vista, y una migración que
+    # se diera por aplicada porque están las columnas dejaría sin detectar
+    # justo la parte de la que cuelga todo lo que segmenta.
+    for fila in db.todas(
+        conn,
+        """
+        select p.proname as nombre
+          from pg_catalog.pg_proc p
+          join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+         where n.nspname = 'public'
+        """,
+    ):
+        relaciones.add(f'{fila["nombre"].lower()}()')
     return relaciones, columnas
 
 

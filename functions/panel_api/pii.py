@@ -31,9 +31,13 @@ CAMPOS_PII = frozenset({
     "contacto", "observaciones",
 })
 
-# `nombre` es legítimo como nombre de cuestionario o de pregunta: son
-# metadatos del estudio, no de la persona. Se permite solo en esos usos.
-CONTEXTOS_QUE_PERMITEN_NOMBRE = frozenset({"cuestionario", "pregunta"})
+# `nombre` es legítimo como nombre de cuestionario, de pregunta o de serie:
+# son metadatos del estudio, no de la persona. Se permite solo en esos usos.
+#
+# Una serie (R4.1.b) es contenido y por eso vive del lado semántico. Quién la
+# creó o la editó, en cambio, es una persona, y no se escribe de este lado: ese
+# rastro va a `serie_auditoria`, en la bóveda.
+CONTEXTOS_QUE_PERMITEN_NOMBRE = frozenset({"cuestionario", "pregunta", "serie"})
 
 
 def _claves(objeto):

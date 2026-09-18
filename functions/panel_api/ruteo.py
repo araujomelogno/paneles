@@ -12,24 +12,32 @@ from . import (
     atributos,
     auditoria,
     bajas,
+    desafio,
     calidad,
     cargas,
     composicion,
     consentimiento,
     consultas,
+    db,
     encuestas,
     esquema,
     inscripciones,
+    longitudinal,
     muestreo,
+    optimizador,
     paneles,
     participacion,
     personas,
+    preferencias,
     premios,
     puntos,
     revision,
     sav,
     semantica,
+    series,
     usuarios,
+    verificacion_contacto,
+    whatsapp,
 )
 from .errores import DatosInvalidos, ErrorApi, NoEncontrado
 
@@ -76,6 +84,12 @@ def resolver(metodo, camino):
 PUBLICAS = frozenset({
     ("GET", "/inscripciones/formulario"),
     ("POST", "/inscripciones"),
+    # R4.3 — pedir y comprobar el código de verificación son parte del mismo
+    # formulario público: si necesitaran token, la verificación sería
+    # imposible desde la landing. Las dos están protegidas por su propio
+    # límite de tasa y por el desafío anti-automatización.
+    ("POST", "/inscripciones/verificacion"),
+    ("POST", "/inscripciones/verificacion/comprobar"),
 })
 
 
@@ -528,6 +542,28 @@ def listar_reidentificaciones(ctx, actor, params, cuerpo, consulta):
 #  Composición y universo de referencia (R2.2, R2.3 + P1)
 # ════════════════════════════════════════════════════════════════════
 
+def _momento(ctx, consulta):
+    """R4.1.a — a qué fecha se pide la composición.
+
+    Se puede pedir por fecha (`?momento=2025-03-01`) o por ola
+    (`?encuesta=12`), que es como lo piensa un analista: no «al 1 de marzo»
+    sino «como estaba cuando salimos a campo con esa encuesta». La fecha de
+    campo de la encuesta es la que manda; si no la tiene cargada se usa cuándo
+    se creó, que es lo más cerca que hay.
+    """
+    if consulta.get("momento"):
+        return str(consulta["momento"])
+    if not consulta.get("encuesta"):
+        return None
+    fila = db.una(
+        ctx.boveda,
+        "select nombre, fecha_campo, creado_en from encuesta where id = %s",
+        (_entero(consulta["encuesta"]),))
+    if not fila:
+        raise NoEncontrado(f"No existe la encuesta {consulta['encuesta']}.")
+    return str(fila["fecha_campo"] or fila["creado_en"])
+
+
 @ruta("GET", "/paneles/<panel_id>/composicion", "leer", requisito="R2.3")
 def ver_composicion(ctx, actor, params, cuerpo, consulta):
     dimensiones = consulta.get("dimensiones")
@@ -546,6 +582,7 @@ def ver_composicion(ctx, actor, params, cuerpo, consulta):
         dimensiones=dimensiones or None,
         estado=consulta.get("estado", "activo"),
         cruce_de=cruce_de or None,
+        momento=_momento(ctx, consulta),
     )
 
 
@@ -805,11 +842,41 @@ def inscribirse(ctx, actor, params, cuerpo, consulta):
     return 201, inscripciones.inscribir(ctx.boveda, cuerpo)
 
 
+@ruta("POST", "/inscripciones/verificacion", None, requisito="R4.3")
+def pedir_verificacion(ctx, actor, params, cuerpo, consulta):
+    """R4.3 — emite el código de un solo uso que verifica un contacto.
+
+    El desafío anti-automatización se valida **acá** y no al inscribir: el
+    envío de códigos es lo que cuesta plata y lo que puede molestar a un
+    tercero, así que es lo que hay que proteger.
+    """
+    origen = (cuerpo.get("origen_ip") or "").strip() or None
+    desafio.validar(cuerpo.get("desafio_token"), origen=origen)
+    return 200, verificacion_contacto.pedir_codigo(
+        ctx.boveda, cuerpo.get("canal"), cuerpo.get("destino"), origen=origen)
+
+
+@ruta("POST", "/inscripciones/verificacion/comprobar", None, requisito="R4.3")
+def comprobar_verificacion(ctx, actor, params, cuerpo, consulta):
+    return 200, verificacion_contacto.verificar(
+        ctx.boveda, cuerpo.get("canal"), cuerpo.get("destino"),
+        cuerpo.get("codigo"))
+
+
 @ruta("GET", "/inscripciones", "aprobar_inscripciones", requisito="R3.7")
 def listar_inscripciones(ctx, actor, params, cuerpo, consulta):
     return 200, {"items": inscripciones.listar(
         ctx.boveda, consulta.get("estado", "pendiente")
     )}
+
+
+@ruta("GET", "/inscripciones/<inscripcion_id>", "aprobar_inscripciones",
+      requisito="R4.3")
+def ver_inscripcion(ctx, actor, params, cuerpo, consulta):
+    """La inscripción con sus **candidatos parecidos** (R4.3): quien aprueba
+    los ve sin tener que buscarlos a mano, que es la única forma de que
+    efectivamente los mire."""
+    return 200, inscripciones.obtener(ctx.boveda, _entero(params["inscripcion_id"]))
 
 
 @ruta("POST", "/inscripciones/<inscripcion_id>/aprobar", "aprobar_inscripciones",
@@ -818,6 +885,9 @@ def aprobar_inscripcion(ctx, actor, params, cuerpo, consulta):
     return 200, inscripciones.aprobar(
         ctx.boveda, int(params["inscripcion_id"]), actor,
         panel_id=cuerpo.get("panel_id"),
+        # R4.3 — la fusión con un candidato parecido la declara quien aprueba.
+        # El sistema no la decide solo: un homónimo fusionado no se deshace.
+        id_persona=cuerpo.get("id_persona"),
     )
 
 
@@ -1200,7 +1270,17 @@ def auditoria_atributos(ctx, actor, params, cuerpo, consulta):
 
 @ruta("GET", "/panelistas/<id_persona>/atributos", "leer", requisito="R3.14")
 def atributos_de_persona(ctx, actor, params, cuerpo, consulta):
-    return 200, {"items": atributos.valores_de(ctx.boveda, params["id_persona"])}
+    return 200, {"items": atributos.valores_de(
+        ctx.boveda, params["id_persona"],
+        momento=_momento(ctx, consulta))}
+
+
+@ruta("GET", "/panelistas/<id_persona>/atributos/historial", "leer",
+      requisito="R4.1.a")
+def historial_de_atributos(ctx, actor, params, cuerpo, consulta):
+    """Todos los valores que tuvo la persona, con su vigencia."""
+    return 200, {"items": atributos.historial_de(
+        ctx.boveda, params["id_persona"], consulta.get("clave"))}
 
 
 @ruta("PUT", "/panelistas/<id_persona>/atributos/<clave>", "enrolar",
@@ -1209,7 +1289,289 @@ def fijar_atributo_de_persona(ctx, actor, params, cuerpo, consulta):
     salida = atributos.fijar(
         ctx.boveda, params["id_persona"], params["clave"],
         (cuerpo or {}).get("valor"), origen="edicion",
-        fecha_referencia=(cuerpo or {}).get("fecha_referencia"))
+        fecha_referencia=(cuerpo or {}).get("fecha_referencia"),
+        # R4.1.a — para cargar un cambio que ya ocurrió. Sin esto, el
+        # historial diría que la persona cambió el día que alguien lo editó.
+        vigencia_desde=(cuerpo or {}).get("vigencia_desde"))
+    ctx.boveda.commit()
+    return 200, salida
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Fase 4 · 4A — Contacto
+# ════════════════════════════════════════════════════════════════════
+
+@ruta("GET", "/panelistas/<id_persona>/canales", "leer", requisito="R4.4")
+def canales_de_persona(ctx, actor, params, cuerpo, consulta):
+    return 200, {"items": preferencias.listar(ctx.boveda, params["id_persona"])}
+
+
+@ruta("PUT", "/panelistas/<id_persona>/canales/<canal>", "gestionar_canales",
+      requisito="R4.4")
+def fijar_canal(ctx, actor, params, cuerpo, consulta):
+    """Registra que esta persona acepta ese canal, con el texto con que lo
+    aceptó. Sin ese texto, «aceptó recibir WhatsApp» es una afirmación sin
+    respaldo."""
+    salida = preferencias.otorgar(
+        ctx.boveda, params["id_persona"], params["canal"],
+        version_texto=(cuerpo or {}).get("version_texto"),
+        origen=(cuerpo or {}).get("origen") or "edicion")
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("DELETE", "/panelistas/<id_persona>/canales/<canal>", "gestionar_canales",
+      requisito="R4.4")
+def revocar_canal(ctx, actor, params, cuerpo, consulta):
+    """Deja de ser elegible para ese canal, sin afectar los otros.
+
+    Es la mitigación mínima del riesgo de cumplimiento que anota la spec: sin
+    canal de entrada, un «STOP» o un bloqueo en WhatsApp no llega al sistema,
+    así que la revocación tiene que poder hacerse a mano."""
+    salida = preferencias.revocar(ctx.boveda, params["id_persona"], params["canal"])
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("PUT", "/encuestas/<encuesta_id>/flow", "fieldear", requisito="R4.5")
+def configurar_flow(ctx, actor, params, cuerpo, consulta):
+    salida = encuestas.configurar_flow(
+        ctx.boveda, _entero(params["encuesta_id"]),
+        flow_id=(cuerpo or {}).get("flow_id"),
+        plantilla=(cuerpo or {}).get("plantilla"),
+        idioma=(cuerpo or {}).get("idioma"))
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("GET", "/encuestas/<encuesta_id>/flow", "leer", requisito="R4.5")
+def estado_flow(ctx, actor, params, cuerpo, consulta):
+    """Valida contra Meta que el Flow esté publicado y la plantilla aprobada.
+
+    Se consulta **antes** de convocar: una plantilla rechazada no se arregla
+    sola y descubrirlo al enviar significa haber convocado a gente a la que no
+    se le puede mandar nada."""
+    return 200, encuestas.estado_flow(ctx.boveda, _entero(params["encuesta_id"]))
+
+
+@ruta("GET", "/encuestas/<encuesta_id>/whatsapp", "leer", requisito="R4.5")
+def destinatarios_whatsapp(ctx, actor, params, cuerpo, consulta):
+    """A quiénes se les puede enviar y a quiénes no, discriminado por motivo."""
+    return 200, encuestas.destinatarios_whatsapp(
+        ctx.boveda, _entero(params["encuesta_id"]))
+
+
+@ruta("POST", "/encuestas/<encuesta_id>/whatsapp", "enviar_whatsapp",
+      requisito="R4.5")
+def enviar_whatsapp(ctx, actor, params, cuerpo, consulta):
+    """Manda el Flow. No es automático al convocar: es una acción explícita.
+
+    Reintentar no reenvía a quien ya recibió."""
+    return 200, encuestas.enviar_por_whatsapp(
+        ctx.boveda, _entero(params["encuesta_id"]),
+        ids_persona=(cuerpo or {}).get("ids_persona"))
+
+
+@ruta("GET", "/diagnostico/contacto", "cumplimiento", requisito="R4.3, R4.5")
+def diagnostico_contacto(ctx, actor, params, cuerpo, consulta):
+    """Qué tan endurecida está la landing y si el canal de WhatsApp está listo.
+
+    Va junto al resto del diagnóstico de Cumplimiento porque las tres cosas
+    que informa —proveedor de códigos, desafío y credenciales de Meta— son
+    condiciones para poder anunciar la landing y para poder enviar, y su
+    ausencia no puede ser una sorpresa."""
+    return 200, {
+        "verificacion": verificacion_contacto.diagnostico(),
+        "desafio": desafio.diagnostico(),
+        "whatsapp": whatsapp.diagnostico(),
+    }
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Fase 4 · 4B — Inteligencia
+# ════════════════════════════════════════════════════════════════════
+
+# ── R4.1.b · Series comparables ──────────────────────────────────────
+
+@ruta("GET", "/series", "leer", requisito="R4.1.b")
+def listar_series(ctx, actor, params, cuerpo, consulta):
+    return 200, {"items": series.listar(
+        ctx.semantica, incluir_inactivas=_bandera(consulta.get("inactivas")))}
+
+
+@ruta("POST", "/series", "gestionar_series", requisito="R4.1.b")
+def crear_serie(ctx, actor, params, cuerpo, consulta):
+    salida = series.crear(ctx.semantica, ctx.boveda, cuerpo or {}, actor=actor)
+    ctx.semantica.commit()
+    ctx.boveda.commit()
+    return 201, salida
+
+
+@ruta("GET", "/series/<clave>", "leer", requisito="R4.1.b")
+def ver_serie(ctx, actor, params, cuerpo, consulta):
+    return 200, series.obtener(ctx.semantica, params["clave"])
+
+
+@ruta("PATCH", "/series/<clave>", "gestionar_series", requisito="R4.1.b")
+def editar_serie(ctx, actor, params, cuerpo, consulta):
+    salida = series.editar(ctx.semantica, ctx.boveda, params["clave"],
+                           cuerpo or {}, actor=actor)
+    ctx.semantica.commit()
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("POST", "/series/<clave>/categorias", "gestionar_series",
+      requisito="R4.1.b")
+def agregar_categoria_de_serie(ctx, actor, params, cuerpo, consulta):
+    salida = series.agregar_categoria(ctx.semantica, ctx.boveda, params["clave"],
+                                      cuerpo or {}, actor=actor)
+    ctx.semantica.commit()
+    ctx.boveda.commit()
+    return 201, salida
+
+
+@ruta("POST", "/series/<clave>/preguntas", "gestionar_series",
+      requisito="R4.1.b")
+def agregar_pregunta_a_serie(ctx, actor, params, cuerpo, consulta):
+    """Declara que esta pregunta es la misma medición que las otras.
+
+    El sistema puede haberla sugerido, pero agregarla es siempre un acto de
+    una persona: por eso esto es un POST y no un efecto de pedir sugerencias.
+    """
+    cuerpo = cuerpo or {}
+    if not cuerpo.get("pregunta_id"):
+        raise DatosInvalidos("Falta `pregunta_id`.")
+    salida = series.agregar_pregunta(
+        ctx.semantica, ctx.boveda, params["clave"],
+        _entero(cuerpo["pregunta_id"]), mapeo=cuerpo.get("mapeo"),
+        origen=cuerpo.get("origen") or "declarada", actor=actor)
+    ctx.semantica.commit()
+    ctx.boveda.commit()
+    return 201, salida
+
+
+@ruta("DELETE", "/series/<clave>/preguntas/<pregunta_id>", "gestionar_series",
+      requisito="R4.1.b")
+def quitar_pregunta_de_serie(ctx, actor, params, cuerpo, consulta):
+    salida = series.quitar_pregunta(
+        ctx.semantica, ctx.boveda, params["clave"],
+        _entero(params["pregunta_id"]), actor=actor)
+    ctx.semantica.commit()
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("PUT", "/series/<clave>/preguntas/<pregunta_id>/mapeo",
+      "gestionar_series", requisito="R4.1.b")
+def mapear_opciones(ctx, actor, params, cuerpo, consulta):
+    salida = series.mapear(
+        ctx.semantica, ctx.boveda, params["clave"],
+        _entero(params["pregunta_id"]), (cuerpo or {}).get("mapeo") or {},
+        actor=actor)
+    ctx.semantica.commit()
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("GET", "/series/<clave>/sugerencias", "gestionar_series",
+      requisito="R4.1.b")
+def sugerencias_de_serie(ctx, actor, params, cuerpo, consulta):
+    """Preguntas candidatas de otras olas. **Propone; no agrega ninguna.**"""
+    salida = series.sugerir(
+        ctx.semantica, params["clave"],
+        pregunta_id=consulta.get("pregunta_id"),
+        proveedor=ctx.embeddings)
+    # El embedding del texto de cada pregunta se cachea la primera vez: vale
+    # la pena persistirlo aunque la ruta sea de lectura.
+    ctx.semantica.commit()
+    return 200, salida
+
+
+@ruta("GET", "/preguntas", "leer", requisito="R4.1.b")
+def preguntas_del_corpus(ctx, actor, params, cuerpo, consulta):
+    """Las preguntas de todas las olas, para armar una serie.
+
+    La primera pregunta de una serie no se puede sugerir —sin una de
+    referencia no hay contra qué comparar—, así que tiene que poder elegirse
+    de una lista."""
+    return 200, {"items": series.preguntas_disponibles(
+        ctx.semantica, clave_o_id=consulta.get("serie"),
+        cuestionario_id=_entero(consulta["cuestionario"])
+                        if consulta.get("cuestionario") else None)}
+
+
+@ruta("GET", "/series/<clave>/auditoria", "leer", requisito="R4.1.b")
+def auditoria_de_serie(ctx, actor, params, cuerpo, consulta):
+    return 200, {"items": series.auditoria(ctx.boveda, params["clave"])}
+
+
+# ── R4.1.c · Vista longitudinal ──────────────────────────────────────
+
+@ruta("GET", "/panelistas/<id_persona>/longitudinal", "reidentificar",
+      requisito="R4.1.c")
+def linea_de_tiempo(ctx, actor, params, cuerpo, consulta):
+    """En qué olas participó y qué contestó en cada una.
+
+    Pide `reidentificar` y no `leer`: ver la línea de tiempo de una persona
+    identificada es justo la operación que deshace la seudonimización. Queda
+    registrada (R3.10), y el módulo lo hace por su cuenta para que ninguna
+    ruta se pueda olvidar."""
+    salida = longitudinal.de_persona(
+        ctx.boveda, ctx.semantica, params["id_persona"], actor=actor)
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("GET", "/series/<clave>/transiciones", "leer", requisito="R4.1.c")
+def transiciones_de_serie(ctx, actor, params, cuerpo, consulta):
+    """Cuántas personas pasaron de cada categoría a cada otra entre dos olas.
+
+    No reidentifica: son conteos sobre `id_persona`."""
+    return 200, longitudinal.transiciones(
+        ctx.semantica, params["clave"],
+        desde=consulta.get("desde"), hasta=consulta.get("hasta"))
+
+
+# ── R4.2 · Optimizador de muestreo ───────────────────────────────────
+
+@ruta("GET", "/encuestas/<encuesta_id>/optimizar", "muestrear",
+      requisito="R4.2")
+def optimizar_muestra(ctx, actor, params, cuerpo, consulta):
+    """La selección que mejor cierra la brecha respetando lo duro.
+
+    **Propone.** Convocar sigue siendo una acción explícita, igual que con las
+    reglas de R3.1."""
+    return 200, optimizador.optimizar(
+        ctx.boveda, _entero(params["encuesta_id"]),
+        dimension=consulta.get("dimension", "sexo"),
+        cantidad=consulta.get("cantidad", 100),
+        estado=consulta.get("estado", "activo"),
+        canal=consulta.get("canal"))
+
+
+@ruta("GET", "/encuestas/<encuesta_id>/optimizar/comparar", "muestrear",
+      requisito="R4.2")
+def comparar_metodos(ctx, actor, params, cuerpo, consulta):
+    """La misma pregunta por los dos métodos, para poder justificar el cambio."""
+    return 200, optimizador.comparar(
+        ctx.boveda, _entero(params["encuesta_id"]),
+        dimension=consulta.get("dimension", "sexo"),
+        cantidad=consulta.get("cantidad", 100),
+        estado=consulta.get("estado", "activo"),
+        canal=consulta.get("canal"))
+
+
+@ruta("GET", "/paneles/<panel_id>/pesos-optimizador", "leer", requisito="R4.2")
+def ver_pesos(ctx, actor, params, cuerpo, consulta):
+    return 200, optimizador.obtener_pesos(ctx.boveda, _entero(params["panel_id"]))
+
+
+@ruta("PUT", "/paneles/<panel_id>/pesos-optimizador", "configurar_optimizador",
+      requisito="R4.2")
+def guardar_pesos(ctx, actor, params, cuerpo, consulta):
+    salida = optimizador.guardar_pesos(
+        ctx.boveda, _entero(params["panel_id"]), cuerpo or {}, actor=actor)
     ctx.boveda.commit()
     return 200, salida
 

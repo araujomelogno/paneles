@@ -11,6 +11,20 @@ import {
 
 const VERSION = () => window.VERSION_CONSENTIMIENTO || 'consentimiento-2026-01';
 
+/* R4.4 — los cuatro canales, con qué significa aceptar cada uno. El de
+   WhatsApp dice explícitamente que va a recibir mensajes de Equipos: es lo
+   que hay que poder demostrar ante Meta si alguien reclama. */
+const CANALES = [
+  ['whatsapp', 'WhatsApp',
+   'Recibe mensajes de Equipos en su celular para invitarla a los estudios. '
+   + 'Exige celular válido.'],
+  ['email', 'Correo electrónico', 'Recibe las invitaciones por correo.'],
+  ['telefono', 'Teléfono', 'Acepta que la llamen.'],
+  ['sms', 'SMS', 'Recibe mensajes de texto. Exige celular válido.'],
+];
+
+const ETIQUETA_CANAL = Object.fromEntries(CANALES.map(([k, v]) => [k, v]));
+
 let filtro = { q: '', panel_id: '', sin_panel: false };
 let contexto = {};
 
@@ -127,6 +141,64 @@ async function cargarTabla() {
   $$('[data-ficha]', contenedor).forEach((boton) => {
     boton.onclick = () => contexto.irA('panelistas', { idPersona: boton.dataset.ficha });
   });
+}
+
+async function cambiarCanal(idPersona, canal, activar) {
+  const etiqueta = ETIQUETA_CANAL[canal] || canal;
+  if (!activar && !await confirmar({
+    titulo: `Revocar ${etiqueta}`,
+    cuerpo: `<p>Deja de ser elegible para ese canal. <strong>No afecta a los
+      otros</strong> ni al consentimiento de contacto: son ejes distintos.</p>
+      <p>Queda registrado con su fecha, para poder mostrar cuándo dejó de
+      aceptarlo.</p>`,
+    textoOk: 'Revocar',
+  })) return;
+  try {
+    if (activar) {
+      await api.canales.otorgar(idPersona, canal, VERSION());
+    } else {
+      await api.canales.revocar(idPersona, canal);
+    }
+    toast(activar ? `${etiqueta} registrado.` : `${etiqueta} revocado.`, 'ok');
+    contexto.irA('panelistas', { idPersona });
+  } catch (error) {
+    toast(error.message, 'err');
+  }
+}
+
+/* R4.4 — los canales de la persona.
+
+   La tarjeta dice también **con qué texto** aceptó cada uno: sin eso, «aceptó
+   recibir WhatsApp» es una afirmación sin respaldo, y es justo lo que hay que
+   poder mostrar si Meta o la propia persona lo reclaman. */
+function pintarCanales(ficha) {
+  const activos = Object.fromEntries(
+    (ficha.canales || []).map((c) => [c.canal, c]));
+  return `<div class="table-wrap"><table>
+    <thead><tr><th>Canal</th><th>Estado</th><th>Texto aceptado</th>
+      <th>Origen</th><th></th></tr></thead>
+    <tbody>${CANALES.map(([clave, titulo]) => {
+      const preferencia = activos[clave];
+      const activo = preferencia?.activa;
+      return `<tr>
+        <td class="td-strong">${esc(titulo)}</td>
+        <td><span class="badge ${activo ? 'est-vigente' : 'badge-off'}">
+          ${activo ? 'acepta' : (preferencia ? 'revocado' : 'sin registrar')}</span></td>
+        <td class="small mono muted">${esc(preferencia?.version_texto || '—')}</td>
+        <td class="small muted">${esc(preferencia?.origen || '—')}</td>
+        <td class="td-acciones">
+          <button class="btn btn-outline btn-sm ${activo ? 'btn-del' : ''}"
+            data-canal="${clave}" data-activar="${activo ? '0' : '1'}">
+            ${activo ? 'Revocar' : 'Registrar'}</button>
+        </td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table></div>
+  <div class="small muted" style="padding:.75rem 1.5rem">
+    Para enviar por un canal hacen falta <strong>los dos ejes</strong>: el
+    consentimiento de contacto y la preferencia de ese canal. Sin canal de
+    entrada de WhatsApp, un «STOP» no llega solo: si alguien pide que no le
+    escriban más, se revoca desde acá.</div>`;
 }
 
 /* R3.14 — los segmentadores de la persona, con su procedencia.
@@ -300,6 +372,25 @@ function abrirAlta(paneles) {
       <div class="form-group"><label>Observaciones</label>
         <textarea class="finput" name="observaciones" placeholder="Texto libre; puede contener dato sensible."></textarea></div>
 
+      <!-- R4.4 — por dónde acepta que la contacten. Es un eje distinto del
+           consentimiento de abajo: ese dice si se la puede contactar, este
+           dice por dónde. Para enviar por un canal hacen falta los dos. -->
+      <div class="form-group">
+        <label>Canales de contacto aceptados</label>
+        <div class="finalidades">
+          ${CANALES.map(([clave, titulo, detalle]) => `
+          <label class="finalidad">
+            <input type="checkbox" name="canales" data-lista="1" value="${clave}" />
+            <span>
+              <span class="f-titulo">${esc(titulo)}</span>
+              <span class="f-desc">${esc(detalle)}</span>
+            </span>
+          </label>`).join('')}
+        </div>
+        <div class="field-hint">WhatsApp necesita un celular en formato
+          internacional válido: sin él, la preferencia no se puede activar.</div>
+      </div>
+
       <div class="form-group">
         <label>Consentimiento — versión ${esc(VERSION())}</label>
         <div class="finalidades">
@@ -355,6 +446,9 @@ async function guardarAlta(caja, paneles) {
     })),
     origen: datos.origen, id_en_origen: datos.id_en_origen,
     panel_id: datos.panel_id ? Number(datos.panel_id) : null,
+    // R4.4 — los canales aceptados, con el texto con que se aceptaron.
+    canales: datos.canales || [],
+    version_texto_canales: VERSION(),
   };
 
   try {
@@ -367,6 +461,11 @@ async function guardarAlta(caja, paneles) {
     } else {
       toast('Panelista enrolado.', 'ok');
     }
+    // Un canal que no se pudo activar no voltea el alta, pero tampoco se
+    // calla: lo más común es WhatsApp sin un celular válido.
+    (resultado.canales?.rechazadas || []).forEach((r) => toast(
+      `No se pudo activar ${ETIQUETA_CANAL[r.canal] || r.canal}: ${r.motivo}`,
+      'err'));
     await cargarTabla();
   } catch (error) {
     alerta$.innerHTML = alerta(error.message);
@@ -448,6 +547,14 @@ async function renderFicha(main, idPersona) {
 
         <div class="card">
           <div class="card-header">
+            <span class="card-header-title">Canales de contacto</span>
+            <span class="small muted">por dónde acepta que la contactemos</span>
+          </div>
+          <div class="card-body tight">${pintarCanales(ficha)}</div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
             <span class="card-header-title">Atributos demográficos</span>
             <span class="small muted">con los que se filtra y se fijan cuotas</span>
           </div>
@@ -525,6 +632,11 @@ async function renderFicha(main, idPersona) {
 
   $('#otorgar').onclick = () => abrirOtorgar(idPersona);
   $('#alias-editar').onclick = (e) => { e.preventDefault(); abrirAlias(ficha); };
+  // R4.4 — registrar o revocar un canal desde la ficha.
+  $$('[data-canal]', main).forEach((boton) => {
+    boton.onclick = () => cambiarCanal(
+      ficha.id_persona, boton.dataset.canal, boton.dataset.activar === '1');
+  });
   $$('[data-retiro]', main).forEach((boton) => {
     boton.onclick = () => retirar(idPersona, boton.dataset.retiro, p.nombre);
   });

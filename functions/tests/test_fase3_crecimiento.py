@@ -11,8 +11,11 @@ import pathlib
 
 import pytest
 
-from panel_api import auth, db, inscripciones as ins, paneles, personas
-from panel_api.errores import DatosInvalidos
+from panel_api import (
+    auth, db, inscripciones as ins, paneles, personas,
+    verificacion_contacto as verificacion,
+)
+from panel_api.errores import Conflicto, DatosInvalidos
 
 RAIZ = pathlib.Path(__file__).resolve().parents[2]
 VERSION = "2026-09"
@@ -36,10 +39,34 @@ def _envio(**extra):
     return cuerpo
 
 
+def _verificar(conn, cuerpo):
+    """R4.3 — desde Fase 4, la landing no acepta un contacto sin verificar.
+
+    Los envíos de estas pruebas pasan por el mismo camino que la persona: se
+    pide el código y se comprueba. Sin proveedor de envío configurado el
+    código vuelve en la respuesta, que es el modo de desarrollo.
+    """
+    datos = cuerpo.get("persona") or cuerpo
+    for canal, campo in ((verificacion.EMAIL, "email"),
+                         (verificacion.CELULAR, "celular")):
+        if not datos.get(campo):
+            continue
+        pedido = verificacion.pedir_codigo(conn, canal, datos[campo])
+        verificacion.verificar(conn, canal, datos[campo],
+                               pedido["codigo_sin_enviar"])
+
+
+def _inscribir(conn, **extra):
+    """Verifica el contacto y después inscribe, que es el flujo real."""
+    cuerpo = _envio(**extra)
+    _verificar(conn, cuerpo)
+    return ins.inscribir(conn, cuerpo)
+
+
 # ── R3.7 · Inscripción pública ──────────────────────────────────────
 
 def test_una_inscripcion_registra_consentimiento_con_su_version(conn_boveda, con_texto):
-    ins.inscribir(conn_boveda, _envio())
+    _inscribir(conn_boveda)
 
     pendiente = ins.listar(conn_boveda)[0]
     assert pendiente["version_texto"] == VERSION
@@ -50,7 +77,7 @@ def test_una_inscripcion_registra_consentimiento_con_su_version(conn_boveda, con
 def test_sin_aceptar_el_consentimiento_la_inscripcion_se_rechaza(conn_boveda,
                                                                  con_texto):
     with pytest.raises(DatosInvalidos, match="aceptar el consentimiento"):
-        ins.inscribir(conn_boveda, _envio(acepto_consentimiento=False))
+        _inscribir(conn_boveda, acepto_consentimiento=False)
 
     assert ins.listar(conn_boveda) == [], "no puede guardar los datos «mientras tanto»"
 
@@ -58,13 +85,13 @@ def test_sin_aceptar_el_consentimiento_la_inscripcion_se_rechaza(conn_boveda,
 def test_sin_texto_publicado_el_formulario_no_recibe(conn_boveda):
     assert ins.formulario(conn_boveda)["puede_recibir"] is False
     with pytest.raises(DatosInvalidos, match="no está habilitado"):
-        ins.inscribir(conn_boveda, _envio())
+        _inscribir(conn_boveda)
 
 
 def test_una_inscripcion_no_crea_ninguna_persona(conn_boveda, con_texto):
     """De acá sale, gratis, «no puede ser convocada ni aparecer en consultas
     semánticas»: no existe como panelista hasta que alguien la apruebe."""
-    ins.inscribir(conn_boveda, _envio())
+    _inscribir(conn_boveda)
 
     assert db.una(conn_boveda, "select count(*)::int as n from persona")["n"] == 0
     assert ins.listar(conn_boveda)[0]["estado"] == "pendiente"
@@ -73,7 +100,7 @@ def test_una_inscripcion_no_crea_ninguna_persona(conn_boveda, con_texto):
 def test_al_aprobar_recien_ahi_se_crea_la_persona(conn_boveda, con_texto, actor):
     panel = paneles.crear(conn_boveda, "General")
     conn_boveda.commit()
-    ins.inscribir(conn_boveda, _envio())
+    _inscribir(conn_boveda)
     pendiente = ins.listar(conn_boveda)[0]
 
     resultado = ins.aprobar(conn_boveda, pendiente["id"], actor("operaciones"),
@@ -111,7 +138,7 @@ def test_la_inscripcion_de_alguien_que_ya_existe_reutiliza_su_id(
     })
     conn_boveda.commit()
 
-    ins.inscribir(conn_boveda, _envio())
+    _inscribir(conn_boveda)
     pendiente = ins.listar(conn_boveda)[0]
     assert pendiente["resolucion"] == "reutiliza"
     resultado = ins.aprobar(conn_boveda, pendiente["id"], actor("operaciones"))
@@ -136,10 +163,10 @@ def test_la_respuesta_publica_no_revela_si_la_persona_ya_estaba(
     })
     conn_boveda.commit()
 
-    conocida = ins.inscribir(conn_boveda, _envio())
-    desconocida = ins.inscribir(conn_boveda, _envio(persona={
+    conocida = _inscribir(conn_boveda)
+    desconocida = _inscribir(conn_boveda, persona={
         "nombre": "Zoe Nueva", "email": "zoe@ejemplo.uy", "documento": "9999999"
-    }))
+    })
 
     assert conocida == desconocida, (
         "las dos respuestas tienen que ser idénticas: la diferencia sería "
@@ -160,11 +187,9 @@ def test_el_caso_ambiguo_va_a_revision_y_no_se_fusiona(conn_boveda, con_texto, a
     })
     conn_boveda.commit()
 
-    ins.inscribir(conn_boveda, {
-        "persona": {"nombre": "Juan Gómez", "email": "juan2@ejemplo.uy",
-                    "fecha_nacimiento": "1990-01-01"},
-        "acepto_consentimiento": True,
-    })
+    _inscribir(conn_boveda, persona={
+        "nombre": "Juan Gómez", "email": "juan2@ejemplo.uy",
+        "fecha_nacimiento": "1990-01-01"})
     pendiente = ins.listar(conn_boveda)[0]
     # El email lo desambigua en el envío; se lo saca para forzar el caso.
     db.ejecutar(conn_boveda, "update inscripcion set email = null where id = %s",
@@ -190,7 +215,7 @@ def test_publicar_una_version_nueva_no_altera_lo_ya_consentido(
 ):
     """R3.7 — «cambiar el texto no altera lo que ya consintieron los
     inscriptos anteriores»."""
-    ins.inscribir(conn_boveda, _envio())
+    _inscribir(conn_boveda)
     aprobada = ins.aprobar(conn_boveda, ins.listar(conn_boveda)[0]["id"],
                            actor("operaciones"))
     antes = db.una(
@@ -221,7 +246,7 @@ def test_un_envio_con_una_version_vieja_se_rechaza(conn_boveda, con_texto, actor
                        "Texto nuevo.", actor("dpo"))
 
     with pytest.raises(DatosInvalidos, match="cambió mientras completabas"):
-        ins.inscribir(conn_boveda, _envio(version_texto=VERSION))
+        _inscribir(conn_boveda, version_texto=VERSION)
 
 
 def test_la_landing_no_expone_datos_de_otros_panelistas(conn_boveda, con_texto):
@@ -243,7 +268,7 @@ def test_la_landing_no_expone_datos_de_otros_panelistas(conn_boveda, con_texto):
 
 
 def test_rechazar_una_inscripcion_no_crea_persona(conn_boveda, con_texto, actor):
-    ins.inscribir(conn_boveda, _envio())
+    _inscribir(conn_boveda)
     pendiente = ins.listar(conn_boveda)[0]
 
     ins.rechazar(conn_boveda, pendiente["id"], actor("operaciones"), "datos falsos")
@@ -255,7 +280,7 @@ def test_rechazar_una_inscripcion_no_crea_persona(conn_boveda, con_texto, actor)
 def test_una_inscripcion_ya_resuelta_no_se_aprueba_dos_veces(
     conn_boveda, con_texto, actor
 ):
-    ins.inscribir(conn_boveda, _envio())
+    _inscribir(conn_boveda)
     pendiente = ins.listar(conn_boveda)[0]
     ins.aprobar(conn_boveda, pendiente["id"], actor("operaciones"))
 
@@ -266,13 +291,23 @@ def test_una_inscripcion_ya_resuelta_no_se_aprueba_dos_veces(
 def test_las_rutas_publicas_son_solo_esas_dos():
     """R3.7 — la landing es la única superficie sin login, y tiene que
     seguir siéndolo: cualquier ruta nueva que caiga acá sin querer es un
-    agujero."""
+    agujero.
+
+    R4.3 sumó dos, y son del mismo formulario: pedir el código de
+    verificación y comprobarlo. Si necesitaran token, verificar el contacto
+    desde la landing sería imposible. Las dos tienen su propio límite de tasa
+    y pasan por el desafío anti-automatización.
+    """
     from panel_api import ruteo
 
     assert ruteo.PUBLICAS == frozenset({
         ("GET", "/inscripciones/formulario"),
         ("POST", "/inscripciones"),
+        ("POST", "/inscripciones/verificacion"),
+        ("POST", "/inscripciones/verificacion/comprobar"),
     })
+    # Y ninguna de las cuatro lee datos de otros panelistas.
+    assert ruteo.es_publica("GET", "/inscripciones/1") is False
     assert ruteo.es_publica("POST", "/inscripciones") is True
     assert ruteo.es_publica("GET", "/inscripciones") is False, (
         "la bandeja de aprobación no es pública"

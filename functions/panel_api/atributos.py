@@ -29,6 +29,13 @@ La fecha de nacimiento gana siempre que exista.
 filtro devuelva siempre lo mismo y que la aritmética de cuotas cierre, pero
 congela el error si el mapeo salió mal. Por eso cada valor guarda también lo
 que decía el archivo: con eso se recalcula sin volver a pedir nada (R3.14.h).
+
+**R4.1.a — los valores no se pisan: se cierran.** Cada fila de
+`persona_atributo` vale en `[desde, hasta)`; la vigente es la de `hasta is
+null`. Cambiar un valor cierra el anterior e inserta uno nuevo, así que el
+historial queda. Sin eso, recalcular la composición de una ola de hace un año
+la calculaba con la demografía de hoy: no era una feature que faltaba, era un
+número que estaba mal y no avisaba.
 """
 
 import json
@@ -456,11 +463,16 @@ def _resolver_categoria(conn, atributo, crudo):
     return fila
 
 
-def valores_de(conn, id_persona, incluir_especiales=True):
+def valores_de(conn, id_persona, incluir_especiales=True, momento=None):
     """Los atributos efectivos de una persona, resueltos por la vista.
 
     Es lo que ve la ficha: valor, etiqueta, de dónde salió y —para los
     derivados— si se derivó, se envejeció o se cargó tal cual (R3.14.g).
+
+    R4.1.a — con `momento` devuelve los valores que estaban vigentes en esa
+    fecha, incluidos los derivados: la edad de una persona en una ola de 2024
+    es la que tenía en 2024, no la de hoy. Sin `momento`, el comportamiento es
+    exactamente el de antes.
     """
     filas = db.todas(
         conn,
@@ -469,15 +481,18 @@ def valores_de(conn, id_persona, incluir_especiales=True):
                v.valor_crudo, v.origen, v.procedencia,
                a.etiqueta as atributo_etiqueta, a.tipo, a.es_especial, a.orden,
                pa.fecha_referencia
-          from v_atributo_persona v
+          from f_atributo_persona(coalesce(%s::timestamptz, now())) v
           join atributo_demografico a on a.id = v.atributo_id
           left join persona_atributo pa
                  on pa.id_persona = v.id_persona and pa.atributo_id = v.atributo_id
+                and pa.desde <= coalesce(%s::timestamptz, now())
+                and (pa.hasta is null
+                     or coalesce(%s::timestamptz, now()) < pa.hasta)
          where v.id_persona = %s
            and (%s::bool is not false or not a.es_especial)
          order by a.orden, a.clave
         """,
-        (id_persona, incluir_especiales),
+        (momento, momento, momento, id_persona, incluir_especiales),
     )
     return [
         {
@@ -502,22 +517,99 @@ def valores_de(conn, id_persona, incluir_especiales=True):
     ]
 
 
+def _antes(a, b):
+    """¿`a` es anterior a `b`? Compara aunque uno venga como texto ISO."""
+    import datetime
+
+    def normalizar(v):
+        if isinstance(v, str):
+            return datetime.datetime.fromisoformat(v.replace("Z", "+00:00"))
+        return v
+
+    a, b = normalizar(a), normalizar(b)
+    if a.tzinfo is None and b.tzinfo is not None:
+        a = a.replace(tzinfo=b.tzinfo)
+    elif b.tzinfo is None and a.tzinfo is not None:
+        b = b.replace(tzinfo=a.tzinfo)
+    return a < b
+
+
+def historial_de(conn, id_persona, clave=None):
+    """R4.1.a — todos los valores que tuvo una persona, con su vigencia.
+
+    El valor actual es el de `hasta = None`. Los derivados no aparecen: no se
+    guardan, se calculan, y su «historial» es el de la entrada de la que
+    derivan (la edad declarada) más el paso del tiempo.
+    """
+    filas = db.todas(
+        conn,
+        """
+        select a.clave, a.etiqueta as atributo_etiqueta, a.tipo, a.es_especial,
+               coalesce(c.clave, pa.valor_num::text, pa.valor_fecha::text) as valor,
+               coalesce(c.etiqueta, pa.valor_num::text,
+                        pa.valor_fecha::text) as etiqueta_valor,
+               pa.valor_crudo, pa.origen, pa.hasta, pa.actualizado_en,
+               case when pa.desde = '-infinity'::timestamptz then null
+                    else pa.desde end as desde
+          from persona_atributo pa
+          join atributo_demografico a on a.id = pa.atributo_id
+          left join atributo_categoria c on c.id = pa.categoria_id
+         where pa.id_persona = %s
+           and (%s::text is null or a.clave = %s::text)
+         order by a.orden, a.clave, pa.desde, pa.id
+        """,
+        (id_persona, clave, clave),
+    )
+    return [
+        {
+            "clave": f["clave"],
+            "etiqueta": f["atributo_etiqueta"],
+            "tipo": f["tipo"],
+            "es_especial": f["es_especial"],
+            "valor": f["valor"],
+            "etiqueta_valor": f["etiqueta_valor"],
+            "valor_crudo": f["valor_crudo"],
+            "origen": f["origen"],
+            # `-infinity` es el primer valor conocido: sabemos cuándo cambió,
+            # no cuándo empezó. Se informa como `None` para que la pantalla
+            # pueda decirlo con palabras en vez de mostrar una fecha falsa.
+            # `None` = el primer valor conocido: sabemos cuándo cambió, no
+            # cuándo empezó. La pantalla lo dice con palabras en vez de
+            # mostrar una fecha falsa.
+            "desde": f["desde"].isoformat() if f["desde"] else None,
+            "hasta": f["hasta"].isoformat() if f["hasta"] else None,
+            "vigente": f["hasta"] is None,
+        }
+        for f in filas
+    ]
+
+
 def _fila_actual(conn, id_persona, atributo_id):
+    """La fila vigente, que es la de vigencia abierta (R4.1.a)."""
     return db.una(
         conn,
         """
         select pa.id, pa.categoria_id, pa.valor_num, pa.valor_fecha,
-               pa.valor_crudo, c.clave as categoria
+               pa.valor_crudo, c.clave as categoria,
+               -- `-infinity` no entra en un `datetime` de Python, y además
+               -- `None` es justo lo que significa: no sabemos desde cuándo.
+               case when pa.desde = '-infinity'::timestamptz then null
+                    else pa.desde end as desde,
+               -- `now()` es la hora de inicio de la transacción, así que esto
+               -- es cierto exactamente cuando la fila la escribió esta misma
+               -- transacción. Ver el comentario de `fijar`.
+               (pa.actualizado_en = now()) as de_esta_transaccion
           from persona_atributo pa
           left join atributo_categoria c on c.id = pa.categoria_id
          where pa.id_persona = %s and pa.atributo_id = %s
+           and pa.hasta is null
         """,
         (id_persona, atributo_id),
     )
 
 
 def fijar(conn, id_persona, clave, valor, origen="edicion", crudo=None,
-          fecha_referencia=None, pisar=True):
+          fecha_referencia=None, pisar=True, vigencia_desde=None):
     """Fija el valor de un atributo para una persona.
 
     `pisar=False` implementa la regla del addendum R3.9.d, que es la que rige
@@ -581,35 +673,115 @@ def fijar(conn, id_persona, clave, valor, origen="edicion", crudo=None,
                 "en_el_archivo": canonico,
             }
 
+    # R4.1.a — el valor anterior no se pisa: se cierra. El nuevo abre su
+    # vigencia en el mismo instante en que el viejo la cierra, y como el
+    # intervalo es semiabierto no hay ningún momento con dos valores.
+    #
+    # `vigencia_desde` existe para cargar un cambio que ya ocurrió: un archivo
+    # de campo de hace seis meses trae la situación de entonces, no la de hoy.
+    # Sin él, la única fecha posible sería la de la carga y el historial diría
+    # que la persona cambió el día que alguien subió el archivo.
+    if actual and vigencia_desde is not None and actual["desde"] is not None:
+        if _antes(vigencia_desde, actual["desde"]):
+            # Insertar un valor **anterior** al que ya está vigente no es
+            # cerrar un período: es reescribir el pasado, y no hay una forma
+            # correcta de adivinar dónde encaja. Se informa y decide una
+            # persona, igual que con una discrepancia de carga.
+            raise Conflicto(
+                f"El valor que se quiere cargar para «{atributo['clave']}» "
+                f"vale desde una fecha anterior a la del valor vigente. "
+                f"Corregir el historial hacia atrás es una edición aparte.",
+                {"vigente_desde": str(actual["desde"]),
+                 "se_pide_desde": str(vigencia_desde)})
+
+    # ── Cómo se mueve la vigencia ────────────────────────────────────
+    # Un cambio cierra el valor anterior en `now()` —la hora de inicio de la
+    # transacción— y abre el nuevo en ese mismo instante, para que no quede un
+    # hueco en el medio.
+    #
+    # El caso que hay que tratar aparte es el de **dos cambios en la misma
+    # transacción**, que es lo que hace una carga que corrige un valor que
+    # acaba de escribir. Ahí `now()` es el mismo para los dos, y cerrar el
+    # primero dejaría un intervalo que afirma que ese valor rigió desde
+    # siempre hasta ahora, cuando en realidad nunca existió fuera de la
+    # transacción. Eso envenenaría toda composición retroactiva. Una
+    # transacción es atómica: desde afuera, el único valor que existió es el
+    # último. Así que en ese caso el valor se **pisa**, que es lo que
+    # corresponde, y el historial no registra un cambio que nadie pudo ver.
+    if actual and actual["de_esta_transaccion"] and vigencia_desde is None:
+        db.ejecutar(
+            conn,
+            """
+            update persona_atributo
+               set categoria_id = %s, valor_num = %s, valor_fecha = %s,
+                   valor_crudo = %s, origen = %s, fecha_referencia = %s,
+                   actualizado_en = now()
+             where id = %s
+            """,
+            (categoria_id, valor_num, valor_fecha, crudo, origen,
+             fecha_referencia, actual["id"]))
+        return {"estado": "completado", "clave": atributo["clave"],
+                "valor": canonico}
+
+    if actual:
+        db.ejecutar(
+            conn,
+            "update persona_atributo "
+            "   set hasta = coalesce(%s::timestamptz, now()) where id = %s",
+            (vigencia_desde, actual["id"]))
+
+    # R4.1.a — el **primer** valor de un atributo vale desde siempre. Sabemos
+    # cuándo un valor cambió; no sabemos cuándo el primero empezó, y ponerle
+    # la fecha de carga dejaría a la persona sin dato en toda composición
+    # retroactiva anterior a su alta. Es la misma regla con la que la
+    # migración 0010 sembró lo que ya existía.
+    primero = not actual and vigencia_desde is None
+
     db.ejecutar(
         conn,
         """
         insert into persona_atributo
                (id_persona, atributo_id, categoria_id, valor_num, valor_fecha,
-                valor_crudo, origen, fecha_referencia, actualizado_en)
-             values (%s, %s, %s, %s, %s, %s, %s, %s, now())
-        on conflict (id_persona, atributo_id) do update
-               set categoria_id = excluded.categoria_id,
-                   valor_num = excluded.valor_num,
-                   valor_fecha = excluded.valor_fecha,
-                   valor_crudo = excluded.valor_crudo,
-                   origen = excluded.origen,
-                   fecha_referencia = excluded.fecha_referencia,
-                   actualizado_en = now()
+                valor_crudo, origen, fecha_referencia, desde, actualizado_en)
+             values (%s, %s, %s, %s, %s, %s, %s, %s,
+                     case when %s then '-infinity'::timestamptz
+                          else coalesce(%s::timestamptz, now()) end,
+                     now())
         """,
         (id_persona, atributo["id"], categoria_id, valor_num, valor_fecha,
-         crudo, origen, fecha_referencia),
+         crudo, origen, fecha_referencia, primero, vigencia_desde),
     )
-    return {"estado": "completado", "clave": atributo["clave"], "valor": canonico}
+    resultado = {"estado": "completado", "clave": atributo["clave"],
+                 "valor": canonico}
+    if actual:
+        resultado["valor_anterior"] = actual["categoria"] or (
+            str(actual["valor_num"]) if actual["valor_num"] is not None
+            else (actual["valor_fecha"].isoformat()
+                  if actual["valor_fecha"] else None))
+    return resultado
 
 
 def borrar_valor(conn, id_persona, clave):
+    """Deja a la persona sin valor vigente para el atributo.
+
+    R4.1.a — cierra la vigencia en vez de borrar la fila. Que hoy no tenga
+    valor no significa que nunca lo haya tenido, y una composición de una ola
+    pasada tiene que seguir contándola en la categoría de entonces.
+    """
     atributo = obtener(conn, clave)
+    actual = _fila_actual(conn, id_persona, atributo["id"])
+    if not actual:
+        return {"clave": atributo["clave"], "borrados": 0, "cerrados": 0}
+    if actual["de_esta_transaccion"]:
+        # Escrito y borrado en la misma transacción: nunca existió afuera, y
+        # cerrarlo dejaría en el historial un período que nadie vivió.
+        n = db.ejecutar(conn, "delete from persona_atributo where id = %s",
+                        (actual["id"],))
+        return {"clave": atributo["clave"], "borrados": n, "cerrados": 0}
     n = db.ejecutar(
-        conn,
-        "delete from persona_atributo where id_persona = %s and atributo_id = %s",
-        (id_persona, atributo["id"]))
-    return {"clave": atributo["clave"], "borrados": n}
+        conn, "update persona_atributo set hasta = now() where id = %s",
+        (actual["id"],))
+    return {"clave": atributo["clave"], "borrados": n, "cerrados": n}
 
 
 # ── R3.14.h · Corregir un mapeo sin recargar el archivo ──────────────

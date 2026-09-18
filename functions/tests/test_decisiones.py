@@ -75,10 +75,15 @@ def test_las_garantias_que_afirma_siguen_siendo_ciertas():
     """Las afirmaciones puntuales del documento, contra el código."""
     from panel_api import auth, puntos, ruteo
 
-    # D29 — las rutas públicas son exactamente dos.
+    # D29 — las rutas públicas se enumeran una por una. Fase 4 sumó las dos
+    # de la verificación de contacto (R4.3): pedir el código y comprobarlo son
+    # parte del mismo formulario público, y si necesitaran token la
+    # verificación sería imposible desde la landing.
     assert ruteo.PUBLICAS == frozenset({
         ("GET", "/inscripciones/formulario"),
         ("POST", "/inscripciones"),
+        ("POST", "/inscripciones/verificacion"),
+        ("POST", "/inscripciones/verificacion/comprobar"),
     })
     assert not ruteo.es_publica("GET", "/inscripciones"), (
         "la bandeja de aprobación lista datos de personas: no puede ser pública"

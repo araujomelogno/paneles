@@ -156,6 +156,10 @@ export const cumplimiento = {
   /* Qué migraciones están aplicadas en cada base. Devuelve 500 cuando falta
      alguna, con el detalle en el cuerpo: la página lo lee de ahí. */
   esquema: () => GET('/diagnostico/esquema'),
+  // R4.3/R4.5 — si la landing está endurecida y si el canal de WhatsApp está
+  // listo. Va acá porque su ausencia es una condición para no anunciar la
+  // landing, no un detalle técnico.
+  contacto: () => GET('/diagnostico/contacto'),
 };
 
 export const encuestas = {
@@ -272,7 +276,11 @@ export const canjes = {
 
 export const inscripciones = {
   listar: (estadoInscripcion = 'pendiente') => GET('/inscripciones', { estado: estadoInscripcion }),
-  aprobar: (id, panelId) => POST(`/inscripciones/${id}/aprobar`, { panel_id: panelId }),
+  // R4.3 — con sus candidatos parecidos, para poder resolver sin buscar a mano.
+  ver: (id) => GET(`/inscripciones/${id}`),
+  aprobar: (id, panelId, idPersona) =>
+    POST(`/inscripciones/${id}/aprobar`,
+         { panel_id: panelId, id_persona: idPersona }),
   rechazar: (id, motivo) => POST(`/inscripciones/${id}/rechazar`, { motivo }),
   textos: (finalidad) => GET('/textos-consentimiento', finalidad ? { finalidad } : {}),
   publicarTexto: (finalidad, version, cuerpo) =>
@@ -285,6 +293,32 @@ export const sav = {
           { archivo_base64: archivoBase64 }, opciones),
   ingestar: (encuestaId, cuerpo, opciones) =>
     subir(`/encuestas/${encuestaId}/sav/ingesta`, cuerpo, opciones),
+};
+
+/* R4.4 — por qué canal acepta cada persona que la contacten.
+
+   Es un eje distinto del consentimiento por finalidad: ese dice si se la
+   puede contactar, este dice por dónde. Para enviar hacen falta los dos. */
+export const canales = {
+  deLaPersona: (idPersona) => GET(`/panelistas/${idPersona}/canales`),
+  otorgar: (idPersona, canal, versionTexto) =>
+    PUT(`/panelistas/${idPersona}/canales/${canal}`,
+        { version_texto: versionTexto, origen: 'edicion' }),
+  revocar: (idPersona, canal) =>
+    pedir('DELETE', `/panelistas/${idPersona}/canales/${canal}`),
+};
+
+/* R4.5 — el envío de una encuesta por WhatsApp Flow. El sistema solo envía:
+   las respuestas se bajan de Meta y se ingestan por el flujo de siempre. */
+export const flow = {
+  configurar: (encuestaId, cuerpo) => PUT(`/encuestas/${encuestaId}/flow`, cuerpo),
+  // Valida contra Meta que el Flow esté publicado y la plantilla aprobada.
+  // Se consulta antes de convocar, no al enviar.
+  estado: (encuestaId) => GET(`/encuestas/${encuestaId}/flow`),
+  destinatarios: (encuestaId) => GET(`/encuestas/${encuestaId}/whatsapp`),
+  enviar: (encuestaId, idsPersona) =>
+    POST(`/encuestas/${encuestaId}/whatsapp`,
+         idsPersona ? { ids_persona: idsPersona } : {}),
 };
 
 /* R3.14 — el catálogo de atributos demográficos.
@@ -348,3 +382,75 @@ export const exportacion = {
 
 export const panelDesdeConsulta = (nombre, resultado, definicion, descripcion) =>
   POST('/paneles/desde-consulta', { nombre, resultado, definicion, descripcion });
+
+/* ── Fase 4 · 4B — Inteligencia ─────────────────────────────────────── */
+
+/* R4.1.a — el historial de atributos.
+
+   `deLaPersona` sin `momento` sigue devolviendo los valores vigentes, que es
+   el comportamiento de siempre. Con `momento` devuelve los de esa fecha, y
+   ahí los derivados también: la edad en una ola de 2024 es la de 2024. */
+export const historial = {
+  deLaPersona: (idPersona, clave) =>
+    GET(`/panelistas/${idPersona}/atributos/historial`, clave ? { clave } : {}),
+  atributosA: (idPersona, momento) =>
+    GET(`/panelistas/${idPersona}/atributos`, { momento }),
+  /* La composición de una ola pasada. Se puede pedir por fecha o por
+     encuesta, que es como lo piensa un analista: no «al 1 de marzo» sino
+     «como estaba cuando salimos a campo». */
+  composicionDe: (panelId, { momento, encuesta, dimensiones }) =>
+    GET(`/paneles/${panelId}/composicion`, {
+      momento, encuesta, dimensiones: (dimensiones || []).join(',') || undefined,
+    }),
+};
+
+/* R4.1.b — series comparables entre olas.
+
+   `sugerencias` **propone**: nada entra a la serie hasta que alguien llama a
+   `agregarPregunta`. Por eso son dos llamadas y no una. */
+export const series = {
+  listar: (inactivas) => GET('/series', inactivas ? { inactivas: '1' } : {}),
+  ver: (clave) => GET(`/series/${clave}`),
+  crear: (cuerpo) => POST('/series', cuerpo),
+  editar: (clave, cambios) => PATCH(`/series/${clave}`, cambios),
+  agregarCategoria: (clave, categoria) =>
+    POST(`/series/${clave}/categorias`, categoria),
+  agregarPregunta: (clave, preguntaId, mapeo, origen) =>
+    POST(`/series/${clave}/preguntas`,
+         { pregunta_id: preguntaId, mapeo, origen }),
+  quitarPregunta: (clave, preguntaId) =>
+    pedir('DELETE', `/series/${clave}/preguntas/${preguntaId}`),
+  mapear: (clave, preguntaId, mapeo) =>
+    PUT(`/series/${clave}/preguntas/${preguntaId}/mapeo`, { mapeo }),
+  sugerencias: (clave, preguntaId) =>
+    GET(`/series/${clave}/sugerencias`,
+        preguntaId ? { pregunta_id: preguntaId } : {}),
+  transiciones: (clave, desde, hasta) =>
+    GET(`/series/${clave}/transiciones`, { desde, hasta }),
+  auditoria: (clave) => GET(`/series/${clave}/auditoria`),
+  /* Las preguntas del corpus, para elegir la primera de una serie. La
+     primera no se puede sugerir: sin una de referencia no hay contra qué
+     comparar. */
+  preguntasDisponibles: (clave) => GET('/preguntas', clave ? { serie: clave } : {}),
+};
+
+/* R4.1.c — la línea de tiempo de una persona.
+
+   Es una reidentificación y el backend la registra: no hay que hacer nada
+   acá, pero conviene saberlo antes de llamarla desde cualquier lado. */
+export const longitudinal = {
+  dePersona: (idPersona) => GET(`/panelistas/${idPersona}/longitudinal`),
+};
+
+/* R4.2 — optimizador de muestreo. Propone; convocar sigue siendo explícito. */
+export const optimizador = {
+  optimizar: (encuestaId, { dimension, cantidad, canal, estado }) =>
+    GET(`/encuestas/${encuestaId}/optimizar`,
+        { dimension, cantidad, canal, estado }),
+  comparar: (encuestaId, { dimension, cantidad, canal }) =>
+    GET(`/encuestas/${encuestaId}/optimizar/comparar`,
+        { dimension, cantidad, canal }),
+  pesos: (panelId) => GET(`/paneles/${panelId}/pesos-optimizador`),
+  guardarPesos: (panelId, pesos) =>
+    PUT(`/paneles/${panelId}/pesos-optimizador`, pesos),
+};

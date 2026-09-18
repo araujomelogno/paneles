@@ -33,11 +33,11 @@
       <ul><li>Ingreso · Recuperación de contraseña · Cuentas sin habilitar</li></ul></li>
     <li><a href="#s3"><span><span class="num">3</span> Panelistas</span></a>
       <ul><li>Buscar · Enrolar · Duplicados · Revisión de altas · La ficha ·
-      Cargar panelistas sin panel</li></ul></li>
+      Cargar panelistas sin panel · Canales de contacto</li></ul></li>
     <li><a href="#s4"><span><span class="num">4</span> Paneles</span></a>
       <ul><li>Crear · Agregar miembros · Dar de baja una membresía</li></ul></li>
     <li><a href="#s5"><span><span class="num">5</span> Encuestas</span></a>
-      <ul><li>Crear una ola · Convocar · Exportar la muestra · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Verificar el cruce</li></ul></li>
+      <ul><li>Crear una ola · Convocar · Exportar la muestra · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Enviar por WhatsApp · Verificar el cruce</li></ul></li>
     <li><a href="#s6"><span><span class="num">6</span> Consultas</span></a>
       <ul><li>Buscar por significado · El ranking y la evidencia ·
       Exclusiones · Reidentificación · Modos · Consultas guardadas</li></ul></li>
@@ -45,13 +45,19 @@
       <ul><li>Universo de referencia · Brecha · Cruce de dos dimensiones</li></ul></li>
     <li><a href="#s8"><span><span class="num">8</span> Participación</span></a>
       <ul><li>Tasa de respuesta · Último contacto · Fatiga del panel</li></ul></li>
-    <li><a href="#s9"><span><span class="num">9</span> Cumplimiento</span></a>
+    <li><a href="#s9"><span><span class="num">9</span> Análisis longitudinal</span></a>
+      <ul><li>Series comparables · Mapear opciones · Evolución entre olas ·
+      La historia de una persona · Composición de una ola pasada</li></ul></li>
+    <li><a href="#s10"><span><span class="num">10</span> Muestreo</span></a>
+      <ul><li>Reglas y optimizador · Por qué entró cada persona ·
+      Cuando la cuota no se puede cerrar · Los pesos</li></ul></li>
+    <li><a href="#s11"><span><span class="num">11</span> Cumplimiento</span></a>
       <ul><li>Retiro de consentimiento · Baja total · Auditoría de privacidad</li></ul></li>
-    <li><a href="#s10"><span><span class="num">10</span> Configuración</span></a>
+    <li><a href="#s12"><span><span class="num">12</span> Configuración</span></a>
       <ul><li>Alta de usuarios · Roles · Desactivación · Auditoría ·
       Atributos demográficos</li></ul></li>
-    <li><a href="#s11"><span><span class="num">11</span> Preguntas frecuentes</span></a></li>
-    <li><a href="#s12"><span><span class="num">12</span> Glosario</span></a></li>
+    <li><a href="#s13"><span><span class="num">13</span> Preguntas frecuentes</span></a></li>
+    <li><a href="#s14"><span><span class="num">14</span> Glosario</span></a></li>
   </ol>
 
 </div>
@@ -476,6 +482,110 @@
     <p>Cargar, consultar y recién entonces crear el panel con quienes interesen.
     Así se incorpora únicamente a quien corresponde, en lugar de sumar la base
     completa a un panel y depurarla después.</p>
+  </div>
+
+  <h3><span class="n">3.7</span> Canales de contacto</h3>
+
+  <p>El consentimiento de <i>contacto y participación</i> responde una
+  pregunta: <strong>si</strong> se puede contactar a esa persona. No responde
+  la otra: <strong>por dónde</strong>. Alguien puede aceptar que lo llamen por
+  teléfono y no querer recibir mensajes en su WhatsApp personal.</p>
+
+  <p>Por eso la ficha tiene una tarjeta aparte, <i>Canales de contacto</i>, con
+  los cuatro canales que el sistema maneja: WhatsApp, correo electrónico,
+  teléfono y SMS.</p>
+
+  <div class="aviso grave">
+    <div class="t">La regla de los dos ejes</div>
+    <p>Para enviar por un canal hacen falta <strong>los dos</strong>: el
+    consentimiento de contacto vigente <strong>y</strong> la preferencia de ese
+    canal activa. Si falta cualquiera de los dos, esa persona no recibe nada
+    por ese canal.</p>
+  </div>
+
+  <figure>
+    <img src="capturas/52-canales-ficha.jpg" alt="Canales de contacto de un panelista" />
+    <figcaption><b>Canales de una persona.</b> La columna <i>Texto aceptado</i>
+    identifica con qué texto se obtuvo cada autorización: es lo que la vuelve
+    demostrable.</figcaption>
+  </figure>
+
+  <p>Los canales se registran en los tres caminos por los que entra una
+  persona: al enrolarla a mano, al crearla desde un archivo de campo —declarando
+  qué variable evidencia la autorización, igual que con el consentimiento— y en
+  el formulario público, donde la propia persona los elige.</p>
+
+  <div class="aviso">
+    <div class="t">WhatsApp necesita un celular válido</div>
+    <p>El canal de WhatsApp exige un celular en formato internacional
+    (<code>+59899123456</code>). El sistema convierte los números escritos en
+    formato local, pero si el dato cargado no es un teléfono, la autorización
+    de WhatsApp no se puede activar y la pantalla lo informa. El alta se
+    completa igual: lo único que queda pendiente es ese canal.</p>
+  </div>
+
+  <h4>Cuando alguien pide que no le escriban más</h4>
+
+  <p>Se revoca el canal desde esta misma tarjeta. La revocación queda
+  registrada con su fecha y <strong>no afecta a los demás canales</strong> ni
+  al consentimiento de contacto: son decisiones distintas.</p>
+
+  <div class="aviso info">
+    <div class="t">Un pedido por WhatsApp no llega solo</div>
+    <p>El sistema envía mensajes de WhatsApp pero no recibe respuestas. Si una
+    persona bloquea el número o responde «STOP», ese pedido <strong>no llega
+    automáticamente</strong>: hay que revocarle el canal a mano desde acá. Los
+    reportes de Meta permiten detectar estos casos y conviene revisarlos
+    periódicamente.</p>
+  </div>
+
+  <h3><span class="n">3.8</span> El formulario público de inscripción</h3>
+
+  <p>Además del alta interna, una persona puede inscribirse por su cuenta desde
+  un formulario público. Esas solicitudes no crean panelistas: quedan en la
+  bandeja de <i>Inscripciones</i> hasta que alguien las aprueba, y recién ahí se
+  crea la persona.</p>
+
+  <h4>Verificación del contacto</h4>
+
+  <p>Quien se inscribe debe <strong>verificar su correo electrónico</strong>
+  con un código de un solo uso, y también su celular si lo declara. Sin esa
+  verificación la solicitud <strong>no llega a la bandeja</strong>.</p>
+
+  <figure>
+    <img src="capturas/51-landing-verificacion.jpg" alt="Formulario público con verificación" />
+    <figcaption><b>El formulario público.</b> Cada contacto tiene su botón de
+    verificación. Debajo del consentimiento, la persona elige por qué canales
+    acepta que la contacten.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Por qué se verifica</div>
+    <p>Un contacto sin verificar abarca dos situaciones y ambas son
+    problemáticas: un dato inventado, que ensucia la bandeja, y —más grave— el
+    dato de otra persona, que equivale a inscribir a alguien sin su
+    conocimiento. Los códigos vencen, la cantidad de intentos es limitada y
+    también lo es la cantidad de códigos que se pueden pedir.</p>
+  </div>
+
+  <h4>Al aprobar: los panelistas parecidos</h4>
+
+  <p>Este es el único camino en el que la persona completa sus datos sin que
+  nadie del equipo lo supervise, de modo que es donde resulta más probable que
+  alguien se inscriba dos veces con datos levemente distintos. Por eso, al
+  aprobar, la pantalla muestra los <strong>panelistas ya existentes que se le
+  parecen</strong> —por documento, correo, celular, o nombre y fecha de
+  nacimiento— indicando por cuál de esos datos coincide cada uno.</p>
+
+  <div class="aviso grave">
+    <div class="t">Se proponen, no se fusionan</div>
+    <p>Salvo la coincidencia exacta de documento, que el sistema resuelve solo,
+    <strong>la decisión es de quien aprueba</strong>. Una coincidencia de
+    correo o de nombre y fecha puede corresponder a un homónimo, y unificar dos
+    personas distintas no tiene vuelta atrás.</p>
+    <p>Si se indica que es la misma persona, no se crea ningún registro nuevo:
+    se completan los datos que faltaban en su ficha y se le registran el
+    consentimiento y los canales que declaró en el formulario.</p>
   </div>
 </section>
 
@@ -942,7 +1052,74 @@
     los consentimientos ya registrados no se duplican.</p>
   </div>
 
-  <h3><span class="n">5.6</span> Verificar el cruce entre las dos bases</h3>
+  <h3><span class="n">5.6</span> Enviar la encuesta por WhatsApp</h3>
+
+  <p>Una encuesta puede configurarse para enviarse como un <strong>Flow de
+  WhatsApp</strong>. El sistema <strong>solamente envía</strong>: las
+  respuestas se descargan de Meta y se ingestan por el procedimiento habitual
+  (sección 5.4). No recibe respuestas ni permite crear los Flows.</p>
+
+  <div class="aviso">
+    <div class="t">El Flow y la plantilla se crean en Meta</div>
+    <p>El Flow y la plantilla de mensaje se arman y se publican en la
+    plataforma de Meta; en esta pantalla solo se los referencia por su
+    identificador. La plantilla requiere <strong>aprobación de Meta</strong> y
+    la revisión demora: no es posible configurar la encuesta y convocar el
+    mismo día.</p>
+  </div>
+
+  <p>El sistema comprueba contra Meta que el Flow esté publicado y la plantilla
+  aprobada <strong>antes</strong> de permitir el envío. Si algo falta, lo
+  indica con su motivo en lugar de dejar enviar y fallar mensaje por
+  mensaje.</p>
+
+  <h4>A quiénes se envía</h4>
+
+  <p>Solo a quienes cumplen <strong>los dos ejes</strong> —consentimiento de
+  contacto vigente y autorización de WhatsApp activa (sección 3.7)— y además
+  tienen un celular válido. Quienes no cumplen quedan fuera, y la pantalla
+  informa <strong>por qué motivo cada uno</strong>.</p>
+
+  <figure>
+    <img src="capturas/53-envio-whatsapp.jpg" alt="Envío de una encuesta por WhatsApp" />
+    <figcaption><b>Antes de enviar.</b> Los motivos se detallan por separado
+    porque se resuelven de manera distinta: a unos hay que pedirles el
+    consentimiento, a otros ofrecerles el canal y a otros cargarles el
+    celular.</figcaption>
+  </figure>
+
+  <table class="tabla-roles">
+    <tr><th style="width:34%">Motivo</th><th>Cómo se resuelve</th></tr>
+    <tr><td class="destacado">Sin consentimiento de contacto</td>
+      <td>Corresponde solicitarlo: sin él no se puede contactar a esa persona
+      por ningún medio.</td></tr>
+    <tr><td class="destacado">No aceptó recibir WhatsApp</td>
+      <td>Tiene consentimiento de contacto, pero no autorizó ese canal. Hay
+      que ofrecérselo y registrarlo en su ficha.</td></tr>
+    <tr><td class="destacado">Sin celular cargado</td>
+      <td>Autorizó el canal pero su ficha no tiene número. Se completa desde
+      Panelistas.</td></tr>
+    <tr><td class="destacado">Celular inválido</td>
+      <td>El dato cargado no es un número de teléfono utilizable. Se corrige
+      en la ficha.</td></tr>
+  </table>
+
+  <div class="aviso info">
+    <div class="t">Reintentar no duplica mensajes</div>
+    <p>Si algún envío falla, se puede reintentar: el sistema envía únicamente a
+    quienes no recibieron el mensaje. Un mensaje duplicado deteriora la
+    reputación del número emisor, y esa reputación es la que determina si Meta
+    permite seguir enviando.</p>
+  </div>
+
+  <div class="aviso">
+    <div class="t">El envío no reemplaza a la convocatoria</div>
+    <p>La convocatoria se registra igual que siempre y el envío es una acción
+    <strong>sobre</strong> ella. Es posible convocar sin enviar, y enviar más
+    tarde.</p>
+  </div>
+
+  <h3><span class="n">5.7</span> Verificar el cruce entre las dos bases</h3>
 
   <p>La opción <strong>Verificar</strong> comprueba que lo que quedó del lado
   semántico se corresponda con lo convocado del lado de la bóveda. Es la
@@ -1469,6 +1646,246 @@
   <div class="cab">
     <div class="barra"></div>
     <div class="kicker">Sección 9</div>
+    <h2>Análisis longitudinal</h2>
+    <p>Cómo se movió la misma gente a lo largo de las olas.</p>
+  </div>
+
+  <p>Es lo único que un panel tiene y una muestra fresca no: las mismas
+  personas, medidas en distintos momentos. Una encuesta de opinión le pregunta
+  a mil personas distintas cada vez y puede decir que el pesimismo subió cinco
+  puntos. Un panel puede decir además <i>quiénes</i> cambiaron de opinión, y
+  esa es una pregunta distinta.</p>
+
+  <p>La pantalla tiene tres solapas, y son tres porque responden tres preguntas
+  que no se parecen entre sí.</p>
+
+  <h3><span class="n">9.1</span> Las series: declarar que dos preguntas miden lo mismo</h3>
+
+  <p>El obstáculo es que cada cuestionario redacta la pregunta a su manera. Una
+  ola pregunta «¿Qué bebida consume habitualmente?» con las opciones
+  <i>Fernet / Whisky / Cerveza</i>, y la del año siguiente pregunta «¿Cuál es
+  hoy su bebida de consumo habitual?» con <i>Fernet con cola / Whisky /
+  Cerveza</i>. Para una persona es evidente que miden lo mismo. Para el sistema
+  son dos preguntas distintas, y así tiene que ser: si las diera por
+  equivalentes por su cuenta, tarde o temprano daría por equivalentes dos que
+  no lo son, y esa equivalencia quedaría escrita en el dato, donde ya nadie la
+  ve.</p>
+
+  <p>Por eso la equivalencia se <b>declara</b>. Una <b>serie</b> agrupa las
+  preguntas de las distintas olas y lleva las opciones de cada una a un
+  vocabulario común.</p>
+
+  <p>Para crear una serie hacen falta dos cosas: un nombre y las
+  <b>categorías comunes</b>, que son las que van a poder compararse entre olas.
+  En el ejemplo alcanza con dos: <i>fernet</i> y <i>otra</i>.</p>
+
+  <p>Después se agrega la primera pregunta con el botón <b>Agregar una
+  pregunta</b>, eligiéndola de la lista de todas las olas. A partir de ahí el
+  sistema puede buscar las equivalentes.</p>
+
+  <figure>
+    <img src="capturas/54-serie-sugerencias.jpg" alt="Sugerencias de una serie" />
+    <figcaption><b>El sistema propone; no agrega.</b> «Buscar candidatas» lista
+    las preguntas de otras olas que se le parecen, con el porcentaje de
+    parecido. El botón para agregarlas está al lado de cada una, no arriba de
+    la lista: entra la que usted elija, de a una.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Un parecido alto no es una garantía</div>
+    <p>«¿Qué marca compra habitualmente?» y «¿Qué bebida consume
+    habitualmente?» se parecen mucho en las palabras y miden cosas distintas.
+    El porcentaje ordena la lista para que no tenga que buscar a mano; la
+    decisión de que dos preguntas son la misma medición sigue siendo suya.</p>
+  </div>
+
+  <h3><span class="n">9.2</span> Mapear las opciones</h3>
+
+  <p>Agregar la pregunta no alcanza: hay que decir qué opción de esa ola
+  corresponde a qué categoría común. Eso se hace con <b>Mapear…</b>, que abre
+  una lista con las opciones de esa pregunta y un desplegable por cada una.</p>
+
+  <figure>
+    <img src="capturas/55-serie-completa.jpg" alt="Serie con las dos olas mapeadas" />
+    <figcaption><b>La serie completa.</b> Dos olas, con redacciones y opciones
+    distintas, llevadas al mismo vocabulario. La columna <i>Origen</i> distingue
+    las que agregó usted («declarada») de las que aceptó de una sugerencia
+    («sugerida»).</figcaption>
+  </figure>
+
+  <div class="aviso info">
+    <div class="t">Lo que no se mapea, no se cuenta</div>
+    <p>Si deja una opción sin categoría, las personas que la eligieron quedan
+    fuera de la comparación y la pantalla lo avisa arriba. Es deliberado: si
+    esas respuestas se sumaran a cualquier categoría, el movimiento entre olas
+    mostraría cambios que no ocurrieron.</p>
+  </div>
+
+  <h3><span class="n">9.3</span> La evolución: quiénes cambiaron</h3>
+
+  <p>Con la serie armada, la solapa <b>Evolución</b> muestra la matriz de
+  movimiento entre dos olas: cuántas personas pasaron de cada categoría a cada
+  otra.</p>
+
+  <figure>
+    <img src="capturas/56-evolucion.jpg" alt="Matriz de transiciones entre dos olas" />
+    <figcaption><b>Se lee por fila.</b> La diagonal —en negrita— son los que se
+    mantuvieron; todo lo que está fuera de ella es movimiento. Acá, de los seis
+    que participaron en las dos olas, cuatro se mantuvieron y dos
+    cambiaron.</figcaption>
+  </figure>
+
+  <p>Al pie hay una aclaración que conviene leer: <b>quiénes no entran en la
+  matriz</b>. Una persona que participó en una sola de las dos olas no aparece,
+  y no es un olvido. No hay un «de dónde» o un «a dónde» para ella, y ponerla
+  en la diagonal afirmaría que no cambió de opinión, que es algo que nadie
+  midió.</p>
+
+  <h3><span class="n">9.4</span> La historia de una persona</h3>
+
+  <p>La tercera solapa muestra la línea de tiempo de una persona: en qué olas
+  participó, cuándo, y qué contestó en cada una.</p>
+
+  <figure>
+    <img src="capturas/57-linea-tiempo.jpg" alt="Línea de tiempo de una panelista" />
+    <figcaption><b>Una ola por tarjeta, en orden cronológico.</b> Con las
+    respuestas de cada una, para poder leer la evolución en las propias
+    palabras de la persona.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Esto es una reidentificación y queda registrada</div>
+    <p>Ver la historia de respuestas de una persona identificada es unir su
+    nombre con lo que contestó, que es justamente la operación que la
+    separación entre las dos bases existe para controlar. La pantalla lo avisa
+    antes de que usted busque, y cada consulta queda anotada con su usuario, la
+    fecha y el motivo, igual que abrir una ficha o exportar una convocatoria.
+    No es una traba: es el registro que permite responder «quién vio qué»
+    cuando alguien lo pregunte.</p>
+  </div>
+
+  <h3><span class="n">9.5</span> La composición de una ola pasada</h3>
+
+  <p>Hay una corrección que no está en esta pantalla y conviene conocer, porque
+  cambia un número que el sistema ya venía mostrando.</p>
+
+  <p>Los atributos demográficos ahora guardan <b>desde cuándo</b> vale cada
+  valor. Antes se guardaba un único valor y el anterior se perdía, con una
+  consecuencia que no era evidente: recalcular la composición de una ola de
+  hace un año la calculaba con la demografía de <i>hoy</i>. Una cuota que cerró
+  con 30 % de menores de 35 podía mostrar 22 % un año después sin que nadie se
+  hubiera ido del panel, solamente porque esa gente cumplió años.</p>
+
+  <p>Desde ahora la composición se puede pedir <b>a una fecha</b> o
+  <b>a una ola</b>, y devuelve la foto de entonces: los valores que estaban
+  vigentes y las personas que eran miembros ese día.</p>
+
+  <div class="aviso info">
+    <div class="t">La brecha se compara contra el universo de hoy</div>
+    <p>El universo de referencia no guarda historia: al cargar uno nuevo
+    reemplaza al anterior. Así que una composición retroactiva muestra la foto
+    de entonces contra el universo cargado hoy, y la pantalla lo aclara. Si el
+    universo cambió en el medio, la brecha hay que leerla con eso en
+    cuenta.</p>
+  </div>
+
+</section>
+
+<!-- ════════════════ 10 ════════════════ -->
+<section id="s10">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 10</div>
+    <h2>Muestreo</h2>
+    <p>A quién invitar para cerrar la cuota sin volver a convocar a los mismos.</p>
+  </div>
+
+  <p>Elegir a quién invitar tiene dos objetivos que en general conviven y a
+  veces se contradicen: que la muestra se parezca al universo de referencia, y
+  no desgastar a los panelistas convocándolos todo el tiempo. Cuando el panel
+  tiene holgura los dos se cumplen sin esfuerzo. Cuando no la tiene —un
+  segmento chico y muy usado— hay que elegir cuál ceder, y esa elección es de
+  quien conduce el estudio, no del sistema.</p>
+
+  <p>Por eso la pantalla ofrece <b>dos métodos</b> y los deja convivir.</p>
+
+  <h3><span class="n">10.1</span> Los dos métodos</h3>
+
+  <p><b>Proponer</b> usa reglas: prioriza los segmentos con más brecha y
+  descarta a quien no tiene consentimiento vigente o superó los umbrales de
+  fatiga. Es directo y suficiente en la mayoría de los casos.</p>
+
+  <p><b>Optimizar</b> negocia. Busca el conjunto que mejor cierra la brecha
+  penalizando —no prohibiendo— la fatiga y el desgaste de los mismos
+  panelistas de siempre. Aparece cuando las reglas se quedan cortas: segmentos
+  escasos en los que todos los elegibles están muy convocados.</p>
+
+  <p>El botón <b>Comparar con las reglas</b> corre los dos sobre la misma
+  pregunta y muestra la diferencia. Sirve para justificar ante alguien por qué
+  esta vez se usó uno y no el otro; cuando hay holgura, las dos selecciones
+  suelen coincidir.</p>
+
+  <h3><span class="n">10.2</span> Por qué entró cada persona</h3>
+
+  <figure>
+    <img src="capturas/58-optimizador.jpg" alt="Selección optimizada, con la comparación contra las reglas" />
+    <figcaption><b>Cada fila se explica.</b> Cuánto le faltaba a su segmento
+    cuando entró, cuánto aporta a cerrar la brecha y cuánto cuesta en fatiga y
+    en desgaste. Abajo, la comparación con las reglas.</figcaption>
+  </figure>
+
+  <p>Que cada selección sea explicable no es un adorno. Una lista de nombres
+  sin fundamento no se puede defender ante un investigador que pregunte por qué
+  está esta persona y no aquella, y una herramienta que no se puede defender no
+  se usa.</p>
+
+  <div class="aviso info">
+    <div class="t">Hay cosas que ningún peso compra</div>
+    <p>El consentimiento vigente, la preferencia del canal por el que se va a
+    convocar y la pertenencia al panel son condiciones absolutas: por mucha
+    brecha que haya, quien no las cumple no entra. Lo que se negocia es la
+    fatiga y el reparto, nunca el permiso.</p>
+  </div>
+
+  <h3><span class="n">10.3</span> Cuando la cuota no se puede cerrar</h3>
+
+  <figure>
+    <img src="capturas/59-infactible.jpg" alt="Las tres alternativas ante una cuota infactible" />
+    <figcaption><b>Las tres salidas, con su costo.</b> Reducir el tamaño,
+    aflojar los umbrales de fatiga o aceptar la brecha. El sistema las
+    cuantifica y no elige.</figcaption>
+  </figure>
+
+  <p>Cada alternativa viene con su número: cuántas personas menos tendría la
+  muestra, cuántas más pasarían a ser convocables si se afloja el umbral, y a
+  cuánta distancia del universo quedaría la muestra si se acepta la brecha.
+  Elegir entre menos muestra, más desgaste y menos representatividad es una
+  decisión del estudio, y el sistema no la toma: la informa.</p>
+
+  <h3><span class="n">10.4</span> Los pesos</h3>
+
+  <p><b>Pesos del optimizador…</b> permite ajustar cuánto vale cerrar la cuota
+  frente a cuidar a la gente, por panel. Un panel chico y muy usado necesita
+  pesar la fatiga mucho más que uno grande.</p>
+
+  <div class="aviso">
+    <div class="t">Los valores por defecto no están medidos</div>
+    <p>Igual que los umbrales de fatiga, los pesos vienen con valores
+    razonables pero sin calibrar contra la experiencia de Equipos. Conviene
+    revisarlos cuando haya suficientes olas para comparar.</p>
+  </div>
+
+  <p>Una última cosa, que vale para los dos métodos: <b>el muestreo propone y
+  no convoca</b>. Lo que devuelve es una sugerencia; convocar sigue siendo una
+  acción explícita, con su propio botón y su propia confirmación.</p>
+
+</section>
+
+<!-- ════════════════ 11 ════════════════ -->
+<section id="s11">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 11</div>
     <h2>Cumplimiento</h2>
     <p>Atender los derechos de los panelistas. Disponible para los roles de
     Administración y Cumplimiento.</p>
@@ -1479,7 +1896,7 @@
   operación distinta para cada caso. Las tres se encuentran en su ficha, en el
   bloque <strong>Derechos del titular</strong>.</p>
 
-  <h3><span class="n">9.1</span> Las tres opciones</h3>
+  <h3><span class="n">11.1</span> Las tres opciones</h3>
 
   <table>
     <thead><tr><th>Si la persona solicita…</th><th>Corresponde</th><th>Efecto</th></tr></thead>
@@ -1508,7 +1925,7 @@
   refleja que las finalidades se consintieron por separado y que retirar una no
   autoriza a suponer que se retira la otra.</p>
 
-  <h3><span class="n">9.2</span> La baja total</h3>
+  <h3><span class="n">11.2</span> La baja total</h3>
 
   <p>La baja total ejecuta el borrado en cascada sobre las dos bases. Antes de
   aplicarla, el sistema detalla exactamente qué va a eliminar.</p>
@@ -1530,7 +1947,7 @@
     demostrar, si alguien lo requiere, que la solicitud fue atendida.</p>
   </div>
 
-  <h3><span class="n">9.3</span> La pantalla de Cumplimiento</h3>
+  <h3><span class="n">11.3</span> La pantalla de Cumplimiento</h3>
 
   <figure>
     <img src="capturas/22-cumplimiento.jpg" alt="Pantalla de cumplimiento" />
@@ -1558,10 +1975,10 @@
 </section>
 
 <!-- ════════════════ 10 ════════════════ -->
-<section id="s10">
+<section id="s12">
   <div class="cab">
     <div class="barra"></div>
-    <div class="kicker">Sección 10</div>
+    <div class="kicker">Sección 12</div>
     <h2>Configuración</h2>
     <p>Quién accede al sistema y con qué rol. Disponible únicamente para el rol
     de Administración.</p>
@@ -1580,7 +1997,7 @@
     pantalla.</figcaption>
   </figure>
 
-  <h3><span class="n">10.1</span> Dar de alta a una persona</h3>
+  <h3><span class="n">12.1</span> Dar de alta a una persona</h3>
 
   <ol class="pasos">
     <li>Utilizar <strong>+ Dar de alta un usuario</strong>.</li>
@@ -1618,14 +2035,14 @@
     mismo.</p>
   </div>
 
-  <h3><span class="n">10.2</span> Cambiar un rol</h3>
+  <h3><span class="n">12.2</span> Cambiar un rol</h3>
 
   <p>El rol se modifica eligiendo otro en el desplegable de la fila
   correspondiente. El cambio tiene efecto <strong>a partir de la operación
   siguiente</strong> de esa persona, sin necesidad de que vuelva a ingresar al
   sistema.</p>
 
-  <h3><span class="n">10.3</span> Desactivar un usuario</h3>
+  <h3><span class="n">12.3</span> Desactivar un usuario</h3>
 
   <p>La opción <strong>Desactivar</strong> interrumpe el acceso sin eliminar
   nada: la ficha, la actividad realizada y el registro de sus operaciones se
@@ -1645,7 +2062,7 @@
     rol, debe hacerlo otro administrador.</p>
   </div>
 
-  <h3><span class="n">10.4</span> La auditoría</h3>
+  <h3><span class="n">12.4</span> La auditoría</h3>
 
   <figure>
     <img class="recorte" src="capturas/44-usuarios-auditoria.jpg" alt="Auditoría de la gestión de usuarios" />
@@ -1658,7 +2075,7 @@
   otorgó acceso a una persona determinada y en qué momento, sin depender de la
   memoria de nadie.</p>
 
-  <h3><span class="n">10.5</span> Los cuatro roles</h3>
+  <h3><span class="n">12.5</span> Los cuatro roles</h3>
 
   <table>
     <thead><tr><th>Rol</th><th>A quién corresponde</th></tr></thead>
@@ -1677,7 +2094,7 @@
       accesos.</td></tr>
   </table>
 
-  <h3><span class="n">10.6</span> Atributos demográficos</h3>
+  <h3><span class="n">12.6</span> Atributos demográficos</h3>
 
   <p>La segunda solapa de esta pantalla define <strong>con qué se puede
   segmentar al panel</strong>. Cada atributo del catálogo sirve en los cuatro
@@ -1795,10 +2212,10 @@
 </section>
 
 <!-- ════════════════ 11 ════════════════ -->
-<section id="s11">
+<section id="s13">
   <div class="cab">
     <div class="barra"></div>
-    <div class="kicker">Sección 11</div>
+    <div class="kicker">Sección 13</div>
     <h2>Preguntas frecuentes</h2>
     <p>Situaciones habituales y su explicación.</p>
   </div>
@@ -1906,10 +2323,10 @@
 </section>
 
 <!-- ════════════════ 12 ════════════════ -->
-<section id="s12">
+<section id="s14">
   <div class="cab">
     <div class="barra"></div>
-    <div class="kicker">Sección 12</div>
+    <div class="kicker">Sección 14</div>
     <h2>Glosario</h2>
     <p>Los términos que aparecen en pantalla.</p>
   </div>

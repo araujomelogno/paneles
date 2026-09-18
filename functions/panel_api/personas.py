@@ -7,7 +7,7 @@ personas.
 
 import json
 
-from . import atributos, consentimiento, db, dedup
+from . import atributos, consentimiento, db, dedup, preferencias
 from .errores import Conflicto, DatosInvalidos, NoEncontrado
 
 # Columnas de PII que acepta el alta. Se listan explícitamente para que
@@ -48,6 +48,13 @@ def _limpiar(datos):
             valor = valor.strip() or None
         if valor is not None:
             limpio[campo] = valor
+    # R4.4 — el celular se guarda en E.164 en los tres caminos de alta. Un
+    # número en formato local no se puede usar para enviar y no es comparable
+    # entre archivos. Lo que no se puede normalizar se guarda como vino: sirve
+    # igual para llamar, y lo único que no va a poder es activar WhatsApp.
+    if limpio.get("celular"):
+        limpio["celular"] = (
+            preferencias.normalizar_celular(limpio["celular"]) or limpio["celular"])
     return limpio
 
 
@@ -283,6 +290,12 @@ def alta(conn, cuerpo, actor=None, origen_atributo="alta"):
     crudo_persona = cuerpo.get("persona") or cuerpo
     datos = _limpiar(crudo_persona)
     valores_atributos = _atributos_del_cuerpo(cuerpo, crudo_persona)
+    # R4.4 — por qué canales acepta que la contacten. Es un campo del
+    # formulario de alta, no un paso aparte, y es opcional: quien no declara
+    # ninguno se enrola igual y simplemente no es contactable por ninguno
+    # hasta que se registren.
+    canales = list(cuerpo.get("canales") or crudo_persona.get("canales") or [])
+    version_canales = (cuerpo.get("version_texto_canales") or "").strip() or None
     consentimientos = _validar_consentimientos(cuerpo.get("consentimientos"))
     origen = (cuerpo.get("origen") or "").strip() or None
     id_en_origen = (cuerpo.get("id_en_origen") or "").strip() or None
@@ -320,6 +333,10 @@ def alta(conn, cuerpo, actor=None, origen_atributo="alta"):
                             # revisión: si no, resolverla crearía la persona
                             # sin sexo ni localidad y nadie se enteraría.
                             "atributos": valores_atributos,
+                            # R4.4 — los canales viajan con el alta en
+                            # revisión, por el mismo motivo que los atributos.
+                            "canales": canales,
+                            "version_texto_canales": version_canales,
                             "consentimientos": consentimientos,
                             "origen": origen,
                             "id_en_origen": id_en_origen,
@@ -369,6 +386,11 @@ def alta(conn, cuerpo, actor=None, origen_atributo="alta"):
         for c in consentimientos
     ]
 
+    # R4.4 — recién acá, con la persona ya creada y su celular normalizado.
+    prefs = preferencias.registrar_varias(
+        conn, id_persona, canales, version_texto=version_canales,
+        origen=origen_atributo if origen_atributo != "alta" else "alta_manual")
+
     membresia = None
     if panel_id:
         from . import paneles  # import diferido: evita el ciclo de import
@@ -390,6 +412,8 @@ def alta(conn, cuerpo, actor=None, origen_atributo="alta"):
         salida["atributos_sin_guardar"] = atributos_escritos["sin_categoria"]
     if atributos_escritos["discrepancias"]:
         salida["atributos_en_discrepancia"] = atributos_escritos["discrepancias"]
+    if prefs["activadas"] or prefs["rechazadas"]:
+        salida["canales"] = prefs
     return salida
 
 
@@ -593,6 +617,11 @@ def ficha(conn, id_persona):
     # hace visible la precisión del dato (R3.14.g).
     del_catalogo = atributos.valores_de(conn, id_persona)
     por_clave = {a["clave"]: a for a in del_catalogo}
+    # R4.4 — por dónde acepta que la contacten, con el texto con que lo
+    # aceptó. Va en la ficha porque es parte de lo que el sistema sabe de esa
+    # persona, y porque es donde se revoca cuando alguien pide que no le
+    # escriban más.
+    canales = preferencias.listar(conn, id_persona)
     paneles_de = db.todas(
         conn,
         """
@@ -652,6 +681,7 @@ def ficha(conn, id_persona):
                 por_clave.get("tramo_etario") or {}).get("procedencia"),
         },
         "atributos": del_catalogo,
+        "canales": canales,
         "paneles": [
             {
                 "panel_id": p["id"],

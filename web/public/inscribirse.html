@@ -40,6 +40,13 @@
     }
     .obligatorio::after { content: " *"; color: #c0392b; }
     .landing .btn { width: 100%; justify-content: center; padding: 12px; font-size: 16px; }
+    /* R4.3 — la verificación del contacto, debajo del campo que verifica. */
+    .verificacion { margin-top: 8px; }
+    .landing .verificacion .btn { width: auto; padding: 6px 14px; font-size: 14px;
+      background: #fff; border: 1px solid var(--border); color: var(--dark); }
+    .landing .verificacion .btn:disabled { opacity: 0.5; }
+    .verificacion .form-group { display: flex; gap: 8px; align-items: center; }
+    .verificacion .form-group .finput { flex: 1; }
     .gracias { text-align: center; padding: 48px 16px; }
     .gracias .icono { font-size: 48px; display: block; margin-bottom: 16px; }
   </style>
@@ -111,6 +118,32 @@ function pintar(formulario) {
           Leí y acepto el consentimiento informado.
         </label>
 
+        <!-- R4.4 — por qué canal acepta que la contactemos. Es un eje
+             distinto del consentimiento de arriba: ese dice si podemos
+             contactarla, este dice por dónde. La landing es el único lugar
+             donde el opt-in lo da el titular en el momento, y por eso el
+             texto de WhatsApp tiene que ser explícito. -->
+        <div class="form-group" style="margin-top:18px">
+          <label>¿Por dónde te podemos escribir?</label>
+          <label class="check">
+            <input type="checkbox" name="canal" value="email" checked>
+            Por correo electrónico.
+          </label>
+          <label class="check">
+            <input type="checkbox" name="canal" value="whatsapp" id="canal-wa">
+            Por <strong>WhatsApp</strong>: acepto recibir mensajes de Equipos
+            Consultores en el número que dejé, para invitarme a participar de
+            los estudios del panel.
+          </label>
+          <label class="check">
+            <input type="checkbox" name="canal" value="telefono">
+            Por teléfono.
+          </label>
+          <div id="aviso-whatsapp"></div>
+          <p class="tenue" style="font-size:13px">Podés cambiar esto cuando
+            quieras: alcanza con pedirlo.</p>
+        </div>
+
         <div id="error"></div>
         <button class="btn btn-primary" type="submit" id="enviar">Enviar mi inscripción</button>
         <p class="tenue" style="margin-top:12px; font-size:13px">
@@ -120,6 +153,94 @@ function pintar(formulario) {
     </form>`;
 
   $('#form').onsubmit = (evento) => enviar(evento, texto.version);
+
+  // R4.3 — la verificación del contacto. Cada campo verificable gana su
+  // botón; hasta que los dos estén verificados, el envío no pasa del
+  // servidor, así que la pantalla lo pide antes para que no se descubra
+  // después de completar todo.
+  engancharVerificacion('email', 'email');
+  engancharVerificacion('celular', 'celular');
+  $('#canal-wa').onchange = (evento) => {
+    // WhatsApp necesita un celular verificado: sin él no hay a quién mandar.
+    // El aviso va en su propio nodo y no dentro del bloque de verificación:
+    // escribirlo ahí borraría el botón y el campo del código.
+    $('#aviso-whatsapp').innerHTML =
+      (evento.target.checked && !verificado.celular)
+        ? '<div class="alert alert-warn">Para recibir WhatsApp necesitamos '
+          + 'verificar tu celular: usá el botón «Verificar» de ese campo.</div>'
+        : '';
+  };
+}
+
+/* Qué contactos ya verificó esta persona en esta sesión del formulario. */
+const verificado = { email: false, celular: false };
+
+function engancharVerificacion(campo, canal) {
+  const entrada = $(`#${campo}`);
+  if (!entrada) return;
+  const caja = document.createElement('div');
+  caja.id = `aviso-${campo}`;
+  caja.className = 'verificacion';
+  caja.innerHTML = `
+    <button type="button" class="btn" id="pedir-${campo}">
+      Verificar</button>
+    <span class="tenue" id="estado-${campo}"></span>`;
+  entrada.parentElement.appendChild(caja);
+
+  // Cambiar el contacto invalida lo verificado: si no, alguien verifica un
+  // correo y después escribe otro.
+  entrada.oninput = () => {
+    verificado[campo] = false;
+    $(`#estado-${campo}`).textContent = '';
+  };
+
+  $(`#pedir-${campo}`).onclick = async () => {
+    const destino = entrada.value.trim();
+    if (!destino) {
+      $(`#estado-${campo}`).textContent = 'Completá el campo primero.';
+      return;
+    }
+    const estado = $(`#estado-${campo}`);
+    estado.textContent = 'Enviando el código…';
+    try {
+      const pedido = await pedir('/inscripciones/verificacion', {
+        method: 'POST',
+        body: JSON.stringify({
+          canal, destino,
+          desafio_token: window.desafioToken ? window.desafioToken() : null,
+        }),
+      });
+      caja.insertAdjacentHTML('beforeend', `
+        <div class="form-group" style="margin-top:8px">
+          <input class="finput" id="codigo-${campo}" inputmode="numeric"
+                 placeholder="Código de 6 dígitos">
+          <button type="button" class="btn"
+                  id="comprobar-${campo}">Confirmar</button>
+        </div>`);
+      estado.textContent = pedido.codigo_sin_enviar
+        // Sin proveedor de envío configurado. Se dice con todas las letras:
+        // así no se anuncia una landing creyendo que verifica algo.
+        ? `Modo prueba, sin envío real: el código es ${pedido.codigo_sin_enviar}.`
+        : `Te mandamos un código. Vence en ${pedido.minutos} minutos.`;
+      $(`#pedir-${campo}`).disabled = true;
+      $(`#comprobar-${campo}`).onclick = async () => {
+        try {
+          await pedir('/inscripciones/verificacion/comprobar', {
+            method: 'POST',
+            body: JSON.stringify({
+              canal, destino, codigo: $(`#codigo-${campo}`).value.trim() }),
+          });
+          verificado[campo] = true;
+          estado.textContent = '✓ Verificado.';
+        } catch (falla) {
+          estado.textContent = falla.message;
+        }
+      };
+    } catch (falla) {
+      estado.textContent = falla.message;
+      $(`#pedir-${campo}`).disabled = false;
+    }
+  };
 }
 
 async function enviar(evento, version) {
@@ -142,6 +263,20 @@ async function enviar(evento, version) {
     return;
   }
 
+  if (!verificado.email) {
+    error.innerHTML = '<div class="alert alert-error">Verificá tu correo '
+      + 'antes de enviar: te mandamos un código para confirmarlo.</div>';
+    return;
+  }
+  if (persona.celular && !verificado.celular) {
+    error.innerHTML = '<div class="alert alert-error">Verificá tu celular '
+      + 'antes de enviar.</div>';
+    return;
+  }
+
+  const canales = [...document.querySelectorAll('input[name="canal"]:checked')]
+    .map((c) => c.value);
+
   boton.disabled = true;
   boton.textContent = 'Enviando…';
   try {
@@ -149,6 +284,7 @@ async function enviar(evento, version) {
       method: 'POST',
       body: JSON.stringify({
         persona, acepto_consentimiento: true, version_texto: version,
+        canales, version_texto_canales: version,
       }),
     });
     $('#landing').innerHTML = `<div class="gracias">

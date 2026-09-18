@@ -73,6 +73,10 @@ def resolver(conn, revision_id, decision, id_persona=None, actor=None):
     # escriben al resolver, no antes: mientras la revisión está pendiente no
     # existe ninguna persona a la que atárselos.
     valores_atributos = datos.get("atributos") or {}
+    # R4.4 — igual que los atributos: los canales viajaron con el alta y se
+    # escriben al resolver, cuando ya hay una persona a la que atárselos.
+    canales = datos.get("canales") or []
+    version_canales = datos.get("version_texto_canales")
     consentimientos = datos.get("consentimientos") or []
     panel_id = datos.get("panel_id")
     origen = datos.get("origen")
@@ -108,6 +112,13 @@ def resolver(conn, revision_id, decision, id_persona=None, actor=None):
             f"Decisión desconocida: {decision!r}.",
             {"decisiones_validas": ["fusionar", "crear", "descartar"]},
         )
+
+    if canales:
+        from . import preferencias
+
+        preferencias.registrar_varias(
+            conn, destino, canales, version_texto=version_canales,
+            origen="alta_manual")
 
     if origen and id_en_origen:
         dedup.registrar_alias(conn, destino, origen, id_en_origen)

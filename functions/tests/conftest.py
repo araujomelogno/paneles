@@ -27,6 +27,10 @@ TABLAS_BOVEDA = [
     # Fase 3
     "umbral_fatiga", "bono_puntos", "texto_consentimiento", "inscripcion",
     "carga", "atributo_auditoria",
+    # Fase 4. `preferencia_canal` cascadea desde `persona`, pero
+    # `verificacion_contacto` no tiene FK a nadie: sin truncarla, el límite
+    # de códigos por destino se agota entre pruebas.
+    "verificacion_contacto", "preferencia_canal",
 ]
 
 # R3.14 — el catálogo de atributos **no** se trunca: `sexo`, `localidad`,

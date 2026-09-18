@@ -70,6 +70,11 @@ restricción real del sistema.
 | [D34](#d34) | El identificador viaja al campo en vez de adivinarlo a la vuelta | 3 |
 | [D35](#d35) | Incorporar individuos y hacerlos panelistas son dos cosas distintas | 3 |
 | [D36](#d36) | Los segmentadores son un catálogo, no una lista en el código | 3 |
+| [D37](#d37) | Poder contactar y poder contactar por un canal son dos permisos | 4 |
+| [D38](#d38) | La landing verifica el contacto antes de existir la inscripción | 4 |
+| [D39](#d39) | Guardar un solo valor vigente por atributo era un número mal calculado | 4 |
+| [D40](#d40) | La comparabilidad entre olas la declara el analista, no el sistema | 4 |
+| [D41](#d41) | El optimizador propone y explica; no es un solver | 4 |
 
 ---
 
@@ -1533,6 +1538,275 @@ y la solapa de atributos en `web/public/js/paginas/configuracion.js`.
 
 ---
 
+<a id="d37"></a>
+## D37 · Poder contactar y poder contactar por un canal son dos permisos
+
+**El problema.** El sistema tenía un solo eje de permiso para contactar:
+`contacto_participacion`. Eso responde *«¿puedo contactarla?»* y no dice nada
+de *«¿por dónde?»*. Alguien pudo aceptar que lo llamen por teléfono y no
+querer mensajes en su WhatsApp personal, y con un solo eje esa distinción no
+existe.
+
+Del lado de afuera el problema es más duro. La política de mensajería de
+WhatsApp exige **opt-in previo** para los mensajes que inicia el negocio.
+Mandar sin él no es una infracción abstracta: la gente bloquea, el *quality
+rating* del número baja y Meta termina restringiendo la cuenta. El canal se
+quema con el primer envío masivo a gente que no lo pidió, y no se recupera
+fácil.
+
+**La decisión.** `preferencia_canal`, un eje aparte. Para enviar por un canal
+hacen falta **los dos**: consentimiento de finalidad vigente y preferencia de
+ese canal activa. Falta cualquiera, no se envía.
+
+**Los cuatro motivos de exclusión se informan por separado**, y eso no es
+prolijidad: se arreglan distinto. A quien le falta el consentimiento hay que
+pedírselo; a quien le falta la preferencia hay que ofrecerle el canal; a quien
+le falta el celular hay que cargárselo; y a quien lo tiene inválido hay que
+corregírselo. Un «no se pudo enviar a 340 personas» agrupado no le sirve a
+nadie.
+
+**El opt-in guarda con qué texto se obtuvo**, igual que el consentimiento. Sin
+eso, «aceptó recibir WhatsApp» es una afirmación sin respaldo, y es
+exactamente lo que hay que poder mostrar si Meta o la propia persona lo
+reclaman.
+
+**E.164 en los tres caminos de alta, y la normalización en un solo lugar.**
+Un celular guardado como «099 123 456» no se puede usar para enviar y no es
+comparable entre archivos. La conversión vive en `preferencias.normalizar_celular`
+y la usan el alta manual, la ingesta y la landing: tres implementaciones
+distintas del mismo formato es cómo se terminan teniendo tres formatos.
+
+**Un celular que no se puede normalizar no voltea el alta.** Se guarda como
+vino. El resto de los datos de esa persona sirven igual, y lo único que no va
+a poder es activar WhatsApp —que es precisamente lo correcto—. Al revés, un
+número mal tipeado impediría enrolar a alguien, y eso es peor que quedarse sin
+un canal.
+
+**Lo que no se hizo, y hay que saberlo.** No hay canal de entrada: si alguien
+bloquea el número o responde «STOP», el sistema no se entera. La mitigación es
+la revocación manual desde la ficha y la revisión periódica de los reportes de
+Meta. Si el volumen crece, recibir webhooks deja de ser opcional.
+
+**Dónde vive.** `db/boveda/0009_fase4_contacto.sql`,
+`functions/panel_api/preferencias.py`, y la captura enhebrada en
+`personas.py` (alta manual), `sav.py` (ingesta) e `inscripciones.py`
+(landing).
+
+---
+
+<a id="d38"></a>
+## D38 · La landing verifica el contacto antes de que exista la inscripción
+
+**El problema.** La landing de Fase 3 aceptaba cualquier envío. Nadie
+comprobaba que el correo o el celular fueran de quien se estaba inscribiendo,
+y eso deja entrar dos cosas distintas y las dos malas: datos inventados, que
+ensucian la cola de aprobación, y **datos ajenos**, que es inscribir a alguien
+sin que se entere.
+
+**La decisión.** Un código de un solo uso, y la inscripción **no existe** hasta
+que se verifica. No es una casilla más del formulario: es una precondición de
+escribir, igual que el consentimiento.
+
+**Cuatro cosas que valen la pena:**
+
+| | |
+|---|---|
+| **El código se guarda hasheado** | Un código en claro en la base es una credencial de un solo uso al alcance de cualquiera que lea la tabla, y alcanza para inscribir a nombre de otro |
+| **La IP también** | Para limitar la tasa por origen alcanza con saber que dos pedidos vinieron del mismo lado; de cuál no hace falta, y guardarlo sería juntar un dato personal más en una superficie pública |
+| **Los intentos se agotan** | Sin eso, seis dígitos se adivinan por fuerza bruta en minutos |
+| **Hay dos límites de tasa, no uno** | Por origen, que frena el uso de la landing como oráculo; y **por destino**, que es el que protege a la persona del otro lado: sin él, la landing sirve para bombardear a un número ajeno |
+
+**El desafío anti-automatización va antes de emitir el código, no antes de
+inscribir.** El envío de códigos es lo que cuesta plata y lo que puede
+molestar a un tercero, así que es lo que hay que proteger. Dejarlo para el
+final protegería la tabla y no el bolsillo ni al vecino.
+
+**Sin proveedor configurado, el sistema no finge.** El código vuelve en la
+respuesta y lo dice con todas las letras; el desafío no bloquea y el
+diagnóstico de Cumplimiento lo informa. Una landing sin verificación real es
+una decisión que alguien tiene que tomar a sabiendas, no un olvido silencioso.
+Es el mismo patrón de degradación visible del reranker y de la verificación
+con Claude.
+
+**El dedup se refuerza acá y no en el alta.** La landing es el único camino
+donde la persona se inscribe sola, sin que nadie del equipo controle qué
+escribe: es donde más probable es que la misma persona se anote dos veces, con
+el correo del trabajo una vez y el personal la otra. Por eso quien aprueba ve
+los candidatos parecidos —por documento, correo, celular o nombre y fecha— y
+por eso **se proponen y no se fusionan**: una coincidencia de correo o de
+nombre puede ser un homónimo, y fusionar a dos personas distintas no se
+deshace. La única que se resuelve sola sigue siendo el documento exacto, que
+es R1.2 sin cambios.
+
+**Dónde vive.** `functions/panel_api/verificacion_contacto.py`,
+`functions/panel_api/desafio.py`, `inscripciones.candidatos_parecidos`, y del
+lado público `web/public/inscribirse.html`.
+
+---
+
+<a id="d39"></a>
+## D39 · Guardar un solo valor vigente por atributo era un número mal calculado
+
+**El problema.** `persona_atributo` guardaba un valor por persona y atributo, y
+al cambiarlo lo pisaba. La lectura fácil es que faltaba una feature
+longitudinal. La lectura correcta es peor: **el sistema ya mostraba números
+incorrectos y no avisaba**. Recalcular la composición de una ola de hace un año
+la calculaba con la demografía de hoy. Una cuota que cerró con 30 % de menores
+de 35 puede mostrar 22 % un año después sin que nadie se haya ido del panel,
+solo porque esa gente cumplió años. El dato no estaba incompleto: estaba mal, y
+se veía bien.
+
+Por eso R4.1.a va primero en el bloque, antes que las series y que el
+optimizador. No es la parte más vistosa; es la que arregla algo roto.
+
+**La decisión.** Cada valor vale en un intervalo semiabierto `[desde, hasta)`.
+El vigente es el de `hasta is null`. Cambiar un valor no lo actualiza: le cierra
+la vigencia e inserta uno nuevo.
+
+**Tres cosas de la implementación que no son obvias:**
+
+**El primer valor vale desde `-infinity`.** Sabemos cuándo un valor *cambió*;
+no sabemos cuándo el primero *empezó*. Si al primero le pusiéramos la fecha de
+carga, toda composición anterior a esta migración devolvería cero personas con
+dato, y la corrección habría quedado peor que el problema. Es una suposición
+declarada, no un dato, y está escrita como tal en la migración. No se usa
+`persona.creado_en` en su lugar porque una persona puede ingresarse hoy desde
+un archivo de campo de hace dos años: su fecha de alta no acota hacia atrás la
+validez de sus atributos.
+
+**Dos cambios en la misma transacción se colapsan.** Una carga que corrige un
+valor que acaba de escribir produciría, si se registrara como un cambio, un
+intervalo que afirma que ese valor rigió *desde siempre hasta ahora*, cuando
+nunca existió fuera de la transacción. Una transacción es atómica: desde
+afuera, el único valor que existió es el último. Ese caso pisa en vez de
+cerrar, y el historial no registra un cambio que nadie pudo ver.
+
+**Una sola implementación de la resolución.** La precedencia de R3.14.g —fecha
+de nacimiento > edad declarada envejecida > tramo cargado— vivía en
+`v_atributo_persona`. Duplicarla en una versión «a fecha» garantizaba que las
+dos se separaran con el tiempo. En vez de eso pasó a
+`f_atributo_persona(momento)` y la vista quedó como esa función en `now()`.
+Todo el código que consultaba la vista siguió andando sin cambios, y de yapa
+los derivados se calculan a la fecha pedida: la edad de una persona en una ola
+de 2024 es la que tenía en 2024, que era el otro lado del mismo error.
+
+**Lo que no se historiza: el objetivo de composición.** `objetivo_composicion`
+guarda el universo de referencia vigente y cargar uno nuevo pisa al anterior.
+Así que la brecha de una composición retroactiva compara la foto de entonces
+contra el universo de hoy. No se resolvió —historizar el universo es otro
+requisito— pero la respuesta lo dice con todas las letras, que es la diferencia
+entre un número que se entiende y uno que engaña.
+
+**Dónde vive.** `db/boveda/0010_fase4_historial_atributos.sql`,
+`functions/panel_api/atributos.py`, `functions/panel_api/composicion.py`,
+`functions/panel_api/demografia.py`.
+
+---
+
+<a id="d40"></a>
+## D40 · La comparabilidad entre olas la declara el analista, no el sistema
+
+**El problema.** Comparar «la misma pregunta» entre dos olas es difícil porque
+cada cuestionario la redacta distinto: «¿Qué bebida consume habitualmente?» en
+una y «¿Cuál es hoy su bebida de consumo habitual?» en la siguiente, con
+opciones que tampoco coinciden. Un sistema que quisiera resolverlo solo tendría
+que canonizar respuestas, que es justamente lo que este diseño descarta desde
+la Fase 1.
+
+**La decisión.** Una `serie` agrupa preguntas de distintas olas y mapea sus
+opciones a un vocabulario común. La declara el analista. El sistema **sugiere**
+candidatas por similitud semántica y no agrega ninguna sola.
+
+**Por qué declarado y no automático.** Es la misma distinción de siempre, con
+una vuelta de tuerca. Canonizar automáticamente congelaría una equivalencia que
+puede ser falsa —dos preguntas parecidas que miden cosas distintas— y lo haría
+*en el dato*, donde ya no se ve. Declararla la hace explícita, revisable y
+responsabilidad de quien sabe qué se preguntó y para qué. Las que entran por
+sugerencia quedan marcadas como tales: si más adelante una serie resulta mal
+armada, saber cuáles entraron así dice si el problema fue el criterio o la
+herramienta.
+
+**Hubo que embeber algo nuevo.** Hasta acá solo se embebían las *respuestas*
+(`pregunta → respuesta`), que sirve para buscar qué contestó la gente pero no
+para preguntarse qué preguntas se parecen entre sí: dos olas pueden preguntar
+lo mismo y recibir respuestas opuestas. Así que `pregunta.embedding_texto`, que
+se llena en forma perezosa la primera vez que se piden sugerencias.
+
+**Una opción sin mapear no se cuenta.** Es la misma regla que «(sin dato)» en
+la composición: meterla en una categoría real haría que el movimiento entre
+olas mienta.
+
+**Dónde vive la serie, y dónde no.** La serie vive en el **store semántico**,
+porque agrupar preguntas y mapear opciones es contenido. Quién la creó o la
+editó, **no**: eso es una persona, y la regla dura del sistema es que ninguna
+persona se escribe de ese lado. Así que el rastro va a `serie_auditoria`, en la
+bóveda, junto a los otros dos rastros de acciones de personal. Es una tabla más
+y una escritura cruzada, y vale la pena: la alternativa era una columna con un
+correo del lado equivocado.
+
+**Dónde vive.** `db/semantica/0004_series.sql`,
+`functions/panel_api/series.py`, `functions/panel_api/longitudinal.py`,
+`web/public/js/paginas/longitudinal.js`.
+
+---
+
+<a id="d41"></a>
+## D41 · El optimizador propone y explica; no es un solver
+
+**El problema.** Las reglas de R3.1 priorizan brechas y excluyen
+sobre-convocados, y eso alcanza cuando hay holgura. Cuando no la hay, cerrar la
+cuota y cuidar a la gente tiran para lados opuestos y las reglas no saben
+negociar: eligen mal o no eligen.
+
+**La decisión: un voraz, no programación entera.** La spec pide que cada
+individuo incluido sea *explicable*: por qué segmento entró y qué peso tuvo. Un
+óptimo de programación entera da una asignación mejor en el margen y **ninguna
+explicación por persona**, además de una dependencia nueva. Con una función
+objetivo convexa y una sola dimensión de cuota, el voraz llega al mismo lugar
+en la enorme mayoría de los casos, y cada elegido sale con el déficit que tenía
+su segmento cuando entró, lo que aportó a la brecha y lo que costó en fatiga y
+en equidad. Una selección que nadie puede defender ante un investigador no
+sirve para decidir.
+
+El aporte usa el error cuadrático sobre el conteo del segmento: la derivada de
+`(s − objetivo)²` al sumar uno es `2·déficit − 1`, fuertemente positiva
+mientras falte gente y negativa apenas la categoría se pasa. Eso da el
+comportamiento que se quiere sin ningún caso especial.
+
+**Duro y blando son cosas distintas.** Consentimiento, preferencia de canal,
+pertenencia al panel y tamaño pedido son restricciones **duras**: no se compran
+con ningún peso. Fatiga y equidad de rotación son **blandas**: se penalizan.
+Meterlas en la misma bolsa sería o convocar a quien no consintió, o no poder
+cerrar nunca una cuota. Y la equidad no es lo mismo que la fatiga: alguien
+puede estar lejos del umbral de la ventana y aun así ser siempre el elegido de
+su celda, porque su celda tiene poca gente.
+
+**Cuando no se puede, lo dice con números y no elige.** Una cuota infactible no
+se cierra violando una restricción ni devolviendo menos gente en silencio: se
+informan las tres salidas con su costo medido —reducir el tamaño, aflojar la
+fatiga, aceptar la brecha— y decide una persona. La alternativa de aflojar la
+fatiga se cuantifica **corriendo el mismo motor con el tope movido**, que es la
+única forma honesta de decir cuántos más entran; y si no entra nadie, se dice
+una vez que el cuello de botella no es la fatiga en vez de repetir pasos que
+dicen «0 personas más».
+
+**Las reglas de R3.1 se mantienen, no se reemplazan.** Con holgura los dos
+métodos coinciden; la diferencia aparece justo donde duele. `comparar()` corre
+los dos sobre la misma pregunta y muestra la diferencia, que es lo que permite
+justificar el cambio de método ante quien pregunte. Las reglas quedan además
+como respaldo.
+
+**Los pesos son por panel y no globales.** La tensión es distinta en cada uno:
+un panel chico y muy usado necesita pesar la fatiga mucho más que uno grande.
+Un peso negativo se rechaza: invertiría el sentido de la restricción y premiaría
+convocar a los más convocados.
+
+**Dónde vive.** `functions/panel_api/optimizador.py`,
+`db/boveda/0011_fase4_inteligencia.sql`,
+`web/public/js/paginas/muestreo.js`.
+
+---
+
 ## Anexo · Decisiones que no se tomaron
 
 Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
@@ -1546,14 +1820,21 @@ Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 | Si se van a definir atributos que sean categorías especiales | **Abierta, y es legal.** El sistema los permite y los advierte; el consentimiento actual probablemente no alcance para tratarlos | [D36](#d36) |
 | Quién es dueño del vocabulario de segmentadores | Sin definir. Sin un responsable, el catálogo se llena de atributos parecidos | [D36](#d36) |
 | Versionar el conjunto de categorías de un atributo | No se hizo: alcanza con no permitir cambiar claves. Cambiar categorías usadas en cuotas históricas rompe la comparabilidad entre olas, y eso queda como riesgo anotado | [D36](#d36) |
-| Historial de un atributo que cambia con el tiempo (ocupación, ingresos) | Se guarda un solo valor vigente. El historial se cruza con el análisis longitudinal de Fase 4 | [D36](#d36) |
+| Historial de un atributo que cambia con el tiempo (ocupación, ingresos) | **Resuelto en R4.1.a:** cada valor vale en un intervalo y el anterior se conserva | [D39](#d39) |
 | Eliminar `persona.sexo` y `persona.localidad` | Pendiente de una migración posterior: quedaron obsoletas, no se escriben ni se leen, y se borran una vez verificado que nada las usa | [D36](#d36) |
+| Recibir webhooks de WhatsApp | **No se hizo.** Sin canal de entrada, un bloqueo o un «STOP» no llega al sistema. Mitigación: revocación manual y revisión de los reportes de Meta. Si el volumen crece, deja de ser opcional | [D37](#d37) |
+| Opt-in de WhatsApp de los panelistas ya enrolados | **Pendiente, y es legal.** Nadie se lo pidió: hay que obtenerlo antes de poder mandarles | [D37](#d37) |
+| Transferencia de celulares a Meta | **A revisar antes del primer envío real.** Es compartir datos personales con un tercero fuera del país | [D37](#d37) |
 | Embeber un demográfico cuando es el objeto del estudio | Sin override: la marca excluye sin excepción. Habilitarlo reintroduce el espejado que el diseño descarta | [D33](#d33) |
 | Base legal del alta por SAV | **Resuelta:** la evidencia viaja en el archivo y declararla es obligatorio. Lo que queda es de campo: que el cuestionario incluya la pregunta | [D25](#d25) |
 | Texto de consentimiento de la landing | Pendiente del DPO; el sistema lo trata como dato | [D24](#d24) |
 | Tratamiento fiscal del canje | No-goal explícito de la Fase 3 | `SPEC_fase3.md` §3 |
 | Calibración de todos los umbrales | Pendiente, contra datos de Equipos | [D31](#d31) |
-| Optimización de muestreo con restricciones | Fase 4 (R4.2); la Fase 3 es por reglas | [D15](#d15) |
+| Optimización de muestreo con restricciones | **Resuelta en R4.2:** un voraz explicable, con las reglas de R3.1 como referencia y respaldo | [D41](#d41) |
 | Endurecimiento de la landing (verificación de contacto, anti-fraude) | Fase 4 (R4.4) | `docs/DESPLIEGUE - Fase 3.md` §5.4 |
-| Análisis longitudinal | Fase 4 | `SPEC_fase3.md` §3 |
+| Análisis longitudinal | **Resuelto en R4.1:** historial de atributos, series declaradas y vista longitudinal | [D39](#d39), [D40](#d40) |
+| Historizar el universo de referencia (`objetivo_composicion`) | **No se hizo.** Una composición retroactiva compara la foto de entonces contra el universo de hoy; la respuesta lo avisa | [D39](#d39) |
+| Quién es dueño del vocabulario de series | Sin definir, y es el mismo riesgo que con los segmentadores: sin un responsable, cada equipo arma las suyas y las comparaciones dejan de ser comparables entre equipos | [D40](#d40) |
+| Un solver de programación entera para el muestreo | **Descartado a propósito:** da una asignación mejor en el margen y ninguna explicación por persona | [D41](#d41) |
+| Calibrar los pesos del optimizador contra datos de Equipos | Pendiente, igual que los umbrales de fatiga. Los defaults están documentados pero no medidos | [D41](#d41) |
 | Alinear el voseo de la interfaz con el registro formal del manual | Sin decidir; requeriría recapturar las 44 pantallas | PR de la Fase 2 |

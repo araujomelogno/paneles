@@ -191,13 +191,51 @@ Criterios de aceptación:
 
 **Objetivo.** Optimizar y extender.
 
-**Alcance.** Análisis longitudinal por `id_persona` a través de olas; muestreo como optimización con restricciones (cuota sujeto a fatiga y equidad de rotación); endurecimiento del auto-registro (verificación y anti-fraude/dedup en la landing).
+**Alcance.** Dos bloques independientes. **4A — Contacto:** endurecimiento del auto-registro (verificación y anti-fraude/dedup en la landing), preferencias de canal y envío por WhatsApp Flow. **4B — Inteligencia:** análisis longitudinal por `id_persona` a través de olas (con historial de atributos, que es a la vez una corrección) y muestreo como optimización con restricciones (cuota sujeta a fatiga y equidad de rotación).
 
 **Requisitos.** R4.1 vista longitudinal · R4.2 optimizador de muestreo · R4.3 landing endurecida · **R4.4 preferencias de canal de contacto** · **R4.5 envío de encuestas por WhatsApp Flow**.
 
 **R4.4 — Preferencias de canal de contacto.** Por persona y canal (`whatsapp`, `email`, `telefono`, `sms`), con evidencia de cuándo y cómo se obtuvo. Es un eje **distinto** del consentimiento por finalidad: `contacto_participacion` responde «¿puedo contactarla?», la preferencia responde «¿por dónde?». Para contactar por un canal hacen falta los dos. Se captura en los tres caminos de alta ya construidos en Fase 3 (alta manual, ingesta con creación de individuos, landing), agregando la captura sin rehacerlos.
 
 **R4.5 — Envío de encuestas por WhatsApp Flow.** Una encuesta puede configurarse con un Flow de WhatsApp publicado y su plantilla aprobada; al convocar, se ofrece enviarlo por WhatsApp a los convocados que cumplan **los dos ejes** y tengan celular válido. El sistema **solo envía**: las respuestas se bajan de Meta y se ingestan por el flujo de siempre. Cada envío lleva el `id_persona` como `flow_token`, para que esa ingesta mapee directo.
+
+Criterios de aceptación del bloque 4A (R4.3, R4.4, R4.5):
+- Dada una inscripción de la landing, entonces el correo —y el celular si lo declara— se verifican con un **código de un solo uso** antes de que la inscripción exista. Sin verificar, **no llega a la cola de aprobación**.
+- Dados los códigos, entonces vencen, cuentan los intentos y están limitados por tasa **por origen y por destino**; se guardan hasheados, igual que el origen.
+- Dado un envío automatizado, entonces se bloquea con un desafío, que se valida **antes de emitir el código** —que es lo que cuesta plata y lo que puede molestar a un tercero—.
+- Dada una inscripción en la cola, entonces quien aprueba ve los **candidatos parecidos** (por documento, correo, celular o nombre y fecha). El documento exacto se resuelve solo; el resto **se propone y no se fusiona**.
+- Dada una persona y un canal, entonces la preferencia se registra con **el texto con que se obtuvo**, su origen y su fecha; revocarla no afecta a los otros canales.
+- Dado el canal `whatsapp`, entonces exige **celular en E.164**; el celular se normaliza en los tres caminos de alta, y uno que no se puede normalizar **no voltea el alta**.
+- Dado un envío, entonces salen solo quienes cumplen los dos ejes y tienen celular válido, y los excluidos se informan **discriminados por motivo**: sin consentimiento, sin preferencia, sin celular, celular inválido.
+- Dada una encuesta de Flow, entonces el sistema valida contra Meta que el Flow esté **publicado** y la plantilla **aprobada** antes de permitir convocar, en vez de fallar al enviar.
+- Dado un envío fallido, entonces se puede reintentar **sin reenviar a quien ya recibió**.
+
+> **Por qué la preferencia de canal es un eje aparte.** El consentimiento autoriza a contactar pero no dice por qué medio: alguien pudo aceptar que lo llamen y no querer mensajes en su WhatsApp personal. Y del lado de Meta, la política de mensajería exige opt-in previo para los mensajes que inicia el negocio; mandar sin él lleva a bloqueos, baja el *quality rating* y termina en la restricción de la cuenta. El canal se quema con el primer envío masivo a gente que no lo pidió.
+
+> **Por qué la verificación va antes de que exista la inscripción.** Un contacto sin verificar cubre dos casos y los dos son malos: un dato inventado, que ensucia la cola de aprobación, y —peor— el dato de otra persona, que es inscribir a alguien sin que se entere. Por eso es una precondición de escribir, no una casilla más del formulario.
+
+**R4.1 — Análisis longitudinal.** Tres partes. **(a) Historial de atributos:** cada valor demográfico pasa a valer en un intervalo de vigencia, y el anterior se conserva en vez de perderse. **(b) Series comparables:** el analista declara que preguntas de olas distintas son la misma medición y mapea sus opciones a un vocabulario común; el sistema sugiere candidatas por similitud semántica pero no agrega ninguna sola. **(c) Vista longitudinal:** la línea de tiempo de una persona a través de las olas, y la matriz de cuántos se movieron entre categorías de una serie de una ola a la siguiente.
+
+**R4.2 — Optimizador de muestreo.** Minimiza la distancia entre la composición de la muestra y el objetivo de cuotas, sujeto a restricciones duras (consentimiento vigente, preferencia del canal a usar, pertenencia al panel, tamaño pedido) y penalizando las blandas (fatiga y equidad de rotación, con pesos configurables por panel). Cada individuo incluido es explicable. Ante una cuota infactible lo informa con las alternativas cuantificadas en vez de violar una restricción, y **no elige por su cuenta**. Las reglas de R3.1 no se reemplazan: se mantienen como referencia y respaldo, y la diferencia entre las dos selecciones se puede ver.
+
+Criterios de aceptación del bloque 4B (R4.1, R4.2):
+- Dado un cambio de valor en un atributo, entonces el anterior **se conserva** con su período de vigencia.
+- Dada una consulta o una composición **sin** referencia temporal, entonces devuelve exactamente lo que devolvía antes del historial.
+- Dada la composición de una ola pasada, entonces se calcula con los valores vigentes entonces —incluidos los derivados: la edad de una persona en 2024 es la que tenía en 2024— y con la membresía que existía en esa fecha.
+- Dada una composición retroactiva con objetivo cargado, entonces se **avisa** que la brecha compara la foto de entonces contra el universo de hoy: los objetivos no se historizan.
+- Dada una serie declarada, entonces se ve el movimiento entre categorías de una ola a otra; quien está en una sola ola **no entra en la matriz**, porque ponerlo en la diagonal diría que no cambió.
+- Dada una serie, entonces el sistema **sugiere** preguntas candidatas de otras olas y no agrega ninguna sola; las que entran por sugerencia quedan marcadas como tales.
+- Dada una opción sin mapear a una categoría común, entonces **no se cuenta** en la comparación y se informa aparte, igual que «(sin dato)» en la composición.
+- Dada la línea de tiempo de una persona identificada, entonces la consulta queda registrada como **reidentificación**.
+- Dada una selección optimizada, entonces cada individuo sale con el déficit que tenía su segmento al entrar, lo que aportó a la brecha y lo que costó en fatiga y en equidad.
+- Dada una restricción dura, entonces **ningún peso la compra**: quien no consintió, o no aceptó el canal, no entra por más brecha que haya.
+- Dada una cuota infactible, entonces se informan las tres salidas con su costo medido —reducir el tamaño, aflojar la fatiga, aceptar la brecha— y **el sistema no elige**.
+
+> **Por qué el historial de atributos es una corrección y no una feature.** Sin él, recalcular la composición de una ola de hace un año la calculaba con la demografía de hoy. Una cuota que cerró con 30 % de menores de 35 puede mostrar 22 % un año después sin que nadie se haya ido del panel, solo porque esa gente cumplió años. El número no estaba incompleto: estaba mal, y se veía bien. Por eso R4.1.a va primero en el bloque.
+
+> **Por qué la comparabilidad la declara el analista.** Es la misma distinción de siempre: el sistema no canoniza respuestas. Canonizar automáticamente congelaría una equivalencia que puede ser falsa —dos preguntas parecidas que miden cosas distintas— y lo haría en el dato, donde ya no se ve. Declararla la hace explícita, revisable y responsabilidad de quien sabe qué se preguntó y para qué.
+
+> **Por qué el optimizador propone y no convoca, y por qué es un voraz.** Convocar sigue siendo un acto explícito de un responsable, igual que con las reglas. Y la selección es por un voraz y no por programación entera porque el requisito pide que cada individuo sea **explicable**: un óptimo de programación entera da una asignación mejor en el margen y ninguna explicación por persona. Una selección que nadie puede defender ante un investigador no sirve para decidir.
 
 > **Detalle completo en `SPEC_fase4.md`.**
 
