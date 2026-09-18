@@ -201,6 +201,34 @@ select id_persona, atributo_id, count(*)
 
 Tres bloques, y **ninguno va al repositorio**. En producción, Secret Manager.
 
+> ### Guardar el secreto no alcanza: hay que declararlo
+>
+> `firebase deploy` solo monta en la función los secretos que
+> `functions/main.py` declara en su lista `SECRETOS`. Un secreto que está en
+> Secret Manager pero no figura ahí **no llega al runtime**, y el síntoma
+> engaña: como todo este sistema se degrada de forma visible cuando falta una
+> credencial, la pantalla dice «sin `WHATSAPP_TOKEN` no se pueden listar las
+> plantillas» justo después de haberlo cargado.
+>
+> Los cinco de la Fase 4 ya están declarados. Lo que hay que saber es la otra
+> mitad de la regla: **el deploy falla si se declara un secreto que no existe
+> en Secret Manager**. Así que los cinco tienen que existir antes del primer
+> `firebase deploy`, aunque todavía no se vayan a usar:
+>
+> ```bash
+> # Los que no se van a usar todavía, con un valor de relleno. Crear el
+> # secreto es lo que el deploy necesita; el código ya trata el vacío como
+> # «no configurado» y lo informa.
+> for s in VERIFICACION_SAL DESAFIO_SECRETO WHATSAPP_TOKEN \
+>          WHATSAPP_PHONE_NUMBER_ID WHATSAPP_WABA_ID; do
+>   firebase functions:secrets:access "$s" >/dev/null 2>&1 \
+>     || echo -n "pendiente" | firebase functions:secrets:set "$s" --data-file -
+> done
+> ```
+>
+> `functions/tests/test_main.py` comprueba las dos direcciones: que no falte
+> ningún secreto que el código lee, y que no sobre ninguno que nadie lee.
+
 ### 3.1 · WhatsApp Business (R4.5)
 
 ```
@@ -440,7 +468,9 @@ Infraestructura:
 - [ ] `DESAFIO_PROVEEDOR` y `DESAFIO_SECRETO`, o la decisión explícita de
       dejar la landing sin desafío.
 - [ ] `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` y `WHATSAPP_WABA_ID` en
-      Secret Manager.
+      Secret Manager, y el token con permiso `whatsapp_business_management`.
+- [ ] **Los cinco secretos de la Fase 4 existen** —aunque sea con un valor de
+      relleno—: el deploy falla si `main.py` declara uno que no está (§3).
 - [ ] Cuenta de WhatsApp Business verificada, Flow publicado y plantilla
       aprobada.
 

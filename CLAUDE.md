@@ -44,5 +44,27 @@ La búsqueda semántica depende de **pgvector** y de consultas relacionales (joi
 
 - Identificadores de esquema y dominio en **español** (ya reflejado en los `.sql`).
 - Migraciones versionadas; no editar el esquema a mano en la base.
-- Secretos por variables de entorno; nunca en el repo.
+- Secretos por variables de entorno; nunca en el repo. Además de guardarlos en Secret Manager hay que **declararlos** en la lista `SECRETOS` de `functions/main.py`: `firebase deploy` solo monta los declarados, y uno que falta no rompe nada —hace que el sistema se comporte como si la credencial no existiera—. `functions/tests/test_main.py` lo verifica en las dos direcciones.
 - **Trabajar por fases.** Empezar por la Fase 1 (`HANDOFF_fase1.md`). No implementar una fase posterior hasta cerrar el Definition of Done de la anterior.
+
+## Antes de pushear: verificar si el PR ya está mergeado
+
+La rama de trabajo se reutiliza entre entregas, así que **siempre** hay que
+comprobar el estado del PR antes de pushear. Un PR mergeado no admite trabajo
+nuevo: apilar commits encima de historia ya mergeada deja la rama divergida y
+el trabajo invisible.
+
+```bash
+gh pr view --json state,mergedAt        # o el equivalente por API
+```
+
+Si está mergeado, el trabajo que sigue es un cambio **nuevo**: rebasar los
+commits sin mergear sobre el `main` actual, conservando el nombre de la rama, y
+abrir **otro PR**.
+
+```bash
+git fetch origin main
+git checkout -B <rama> origin/main
+git cherry-pick <commits-sin-mergear>
+git push --force-with-lease -u origin <rama>
+```
