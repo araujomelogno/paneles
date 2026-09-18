@@ -182,13 +182,17 @@ todo lo que segmenta.
 Y una comprobación que vale la pena hacer a mano, porque es la que prueba que
 la corrección de R4.1.a quedó bien:
 
-```sql
+En la **bóveda** (con `cloud-sql-proxy --port 5432 …:paneles-boveda` corriendo
+en otra terminal):
+
+```bash
+psql -h 127.0.0.1 -p 5432 -U app_paneles -d paneles_boveda -c "
 -- Toda persona con algún atributo cargado tiene que tener exactamente un
 -- valor vigente por atributo, y ninguna vigencia solapada. Si esto devuelve
 -- filas, la migración no terminó bien.
 select id_persona, atributo_id, count(*)
   from persona_atributo where hasta is null
- group by 1, 2 having count(*) > 1;
+ group by 1, 2 having count(*) > 1;"
 ```
 
 ---
@@ -204,6 +208,29 @@ WHATSAPP_TOKEN            token de acceso de la app de Meta
 WHATSAPP_PHONE_NUMBER_ID  el número emisor
 WHATSAPP_WABA_ID          la cuenta de WhatsApp Business
 ```
+
+Los tres valores salen de **Meta for Developers → tu app → WhatsApp → API
+Setup**. Se cargan como los de las fases anteriores (ojo con el `-n`: sin él
+se guarda un salto de línea y Meta rechaza el token con un error poco claro):
+
+```bash
+echo -n "EL_TOKEN" \
+  | firebase functions:secrets:set WHATSAPP_TOKEN --data-file -
+
+echo -n "EL_PHONE_NUMBER_ID" \
+  | firebase functions:secrets:set WHATSAPP_PHONE_NUMBER_ID --data-file -
+
+echo -n "EL_WABA_ID" \
+  | firebase functions:secrets:set WHATSAPP_WABA_ID --data-file -
+```
+
+Verificar: `firebase functions:secrets:access WHATSAPP_TOKEN`.
+
+> **El token de la consola es temporal.** El que Meta muestra por defecto en
+> API Setup dura 24 horas: sirve para probar, no para producción. Para que el
+> envío funcione de forma estable hace falta un token permanente de usuario
+> del sistema. Si el primer envío anda y al día siguiente falla con error de
+> autenticación, es esto.
 
 La configuración es **a nivel sistema, no por encuesta**: hay un número
 emisor y es el mismo para todas.
@@ -231,6 +258,16 @@ VERIFICACION_ENVIO_PROVEEDOR   'ninguno' (default) | 'log'
 VERIFICACION_SAL               la sal con que se hashean códigos y orígenes
 ```
 
+```bash
+# Generar una sal larga y aleatoria, y cargarla.
+openssl rand -base64 32 \
+  | tr -d '\n' \
+  | firebase functions:secrets:set VERIFICACION_SAL --data-file -
+
+# El proveedor es configuración, no secreto: va como variable de entorno
+# de la función (en su configuración de despliegue), no en Secret Manager.
+```
+
 > **Sin proveedor la landing no verifica nada.** El código vuelve en la
 > respuesta del propio pedido, o sea que quien lo pide lo recibe sin
 > necesidad de tener acceso al contacto. El sistema lo dice con todas las
@@ -252,6 +289,14 @@ reranker.
 DESAFIO_PROVEEDOR   'ninguno' (default) | 'turnstile' | 'recaptcha'
 DESAFIO_SECRETO     el secreto del lado servidor
 ```
+
+```bash
+echo -n "EL_SECRETO_DEL_PROVEEDOR" \
+  | firebase functions:secrets:set DESAFIO_SECRETO --data-file -
+```
+
+`DESAFIO_PROVEEDOR` es configuración (variable de entorno de la función), no
+secreto. La clave *pública* del desafío va en el front de la landing.
 
 Sin configurar, la landing no distingue un envío automatizado de una persona.
 No bloquea el despliegue, pero está en el checklist: es una decisión que
