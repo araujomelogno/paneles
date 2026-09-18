@@ -67,7 +67,7 @@ de atributos de la ficha (R3.14)— también se toman aparte, con el mismo
 recorrido que `capturar.mjs`: se agregaron después y no hacía falta rehacer
 las 44 para sumarlas.
 
-Las 51 a 53 son del bloque 4A. La 51 —el formulario público con la
+Las 51 a 53 y la 60 son del bloque 4A. La 51 —el formulario público con la
 verificación— **no se puede tomar de la copia en modo demo**: la landing habla
 con la API real y `demo.js` no la cubre. Se toma levantando un servidor mínimo
 contra el ruteo real y un Postgres de pruebas.

@@ -1062,16 +1062,40 @@
   <div class="aviso">
     <div class="t">El Flow y la plantilla se crean en Meta</div>
     <p>El Flow y la plantilla de mensaje se arman y se publican en la
-    plataforma de Meta; en esta pantalla solo se los referencia por su
-    identificador. La plantilla requiere <strong>aprobación de Meta</strong> y
-    la revisión demora: no es posible configurar la encuesta y convocar el
-    mismo día.</p>
+    plataforma de Meta. La plantilla requiere <strong>aprobación de
+    Meta</strong> y la revisión demora: no es posible crear la plantilla y
+    convocar el mismo día.</p>
   </div>
 
-  <p>El sistema comprueba contra Meta que el Flow esté publicado y la plantilla
-  aprobada <strong>antes</strong> de permitir el envío. Si algo falta, lo
-  indica con su motivo en lugar de dejar enviar y fallar mensaje por
-  mensaje.</p>
+  <h4>Elegir la plantilla</h4>
+
+  <p>Lo único que se configura en esta pantalla es <strong>cuál de las
+  plantillas aprobadas</strong> de la cuenta usar. Se elige de una lista, y
+  nada más: cada plantilla lleva adentro su idioma y el Flow que abre su
+  botón, así que no hay que copiar ningún identificador desde Meta.</p>
+
+  <figure>
+    <img src="capturas/53-plantilla-whatsapp.jpg" alt="Elegir la plantilla de WhatsApp" />
+    <figcaption><b>La lista muestra solo lo que sirve.</b> Únicamente las
+    plantillas aprobadas que llevan un botón de Flow. Al elegir una se ven su
+    idioma, el Flow que abre y el texto del mensaje, para confirmar que es la
+    correcta antes de guardar.</figcaption>
+  </figure>
+
+  <div class="aviso info">
+    <div class="t">El mismo nombre en dos idiomas son dos plantillas</div>
+    <p>En Meta, una plantilla se identifica por su nombre <em>y</em> su
+    idioma: cada versión se aprueba por separado y puede estar en estados
+    distintos. Por eso la lista muestra las dos —<code>invitacion_ola ·
+    es</code> y <code>invitacion_ola · pt_BR</code>— como opciones separadas, y
+    el sistema no elige una por usted: sería decidir en qué idioma se le habla
+    a la gente.</p>
+  </div>
+
+  <p>El sistema comprueba contra Meta que la plantilla esté aprobada y que el
+  Flow que lleva adentro esté publicado, <strong>antes</strong> de permitir el
+  envío. Si algo falta, lo indica con su motivo en lugar de dejar enviar y
+  fallar mensaje por mensaje.</p>
 
   <h4>A quiénes se envía</h4>
 
@@ -1081,9 +1105,12 @@
   informa <strong>por qué motivo cada uno</strong>.</p>
 
   <figure>
-    <img src="capturas/53-envio-whatsapp.jpg" alt="Envío de una encuesta por WhatsApp" />
-    <figcaption><b>Antes de enviar.</b> Los motivos se detallan por separado
-    porque se resuelven de manera distinta: a unos hay que pedirles el
+    <img src="capturas/60-estado-flow.jpg" alt="Estado del Flow y destinatarios" />
+    <figcaption><b>Antes de enviar.</b> Arriba, qué plantilla quedó
+    configurada —con su idioma, porque es lo que distingue dos versiones del
+    mismo nombre— y si el Flow está publicado. Abajo, a cuántos se les puede
+    enviar y cuántos quedan fuera. Los motivos se detallan por separado porque
+    se resuelven de manera distinta: a unos hay que pedirles el
     consentimiento, a otros ofrecerles el canal y a otros cargarles el
     celular.</figcaption>
   </figure>

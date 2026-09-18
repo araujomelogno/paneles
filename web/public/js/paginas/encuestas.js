@@ -151,9 +151,10 @@ async function renderDetalle(main, encuestaId) {
       <div class="card-body"><div id="flow" class="muted small">
         ${encuesta.es_flow
           ? cargando('12vh')
-          : `Esta encuesta no se envía por WhatsApp. Se configura con un Flow
-             ya publicado en Meta y su plantilla aprobada; el sistema
-             <strong>solo envía</strong>: las respuestas se bajan de Meta y se
+          : `Esta encuesta no se envía por WhatsApp. Para que lo haga, se
+             elige una de las <strong>plantillas aprobadas</strong> de la
+             cuenta: cada una lleva adentro su Flow y su idioma. El sistema
+             <strong>solo envía</strong>; las respuestas se bajan de Meta y se
              ingestan por el flujo de siempre.`}
       </div></div>
     </div>
@@ -1232,11 +1233,22 @@ async function cargarEstadoFlow(encuestaId) {
               estado.motivos.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>`}
       </div>
       <dl class="kv">
-        <dt>Flow</dt><dd class="mono">${esc(estado.flow_id || '—')}
-          ${estado.flow ? `<span class="badge badge-off">${esc(estado.flow.estado)}</span>` : ''}</dd>
-        <dt>Plantilla</dt><dd class="mono">${esc(estado.plantilla || '—')}
+        <!-- El idioma va pegado al nombre y no en una fila aparte: dos
+             plantillas con el mismo nombre en distintos idiomas son dos
+             plantillas distintas, y sin el idioma la tarjeta no las
+             distingue. -->
+        <dt>Plantilla</dt><dd><span class="mono">${esc(estado.plantilla || '—')}</span>
+          ${estado.idioma ? ` · <span class="mono">${esc(estado.idioma)}</span>` : ''}
           ${estado.plantilla_estado
-            ? `<span class="badge badge-off">${esc(estado.plantilla_estado)}</span>` : ''}</dd>
+            ? `<span class="badge ${estado.plantilla_estado === 'APPROVED'
+                 ? 'badge-on' : 'badge-off'}">${esc(estado.plantilla_estado)}</span>` : ''}</dd>
+        <dt>Flow</dt><dd>${esc(estado.flow?.nombre || '—')}
+          ${estado.flow ? `<span class="badge ${estado.flow.estado === 'PUBLISHED'
+             ? 'badge-on' : 'badge-off'}">${esc(estado.flow.estado)}</span>` : ''}
+          ${estado.flow_id
+            ? `<div class="td-muted small mono">${esc(estado.flow_id)}</div>` : ''}</dd>
+        ${estado.texto_boton
+          ? `<dt>Botón</dt><dd>${esc(estado.texto_boton)}</dd>` : ''}
       </dl>
       ${destinatarios ? pintarDestinatarios(destinatarios) : ''}`;
   } catch (error) {
@@ -1266,44 +1278,55 @@ function pintarDestinatarios(destinatarios) {
       </div>` : ''}`;
 }
 
-function abrirConfiguracionFlow(encuesta) {
+/* R4.5 — elegir la plantilla, y nada más.
+
+   Antes esta pantalla pedía tres cosas: el id del Flow, el nombre de la
+   plantilla y el idioma. Eran tres veces el mismo dato: una plantilla de Meta
+   ya trae adentro su idioma y, en su botón de Flow, el `flow_id`. Pedirlos
+   por separado no solo era tedioso —había que ir a buscar el id a Meta y
+   copiarlo a mano— sino que dejaba que se contradijeran: nada impedía
+   configurar la plantilla `X` con el Flow de la `Y`, y eso recién se
+   descubría al validar, o peor, al enviar.
+
+   Ahora se elige de una lista de las plantillas aprobadas de la cuenta que
+   tienen botón de Flow. El resto se resuelve solo. */
+async function abrirConfiguracionFlow(encuesta) {
   const caja = modal({
     titulo: 'Enviar esta encuesta por WhatsApp',
-    ancho: '620px',
+    ancho: '640px',
     cuerpo: `
       <div id="flow-alerta"></div>
       <div class="aviso">
         <h4>El Flow se crea en Meta, no acá</h4>
         <p>El sistema <strong>solo envía</strong>. El Flow y la plantilla se
-        arman y se publican en Meta; acá se referencian por su id. Las
-        respuestas se bajan de Meta y se ingestan por el flujo de siempre.</p>
+        arman y se publican en Meta; acá se elige cuál usar. Las respuestas se
+        bajan de Meta y se ingestan por el flujo de siempre.</p>
         <p>La plantilla necesita <strong>aprobación de Meta</strong> y la
-        revisión demora: no se puede configurar la encuesta y convocar el
-        mismo día.</p>
+        revisión demora: no se puede crear la plantilla y convocar el mismo
+        día.</p>
       </div>
       <div class="form-group" style="margin-top:1.25rem">
-        <label>Id del Flow</label>
-        <input type="text" name="flow_id" placeholder="1234567890"
-               value="${esc(encuesta.flow_id || '')}" />
-        <div class="field-hint">Tiene que estar <strong>publicado</strong>.</div>
+        <label>Plantilla de mensaje</label>
+        <select class="fselect" name="elegida" id="plantilla-elegida" disabled>
+          <option>Cargando las plantillas de la cuenta…</option>
+        </select>
+        <div class="field-hint" id="plantilla-hint">Solo se listan las
+        aprobadas que llevan un botón de Flow. El idioma y el Flow vienen
+        adentro de la plantilla.</div>
       </div>
-      <div class="form-row">
-        <div class="form-group"><label>Plantilla de mensaje</label>
-          <input type="text" name="plantilla" placeholder="invitacion_ola"
-                 value="${esc(encuesta.flow_plantilla || '')}" />
-          <div class="field-hint">La aprobada que contiene el Flow.</div></div>
-        <div class="form-group"><label>Idioma</label>
-          <input type="text" name="idioma" placeholder="es"
-                 value="${esc(encuesta.flow_idioma || 'es')}" /></div>
-      </div>`,
+      <div id="plantilla-detalle"></div>`,
     acciones: [
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
       { texto: 'Guardar', clase: 'btn-orange', onClick: async (c) => {
-          const datos = leerFormulario(c);
+          const elegida = $('#plantilla-elegida', c).value;
+          if (!elegida) {
+            $('#flow-alerta', c).innerHTML = alerta(
+              'Elegí una plantilla de la lista.');
+            return;
+          }
+          const [plantilla, idioma] = JSON.parse(elegida);
           try {
-            await api.flow.configurar(encuesta.id, {
-              flow_id: datos.flow_id, plantilla: datos.plantilla,
-              idioma: datos.idioma });
+            await api.flow.configurar(encuesta.id, { plantilla, idioma });
             cerrarModal();
             toast('Configuración guardada.', 'ok');
             contexto.irA('encuestas', { encuestaId: encuesta.id });
@@ -1313,7 +1336,57 @@ function abrirConfiguracionFlow(encuesta) {
         } },
     ],
   });
+
+  await cargarPlantillas(caja, encuesta);
   return caja;
+}
+
+async function cargarPlantillas(caja, encuesta) {
+  const select = $('#plantilla-elegida', caja);
+  let salida;
+  try {
+    salida = await api.flow.plantillas();
+  } catch (error) {
+    select.innerHTML = '<option value="">— no se pudieron cargar —</option>';
+    $('#flow-alerta', caja).innerHTML = alerta(error.message);
+    return;
+  }
+
+  const plantillas = salida.plantillas || [];
+  if (!plantillas.length) {
+    select.innerHTML = '<option value="">— no hay ninguna disponible —</option>';
+    // Los avisos explican **por qué** está vacía, que es lo que hace falta
+    // para saber a quién reclamarle: no hay credenciales, no hay plantillas
+    // aprobadas, o las que hay no tienen botón de Flow.
+    $('#flow-alerta', caja).innerHTML = (salida.avisos || [])
+      .map((a) => alerta(a, 'warn')).join('')
+      || alerta('La cuenta de WhatsApp no tiene plantillas con Flow.', 'warn');
+    return;
+  }
+
+  const actual = JSON.stringify([encuesta.flow_plantilla, encuesta.flow_idioma]);
+  select.disabled = false;
+  select.innerHTML = '<option value="">— elegir —</option>'
+    + plantillas.map((p) => {
+      const valor = JSON.stringify([p.nombre, p.idioma]);
+      return `<option value="${esc(valor)}" ${valor === actual ? 'selected' : ''}>`
+        + `${esc(p.nombre)} · ${esc(p.idioma)}</option>`;
+    }).join('');
+
+  const pintarDetalle = () => {
+    const elegida = plantillas.find((p) =>
+      JSON.stringify([p.nombre, p.idioma]) === select.value);
+    $('#plantilla-detalle', caja).innerHTML = elegida ? `
+      <dl class="kv">
+        <dt>Idioma</dt><dd>${esc(elegida.idioma)}</dd>
+        <dt>Flow</dt><dd class="mono">${esc(elegida.flow_id)}</dd>
+        <dt>Botón</dt><dd>${esc(elegida.texto_boton || '—')}</dd>
+        ${elegida.cuerpo
+          ? `<dt>Mensaje</dt><dd class="small">${esc(elegida.cuerpo)}</dd>` : ''}
+      </dl>` : '';
+  };
+  select.onchange = pintarDetalle;
+  pintarDetalle();
 }
 
 async function abrirEnvioWhatsapp(encuesta) {

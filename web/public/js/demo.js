@@ -102,6 +102,31 @@ const bd = {
 
 const siguiente = (clave) => bd.secuencias[clave]++;
 
+/* R4.5 — las plantillas que «tiene» la cuenta de WhatsApp de la copia demo.
+
+   Cada una trae su idioma y su `flow_id` adentro, que es exactamente la razón
+   por la que la pantalla los dejó de pedir por separado. `invitacion_ola`
+   está en dos idiomas a propósito: son dos plantillas distintas, se aprueban
+   por separado, y elegir una por la otra sería mandarle a la gente en el
+   idioma equivocado. */
+const PLANTILLAS_DEMO = [
+  { nombre: 'invitacion_ola', idioma: 'es', estado: 'APPROVED',
+    categoria: 'MARKETING', flow_id: '7412880031',
+    texto_boton: 'Responder la encuesta',
+    cuerpo: 'Hola, somos Equipos Consultores. Te invitamos a responder una '
+          + 'encuesta breve. Gracias por ser parte del panel.', calidad: 'GREEN' },
+  { nombre: 'invitacion_ola', idioma: 'pt_BR', estado: 'APPROVED',
+    categoria: 'MARKETING', flow_id: '7412880031',
+    texto_boton: 'Responder a pesquisa',
+    cuerpo: 'Olá, somos a Equipos Consultores. Convidamos você a responder '
+          + 'uma pesquisa breve.', calidad: 'GREEN' },
+  { nombre: 'recordatorio_ola', idioma: 'es', estado: 'APPROVED',
+    categoria: 'UTILITY', flow_id: '7412880032',
+    texto_boton: 'Completar ahora',
+    cuerpo: 'Te habíamos invitado a una encuesta y todavía está abierta. '
+          + 'Si querés, podés completarla acá.', calidad: 'GREEN' },
+];
+
 /* ── Semilla ────────────────────────────────────────────────────── */
 
 const SEMILLA = [
@@ -290,8 +315,15 @@ function sembrar() {
 
   // Y una sin convocar en el panel que sí tiene universo de referencia: es
   // la que deja ver el muestreo de la Fase 3 haciendo lo suyo, priorizando
-  // la brecha contra un objetivo cargado.
-  crearEncuesta(nacional.id, 'Ola 3 — Movilidad urbana', '2026-10-10');
+  // la brecha contra un objetivo cargado. Va configurada como Flow de
+  // WhatsApp (R4.5): sin una así, la pantalla de envío no tendría nada que
+  // mostrar y el estado del Flow no se podría ver nunca.
+  const movilidad = crearEncuesta(nacional.id, 'Ola 3 — Movilidad urbana',
+                                  '2026-10-10');
+  Object.assign(movilidad, {
+    flow_plantilla: 'invitacion_ola', flow_idioma: 'es',
+    flow_id: '7412880031', es_flow: true,
+  });
 
   // R3.13 — una carga externa ya hecha: gente incorporada con sus respuestas
   // que **no** es panelista. Sin esto el filtro «sin panel» de la pantalla de
@@ -1229,30 +1261,58 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     }
   }
 
+  /* R4.5 — las plantillas de la cuenta de WhatsApp.
+
+     La copia demo no llama a Meta: devuelve un catálogo fijo con la forma
+     que devuelve la API. Las tres están para mostrar los tres casos que la
+     pantalla tiene que distinguir: la que sirve, la que existe en dos
+     idiomas —y por eso son dos plantillas distintas— y ninguna sin botón de
+     Flow, porque el backend las filtra antes de que lleguen acá. */
+  if (clave === 'GET /whatsapp/plantillas') {
+    return { plantillas: PLANTILLAS_DEMO, configurado: true, faltan: [],
+             sin_flow: 1, avisos: [] };
+  }
+
   /* R4.5 — el canal de WhatsApp de una encuesta. */
   if (partes[0] === 'encuestas' && partes[2] === 'flow') {
     const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
     if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
     if (metodo === 'PUT') {
+      const nombre = (cuerpo.plantilla || '').trim() || null;
+      const idioma = (cuerpo.idioma || '').trim() || null;
+      // El idioma y el `flow_id` salen de la plantilla, no del formulario.
+      const candidatas = PLANTILLAS_DEMO.filter((p) =>
+        p.nombre === nombre && (!idioma || p.idioma === idioma));
+      const elegida = candidatas.length === 1 ? candidatas[0] : null;
       Object.assign(encuesta, {
-        flow_id: (cuerpo.flow_id || '').trim() || null,
-        flow_plantilla: (cuerpo.plantilla || '').trim() || null,
-        flow_idioma: (cuerpo.idioma || '').trim() || null,
+        flow_plantilla: nombre,
+        flow_idioma: elegida ? elegida.idioma : idioma,
+        flow_id: elegida ? elegida.flow_id : null,
       });
-      encuesta.es_flow = !!(encuesta.flow_id && encuesta.flow_plantilla);
+      encuesta.es_flow = !!encuesta.flow_plantilla;
       return encuesta;
     }
     // La copia demo no llama a Meta: responde como si el Flow estuviera
     // publicado y la plantilla aprobada, que es el caso que interesa recorrer.
+    const resuelta = !!(encuesta.es_flow && encuesta.flow_id);
+    const ambigua = encuesta.es_flow && !encuesta.flow_id
+      && PLANTILLAS_DEMO.filter((p) => p.nombre === encuesta.flow_plantilla);
     return {
       encuesta_id: encuesta.id, es_flow: !!encuesta.es_flow,
       flow_id: encuesta.flow_id, plantilla: encuesta.flow_plantilla,
       idioma: encuesta.flow_idioma,
-      puede_enviar: !!encuesta.es_flow,
-      motivos: encuesta.es_flow
-        ? [] : ['La encuesta no está configurada como Flow.'],
-      flow: encuesta.es_flow ? { estado: 'PUBLISHED' } : undefined,
-      plantilla_estado: encuesta.es_flow ? 'APPROVED' : undefined,
+      puede_enviar: resuelta,
+      motivos: resuelta ? [] : (
+        !encuesta.es_flow
+          ? ['La encuesta no está configurada como Flow.']
+          : [`Hay ${(ambigua || []).length} plantillas «${encuesta.flow_plantilla}», `
+             + `una por idioma. Hay que elegir cuál: son plantillas distintas y `
+             + `se aprueban por separado.`]),
+      idiomas_disponibles: resuelta ? undefined
+        : (ambigua || []).map((p) => p.idioma).sort(),
+      flow: resuelta ? { nombre: 'Invitación a la ola', estado: 'PUBLISHED' } : undefined,
+      plantilla_estado: resuelta ? 'APPROVED' : undefined,
+      texto_boton: resuelta ? 'Responder la encuesta' : undefined,
     };
   }
 

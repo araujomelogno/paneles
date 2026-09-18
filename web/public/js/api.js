@@ -311,6 +311,10 @@ export const canales = {
 /* R4.5 — el envío de una encuesta por WhatsApp Flow. El sistema solo envía:
    las respuestas se bajan de Meta y se ingestan por el flujo de siempre. */
 export const flow = {
+  /* Las plantillas aprobadas de la cuenta que tienen botón de Flow. Es lo
+     único que se elige: el idioma y el `flow_id` vienen adentro de cada una,
+     así que pedirlos aparte era pedir tres veces el mismo dato. */
+  plantillas: () => GET('/whatsapp/plantillas'),
   configurar: (encuestaId, cuerpo) => PUT(`/encuestas/${encuestaId}/flow`, cuerpo),
   // Valida contra Meta que el Flow esté publicado y la plantilla aprobada.
   // Se consulta antes de convocar, no al enviar.
