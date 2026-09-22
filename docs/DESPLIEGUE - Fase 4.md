@@ -157,7 +157,7 @@ crean tablas y agregan columnas nullables o con default.
 | `verificacion_contacto` | Los códigos de un solo uso que endurecen la landing. El código va **hasheado** y la IP también (R4.3) |
 | `inscripcion.celular_verificado` / `email_verificado` | Qué verificó cada inscripción. `false` en las anteriores a esta migración, que no pasaron por verificación |
 | `inscripcion.canales` | Los canales que el titular aceptó de primera mano en el formulario. Se convierten en preferencias al aprobar |
-| `encuesta.flow_plantilla` / `flow_idioma` / `flow_id` | Qué plantilla de WhatsApp usa la encuesta (R4.5). Lo único que se elige es la plantilla; el idioma y el `flow_id` se resuelven de ella y se guardan para dejar registrado qué Flow usó esa ola |
+| `encuesta.flow_id` / `flow_plantilla` / `flow_idioma` | Configurar una encuesta como WhatsApp Flow (R4.5) |
 | `participacion.enviado_en` / `envio_estado` / `envio_error` | El estado del envío por persona, para reintentar solo los fallidos |
 | `persona_atributo.desde` / `hasta` | El historial: desde y hasta cuándo valió cada valor (R4.1.a) |
 | `f_atributo_persona(momento)` | La única implementación de la resolución de atributos, ahora a una fecha. `v_atributo_persona` es esta función en `now()` |
@@ -201,34 +201,6 @@ select id_persona, atributo_id, count(*)
 
 Tres bloques, y **ninguno va al repositorio**. En producción, Secret Manager.
 
-> ### Guardar el secreto no alcanza: hay que declararlo
->
-> `firebase deploy` solo monta en la función los secretos que
-> `functions/main.py` declara en su lista `SECRETOS`. Un secreto que está en
-> Secret Manager pero no figura ahí **no llega al runtime**, y el síntoma
-> engaña: como todo este sistema se degrada de forma visible cuando falta una
-> credencial, la pantalla dice «sin `WHATSAPP_TOKEN` no se pueden listar las
-> plantillas» justo después de haberlo cargado.
->
-> Los cinco de la Fase 4 ya están declarados. Lo que hay que saber es la otra
-> mitad de la regla: **el deploy falla si se declara un secreto que no existe
-> en Secret Manager**. Así que los cinco tienen que existir antes del primer
-> `firebase deploy`, aunque todavía no se vayan a usar:
->
-> ```bash
-> # Los que no se van a usar todavía, con un valor de relleno. Crear el
-> # secreto es lo que el deploy necesita; el código ya trata el vacío como
-> # «no configurado» y lo informa.
-> for s in VERIFICACION_SAL DESAFIO_SECRETO WHATSAPP_TOKEN \
->          WHATSAPP_PHONE_NUMBER_ID WHATSAPP_WABA_ID; do
->   firebase functions:secrets:access "$s" >/dev/null 2>&1 \
->     || echo -n "pendiente" | firebase functions:secrets:set "$s" --data-file -
-> done
-> ```
->
-> `functions/tests/test_main.py` comprueba las dos direcciones: que no falte
-> ningún secreto que el código lee, y que no sobre ninguno que nadie lee.
-
 ### 3.1 · WhatsApp Business (R4.5)
 
 ```
@@ -263,24 +235,16 @@ Verificar: `firebase functions:secrets:access WHATSAPP_TOKEN`.
 La configuración es **a nivel sistema, no por encuesta**: hay un número
 emisor y es el mismo para todas.
 
-**`WHATSAPP_WABA_ID` no es opcional.** Es de donde sale la lista de plantillas
-de la cuenta, y la pantalla de la encuesta no pide un id de Flow ni un idioma:
-se elige una plantilla de esa lista y de ella salen los dos. Sin el WABA_ID la
-lista viene vacía, la encuesta no se puede configurar como Flow y la pantalla
-lo dice con ese motivo.
-
-> **Qué permisos necesita el token.** Leer las plantillas exige
-> `whatsapp_business_management`; enviar, `whatsapp_business_messaging`. Un
-> token con solo el segundo envía pero no puede listar, y la pantalla queda
-> sin nada que ofrecer sin que sea evidente por qué.
+Sin ellas, una encuesta se puede configurar como Flow pero el envío queda
+deshabilitado y la pantalla lo dice. Sin `WHATSAPP_WABA_ID` en particular no
+se puede comprobar que la plantilla esté aprobada, y por eso el envío también
+se bloquea: enviar con una plantilla rechazada falla persona por persona.
 
 **Antes del primer envío hacen falta, además del token:**
 
 - Cuenta de WhatsApp Business **verificada**.
 - El **Flow publicado** en Meta (no en borrador).
-- La **plantilla aprobada** con un **botón de Flow**. Una plantilla aprobada
-  sin ese botón no aparece en la lista: sirve para mandar un mensaje, no para
-  convocar a un cuestionario. La revisión de Meta demora, así
+- La **plantilla aprobada** que lo contiene. La revisión de Meta demora, así
   que conviene mandarla a aprobar apenas se sepa el texto: **no se puede
   configurar la encuesta y convocar el mismo día**.
 
@@ -314,10 +278,27 @@ openssl rand -base64 32 \
 de seis dígitos se revierte con una tabla de un millón de entradas, y el de
 una IP también.
 
-Los proveedores reales de SMS y de correo se agregan en
-`verificacion_contacto.proveedor_de_envio`, que es una función que devuelve
-`enviar(canal, destino, codigo)`. El patrón es el mismo de los embeddings y el
-reranker.
+**Los valores.** `VERIFICACION_ENVIO_PROVEEDOR` acepta hoy dos:
+
+- **`ninguno`** (default): no se envía nada y el código vuelve en la respuesta.
+  Sirve para probar el circuito; **no es publicable** (ver aviso de arriba).
+- **`log`**: no envía tampoco, pero deja el código en los logs de la función.
+  Útil para probar el flujo completo sin contratar un proveedor, revisando el
+  código con `gcloud run services logs read api --region=southamerica-east1`.
+
+**Para verificar de verdad hace falta un proveedor real**, y todavía no hay
+ninguno implementado: es trabajo pendiente, no configuración. Se agrega en
+`verificacion_contacto.proveedor_de_envio`, una función que devuelve
+`enviar(canal, destino, codigo)` — el mismo patrón de interfaz que ya se usa
+para los embeddings y el reranker. Al agregarlo, su credencial va a Secret
+Manager como las demás, y el nuevo valor se declara en
+`VERIFICACION_ENVIO_PROVEEDOR`.
+
+> **Consecuencia para el despliegue.** Hasta que exista un proveedor real, la
+> landing **no puede difundirse públicamente**: R4.3 exige verificar el
+> contacto antes de que una inscripción llegue a la cola, y sin envío no hay
+> verificación posible. Con `ninguno` o `log` el circuito se prueba, no se
+> opera.
 
 ### 3.3 · Desafío anti-automatización (R4.3)
 
@@ -326,17 +307,66 @@ DESAFIO_PROVEEDOR   'ninguno' (default) | 'turnstile' | 'recaptcha'
 DESAFIO_SECRETO     el secreto del lado servidor
 ```
 
+**Qué es.** «Desafío» es *challenge*: el widget que comprueba que del otro lado
+hay una persona y no un script. Sin él, la landing acepta cualquier envío, y
+un script puede inscribir miles de personas falsas en minutos — que llegan a
+la cola de aprobación como si fueran legítimas.
+
+**Cómo funciona.** El proveedor entrega **dos claves**:
+
+| Clave | Dónde va | Para qué |
+|---|---|---|
+| **Pública** (site key) | En el HTML de la landing | Muestra el widget al visitante |
+| **Privada** (secret key) | En Secret Manager, como `DESAFIO_SECRETO` | El backend la usa para preguntarle al proveedor si el token que recibió es válido |
+
+Cuando alguien envía el formulario, el widget genera un token. El backend se
+lo manda al proveedor junto con el secreto, y el proveedor responde si es
+legítimo. Sin el secreto, cualquiera podría inventar un token.
+
+**Qué proveedor elegir.** Las dos opciones soportadas:
+
+- **`turnstile`** — Cloudflare Turnstile. Gratis, no requiere cuenta de
+  Google, y en la mayoría de los casos no le muestra ningún rompecabezas al
+  visitante (resuelve en silencio). **Es la opción recomendada** salvo que ya
+  usen reCAPTCHA en otro lado.
+- **`recaptcha`** — Google reCAPTCHA. Equivalente en función; conviene si ya
+  hay una cuenta y prácticas establecidas.
+
+**Cómo obtener las claves (Turnstile).**
+
+1. Entrar a la cuenta de Cloudflare (crearla si no existe; no hace falta tener
+   el dominio en Cloudflare).
+2. Ir a **Turnstile → Add site**.
+3. Poner el dominio desde donde se sirve la landing (`gestion-paneles.web.app`,
+   o el dominio propio si ya se configuró). Para probar en local, agregar
+   también `localhost`.
+4. Elegir el modo **Managed** (el proveedor decide cuándo desafiar).
+5. Copiar las dos claves que quedan a la vista: **site key** y **secret key**.
+
+**Cargar el secreto:**
+
 ```bash
-echo -n "EL_SECRETO_DEL_PROVEEDOR" \
+echo -n "LA_SECRET_KEY" \
   | firebase functions:secrets:set DESAFIO_SECRETO --data-file -
 ```
 
-`DESAFIO_PROVEEDOR` es configuración (variable de entorno de la función), no
-secreto. La clave *pública* del desafío va en el front de la landing.
+**Configurar el resto:**
 
-Sin configurar, la landing no distingue un envío automatizado de una persona.
-No bloquea el despliegue, pero está en el checklist: es una decisión que
-alguien tiene que tomar a sabiendas.
+- `DESAFIO_PROVEEDOR` es configuración (variable de entorno de la función), no
+  secreto: se setea en `turnstile` o `recaptcha`.
+- La **site key** va en el front de la landing, junto a la configuración de
+  Firebase en `web/public/inscribirse.html`. Es pública por diseño: no es un
+  secreto y no pasa nada si se ve en el código de la página.
+
+**Verificar que quedó andando.** Abrir la landing y enviar el formulario: el
+widget tiene que aparecer (o resolverse solo, en modo Managed) y el envío
+completarse. **Cumplimiento → Contacto: landing y WhatsApp** informa si el
+desafío está configurado.
+
+> **Si se deja en `ninguno`.** La landing sigue funcionando, pero no distingue
+> un envío automatizado de una persona. No bloquea el despliegue y es una
+> opción válida mientras la landing no se difunda públicamente — pero conviene
+> que sea una decisión tomada, no un olvido. Por eso está en el checklist.
 
 ### 3.4 · Comprobarlo todo desde la app
 
@@ -468,9 +498,7 @@ Infraestructura:
 - [ ] `DESAFIO_PROVEEDOR` y `DESAFIO_SECRETO`, o la decisión explícita de
       dejar la landing sin desafío.
 - [ ] `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` y `WHATSAPP_WABA_ID` en
-      Secret Manager, y el token con permiso `whatsapp_business_management`.
-- [ ] **Los cinco secretos de la Fase 4 existen** —aunque sea con un valor de
-      relleno—: el deploy falla si `main.py` declara uno que no está (§3).
+      Secret Manager.
 - [ ] Cuenta de WhatsApp Business verificada, Flow publicado y plantilla
       aprobada.
 
