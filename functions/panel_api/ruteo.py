@@ -1382,14 +1382,19 @@ def enviar_whatsapp(ctx, actor, params, cuerpo, consulta):
         ids_persona=(cuerpo or {}).get("ids_persona"))
 
 
-@ruta("GET", "/diagnostico/contacto", "cumplimiento", requisito="R4.3, R4.5")
+@ruta("GET", "/diagnostico/contacto", "leer", requisito="R4.3, R4.5")
 def diagnostico_contacto(ctx, actor, params, cuerpo, consulta):
     """Qué tan endurecida está la landing y si el canal de WhatsApp está listo.
 
-    Va junto al resto del diagnóstico de Cumplimiento porque las tres cosas
-    que informa —proveedor de códigos, desafío y credenciales de Meta— son
-    condiciones para poder anunciar la landing y para poder enviar, y su
-    ausencia no puede ser una sorpresa."""
+    Las tres cosas que informa —proveedor de códigos, desafío y credenciales
+    de Meta— son condiciones para poder anunciar la landing y para poder
+    enviar, y su ausencia no puede ser una sorpresa.
+
+    Pide `leer` y no `cumplimiento`: quien reparte el enlace del formulario
+    público es operaciones, y es justo quien necesita saber si la
+    verificación funciona de verdad antes de repartirlo. Lo que devuelve son
+    nombres de proveedor y booleanos —**ningún valor de credencial**—, así que
+    no hay nada que proteger más allá de la sesión."""
     return 200, {
         "verificacion": verificacion_contacto.diagnostico(),
         "desafio": desafio.diagnostico(),

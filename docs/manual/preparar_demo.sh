@@ -65,6 +65,15 @@ grep -q "lexico (demo)" "$DESTINO/js/demo.js" \
 node --check "$DESTINO/js/demo.js" \
   || { echo "ERROR: los retoques rompieron demo.js"; exit 1; }
 
+# `python3 -m http.server` no hace los rewrites de Firebase Hosting, así que
+# `/inscribirse` —que en producción resuelve por el rewrite de firebase.json—
+# daría 404 en la copia. Con el archivo también en `inscribirse/index.html`,
+# el servidor lo sirve en esa ruta y el enlace de la pantalla de
+# Inscripciones deja de estar roto acá. (Que el formulario no funcione es
+# otra cosa, y es por la API: ver el README de esta carpeta.)
+mkdir -p "$DESTINO/inscribirse"
+cp "$DESTINO/inscribirse.html" "$DESTINO/inscribirse/index.html"
+
 pkill -f "http.server $PUERTO" 2>/dev/null || true
 sleep 0.5
 cd "$DESTINO" && nohup python3 -m http.server "$PUERTO" > "$DESTINO/servidor.log" 2>&1 &
@@ -72,4 +81,7 @@ sleep 1.5
 
 curl -sf -o /dev/null "http://localhost:$PUERTO/index.html" \
   || { echo "ERROR: el servidor no responde en el puerto $PUERTO"; exit 1; }
+curl -sfL -o /dev/null "http://localhost:$PUERTO/inscribirse" \
+  || { echo "ERROR: /inscribirse no resuelve; el enlace de la pantalla de "\
+            "Inscripciones va a dar 404 en la copia"; exit 1; }
 echo "copia en modo demo servida en http://localhost:$PUERTO ($DESTINO)"

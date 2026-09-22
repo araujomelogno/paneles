@@ -95,7 +95,11 @@ textarea.finput { resize: vertical; min-height: 68px; }
 button { cursor: pointer; font-family: 'Montserrat', sans-serif; }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
   padding: 0.7rem 1.3rem; border-radius: 3px; border: none; font-family: 'Montserrat', sans-serif;
-  font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; transition: all 0.18s; }
+  font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  /* `text-decoration` para los botones que son <a>: un enlace con clase de
+     botón salía subrayado. Un <button> nunca lo está, así que no cambia nada
+     de lo que ya existe. */
+  text-decoration: none; transition: all 0.18s; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
 .btn-orange { background: var(--orange); color: var(--white); }
 .btn-orange:not(:disabled):hover { background: var(--orange-dark); transform: translateY(-1px); box-shadow: 0 5px 16px rgba(233,100,54,0.35); }
