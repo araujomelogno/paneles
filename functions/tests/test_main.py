@@ -111,3 +111,39 @@ def test_lo_que_no_es_secreto_tiene_un_default_usable(variable):
                 f"—ni segundo argumento de `.get()` ni `or`—, así que un "
                 f"`.env` sin esa línea la deja en `None`.")
     assert encontrados, f"`{variable}` no se lee en ningún lado: sobra de la lista."
+
+
+# ── El enlace del formulario público ─────────────────────────────────
+
+def test_la_url_de_la_landing_coincide_con_el_rewrite_de_hosting():
+    """La pantalla de Inscripciones muestra el enlace del formulario público
+    para repartirlo. Lo arma como `<origen>/inscribirse`, y esa ruta existe
+    **solo** por un rewrite de `firebase.json`.
+
+    Si alguien cambia el rewrite, el enlace sigue mostrándose y empieza a dar
+    404 sin que nada falle: la pantalla no tiene forma de saberlo.
+    """
+    import json
+
+    hosting = json.loads(
+        (RAIZ / "firebase.json").read_text(encoding="utf-8"))["hosting"]
+    rutas = {r["source"] for r in hosting.get("rewrites", [])}
+
+    pagina = (RAIZ / "web" / "public" / "js" / "paginas"
+              / "inscripciones.js").read_text(encoding="utf-8")
+    usadas = set(re.findall(r"window\.location\.origin\}(/[a-z-]+)", pagina))
+
+    assert usadas, "la pantalla ya no arma la URL del formulario público"
+    assert usadas <= rutas, (
+        f"la pantalla enlaza a {sorted(usadas - rutas)} y firebase.json no "
+        f"reescribe esa ruta: en producción va a dar 404.")
+
+
+def test_la_copia_demo_tambien_resuelve_la_landing():
+    """`python3 -m http.server` no hace rewrites, así que la copia demo sirve
+    el archivo también como `inscribirse/index.html`. Sin eso el enlace de la
+    pantalla está roto justo donde se toman las capturas."""
+    script = (RAIZ / "docs" / "manual" / "preparar_demo.sh").read_text(
+        encoding="utf-8")
+    assert "inscribirse/index.html" in script, (
+        "preparar_demo.sh ya no deja `/inscribirse` resoluble en la copia.")

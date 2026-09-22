@@ -7,6 +7,17 @@
    La bandeja muestra qué dijo la resolución de identidad —si la persona ya
    existe, si el caso es ambiguo— porque quien aprueba necesita saberlo. Eso
    es adentro; la landing, afuera, no dice nada de eso.
+
+   Arriba de todo va **el enlace del formulario**, que es lo que hay que
+   repartir y no estaba en ninguna pantalla: había que saberlo de memoria o
+   ir a buscarlo al documento de despliegue. Va con su estado, porque el
+   enlace solo sirve si las dos condiciones se cumplen, y las dos fallan en
+   silencio:
+
+     sin texto de consentimiento publicado   el formulario rechaza a todos
+     sin proveedor de envío de códigos       el código se muestra en pantalla,
+                                             así que la verificación no verifica
+                                             nada y el enlace no se puede repartir
 */
 
 import * as api from '../api.js';
@@ -28,6 +39,7 @@ export async function render(main, ctx) {
   contexto = ctx;
   main.innerHTML = encabezado('Inscripciones', 'de la landing',
     'Quién se inscribió por el formulario público y con qué versión del consentimiento.') + `
+    <div id="enlace">${cargando('12vh')}</div>
     <div class="tabs" id="solapas">
       <button class="tab ${solapa === 'pendientes' ? 'active' : ''}" data-solapa="pendientes">Pendientes</button>
       <button class="tab ${solapa === 'resueltas' ? 'active' : ''}" data-solapa="resueltas">Resueltas</button>
@@ -49,23 +61,101 @@ async function cargar() {
   const cuerpo = $('#cuerpo');
   cuerpo.innerHTML = cargando('20vh');
   try {
-    if (solapa === 'textos') return pintarTextos(cuerpo);
-    return pintarInscripciones(cuerpo, solapa === 'pendientes' ? 'pendiente' : 'aprobada');
+    // Una sola lectura de los textos para las dos cosas que los necesitan:
+    // la tarjeta del enlace y la solapa. Antes se pedían dos veces en la
+    // misma carga de pantalla.
+    const { items: textos } = await api.inscripciones.textos();
+    pintarEnlace(textos);
+    if (solapa === 'textos') return pintarTextos(cuerpo, textos);
+    return pintarInscripciones(
+      cuerpo, solapa === 'pendientes' ? 'pendiente' : 'aprobada', textos);
   } catch (error) {
     cuerpo.innerHTML = alerta(error.message);
   }
 }
 
-async function pintarInscripciones(cuerpo, estadoPedido) {
-  const [{ items }, { items: paneles }, { items: textos }] = await Promise.all([
+/* El enlace del formulario público, con su estado.
+
+   La URL se arma con el origen de la propia app y no con un dominio
+   configurado: las dos cosas se sirven del mismo Hosting, así que el origen
+   **es** el dato correcto en producción, en la copia demo y en desarrollo, y
+   no hay una variable más que se pueda quedar vieja. */
+async function pintarEnlace(textos) {
+  const caja = $('#enlace');
+  if (!caja) return;
+  const url = `${window.location.origin}/inscribirse`;
+
+  const hayTexto = textos.some(
+    (t) => t.finalidad === 'contacto_participacion' && t.activo);
+
+  // El diagnóstico puede no estar disponible —una versión vieja del backend,
+  // por ejemplo—; si no está, se informa lo que sí se sabe en vez de no
+  // mostrar nada.
+  let verifica = null;
+  try {
+    const diagnostico = await api.cumplimiento.contacto();
+    // `envia_de_verdad` es lo que decide si el código sale hacia el titular
+    // o vuelve en la respuesta. Lo segundo es lo que vuelve teatro a la
+    // verificación, y por eso es la condición que importa acá.
+    verifica = Boolean(diagnostico?.verificacion?.envia_de_verdad);
+  } catch { /* se informa sin esta parte */ }
+
+  const problemas = [];
+  if (!hayTexto) {
+    problemas.push('No hay un texto de consentimiento publicado: el '
+      + 'formulario rechaza a todo el mundo. Se publica en la solapa «Textos '
+      + 'de consentimiento».');
+  }
+  if (verifica === false) {
+    problemas.push('No hay proveedor de envío de códigos: el formulario '
+      + 'muestra el código en pantalla en vez de mandarlo, así que la '
+      + 'verificación no comprueba nada. El enlace no se puede repartir así.');
+  }
+
+  caja.innerHTML = `
+    <div class="card"><div class="card-body">
+      <div class="card-header-title" style="margin-bottom:.6rem">
+        Enlace del formulario público</div>
+      <div class="toolbar" style="gap:.5rem;flex-wrap:wrap">
+        <code class="token" id="url-landing" data-copiar="${esc(url)}"
+              style="font-size:.8rem;padding:.45rem .7rem">${esc(url)}</code>
+        <button class="btn btn-outline btn-sm" id="copiar-landing">Copiar</button>
+        <a class="btn btn-outline btn-sm" href="${esc(url)}" target="_blank"
+           rel="noopener">Abrir</a>
+      </div>
+      ${problemas.length
+        ? problemas.map((p) => alerta(p, 'warn')).join('')
+        : `<div class="alert alert-success" style="margin-top:.75rem">${
+             verifica === null
+               ? 'Hay un texto de consentimiento publicado: el formulario '
+                 + 'recibe inscripciones.'
+               : 'Hay texto publicado y los códigos se envían de verdad: el '
+                 + 'enlace se puede repartir.'}</div>`}
+    </div></div>`;
+
+  const copiar = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('Enlace copiado.', 'ok');
+    } catch {
+      toast('No se pudo copiar. El enlace está a la vista para copiarlo a mano.',
+            'err');
+    }
+  };
+  $('#copiar-landing').onclick = copiar;
+  $('#url-landing').onclick = copiar;
+}
+
+async function pintarInscripciones(cuerpo, estadoPedido, textos) {
+  const [{ items }, { items: paneles }] = await Promise.all([
     api.inscripciones.listar(estadoPedido),
     api.paneles.listar(),
-    api.inscripciones.textos('contacto_participacion'),
   ]);
 
-  const sinTexto = !textos.some((t) => t.activo);
+  // El aviso de «falta el texto» ya lo da la tarjeta del enlace, arriba, que
+  // es donde se mira antes de repartirlo. Repetirlo acá era decir dos veces
+  // lo mismo en la misma pantalla.
   cuerpo.innerHTML = `
-    ${sinTexto ? alerta('No hay ningún texto de consentimiento publicado, así que la landing no puede recibir inscripciones. Publicá uno en la solapa «Textos de consentimiento».', 'warn') : ''}
     <div class="card"><div class="card-head">
       <h3>${items.length} ${estadoPedido === 'pendiente' ? 'pendientes' : 'resueltas'}</h3></div>
     <div class="card-body" style="padding:0">
@@ -198,8 +288,7 @@ function rechazar(id) {
 
 /* ── Textos ─────────────────────────────────────────────────────── */
 
-async function pintarTextos(cuerpo) {
-  const { items } = await api.inscripciones.textos();
+async function pintarTextos(cuerpo, items) {
   cuerpo.innerHTML = `
     ${alerta('Cada versión es una fila nueva y no se puede reescribir: lo que alguien consintió tiene que seguir siendo recuperable tal cual. Para cambiar el texto, se publica una versión nueva.', 'info')}
     <div class="card"><div class="card-head">

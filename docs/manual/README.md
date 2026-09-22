@@ -72,6 +72,12 @@ verificación— **no se puede tomar de la copia en modo demo**: la landing habl
 con la API real y `demo.js` no la cubre. Se toma levantando un servidor mínimo
 contra el ruteo real y un Postgres de pruebas.
 
+La 61 —el enlace del formulario público con su estado— sale de la pantalla de
+Inscripciones en la copia demo. Desde este cambio la copia sirve el formulario
+también en `inscribirse/index.html`, para que el botón «Abrir» no dé 404:
+`python3 -m http.server` no hace los rewrites de Firebase Hosting, que es de
+donde sale `/inscribirse` en producción.
+
 Las 54 a 59 son del bloque 4B: las sugerencias de una serie, la serie con sus
 dos olas mapeadas, la matriz de evolución, la línea de tiempo de una persona,
 el optimizador con su comparación contra las reglas y las tres alternativas
@@ -115,7 +121,7 @@ node docs/manual/generar_pdf.mjs
 | `portada.html` | Portada, a sangre |
 | `manual.html` | Índice y las catorce secciones |
 | `estilo.css` | Estilos, compartidos por los dos |
-| `capturas/` | Las 59 capturas |
+| `capturas/` | Las 61 capturas |
 | `tipografia/` | Montserrat local, para que el PDF salga igual sin red |
 | `preparar_demo.sh` | Arma y sirve la copia en modo demo |
 | `capturar.mjs` | Toma las capturas |
