@@ -118,6 +118,10 @@ primera candidata a volver a subir**.
 Ninguno de los dos tiers de núcleo compartido tiene SLA de Cloud SQL. Ya era
 así con `db-g1-small`: no es un cambio.
 
+**Antes de bajar de tier, anotar los valores de referencia de la sección 4**
+(memoria, conexiones, tamaño del índice y tiempos de una consulta típica): sin
+línea de base no se puede saber después si el cambio afectó algo.
+
 ### El cambio
 
 Requiere **reinicio de la instancia** (un par de minutos de indisponibilidad
@@ -156,7 +160,110 @@ gcloud sql instances patch paneles-semantica --tier=db-g1-small
 
 ---
 
-## 4. Costos variables (por uso)
+## 4. Cómo saber si `db-f1-micro` quedó chico
+
+Cuatro señales. Conviene **anotar los valores antes del cambio** para tener con
+qué comparar.
+
+### 4.1 · Memoria — el límite real
+
+`db-f1-micro` tiene **0.6 GB** contra 1.7 GB de `db-g1-small`. Es lo primero
+que se agota.
+
+**Dónde mirar:** consola → **Cloud SQL → la instancia → Monitoring** →
+*Memory usage*.
+
+| Uso sostenido | Lectura |
+|---|---|
+| < 70% | Cómodo |
+| 70–85% | Vigilar |
+| > 85% | Quedó chico |
+
+**Síntoma feo:** la instancia se reinicia sola por falta de memoria. Si ves
+reinicios no programados en **Operaciones**, es esto.
+
+### 4.2 · CPU — throttling por créditos de ráfaga
+
+Los tiers de núcleo compartido aguantan picos con créditos, pero si el uso
+sostenido pasa ~70% empiezan a throttlear y **todo se pone lento de forma
+pareja**, sin errores.
+
+**Dónde mirar:** mismo panel de Monitoring → *CPU utilization*.
+
+### 4.3 · Conexiones — la que más probablemente muerda primero
+
+No depende del volumen de datos sino de Cloud Functions: cada instancia de la
+función abre su pool, y al escalar las conexiones se multiplican.
+`db-f1-micro` admite bastante menos que `db-g1-small`.
+
+**Cómo verificar** (en cualquiera de las dos bases, con el proxy corriendo):
+
+```bash
+psql -h 127.0.0.1 -p 5432 -U app_paneles -d paneles_boveda -c "
+show max_connections;
+select count(*) as en_uso from pg_stat_activity;"
+```
+
+Si `en_uso` se acerca a `max_connections`, ese es el techo. **El síntoma es un
+error de «too many connections», no lentitud.**
+
+### 4.4 · Que el índice vectorial no entre en RAM (solo `paneles-semantica`)
+
+El índice HNSW de pgvector rinde cuando entra en memoria. Cada vector son
+1024 dimensiones × 4 bytes ≈ **4 KB**, más el grafo del índice.
+
+| Respuestas en el corpus | Tamaño aprox. | Con 0.6 GB |
+|---:|---:|---|
+| 10.000 | ~40 MB | Cómodo |
+| 50.000 | ~200 MB | En el límite |
+| 100.000 | ~400 MB | Ya no entra |
+
+**Cómo verificar el tamaño real:**
+
+```bash
+psql -h 127.0.0.1 -p 5433 -U app_paneles -d paneles_semantica -c "
+select count(*) as respuestas from respuesta;
+select pg_size_pretty(pg_total_relation_size('respuesta')) as tabla_total;
+select indexrelname,
+       pg_size_pretty(pg_relation_size(indexrelid)) as indice
+  from pg_stat_user_indexes where relname = 'respuesta';"
+```
+
+Si el índice HNSW se acerca a la memoria disponible, **`paneles-semantica` es
+la primera candidata a volver a `db-g1-small`** (la bóveda puede quedarse en
+micro).
+
+### 4.5 · La señal más práctica: el diagnóstico de la propia app
+
+Sin entrar a GCP. La pantalla de consulta muestra los tiempos por etapa. Si
+**crece el tiempo de la etapa de recall** mientras reranker y verificación se
+mantienen, el problema es la base y no los proveedores externos.
+
+- [ ] Anotar los tiempos de una consulta típica **antes** de bajar de tier.
+
+### 4.6 · Alertas (gratis, y avisan antes de que se note)
+
+Configurar en **Cloud Monitoring → Alerting**, sin costo en la capa gratuita:
+
+- Memoria > 85% sostenido 5 minutos.
+- CPU > 70% sostenido 10 minutos.
+- Conexiones > 80% del máximo.
+
+### 4.7 · Volver atrás
+
+Reversible, con un reinicio de un par de minutos. Cuesta ~US$ 24/mes más por
+instancia:
+
+```bash
+gcloud sql instances patch paneles-semantica --tier=db-g1-small
+```
+
+No hace falta subir las dos: lo habitual es que la semántica necesite volver y
+la bóveda se quede en micro.
+
+---
+
+## 5. Costos variables (por uso)
 
 No entran en la base fija y dependen de la actividad:
 
@@ -178,7 +285,7 @@ No entran en la base fija y dependen de la actividad:
 
 ---
 
-## 5. Controles recomendados
+## 6. Controles recomendados
 
 - [ ] **Presupuesto con alertas** en Facturación (ej. aviso al 50%, 90% y 100%
       de un tope mensual). Es lo que evita la próxima sorpresa.
@@ -186,3 +293,5 @@ No entran en la base fija y dependen de la actividad:
 - [ ] Definir si el sistema necesita estar encendido 24/7 o puede apagarse
       entre usos.
 - [ ] Estimar el costo por consulta semántica una vez calibrado `top_k`.
+- [ ] Alertas de memoria, CPU y conexiones configuradas (sección 4.6).
+- [ ] Línea de base anotada antes de cualquier cambio de tier (sección 4).
