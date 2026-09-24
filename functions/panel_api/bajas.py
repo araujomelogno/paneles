@@ -19,6 +19,13 @@ El borrado semántico es una llamada a otra instancia y puede fallar. Si falla,
 el retiro en la bóveda se completa igual y la lápida queda con `borrado_semantica_en`
 en null: `pendientes_de_borrado_semantica()` las lista para reintentar. Nunca
 se demora el retiro en la bóveda esperando al store semántico.
+
+R5.3 — ese patrón era correcto y estaba escrito para **un** consumidor. Desde
+la Fase 5 se generaliza: cada retiro genera una fila en `borrado_pendiente`
+por cada sistema registrado y activo cuyo alcance incluya la finalidad. El
+store semántico de `paneles` sigue borrándose acá mismo y su pendiente se
+cierra en el acto cuando sale bien; el de otro consumidor queda abierto hasta
+que ese consumidor lo confirme. La bóveda nunca espera a ninguno de los dos.
 """
 
 from . import consentimiento, db, semantica
@@ -56,6 +63,50 @@ def _lapida(conn, id_persona, motivo, finalidad, actor):
     )
 
 
+def _generar_pendientes(conn, id_persona, finalidad):
+    """R5.3 — le avisa a cada consumidor registrado que tiene que borrar.
+
+    `finalidad=None` es baja total. La función de base es la que decide a
+    quién le toca, mirando `sistema_consumidor.alcance_finalidades` y la fecha
+    de alta de cada uno: un retiro parcial no molesta a un sistema que no
+    trata esa finalidad, y una baja anterior al alta de un consumidor no es
+    responsabilidad suya.
+    """
+    fila = db.una(
+        conn, "select generar_borrados_pendientes(%s, %s) as cuantos",
+        (str(id_persona), finalidad))
+    return fila["cuantos"] if fila else 0
+
+
+def _cerrar_pendiente_propio(conn, id_persona, alcance):
+    """Cierra el pendiente de `paneles`, que es este mismo código.
+
+    Usa la misma función que usa un consumidor externo —deriva el sistema de
+    la conexión— y no un `update` a mano: si `paneles` se cerrara el pendiente
+    por otro camino, la cascada tendría dos mecanismos y uno de los dos
+    envejecería.
+
+    `confirmar_borrado()` es estricta a propósito: falla si no hay un
+    pendiente abierto, para que un consumidor no crea que confirmó algo que no
+    existía. Acá eso sí puede pasar sin que nada esté mal —un segundo retiro
+    de la misma finalidad, o un alcance que `paneles` no tiene declarado—, así
+    que se mira antes en vez de dejar que la excepción aborte la transacción
+    del retiro.
+    """
+    abierto = db.una(
+        conn,
+        """
+        select 1 from borrado_pendiente
+         where id_persona = %s and alcance = %s
+           and sistema = sistema_de_la_conexion()
+           and confirmado_en is null
+        """,
+        (str(id_persona), alcance))
+    if abierto:
+        db.ejecutar(conn, "select confirmar_borrado(%s, %s)",
+                    (str(id_persona), alcance))
+
+
 def _confirmar_borrado_semantica(conn, id_persona, error=None):
     db.ejecutar(
         conn,
@@ -88,10 +139,23 @@ def retirar(conn_boveda, id_persona, finalidad=TODAS, actor=None, conn_semantica
 
     membresias_bajas = _sacar_del_muestreo(conn_boveda, id_persona) if saca_del_muestreo else 0
 
+    # El aviso a los consumidores va **antes** de borrar la PII: después del
+    # `delete` la persona ya no existe y el pendiente tendría que armarse a
+    # ciegas. `borrado_pendiente` no tiene FK a `persona` justamente por eso,
+    # para poder sobrevivirla.
+    alcance = "total" if finalidad == TODAS else finalidad
+    pendientes = _generar_pendientes(
+        conn_boveda, id_persona, None if finalidad == TODAS else finalidad)
+
     if borra_pii:
         _lapida(conn_boveda, id_persona, "retiro_consentimiento", finalidad, actor)
 
     resultado_semantica = {"estado": "no_aplica"}
+    if not borra_semantica:
+        # Un retiro que no toca el store semántico no le deja nada por hacer a
+        # `paneles`: el pendiente se cierra en el acto, porque dejarlo abierto
+        # diría que falta un borrado que no existe.
+        _cerrar_pendiente_propio(conn_boveda, id_persona, alcance)
     if borra_semantica:
         if conn_semantica is None:
             resultado_semantica = {
@@ -103,6 +167,7 @@ def retirar(conn_boveda, id_persona, finalidad=TODAS, actor=None, conn_semantica
                 borrado = semantica.borrar_persona(conn_semantica, id_persona)
                 conn_semantica.commit()
                 resultado_semantica = {"estado": "ok", **borrado}
+                _cerrar_pendiente_propio(conn_boveda, id_persona, alcance)
                 if borra_pii:
                     _confirmar_borrado_semantica(conn_boveda, id_persona)
             except Exception as error:  # el retiro en la bóveda no espera al store semántico
@@ -126,7 +191,48 @@ def retirar(conn_boveda, id_persona, finalidad=TODAS, actor=None, conn_semantica
         "membresias_dadas_de_baja": membresias_bajas,
         "pii_borrada": bool(pii_borrada),
         "semantica": resultado_semantica,
+        # Cuántos sistemas quedaron notificados, y cuáles siguen sin
+        # confirmar. Es lo que convierte «la cascada anda» en algo que se
+        # puede mirar.
+        "consumidores_notificados": pendientes,
+        "borrados_sin_confirmar": sin_confirmar(conn_boveda, id_persona),
     }
+
+
+def sin_confirmar(conn_boveda, id_persona=None):
+    """Bajas que algún consumidor todavía no confirmó haber ejecutado.
+
+    Es el tablero del DPO. Sin `id_persona` devuelve todo lo abierto, que es
+    la métrica que importa: una baja abierta por mucho tiempo es un
+    incumplimiento real, no una tarea pendiente.
+    """
+    donde = "where id_persona = %s" if id_persona else ""
+    filas = db.todas(
+        conn_boveda,
+        f"""
+        select id_persona, sistema, sistema_nombre, alcance, finalidad,
+               solicitado_en, dias_abierto, intentos, ultimo_error,
+               contacto_tecnico
+          from v_borrados_sin_confirmar
+          {donde}
+        """,
+        (str(id_persona),) if id_persona else (),
+    )
+    return [
+        {
+            "id_persona": str(f["id_persona"]),
+            "sistema": f["sistema"],
+            "sistema_nombre": f["sistema_nombre"],
+            "alcance": f["alcance"],
+            "finalidad": f["finalidad"],
+            "solicitado_en": f["solicitado_en"].isoformat(),
+            "dias_abierto": f["dias_abierto"],
+            "intentos": f["intentos"],
+            "ultimo_error": f["ultimo_error"],
+            "contacto_tecnico": f["contacto_tecnico"],
+        }
+        for f in filas
+    ]
 
 
 def pendientes_de_borrado_semantica(conn_boveda):
@@ -161,6 +267,7 @@ def reintentar_borrado_semantica(conn_boveda, conn_semantica):
             borrado = semantica.borrar_persona(conn_semantica, id_persona)
             conn_semantica.commit()
             _confirmar_borrado_semantica(conn_boveda, id_persona)
+            _cerrar_pendiente_propio(conn_boveda, id_persona, "total")
             resultados.append({"id_persona": id_persona, "estado": "ok", **borrado})
         except Exception as error:
             conn_semantica.rollback()

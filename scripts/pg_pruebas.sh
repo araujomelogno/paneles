@@ -45,6 +45,17 @@ for base in paneles_boveda paneles_semantica; do
     | grep -q 1 || createdb "$base"
 done
 
+# Los roles que las migraciones esperan encontrar. La 0014 falla a proposito
+# si `coloquio_app` no existe —otorgarle privilegios a la nada seria peor que
+# fallar—, y como el bucle de abajo ignora los errores, sin esto la Fase 5
+# quedaria a medio aplicar en silencio. `intruso` no lo usa ninguna migracion:
+# es el rol con el que las pruebas comprueban que un rol sin registrar no
+# consigue nada.
+for rol in coloquio_app intruso plataforma_ro; do
+  psql -q -d postgres -tAc "select 1 from pg_roles where rolname='$rol'" \
+    | grep -q 1 || psql -q -d postgres -c "create role $rol login" >/dev/null
+done
+
 # Todas las migraciones, en orden de numero. Se recorren por glob y no por
 # una lista fija: una migracion nueva se aplica sola. Los errores se ignoran
 # porque re-aplicar un CREATE ya aplicado falla y no importa.

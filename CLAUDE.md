@@ -10,12 +10,28 @@ Referencia de producto: `PRD_gestion_de_paneles_detallado.md` y `PRD_consulta_se
 
 **Regla dura #1: la PII nunca se escribe en el store semántico.** Al store semántico solo viaja `id_persona`. Cualquier código que intente persistir nombre, email, celular, documento, fecha exacta u observaciones del lado semántico está mal.
 
+Desde la Fase 5 esa regla **la hace valer la base**: un event trigger en `ddl_command_end` rechaza el `alter table` en el momento, y el catálogo de campos prohibidos vive en `campo_pii` (store semántico). `pii.CAMPOS_PII` es su espejo y hay una prueba que falla si divergen. Las excepciones legítimas (`nombre` en `cuestionario`, `pregunta` y `serie`) se declaran en `excepcion_pii`, con su motivo, en una migración: nunca apagando el guardia.
+
 Cruce entre stores: por conjuntos de `id_persona`. Los dos lados comparten `ref_estudio` (uuid) para vincular `encuesta` (bóveda) ↔ `cuestionario` (semántico). No hay FK entre stores; es una referencia lógica.
 
 ## Identidad
 
 - `id_persona` (uuid) es la clave de la persona en **toda** la plataforma. La emite el **enrolamiento** (bóveda), no la ingesta.
 - El panelista **es** la `persona` de la bóveda. La ingesta semántica referencia ese `id_persona`; no crea personas.
+
+## La bóveda tiene más de un consumidor
+
+Desde la Fase 5, `paneles` **no es el único** programa que le habla a la bóveda: COLOQUIO (investigación cualitativa) es el segundo, y el registro `sistema_consumidor` está hecho para que sumar un tercero cueste una fila y un `grant`.
+
+La consecuencia para quien escribe código acá: **una invariante de cumplimiento escrita en Python es una promesa repetida en dos bases de código**, y la primera que se rompa lo va a hacer en silencio. Por eso:
+
+- El gate de consentimiento es `v_persona_convocable`, **no** un `select` en Python. `consentimiento.esta_vigente()` y `filtrar_con_consentimiento()` leen esa vista; no vuelvan a calcular la regla.
+- Leer un dato de contacto es `contacto_para_convocatoria()`: un canal, con el gate reaplicado y la auditoría en la misma transacción. No hay un segundo camino.
+- Una baja genera pendientes para **todos** los consumidores activos (`generar_borrados_pendientes()`), y la bóveda nunca espera a ninguno.
+- La fatiga es la excepción deliberada: se expone como **hechos** (`v_fatiga_panelista`) y cada consumidor pone su umbral. El consentimiento es legal y no se negocia; la fatiga es negocio.
+- El origen de cada fila de auditoría se deriva de la conexión (`sistema_de_la_conexion()`, sobre `session_user`), nunca de un parámetro del llamador.
+
+`scripts/verificar_coloquio.py` se conecta **como `coloquio_app`** y comprueba todo eso, incluida una lista blanca de privilegios efectivos que vive en el repo. Si una migración abre un acceso de más, esa prueba rompe. Correrlo después de tocar cualquier `grant`, vista o función de la superficie externa.
 
 ## Reglas de negocio que el código debe respetar
 

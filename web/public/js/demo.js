@@ -86,7 +86,24 @@ const bd = {
   canjes: [],
   bonos: [],
   inscripciones: [],       // solicitudes de la landing, todavía no personas
-  textosConsentimiento: [],
+  /* R5.7.d — desde la Fase 5 no se puede otorgar una finalidad sin una
+     versión activa de su texto, así que el demo arranca con las dos
+     publicadas. No es maquillaje: en producción publicarlas es precondición
+     del alta, y un demo que permitiera enrolar sin texto mostraría un
+     sistema que no existe. */
+  textosConsentimiento: [
+    { id: 1, finalidad: 'contacto_participacion', version: 'consentimiento-2026-01',
+      cuerpo: 'Autorizo a Equipos Consultores a contactarme para invitarme a '
+            + 'participar en estudios de investigación de mercado.',
+      activo: true, creado_por: 'demo@equipos.com.uy',
+      creado_en: '2026-01-15T10:00:00Z' },
+    { id: 2, finalidad: 'uso_semantico', version: 'consentimiento-2026-01',
+      cuerpo: 'Autorizo el análisis del contenido de mis respuestas para '
+            + 'estudios posteriores, de forma disociada de mis datos '
+            + 'identificatorios.',
+      activo: true, creado_por: 'demo@equipos.com.uy',
+      creado_en: '2026-01-15T10:00:00Z' },
+  ],
   cargas: [],              // R3.13 — lotes incorporados sin panel
   atributos: [],           // R3.14 — el catálogo de segmentadores
   canales: [],             // R4.4 — preferencias de canal por persona
@@ -1559,6 +1576,14 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     return { items: bd.borradas.filter((b) => !b.borrado_semantica_en) };
   }
   if (clave === 'POST /cumplimiento/reintentar') return { resultados: [] };
+
+  /* R5.3 — el tablero de bajas sin confirmar. En el demo está vacío: el
+     segundo consumidor entra al registro inactivo y no recibe pendientes
+     hasta el día que salga a producción, así que «nadie debe nada» es
+     justamente el estado que corresponde mostrar. */
+  if (clave === 'GET /cumplimiento/borrados') {
+    return { items: [], mas_vieja_dias: 0 };
+  }
   if (clave === 'GET /auditoria/pii') return { limpio: true, hallazgos: [] };
 
   /* El demo no tiene esquema que verificar: se responde «al día» para que la

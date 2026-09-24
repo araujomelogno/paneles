@@ -8,6 +8,19 @@ Dos finalidades independientes (limitación de finalidad):
 Tener una NO implica tener la otra. El gate se aplica en el punto de uso,
 no en el alta: una persona puede estar en el panel y aun así quedar fuera
 de una ingesta si no consintió el uso semántico.
+
+R5.1 — desde la Fase 5 el gate **no se calcula acá**: se lee de
+`v_persona_convocable`, que es la misma vista de la que lo lee COLOQUIO. Con
+dos sistemas consumiendo la bóveda, un gate escrito en Python sería una
+promesa repetida en dos bases de código, y la primera que se rompa lo haría en
+silencio. Estas funciones quedan como la forma cómoda de consultarlo desde la
+aplicación; la regla es de la base.
+
+La vista es además algo más estricta que el `select` que había acá: exige que
+la persona esté `activa` y que no tenga lápida en `persona_borrada`. Las dos
+condiciones son las que uno querría igual —convocar a alguien dado de baja es
+exactamente lo que el gate tiene que impedir— y el muestreo ya las aplicaba
+por su cuenta.
 """
 
 from . import db
@@ -15,6 +28,22 @@ from .errores import ConsentimientoFaltante, DatosInvalidos
 
 CONTACTO = "contacto_participacion"
 SEMANTICO = "uso_semantico"
+
+# R5.7 — el catálogo de finalidades vive en `finalidad_consentimiento` y desde
+# la Fase 5 tiene seis filas: estas dos más las cuatro del cualitativo
+# (`grabacion_av`, `moderacion_automatizada`, `uso_semantico_cuali`,
+# `difusion_verbatim`).
+#
+# Esta tupla **no es el catálogo**: es la lista de finalidades que *esta*
+# aplicación sabe tratar. `bajas.retirar()` sabe qué implica retirar cada una
+# de las dos —qué se borra, qué sale del muestreo—; de `grabacion_av` no sabe
+# nada, porque el plano de medios es de COLOQUIO. Aceptarla acá sería aceptar
+# un retiro que después nadie ejecuta, que es peor que rechazarlo.
+#
+# El guardia de verdad contra una finalidad inexistente es la FK a
+# `finalidad_consentimiento`; esto es lo que da el mensaje bueno antes de
+# llegar a la base. `test_fase5_finalidades` comprueba que las dos sigan
+# existiendo y activas en el catálogo.
 FINALIDADES = (CONTACTO, SEMANTICO)
 
 VIGENTE = "vigente"
@@ -64,8 +93,8 @@ def esta_vigente(conn, id_persona, finalidad):
         conn,
         """
         select 1
-          from consentimiento
-         where id_persona = %s and finalidad = %s and estado = 'vigente'
+          from v_persona_convocable
+         where id_persona = %s and finalidad = %s
          limit 1
         """,
         (id_persona, finalidad),
@@ -97,8 +126,8 @@ def filtrar_con_consentimiento(conn, ids_persona, finalidad):
         conn,
         """
         select distinct id_persona
-          from consentimiento
-         where finalidad = %s and estado = 'vigente'
+          from v_persona_convocable
+         where finalidad = %s
            and id_persona = any(%s::uuid[])
         """,
         (finalidad, ids),

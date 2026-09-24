@@ -152,6 +152,10 @@ export const consentimientos = {
 export const cumplimiento = {
   pendientes: () => GET('/cumplimiento/pendientes'),
   reintentar: () => POST('/cumplimiento/reintentar', {}),
+  /* R5.3 — las bajas que algún sistema consumidor todavía no confirmó haber
+     ejecutado. Es distinto de `pendientes`: eso mira el store semántico de
+     `paneles`, esto mira a todos los sistemas registrados. */
+  borrados: () => GET('/cumplimiento/borrados'),
   auditoriaPii: () => GET('/auditoria/pii'),
   /* Qué migraciones están aplicadas en cada base. Devuelve 500 cuando falta
      alguna, con el detalle en el cuerpo: la página lo lee de ahí. */

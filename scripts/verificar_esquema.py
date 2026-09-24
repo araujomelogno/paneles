@@ -51,9 +51,10 @@ import os
 import pathlib
 import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "functions"))
+RAIZ = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(RAIZ / "functions"))
 
-from panel_api import esquema  # noqa: E402
+from panel_api import esquema, pii  # noqa: E402
 
 ROJO, AMARILLO, VERDE, GRIS, FIN = (
     "\033[31m", "\033[33m", "\033[32m", "\033[90m", "\033[0m"
@@ -109,6 +110,37 @@ select current_database() as base, e.migracion, e.objeto
             and right(e.relacion, 2) = '()'
             and pr.proname = left(e.relacion, length(e.relacion) - 2))
  order by e.migracion, e.objeto;"""
+
+
+def revisar_pii():
+    """R5.5 nivel 2 — ninguna migración del store semántico declara PII.
+
+    Corre sobre los **archivos**, no sobre la base, y por eso no es redundante
+    con el event trigger: el trigger protege la base pero no ve una migración
+    que todavía no se aplicó, y ésa es justamente la que llega a un pull
+    request. Es el chequeo que tiene que correr en CI y bloquear el deploy.
+    """
+    hallazgos = []
+    for archivo in sorted((RAIZ / "db" / "semantica").glob("*.sql")):
+        for tabla, columna in pii.auditar_esquema(
+                archivo.read_text(encoding="utf-8")):
+            hallazgos.append((archivo.name, tabla, columna))
+    return hallazgos
+
+
+def informar_pii(hallazgos):
+    print("\nPII del lado semántico")
+    if not hallazgos:
+        print(f"  {VERDE}✓{FIN} ninguna migración declara una columna de PII")
+        return
+    for archivo, tabla, columna in hallazgos:
+        print(f"  {ROJO}✗{FIN} {archivo}: {tabla}.{columna}")
+    print(f"\n{ROJO}Regla dura #1: la PII nunca se escribe en el store "
+          f"semántico.{FIN}")
+    print("Al store semántico solo viaja `id_persona`; los atributos de la")
+    print("persona son autoritativos en la bóveda. Si el nombre es legítimo")
+    print("—metadato del estudio y no de la persona— la excepción se declara")
+    print("en `excepcion_pii`, en una migración, con su motivo escrito.")
 
 
 def revisar(store, dsn):
@@ -177,7 +209,16 @@ def main():
         help="imprime la consulta para pegar en psql, sin conectarse a nada; "
              "con un store imprime solo la de ese store",
     )
+    parser.add_argument(
+        "--pii", action="store_true",
+        help="solo el chequeo de PII sobre los archivos de migración del "
+             "store semántico; no se conecta a ninguna base (R5.5)")
     argumentos = parser.parse_args()
+
+    if argumentos.pii:
+        hallazgos = revisar_pii()
+        informar_pii(hallazgos)
+        return 1 if hallazgos else 0
 
     if argumentos.sql:
         stores = esquema.STORES if argumentos.sql == "ambos" else (argumentos.sql,)
@@ -225,9 +266,16 @@ def main():
             (store, m["migracion"]) for m in estado["migraciones"] if not m["aplicada"]
         ]
 
-    if not pendientes:
+    # El chequeo de PII va acá y no en un script aparte a propósito: éste es
+    # el que se corre antes de desplegar, así que es el que no se olvida.
+    hallazgos_pii = revisar_pii()
+    informar_pii(hallazgos_pii)
+
+    if not pendientes and not hallazgos_pii:
         print(f"\n{VERDE}Las dos bases están al día.{FIN}")
         return 0
+    if not pendientes:
+        return 1
 
     print(f"\n{ROJO}Faltan {len(pendientes)} migración(es).{FIN} Para aplicarlas, "
           f"con el Auth Proxy abierto:\n")

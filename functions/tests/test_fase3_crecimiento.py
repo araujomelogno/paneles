@@ -29,6 +29,25 @@ def con_texto(conn_boveda, actor):
     return actor("admin")
 
 
+def _enrolada_con_texto_viejo(conn, cuerpo, actor_admin):
+    """Una persona que ya era panelista, enrolada bajo un texto anterior.
+
+    Desde R5.7.d la base exige que la versión esté publicada y **activa** al
+    otorgar, así que simular «se enroló con la versión vieja» es publicar esa
+    versión, usarla y desactivarla — que es exactamente lo que pasó en el
+    mundo que la prueba describe. Antes alcanzaba con inventar la cadena, y
+    eso era justamente el problema: un consentimiento que no apunta a ningún
+    texto recuperable.
+    """
+    ins.publicar_texto(conn, "contacto_participacion", "vieja", CUERPO,
+                       actor_admin)
+    alta = personas.alta(conn, cuerpo)
+    db.ejecutar(conn,
+                "update texto_consentimiento set activo = false "
+                " where finalidad = 'contacto_participacion' and version = 'vieja'")
+    return alta
+
+
 def _envio(**extra):
     cuerpo = {
         "persona": {"nombre": "Ana Pérez", "email": "ana@ejemplo.uy",
@@ -83,6 +102,10 @@ def test_sin_aceptar_el_consentimiento_la_inscripcion_se_rechaza(conn_boveda,
 
 
 def test_sin_texto_publicado_el_formulario_no_recibe(conn_boveda):
+    """Desde R5.7.d la fixture publica textos —en producción son precondición
+    del alta—, así que el estado «sin texto» hay que construirlo: se
+    desactivan. Antes era el estado por defecto de una base vacía."""
+    db.ejecutar(conn_boveda, "update texto_consentimiento set activo = false")
     assert ins.formulario(conn_boveda)["puede_recibir"] is False
     with pytest.raises(DatosInvalidos, match="no está habilitado"):
         _inscribir(conn_boveda)
@@ -129,13 +152,13 @@ def test_la_inscripcion_de_alguien_que_ya_existe_reutiliza_su_id(
     """Caso borde de la spec: «inscripción pública de alguien que ya es
     panelista»."""
     panel = paneles.crear(conn_boveda, "General")
-    ya = personas.alta(conn_boveda, {
+    ya = _enrolada_con_texto_viejo(conn_boveda, {
         "persona": {"nombre": "Ana Pérez", "email": "ana@ejemplo.uy",
                     "documento": "1111111"},
         "consentimientos": [{"finalidad": "contacto_participacion",
                              "version_texto": "vieja"}],
         "panel_id": panel["id"],
-    })
+    }, con_texto)
     conn_boveda.commit()
 
     _inscribir(conn_boveda)
@@ -154,13 +177,13 @@ def test_la_respuesta_publica_no_revela_si_la_persona_ya_estaba(
     """El formulario no puede ser un oráculo para averiguar quién es
     panelista probando documentos."""
     panel = paneles.crear(conn_boveda, "General")
-    personas.alta(conn_boveda, {
+    _enrolada_con_texto_viejo(conn_boveda, {
         "persona": {"nombre": "Ana Pérez", "email": "ana@ejemplo.uy",
                     "documento": "1111111"},
         "consentimientos": [{"finalidad": "contacto_participacion",
                              "version_texto": "vieja"}],
         "panel_id": panel["id"],
-    })
+    }, con_texto)
     conn_boveda.commit()
 
     conocida = _inscribir(conn_boveda)
@@ -178,13 +201,13 @@ def test_la_respuesta_publica_no_revela_si_la_persona_ya_estaba(
 
 def test_el_caso_ambiguo_va_a_revision_y_no_se_fusiona(conn_boveda, con_texto, actor):
     panel = paneles.crear(conn_boveda, "General")
-    personas.alta(conn_boveda, {
+    _enrolada_con_texto_viejo(conn_boveda, {
         "persona": {"nombre": "Juan Gómez", "fecha_nacimiento": "1990-01-01",
                     "localidad": "Salto"},
         "consentimientos": [{"finalidad": "contacto_participacion",
                              "version_texto": "vieja"}],
         "panel_id": panel["id"],
-    })
+    }, con_texto)
     conn_boveda.commit()
 
     _inscribir(conn_boveda, persona={
@@ -251,13 +274,13 @@ def test_un_envio_con_una_version_vieja_se_rechaza(conn_boveda, con_texto, actor
 
 def test_la_landing_no_expone_datos_de_otros_panelistas(conn_boveda, con_texto):
     panel = paneles.crear(conn_boveda, "General")
-    personas.alta(conn_boveda, {
+    _enrolada_con_texto_viejo(conn_boveda, {
         "persona": {"nombre": "Secreta", "email": "secreta@ejemplo.uy",
                     "documento": "5555555", "celular": "099111222"},
         "consentimientos": [{"finalidad": "contacto_participacion",
                              "version_texto": "vieja"}],
         "panel_id": panel["id"],
-    })
+    }, con_texto)
     conn_boveda.commit()
 
     formulario = ins.formulario(conn_boveda)

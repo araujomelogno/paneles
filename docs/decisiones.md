@@ -1867,6 +1867,289 @@ encuesta no se puede marcar como Flow. El token necesita además el permiso
 
 ---
 
+## D43 · El gate de consentimiento es una vista; la fatiga son hechos
+
+**El problema.** `paneles` fue construido con el supuesto de que hay **un
+solo** programa hablándole a la bóveda. Bajo ese supuesto era razonable que el
+gate de consentimiento fuera `consentimiento.exigir()`, en Python. Con un
+segundo consumidor eso pasa a ser una promesa repetida en dos bases de código,
+y la primera que se rompa lo va a hacer en silencio: una persona sin
+consentimiento vigente convocada a un grupo, o una baja que deja viva una
+grabación porque la cascada no sabe que el otro sistema existe.
+
+La reacción obvia —«que COLOQUIO llame a una API de `paneles`»— resuelve el
+gate y crea una dependencia de disponibilidad entre dos sistemas que no la
+tenían. La bóveda ya es un punto de encuentro; el control tiene que estar
+donde están los datos.
+
+**La decisión.** Las invariantes de cumplimiento se mueven a la base. Pero no
+todas las reglas son iguales, y tratarlas igual habría sido el error:
+
+- El **consentimiento vigente** es un invariante **legal**. No es negociable,
+  no admite parámetros y no puede quedar del lado del consumidor. Va en
+  `v_persona_convocable`, una vista de la que es imposible salirse: quien no
+  aparece ahí, no existe para el consumidor.
+- La **fatiga** es política de **negocio**. Sus umbrales son por panel, su
+  ventana es un parámetro, y el cálculo actual excluye la encuesta en curso
+  —que es contexto del llamador y no se puede expresar en una vista sin
+  parámetros—. Además el cualitativo tiene su propia noción de fatiga: ocho
+  personas en un grupo no se cansan como mil en una encuesta. Así que la
+  fatiga se expone como **hechos** en `v_fatiga_panelista` (cuántas
+  convocatorias, cuándo la última, cuántas respondió) y cada consumidor aplica
+  su umbral.
+
+**La consecuencia, escrita y no descubierta después: la política de fatiga no
+queda hecha valer en la base.** Es deliberado, y es la diferencia entre las dos
+reglas: el consentimiento no se negocia; la fatiga admite criterios distintos
+por consumidor. Si mañana la fatiga tuviera que ser obligatoria, el camino no
+es agregarle parámetros a una vista: es otra función, como la del contacto.
+
+**Dónde vive.** `db/boveda/0014_fase5_superficie_externa.sql` §3,
+`functions/panel_api/consentimiento.py`.
+
+---
+
+## D44 · El contacto se sirve por función, no por vista
+
+**El problema.** Convocar exige leer un canal de contacto, que es PII, y esa
+lectura tiene que quedar auditada. Una vista no puede auditar: no tiene
+efectos. Y un `grant select` sobre `persona` limitado a dos columnas dejaría
+al consumidor barriendo la agenda entera a voluntad, sin motivo y sin rastro.
+
+**La decisión.** `contacto_para_convocatoria(id_persona, canal, motivo,
+actor)` devuelve **un** canal de **una** persona, y en la misma transacción
+escribe la fila de `reidentificacion`. Si la auditoría no se puede escribir, el
+dato no se entrega: no son dos operaciones que casi siempre pasan juntas, es
+una sola.
+
+Tres detalles que parecen menores y no lo son:
+
+**El gate se vuelve a aplicar adentro.** No se confía en que el llamador haya
+consultado la vista antes. Consultarla y llamar son dos momentos distintos, y
+entre los dos el consentimiento se puede haber retirado.
+
+**Hay que tener a quién convocar.** La función exige una convocatoria activa
+—una `participacion` en una encuesta no cerrada—. Sin eso, un consumidor podría
+reconstruir la agenda completa de a una persona por vez, con el gate intacto y
+todo perfectamente auditado. El gate dice *a quién se puede contactar*; esto
+dice *por qué ahora*.
+
+**Un canal vacío es información, no un error.** Que la persona no tenga celular
+cargado se devuelve como vacío y se audita igual: el intento existió. Un
+rechazo del gate, en cambio, **no** deja fila: no se entregó ningún dato, y una
+auditoría de reidentificaciones que incluya lecturas que no ocurrieron deja de
+servir para contar.
+
+**Dónde vive.** `db/boveda/0014_fase5_superficie_externa.sql` §4.
+
+---
+
+## D45 · Las finalidades son un catálogo, no un `check`
+
+**El problema.** `consentimiento.finalidad` y `texto_consentimiento.finalidad`
+tenían cada una un `check` con las dos finalidades existentes. El cualitativo
+suma cuatro —`grabacion_av`, `moderacion_automatizada`, `uso_semantico_cuali`,
+`difusion_verbatim`— y con un `check` eso es un `alter table` por finalidad, en
+dos tablas, cada vez.
+
+Pero el motivo de fondo no es la comodidad. Un `check` puede decir *qué valores
+se aceptan* y nada más. No puede decir que `grabacion_av` se consiente **por
+estudio** y `uso_semantico_cuali` **por persona**; ni que una finalidad exige
+un texto publicado y otra no; ni en qué orden se muestran en un formulario.
+Esos son atributos de la finalidad, y un `check` no tiene dónde guardarlos.
+
+**La decisión.** `finalidad_consentimiento` es una tabla de catálogo con
+`ambito`, `requiere_texto`, `activa` y `orden`, y las dos columnas pasan a ser
+FK. Los dos `check` se retiran.
+
+De ahí salen tres reglas que antes no existían y que ahora hace valer la base:
+
+1. **Una finalidad de ámbito `estudio` exige `ref_estudio`, y una de ámbito
+   `persona` lo prohíbe.** Consentir que te graben «en general» no es
+   consentimiento; consentir que te graben en *este* grupo, sí. Y al revés:
+   un `uso_semantico_cuali` atado a un estudio se retiraría por estudio, que
+   no es lo que significa.
+2. **No se otorga una finalidad sin una versión activa de su texto.** Es lo
+   que hace demostrable al consentimiento: sin el texto publicado, «consintió
+   la versión 2026-01» no es verificable por nadie.
+3. **El retiro nunca se bloquea.** La regla anterior vale solo al **insertar**.
+   Si el texto se desactivó, retirar el consentimiento tiene que seguir siendo
+   posible: una regla de cumplimiento que impida cumplir está mal escrita.
+
+**Lo que esto rompe, a propósito.** Si hay consentimientos vigentes que apuntan
+a versiones que nunca se publicaron, la migración **se niega a aplicar** y los
+nombra. Es el hallazgo, no el obstáculo: aplicarla igual dejaría el alta
+fallando en producción por un motivo que nadie relacionaría con la migración.
+
+**Dónde vive.** `db/boveda/0012_fase5_catalogo_finalidades.sql`,
+`db/boveda/0013_fase5_finalidades_cualitativo.sql`.
+
+---
+
+## D46 · Las vistas del contrato no llevan `security_invoker`
+
+**El problema.** Desde PG15 una vista puede declararse `security_invoker`, y
+entonces los permisos sobre las tablas de abajo se chequean contra quien
+consulta. Es la opción que más suena a «lo correcto»: privilegio mínimo,
+nada de heredar los del dueño.
+
+Acá sería exactamente al revés. Si `v_persona_convocable` fuera
+`security_invoker`, para leerla COLOQUIO necesitaría `select` sobre `persona`
+y sobre `consentimiento` — es decir, sobre **todas** las filas, con gate o sin
+él. La vista dejaría de ser una puerta y pasaría a ser una sugerencia.
+
+**La decisión.** Las vistas del contrato se quedan con el comportamiento por
+defecto: corren con los privilegios de su dueño. Es ese comportamiento el que
+convierte a la vista en la única puerta, y por eso PostgreSQL 16 no es un
+detalle del stack sino un supuesto del diseño.
+
+**Lo que costó descubrir, y vale escribir.** Una vista le presta al consumidor
+sus privilegios **sobre tablas**, no su permiso para **ejecutar funciones**: el
+`execute` se chequea siempre contra quien invoca, aun cuando la llamada venga
+de adentro de una vista. Como `v_demografia` cuelga de `f_atributo_persona()`
+—la única resolución de la precedencia de atributos, [D39](#d39)—, la primera
+versión de la vista era ilegible para COLOQUIO.
+
+Las dos salidas fáciles eran malas: otorgar `execute` sobre
+`f_atributo_persona()` habría expuesto la demografía de **cualquiera**, con
+gate o sin él; y reescribir la resolución adentro de la vista habría creado la
+segunda implementación que [D39](#d39) existe para evitar. La salida buena fue
+`f_persona_convocable()`: un `security definer` con el gate adentro, del que la
+vista es una fachada delgada. Otorgar su `execute` no abre nada porque no hay
+nada que ver fuera del gate.
+
+**Y algo que Postgres regala y hay que devolver:** una función nace con
+`execute` otorgado a `public`. «No le otorgamos nada» y «no puede ejecutarla»
+son dos afirmaciones distintas, y sin revocarlo explícitamente la lista blanca
+de privilegios no describe nada.
+
+**Dónde vive.** `db/boveda/0014_fase5_superficie_externa.sql` §3 y §6,
+`scripts/verificar_coloquio.py`.
+
+---
+
+## D47 · El rol del consumidor es IAM, no un usuario de Cloud SQL
+
+**El problema.** En Cloud SQL, **todo usuario creado con `gcloud sql users
+create`, la consola o la API recibe automáticamente `cloudsqlsuperuser`**, y
+con él `CREATEROLE`. Así se creó `app_paneles`. Si `coloquio_app` se creara
+igual, podría otorgarse a sí mismo cualquier privilegio que se le revoque, y
+todo el control de acceso de esta fase sería decoración.
+
+**La decisión.** `coloquio_app` se crea como **usuario IAM de cuenta de
+servicio**, que no recibe ningún rol de base automáticamente. Tres cosas se
+cobran de una vez: privilegio realmente mínimo sin herencias que revocar; no
+hay contraseña, así que desaparece un DSN con clave en Secret Manager; y el
+origen deja de ser declarable, porque la identidad de la conexión **es** la
+cuenta de servicio.
+
+`app_paneles` no se toca: migrarlo sería riesgo innecesario en esta fase.
+
+**Y la red de seguridad, que es lo que hace que esto no dependa de la memoria
+de nadie sobre cómo se comporta Cloud SQL:** `scripts/verificar_coloquio.py`
+enumera los privilegios **efectivos** del rol —lo que puede hacer hoy, no los
+`grant` que alguien escribió— contra una lista blanca que vive en el repo, y
+falla si sobra uno. Si un default de la plataforma cambia, o si el usuario se
+crea por el camino equivocado, la build rompe.
+
+**Lo que esa verificación encontró, y que leer la migración no habría
+mostrado.** Tres defectos, los tres de seguridad, aparecieron al conectarse de
+verdad con el rol del consumidor: la vista que el consumidor no podía usar
+([D46](#d46)); el `execute` regalado a `public`; y —el peor— que un rol **sin
+registrar** conseguía un contacto y quedaba auditado como `paneles`, porque
+`sistema_de_la_conexion()` caía en un valor por omisión y porque adentro de un
+`security definer` `current_user` es el dueño de la función, no quien llama.
+Era lavado de origen, no una fuga menor. Por eso todo lo que deriva identidad
+usa `session_user`, y por eso la función es estricta: un rol que no está en
+`sistema_consumidor` no obtiene nada.
+
+**Dónde vive.** `docs/DESPLIEGUE - COLOQUIO Fase 0.md` §3,
+`scripts/verificar_coloquio.py`, `functions/tests/test_fase5_superficie.py`.
+
+---
+
+## D48 · La baja avisa a todos y no espera a ninguno
+
+**El problema.** `bajas.py` ya resolvía bien el borrado semántico: no es
+transaccional, no bloquea la baja en la bóveda, y deja rastro para reintentar.
+Estaba escrito para **un** consumidor. Con dos, «a quién hay que avisarle»
+sería una lista en la cabeza de alguien.
+
+**La decisión.** Se generaliza el patrón que ya existía, en vez de inventar
+uno nuevo. `sistema_consumidor` dice quién consume la bóveda, desde cuándo y de
+qué finalidades se hace responsable; cada retiro genera una fila en
+`borrado_pendiente` por cada sistema activo al que le corresponda. La baja en la
+bóveda se completa igual, siempre, y los pendientes quedan abiertos hasta que
+cada consumidor confirme el suyo.
+
+Cuatro reglas que salen de ahí:
+
+- **Un retiro parcial no molesta a quien no trata esa finalidad.** Por eso
+  `alcance_finalidades`.
+- **Una baja anterior al alta de un consumidor no es responsabilidad suya.**
+  Por eso `alta_en`.
+- **Un consumidor no confirma por otro.** `confirmar_borrado()` deriva el
+  sistema de la conexión; no lo recibe como parámetro.
+- **`paneles` usa la misma función que usa COLOQUIO.** Si se cerrara el
+  pendiente por un camino propio, la cascada tendría dos mecanismos y uno de
+  los dos envejecería.
+
+**Sumar un tercer consumidor tiene que costar una fila y un `grant`.** Es la
+métrica de esta decisión: si sumar el tercero obliga a una migración, el
+diseño salió mal.
+
+**Y lo que hace que esto no sea un buzón que nadie lee:**
+`v_borrados_sin_confirmar` y la pantalla de Cumplimiento. Una baja abierta hace
+mucho tiempo no es una tarea atrasada: es un incumplimiento.
+
+**Dónde vive.** `db/boveda/0014_fase5_superficie_externa.sql` §5,
+`functions/panel_api/bajas.py`, `GET /cumplimiento/borrados`.
+
+---
+
+## D49 · La regla dura #1 la hace valer la base, no un chequeo que hay que correr
+
+**El problema.** «La PII nunca se escribe en el store semántico» es la
+invariante central de la plataforma, y vivía en dos funciones de Python:
+`validar_sin_pii()` para los payloads y `auditar_esquema()` para el DDL. Las
+dos son correctas y las dos **solo detectan cuando alguien las ejecuta**. Con
+un segundo sistema escribiendo de ese lado, basta un `alter table` por `psql`
+para romperla sin que ningún control se entere.
+
+Un `check` no sirve: la regla es sobre **nombres de columna**, no sobre
+valores.
+
+**La decisión.** Un event trigger en `ddl_command_end` que rechaza la columna
+en el momento, lo intente quien lo intente y por el camino que sea. Y la lista
+de PII deja de ser un `frozenset` en el repo: se materializa como catálogo en
+la base (`campo_pii`, `excepcion_pii`), que es de donde la lee el trigger.
+`pii.CAMPOS_PII` pasa a ser su espejo, y hay una prueba que falla si divergen.
+
+**Tres niveles, y ninguno sobra:**
+
+1. El event trigger protege **la base**.
+2. `verificar_esquema.py --pii` lee los **archivos** de migración. El trigger
+   no ve una migración que todavía no se aplicó, y ésa es justamente la que
+   llega a un pull request.
+3. `validar_sin_pii()` cubre lo que el DDL no puede ver: una clave de PII
+   adentro de un `jsonb`.
+
+**La salida de emergencia es una fila, no un `disable`.** `nombre` es legítimo
+en `cuestionario`, `pregunta` y `serie` —es el nombre del estudio, no el de una
+persona—, y eso está declarado en `excepcion_pii` con su motivo escrito. Si
+mañana hace falta otra excepción, el camino es una migración que la declare y
+la explique, no apagar el guardia.
+
+**Y la migración se niega a instalarse sobre un esquema sucio.** Si el store
+semántico ya tuviera una columna prohibida, el trigger no la vería —solo mira
+lo que se crea de acá en adelante— y habríamos instalado un guardia que mira
+para otro lado.
+
+**Dónde vive.** `db/semantica/0005_fase5_prohibicion_pii.sql`,
+`functions/panel_api/pii.py`, `scripts/verificar_esquema.py`.
+
+---
+
 ## Anexo · Decisiones que no se tomaron
 
 Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:

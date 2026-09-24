@@ -42,6 +42,23 @@ TABLAS_SEMANTICA = ["respuesta", "pregunta", "individuo", "cuestionario"]
 
 VERSION_TEXTO = "consentimiento-2026-01"
 
+# R5.7.d — desde la Fase 5 la base rechaza otorgar una finalidad sin una
+# versión **activa** en `texto_consentimiento`. Las pruebas que simulan una
+# carga de campo declaran su propia versión ("la evidencia está en el archivo,
+# con este texto"), y en producción esa versión tendría que estar publicada
+# antes de ingestar: es justamente lo que hace demostrable al consentimiento.
+#
+# Así que la fixture las publica. La lista es explícita a propósito: una
+# versión nueva en una prueba tiene que pasar por acá, que es el mismo trámite
+# que tendría en producción.
+VERSIONES_DE_PRUEBA = (
+    VERSION_TEXTO,
+    "consentimiento-2026-02",          # una segunda versión, para el versionado
+    "consentimiento-campo-2026-09",    # ingesta de un .sav con evidencia
+    "consentimiento-omnibus-2026-08",  # carga de terceros sin panel
+    "campo-2026-09",
+)
+
 
 def _conectar(dsn):
     import psycopg
@@ -76,6 +93,22 @@ def conn_boveda(dsn_boveda):
         cur.execute(
             "delete from atributo_demografico where clave <> all(%s)",
             (list(CLAVES_DEL_NUCLEO),))
+        # R5.7.d — desde la Fase 5 la base rechaza otorgar una finalidad sin
+        # una versión activa en `texto_consentimiento`. El truncate se lleva
+        # los textos, así que se vuelven a publicar acá: en producción es una
+        # precondición del alta, y las pruebas tienen que correr contra el
+        # mismo mundo.
+        cur.execute(
+            """
+            insert into texto_consentimiento (finalidad, version, cuerpo)
+            select f.codigo, v.version,
+                   'Texto de prueba para ' || f.codigo || '.'
+              from finalidad_consentimiento f,
+                   unnest(%s::text[]) as v(version)
+             where f.requiere_texto
+            on conflict (finalidad, version) do nothing
+            """,
+            (list(VERSIONES_DE_PRUEBA),))
     conn.commit()
     yield conn
     conn.rollback()
