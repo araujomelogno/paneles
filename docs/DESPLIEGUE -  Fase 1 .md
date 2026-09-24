@@ -220,6 +220,21 @@ que agrega tu IP mientras dura la sesión y la saca al salir. Sin eso no hay
 forma de aplicar las migraciones desde tu máquina, porque a una instancia con
 IP privada **solamente** solo se llega desde adentro de la VPC.
 
+> ⚠ **Costo: esto es lo más caro del sistema.** Las dos instancias corren 24/7
+> y se facturan por tiempo encendido, no por uso. Con `db-g1-small` en
+> `southamerica-east1` son **~US$ 34 cada una**, más almacenamiento, backups y
+> PITR: **~US$ 75–80/mes solo de Cloud SQL**, antes de sumar el conector VPC
+> (~US$ 10–15).
+>
+> Antes de crearlas, decidir:
+> - **`db-f1-micro`** (~US$ 10/mes cada una) alcanza para empezar y ahorra
+>   ~US$ 48/mes. Se cambia después con un reinicio, en cualquier dirección.
+> - Si el sistema no va a tener uso continuo, se pueden **apagar entre usos**
+>   (`--activation-policy=NEVER`) y dejar de pagar el cómputo.
+> - **Configurar un presupuesto con alertas** en Facturación antes de seguir.
+>
+> Desglose completo y cómo bajarlo: `docs/COSTOS.md`.
+
 ```bash
 REGION=southamerica-east1
 
