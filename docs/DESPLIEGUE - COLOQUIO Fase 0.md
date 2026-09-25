@@ -6,6 +6,13 @@
 
 ---
 
+> **Revisión 2026-09-25.** Corregidos: orden de la `0014` respecto del rol
+> (§2 y §3), chequeo previo de textos de consentimiento movido antes de aplicar
+> migraciones (§2), `--single-transaction` en todas las migraciones, creación
+> del usuario IAM **sin** el sufijo `.gserviceaccount.com` (§3.1), subpasos
+> numerados en §3, token de impersonación de la cuenta de servicio (§7.1),
+> estado real de las IP de las instancias (§4) y checklist (§10).
+
 ## 0 · Qué cambia, en una frase
 
 Hasta hoy la bóveda tenía **un** consumidor, y por eso era razonable que el
@@ -186,8 +193,10 @@ done
 
 # 3 · El usuario de base, como usuario IAM. NO con `gcloud sql users create`
 #     tradicional: ese camino otorga `cloudsqlsuperuser`.
+# OJO: va SIN el sufijo `.gserviceaccount.com`. Con el sufijo completo,
+#      Cloud SQL rechaza el pedido con HTTPError 400.
 gcloud sql users create \
-    coloquio-app@gestion-paneles.iam.gserviceaccount.com \
+    coloquio-app@gestion-paneles.iam \
     --instance=paneles-boveda \
     --type=cloud_iam_service_account
 ```
@@ -268,8 +277,21 @@ está en P2 con nombre y motivo, no como olvido.
 
 ## 4 · Conectividad: la decisión de infraestructura de la fase
 
-Las dos instancias **no tienen IP pública** y viven en la VPC de
-`gestion-paneles`. El plano de control de COLOQUIO va en un proyecto Firebase
+Las dos instancias viven en la VPC de `gestion-paneles`.
+
+> **Verificar antes de decidir.** Según cómo se crearon, pueden tener además
+> IP pública (es el caso si se siguió «DESPLIEGUE - Fase 1»). Comprobarlo:
+>
+> ```bash
+> gcloud sql instances describe paneles-boveda \
+>   --format="value(ipAddresses[].ipAddress)"
+> ```
+>
+> Si aparecen direcciones fuera del rango privado (`10.x`, `172.16-31.x`,
+> `192.168.x`), la instancia tiene IP pública y el Auth Proxy llega por ahí.
+> Eso **no** cambia la decisión de esta sección —la conexión de COLOQUIO va por
+> IP privada con IAM— pero sí explica por qué el proxy funciona hoy sin estar
+> dentro de la VPC. El plano de control de COLOQUIO va en un proyecto Firebase
 propio. Un servicio en otro proyecto no alcanza una IP privada de otra VPC
 porque sí.
 
@@ -372,9 +394,27 @@ python3 scripts/verificar_coloquio.py
 ```bash
 # Contra la instancia real, con el Auth Proxy abierto
 export DSN_BOVEDA="$(scripts/dsn_local.sh boveda)"
-export DSN_BOVEDA_COLOQUIO="postgresql://coloquio-app%40gestion-paneles.iam:$(gcloud auth print-access-token)@127.0.0.1:5432/paneles_boveda?sslmode=disable"
+# El token TIENE que ser el de la cuenta de servicio, no el tuyo:
+# `gcloud auth print-access-token` a secas devuelve el de tu usuario, y la
+# conexión falla porque el usuario de base es `coloquio-app@…`, no vos.
+# Requiere roles/iam.serviceAccountTokenCreator sobre la cuenta (ver abajo).
+TOKEN_COLOQUIO="$(gcloud auth print-access-token \
+  --impersonate-service-account=coloquio-app@gestion-paneles.iam.gserviceaccount.com)"
+export DSN_BOVEDA_COLOQUIO="postgresql://coloquio-app%40gestion-paneles.iam:${TOKEN_COLOQUIO}@127.0.0.1:5432/paneles_boveda?sslmode=disable"
 python3 scripts/verificar_coloquio.py
 ```
+
+> **Para poder impersonar la cuenta** hace falta, una sola vez:
+>
+> ```bash
+> gcloud iam service-accounts add-iam-policy-binding \
+>     coloquio-app@gestion-paneles.iam.gserviceaccount.com \
+>     --member="user:garaujo@equipos.com.uy" \
+>     --role="roles/iam.serviceAccountTokenCreator"
+> ```
+>
+> El token dura **una hora**: si la batería falla con error de autenticación
+> después de un rato, hay que volver a generarlo.
 
 Catorce chequeos. Los siete primeros no escriben nada y valen contra
 producción; los otros siete arman un escenario descartable —dos personas
@@ -460,9 +500,11 @@ hoy las escribió `paneles`.
 - [ ] `semantica/0005` aplicada, y `pg_event_trigger` tiene `pii_prohibida`
 - [ ] Cuenta de servicio `coloquio-app` creada, con `cloudsql.client` e `instanceUser`
 - [ ] Usuario IAM creado en `paneles-boveda`, **no** con `gcloud sql users create` tradicional
-- [ ] Nombre real del rol confirmado, y `sistema_consumidor.rol_bd` ajustado
-- [ ] `boveda/0014` aplicada
-- [ ] `python3 scripts/verificar_esquema.py` en verde
+- [ ] Nombre real del rol confirmado (§3.2) y rol de grupo `coloquio_app` creado (§3.3)
+- [ ] `boveda/0014` aplicada **con `--single-transaction`** (§3.4)
+- [ ] `sistema_consumidor.rol_bd` ajustado al nombre del usuario IAM (§3.5)
+- [ ] `python3 scripts/verificar_esquema.py` en verde **después de §3.4**
+      (antes de aplicar la `0014`, esa migración figura en ✗ y es lo esperado)
 - [ ] `python3 scripts/verificar_coloquio.py` contra el cluster de pruebas: 14/14
 - [ ] `python3 scripts/verificar_coloquio.py` contra la instancia real: 14/14
 - [ ] `pytest` en verde
