@@ -52,6 +52,16 @@ export async function render(main, ctx) {
             <button class="btn btn-outline btn-sm" id="reintentar">Reintentar</button></div>
           <div class="card-body tight"><div id="pendientes">${cargando('12vh')}</div></div>
         </div>
+
+        <!-- R5.3 — la bóveda tiene más de un consumidor. Una baja le genera
+             un pendiente a cada uno, y la baja en la bóveda no espera a
+             ninguno: se completa igual y el pendiente queda abierto hasta que
+             ese sistema confirme. Este panel es el tablero del DPO. -->
+        <div class="card">
+          <div class="card-header"><span class="card-header-title">Bajas sin confirmar por consumidor</span>
+            <button class="btn btn-outline btn-sm" id="ver-borrados">Revisar</button></div>
+          <div class="card-body tight"><div id="borrados">${cargando('12vh')}</div></div>
+        </div>
       </div>
 
       <div class="stack">
@@ -85,9 +95,17 @@ export async function render(main, ctx) {
             <p class="small">La PII vive solo en el store de bóveda. Al store semántico viaja únicamente
             el <code>id_persona</code>, el <code>ref_estudio</code>, el texto de la respuesta
             ya despersonalizado y su embedding.</p>
-            <p class="small" style="margin-top:0.7rem">El control es doble: el DDL del store
-            semántico se audita contra una lista de campos identificatorios, y cada
-            escritura hacia él pasa por una validación que aborta la operación si detecta una clave de PII.</p>
+            <p class="small" style="margin-top:0.7rem">El control es triple. La base
+            <strong>rechaza en el momento</strong> cualquier columna con nombre de PII que se
+            intente crear del lado semántico, venga por donde venga. Antes de eso, el chequeo
+            previo al despliegue lee los archivos de migración y no deja pasar una que la
+            declare. Y cada escritura hacia el store semántico pasa por una validación que
+            aborta la operación si detecta una clave de PII, que es lo único que ve la PII
+            escondida adentro de un <code>jsonb</code>.</p>
+            <p class="small" style="margin-top:0.7rem">Las excepciones legítimas
+            —<code>nombre</code> en cuestionario, pregunta y serie, que son metadatos del
+            estudio y no de la persona— están declaradas en la base con su motivo. La salida
+            no es apagar el guardia.</p>
           </div>
         </div>
       </div>
@@ -97,8 +115,9 @@ export async function render(main, ctx) {
   $('#ver-esquema').onclick = cargarEsquema;
   $('#ver-contacto').onclick = cargarContacto;
   $('#reintentar').onclick = reintentar;
+  $('#ver-borrados').onclick = cargarBorrados;
   await Promise.all([cargarAuditoria(), cargarEsquema(), cargarContacto(),
-                     cargarPendientes()]);
+                     cargarPendientes(), cargarBorrados()]);
 }
 
 /* Las migraciones se aplican a mano contra cada instancia de Cloud SQL. Una
@@ -233,6 +252,51 @@ async function cargarPendientes() {
   activarTokens(contenedor);
 }
 
+/* R5.3 — el número que importa no es cuántas hay sino hace cuánto está
+   abierta la más vieja: una baja que lleva semanas sin confirmar no es una
+   tarea atrasada, es un incumplimiento. Por eso el aviso mira los días y no
+   la cantidad. */
+const DIAS_QUE_PREOCUPAN = 7;
+
+async function cargarBorrados() {
+  const contenedor = $('#borrados');
+  if (!contenedor) return;
+  contenedor.innerHTML = cargando('12vh');
+  try {
+    const { items, mas_vieja_dias: dias } = await api.cumplimiento.borrados();
+    if (!items.length) {
+      contenedor.innerHTML = vacio(
+        'Todos los sistemas confirmaron las bajas que les tocaban.', '✅');
+      return;
+    }
+    contenedor.innerHTML = `
+      <div class="alert ${dias >= DIAS_QUE_PREOCUPAN ? 'alert-error' : 'alert-warn'}">
+        ${items.length} baja(s) sin confirmar. La más vieja lleva
+        ${dias} día(s) abierta.
+        ${dias >= DIAS_QUE_PREOCUPAN
+          ? ' Conviene contactar al responsable técnico del sistema.'
+          : ''}
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Identificador</th><th>Sistema</th><th>Alcance</th>
+          <th>Días</th><th>Último error</th></tr></thead>
+        <tbody>${items.map((b) => `
+          <tr>
+            <td>${token(b.id_persona)}</td>
+            <td class="small">${esc(b.sistema_nombre || b.sistema)}
+              ${b.contacto_tecnico
+                ? `<div class="td-muted">${esc(b.contacto_tecnico)}</div>` : ''}</td>
+            <td class="small">${esc(b.finalidad || b.alcance)}</td>
+            <td class="small">${b.dias_abierto}</td>
+            <td class="small td-muted">${esc(b.ultimo_error
+              || (b.intentos ? `${b.intentos} intento(s)` : 'sin intentos'))}</td>
+          </tr>`).join('')}</tbody></table></div>`;
+    activarTokens(contenedor);
+  } catch (error) {
+    contenedor.innerHTML = alerta(error.message);
+  }
+}
+
 async function reintentar() {
   try {
     const { resultados } = await api.cumplimiento.reintentar();
@@ -241,7 +305,7 @@ async function reintentar() {
       ? `${resultados.length - errores} confirmadas, ${errores} siguen fallando.`
       : `${resultados.length} baja(s) confirmadas del lado semántico.`,
       errores ? 'err' : 'ok');
-    await cargarPendientes();
+    await Promise.all([cargarPendientes(), cargarBorrados()]);
   } catch (error) {
     toast(error.message, 'err');
   }

@@ -1,0 +1,72 @@
+# La verificación que la Fase 5 necesitaba que existiera.
+#
+# Dos de sus requisitos piden explícitamente que un chequeo corra en CI y
+# bloquee el merge, y no como buena práctica genérica:
+#
+#   · R5.5 — el event trigger protege la base, pero no ve una migración mal
+#     escrita que todavía no se aplicó. Ésa es justamente la que llega a un
+#     pull request, y el único lugar donde se la puede atajar es acá.
+#   · R5.8 — la lista blanca de privilegios de `coloquio_app` vive en el repo
+#     para que una migración futura que abra un acceso de más rompa la build.
+#     Una lista blanca que nadie ejecuta no es una lista blanca.
+#
+# El cluster se levanta con el mismo `scripts/pg_pruebas.sh` que se usa en
+# desarrollo. Que sea el mismo importa: un CI que monta la base de otra manera
+# prueba otra cosa.
+
+name: pruebas
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pruebas:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # El gate de PII no necesita base: lee los archivos de migración. Va
+      # primero y por separado para que, cuando una migración meta una columna
+      # prohibida, el fallo diga eso y no se pierda entre 690 puntos verdes.
+      - name: "Regla dura #1 · ninguna migración declara PII del lado semántico"
+        run: python3 scripts/verificar_esquema.py --pii
+
+      - name: Postgres 16 con pgvector y btree_gist
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            postgresql-16 postgresql-16-pgvector postgresql-contrib-16
+          sudo pg_ctlcluster 16 main stop || true
+
+      - name: Dependencias
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r functions/requirements.txt
+          python3 -m pip install pytest
+
+      # `pg_pruebas.sh` levanta el cluster, crea los roles que las migraciones
+      # esperan y aplica todas las migraciones. Hay que hacerle `source`: el
+      # script exporta los DSN, y un subshell se los lleva.
+      - name: Suite
+        run: |
+          source scripts/pg_pruebas.sh
+          cd functions && python3 -m pytest -q
+
+      # Redundante con `test_fase5_superficie.py`, y a propósito: el script es
+      # el que se corre a mano contra la instancia real el día de la puesta en
+      # marcha, así que tiene que seguir andando como programa y no solo como
+      # módulo importado por una prueba.
+      - name: La bóveda, vista desde COLOQUIO
+        run: |
+          source scripts/pg_pruebas.sh
+          python3 scripts/verificar_coloquio.py
+
+      - name: Sintaxis del frontend
+        run: bash scripts/chequear_js.sh

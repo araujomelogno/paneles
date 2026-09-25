@@ -90,8 +90,18 @@ def test_el_esquema_semantica_desplegado_no_tiene_columnas_de_pii(conn_semantica
 def test_la_auditoria_en_vivo_detecta_una_columna_de_pii_agregada_a_mano(conn_semantica):
     # Simula el peor caso: alguien agrega una columna de PII directo en la
     # base. La auditoría tiene que verlo.
+    #
+    # Desde R5.5 ese `alter table` ya no entra: el event trigger lo rechaza en
+    # el momento (lo prueba el test de abajo). Pero la auditoría en vivo no
+    # sobra por eso —cubre las bases que se crearon antes del guardia, y es lo
+    # que la aplicación muestra en Cumplimiento—, así que se la sigue probando
+    # apagando el guardia para el rato que dura el montaje. Apagarlo es
+    # exactamente lo que no se puede hacer sin ser dueño de la base, que es el
+    # punto de tener las dos defensas.
     with conn_semantica.cursor() as cur:
+        cur.execute("alter event trigger pii_prohibida disable")
         cur.execute("alter table individuo add column email text")
+        cur.execute("alter event trigger pii_prohibida enable")
     try:
         assert {"tabla": "individuo", "columna": "email"} in semantica.auditar_columnas(conn_semantica)
     finally:

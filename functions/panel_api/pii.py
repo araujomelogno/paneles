@@ -21,6 +21,12 @@ from .errores import FugaDePII
 # Campos de PII de la bóveda (`persona`, en db/boveda/0001_init.sql) más los
 # sinónimos habituales con los que podrían colarse desde una plataforma
 # externa (Dooblo, Alchemer) o desde un Excel de campo.
+#
+# R5.5 — desde la Fase 5 la fuente de verdad de esta lista es la tabla
+# `campo_pii` del store semántico, porque el event trigger que rechaza el DDL
+# la lee de ahí y un segundo sistema escribiendo embeddings no va a importar
+# este módulo. Este `frozenset` es su espejo: sirve para validar payloads sin
+# ir a la base, y `test_fase5_pii` falla si los dos se separan.
 CAMPOS_PII = frozenset({
     "documento", "cedula", "ci", "dni", "pasaporte", "rut",
     "nombre", "nombres", "apellido", "apellidos", "nombre_completo",
@@ -38,6 +44,23 @@ CAMPOS_PII = frozenset({
 # creó o la editó, en cambio, es una persona, y no se escribe de este lado: ese
 # rastro va a `serie_auditoria`, en la bóveda.
 CONTEXTOS_QUE_PERMITEN_NOMBRE = frozenset({"cuestionario", "pregunta", "serie"})
+
+
+def catalogo_en_base(conn):
+    """La lista de PII tal como la tiene el store semántico.
+
+    Es la fuente de verdad desde R5.5: el event trigger la lee de ahí. Se
+    devuelve `(campos, excepciones)` para poder compararla con las dos
+    constantes de este módulo.
+    """
+    with conn.cursor() as cur:
+        cur.execute("select campo from campo_pii")
+        campos = {fila[0] if isinstance(fila, tuple) else fila["campo"]
+                  for fila in cur.fetchall()}
+        cur.execute("select relacion from excepcion_pii where campo = 'nombre'")
+        excepciones = {fila[0] if isinstance(fila, tuple) else fila["relacion"]
+                       for fila in cur.fetchall()}
+    return frozenset(campos), frozenset(excepciones)
 
 
 def _claves(objeto):
@@ -111,16 +134,52 @@ def _columnas_de(cuerpo):
     return nombres
 
 
+# R5.5 — `create table` no es el único camino. Una migración que agrega la
+# columna después, o que renombra una existente, deja el esquema igual de
+# sucio, y es la que más fácil se cuela en un pull request porque el `create
+# table` original está limpio.
+_RE_ADD_COLUMN = re.compile(
+    r"alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?([a-z_][a-z0-9_]*)"
+    r"(.*?);",
+    re.IGNORECASE | re.DOTALL,
+)
+_RE_COLUMNA_AGREGADA = re.compile(
+    r"add\s+(?:column\s+)?(?:if\s+not\s+exists\s+)?([a-z_][a-z0-9_]*)",
+    re.IGNORECASE,
+)
+_RE_COLUMNA_RENOMBRADA = re.compile(
+    r"rename\s+(?:column\s+)?[a-z_][a-z0-9_]*\s+to\s+([a-z_][a-z0-9_]*)",
+    re.IGNORECASE,
+)
+
+
+def _es_pii(tabla, columna):
+    return columna in CAMPOS_PII and not (
+        tabla in CONTEXTOS_QUE_PERMITEN_NOMBRE and columna == "nombre")
+
+
 def auditar_esquema(sql):
     """Columnas de PII declaradas en un DDL. Vacío = el esquema está limpio.
 
-    Devuelve una lista de `(tabla, columna)`.
+    Devuelve una lista de `(tabla, columna)`. Mira `create table`, `alter
+    table … add column` y `alter table … rename column`: los tres caminos por
+    los que una columna llega a existir.
     """
+    # Los comentarios se sacan primero. Esta misma migración explica en prosa
+    # por qué `email` no va, y sin esto el chequeo se denunciaría a sí mismo.
+    limpio = re.sub(r"--[^\n]*", "", sql)
+
     hallazgos = []
-    for tabla, cuerpo in _RE_CREATE_TABLE.findall(sql):
+    for tabla, cuerpo in _RE_CREATE_TABLE.findall(limpio):
         for columna in _columnas_de(cuerpo):
-            if columna in CAMPOS_PII and not (
-                tabla.lower() in CONTEXTOS_QUE_PERMITEN_NOMBRE and columna == "nombre"
-            ):
+            if _es_pii(tabla.lower(), columna):
+                hallazgos.append((tabla.lower(), columna))
+
+    for tabla, acciones in _RE_ADD_COLUMN.findall(limpio):
+        nombres = (_RE_COLUMNA_AGREGADA.findall(acciones)
+                   + _RE_COLUMNA_RENOMBRADA.findall(acciones))
+        for columna in nombres:
+            columna = columna.lower()
+            if _es_pii(tabla.lower(), columna):
                 hallazgos.append((tabla.lower(), columna))
     return hallazgos

@@ -22,6 +22,10 @@ RAIZ = pathlib.Path(__file__).resolve().parents[2]
 
 def _objetos_del_ddl(sql):
     """Tablas, vistas, funciones y columnas que declara un archivo de migración."""
+    # Los literales de texto se sacan primero. La 0005 del store semántico
+    # lista los tags del event trigger —entre ellos `'CREATE TABLE AS'`— y sin
+    # esto el detector creería que la migración crea una tabla llamada «as».
+    sql = re.sub(r"'[^']*'", "''", sql)
     objetos = set()
     for nombre in re.findall(
         r"create\s+(?:or\s+replace\s+)?(?:table|view)\s+(?:if\s+not\s+exists\s+)?"

@@ -301,6 +301,24 @@ def pendientes_cumplimiento(ctx, actor, params, cuerpo, consulta):
     return 200, {"items": bajas.pendientes_de_borrado_semantica(ctx.boveda)}
 
 
+@ruta("GET", "/cumplimiento/borrados", "cumplimiento", requisito="R5.3")
+def borrados_sin_confirmar(ctx, actor, params, cuerpo, consulta):
+    """Las bajas que algún consumidor todavía no confirmó haber ejecutado.
+
+    Es la vista del DPO, y es distinta de `/cumplimiento/pendientes`: ésa
+    mira el store semántico de `paneles`, ésta mira a **todos** los sistemas
+    registrados. Una baja abierta hace mucho tiempo no es una tarea atrasada,
+    es un incumplimiento.
+    """
+    items = bajas.sin_confirmar(ctx.boveda)
+    return 200, {
+        "items": items,
+        # El número que el DPO mira primero: hace cuánto está abierta la más
+        # vieja. Si sube, hay un consumidor que dejó de confirmar.
+        "mas_vieja_dias": max((i["dias_abierto"] for i in items), default=0),
+    }
+
+
 @ruta("POST", "/cumplimiento/reintentar", "cumplimiento")
 def reintentar_cumplimiento(ctx, actor, params, cuerpo, consulta):
     resultado = bajas.reintentar_borrado_semantica(ctx.boveda, ctx.semantica)

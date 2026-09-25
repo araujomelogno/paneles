@@ -9,7 +9,31 @@ import {
   fechaHora, hace, estado, alerta,
 } from '../ui.js';
 
-const VERSION = () => window.VERSION_CONSENTIMIENTO || 'consentimiento-2026-01';
+/* R5.7.d — la versión del texto que se guarda con cada consentimiento.
+
+   Antes era una constante en el código. Eso convertía al consentimiento en
+   una cadena escrita a mano: si alguien preguntaba «¿qué aceptó exactamente
+   esta persona?», la respuesta era una etiqueta que no apuntaba a ningún
+   texto recuperable. Desde la Fase 5 la base rechaza otorgar con una versión
+   que no esté publicada y activa, así que la pantalla las lee del catálogo,
+   igual que hace la landing desde R3.7.
+
+   `textosActivos` queda con `{finalidad: version}` de lo que haya publicado. */
+let textosActivos = {};
+
+async function cargarTextosActivos() {
+  try {
+    const { items } = await api.inscripciones.textos();
+    textosActivos = {};
+    items.filter((t) => t.activo).forEach((t) => {
+      // El listado viene por finalidad y fecha descendente: la primera de
+      // cada finalidad es la vigente.
+      if (!(t.finalidad in textosActivos)) textosActivos[t.finalidad] = t.version;
+    });
+  } catch { textosActivos = {}; }
+}
+
+const VERSION = (finalidad) => textosActivos[finalidad] || null;
 
 /* R4.4 — los cuatro canales, con qué significa aceptar cada uno. El de
    WhatsApp dice explícitamente que va a recibir mensajes de Equipos: es lo
@@ -50,7 +74,7 @@ export async function render(main, ctx) {
   if (ctx.contexto?.idPersona) return renderFicha(main, ctx.contexto.idPersona);
 
   const [{ items: paneles }, delCatalogo] = await Promise.all([
-    api.paneles.listar(), catalogo.cargar(),
+    api.paneles.listar(), catalogo.cargar(), cargarTextosActivos(),
   ]);
   catalogoDeAtributos = delCatalogo;
 
@@ -435,6 +459,16 @@ async function guardarAlta(caja, paneles) {
     return;
   }
 
+  // Sin texto publicado la base rechaza el otorgamiento, y con razón. Se
+  // dice acá, con el nombre de la finalidad, en vez de dejar que vuelva un
+  // error de base que no explica qué hacer.
+  const sinTexto = finalidades.filter((f) => !VERSION(f));
+  if (sinTexto.length) {
+    toast(`No hay texto de consentimiento publicado para ${sinTexto.join(', ')}. `
+          + 'Se publica en Inscripciones → Textos de consentimiento.', 'error');
+    return;
+  }
+
   const cuerpo = {
     persona: {
       documento: datos.documento, nombre: datos.nombre, sexo: datos.sexo,
@@ -442,13 +476,13 @@ async function guardarAlta(caja, paneles) {
       email: datos.email, celular: datos.celular, observaciones: datos.observaciones,
     },
     consentimientos: finalidades.map((finalidad) => ({
-      finalidad, version_texto: VERSION(),
+      finalidad, version_texto: VERSION(finalidad),
     })),
     origen: datos.origen, id_en_origen: datos.id_en_origen,
     panel_id: datos.panel_id ? Number(datos.panel_id) : null,
     // R4.4 — los canales aceptados, con el texto con que se aceptaron.
     canales: datos.canales || [],
-    version_texto_canales: VERSION(),
+    version_texto_canales: VERSION('contacto_participacion'),
   };
 
   try {
@@ -642,24 +676,33 @@ async function renderFicha(main, idPersona) {
   });
 }
 
-function abrirOtorgar(idPersona) {
+async function abrirOtorgar(idPersona) {
+  await cargarTextosActivos();
+  const disponibles = Object.entries(textosActivos);
+  if (!disponibles.length) {
+    toast('No hay ningún texto de consentimiento publicado. Se publica en '
+          + 'Inscripciones → Textos de consentimiento.', 'error');
+    return;
+  }
   modal({
     titulo: 'Otorgar consentimiento',
     cuerpo: `
       <div class="form-group"><label>Finalidad</label>
         <select class="fselect" name="finalidad">
-          <option value="contacto_participacion">Contacto y participación</option>
-          <option value="uso_semantico">Uso semántico entre estudios</option>
-        </select></div>
-      <div class="form-group"><label>Versión del texto</label>
-        <input type="text" name="version_texto" value="${esc(VERSION())}" />
-        <div class="field-hint">Queda guardada: es lo que hace demostrable qué consintió.</div></div>`,
+          ${disponibles.map(([f, v]) =>
+            `<option value="${esc(f)}" data-version="${esc(v)}">${esc(f)}</option>`
+          ).join('')}
+        </select>
+        <div class="field-hint">Solo las que tienen un texto publicado: la
+        base rechaza otorgar una finalidad sin texto activo, porque un
+        consentimiento sin texto recuperable no es demostrable.</div></div>`,
     acciones: [
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
       { texto: 'Otorgar', clase: 'btn-orange', onClick: async (caja) => {
           const datos = leerFormulario(caja);
           try {
-            await api.consentimientos.otorgar(idPersona, datos.finalidad, datos.version_texto);
+            await api.consentimientos.otorgar(
+              idPersona, datos.finalidad, VERSION(datos.finalidad));
             cerrarModal();
             toast('Consentimiento registrado.', 'ok');
             contexto.irA('panelistas', { idPersona });

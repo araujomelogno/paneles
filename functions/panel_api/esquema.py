@@ -78,6 +78,31 @@ MIGRACIONES_BOVEDA = (
         "v_atributo_persona", "v_demografia",
     )),
     ("0011_fase4_inteligencia.sql", ("serie_auditoria", "peso_optimizador")),
+    # ── Fase 5 ──
+    ("0012_fase5_catalogo_finalidades.sql", (
+        "finalidad_consentimiento", "v_finalidad",
+        "v_texto_consentimiento_activo",
+    )),
+    ("0013_fase5_finalidades_cualitativo.sql", (
+        "consentimiento.ref_estudio",
+        # Las tres reglas del consentimiento hechas valer en la base. Sin
+        # ellas las columnas estarían y no habría nada que las respetara.
+        "consentimiento_valida_ambito()", "consentimiento_exige_texto()",
+        "inscripcion_valida_finalidades()",
+    )),
+    ("0014_fase5_superficie_externa.sql", (
+        "sistema_consumidor", "reidentificacion.sistema",
+        "usuario_auditoria.sistema",
+        # El gate legal. La vista es una fachada de la función: si faltara la
+        # función, la vista tampoco estaría, pero se declaran las dos porque
+        # es la función la que lleva el gate adentro.
+        "f_persona_convocable()", "v_persona_convocable",
+        "v_fatiga_panelista",
+        "contacto_para_convocatoria()", "sistema_de_la_conexion()",
+        "borrado_pendiente", "v_borrados_sin_confirmar",
+        "generar_borrados_pendientes()", "mis_borrados_pendientes()",
+        "confirmar_borrado()", "reportar_error_de_borrado()",
+    )),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -87,6 +112,10 @@ MIGRACIONES_SEMANTICA = (
     ("0004_series.sql", (
         "serie", "serie_categoria", "serie_pregunta", "serie_mapeo",
         "pregunta.embedding_texto",
+    )),
+    # ── Fase 5 ──
+    ("0005_fase5_prohibicion_pii.sql", (
+        "campo_pii", "excepcion_pii", "prohibir_pii_en_ddl()",
     )),
 )
 
@@ -138,6 +167,21 @@ PARA_QUE = {
     "pregunta.embedding_texto": "sugerir preguntas candidatas de otras olas por similitud",
     "serie_auditoria": "quién tocó una serie y cuándo; la serie vive del lado semántico, el nombre de quien la editó nunca",
     "peso_optimizador": "cuánto pesa la fatiga frente a la cuota al optimizar una muestra",
+    # ── Fase 5 ──
+    "finalidad_consentimiento": "el catálogo de finalidades; sin él no se puede otorgar ninguna",
+    "v_texto_consentimiento_activo": "qué versión del texto hay que mostrar hoy para cada finalidad",
+    "consentimiento.ref_estudio": "consentir para *este* estudio y no para todos",
+    "sistema_consumidor": "quién consume la bóveda; sin esta tabla la cascada de baja no sabe a quién avisarle",
+    "reidentificacion.sistema": "de qué sistema vino cada reidentificación, derivado de la conexión",
+    "f_persona_convocable()": "el gate de consentimiento hecho valer en la base; es lo que hace que un segundo consumidor no pueda salteárselo",
+    "v_persona_convocable": "la única superficie desde la que un consumidor externo ve personas",
+    "v_fatiga_panelista": "los hechos de fatiga (cuántas convocatorias, cuándo la última); el umbral lo pone cada consumidor",
+    "contacto_para_convocatoria()": "el único camino a un dato de contacto: un canal, con gate y auditado en la misma transacción",
+    "sistema_de_la_conexion()": "de qué sistema es esta conexión; el llamador no lo declara",
+    "borrado_pendiente": "las bajas que cada consumidor todavía no confirmó haber ejecutado",
+    "v_borrados_sin_confirmar": "las bajas que llevan demasiado sin confirmar",
+    "campo_pii": "la lista de nombres de columna prohibidos del lado semántico, que es la fuente de `pii.CAMPOS_PII`",
+    "prohibir_pii_en_ddl()": "la regla dura #1 hecha valer por la base: sin esta función un `alter table` puede meter PII del lado semántico y nadie se entera",
 }
 
 

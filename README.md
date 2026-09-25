@@ -13,7 +13,9 @@ Empezá leyendo `CLAUDE.md`, después el PRD, y desarrollá por fases empezando 
 | `DESPLIEGUE -  Fase 1 .md` | Manual de despliegue de la Fase 1: las dos instancias de Cloud SQL, el conector de VPC, los secretos, la ingesta, verificación y problemas frecuentes. | `docs/` |
 | `DESPLIEGUE - Fase 2.md` | Manual de despliegue de la Fase 2: migraciones nuevas, claves de reranking y de Claude, permisos de la cuenta de servicio, índice vectorial, calibración. | `docs/` |
 | `DESPLIEGUE - Fase 3.md` | Manual de despliegue de la Fase 3: migración de la bóveda, dependencia de `pyreadstat`, la landing pública y las definiciones legales pendientes. | `docs/` |
-| `decisiones.md` | **Por qué el sistema está hecho así.** Las 31 decisiones de diseño que no son obvias, con lo que se descartó, lo que cuestan y la prueba que impide revertirlas sin querer. Léelo antes de cambiar algo que parezca raro. | `docs/` |
+| `DESPLIEGUE - Fase 4.md` | Manual de despliegue de la Fase 4: las tres migraciones nuevas, las credenciales de Meta y del proveedor de códigos, y el endurecimiento de la landing. | `docs/` |
+| `DESPLIEGUE - COLOQUIO Fase 0.md` | Manual de despliegue de la Fase 5: la bóveda deja de tener un solo consumidor. Migraciones, el rol IAM del segundo sistema y por qué no puede crearse con `gcloud sql users create`, la conectividad, y la verificación conectada como ese rol. | `docs/` |
+| `decisiones.md` | **Por qué el sistema está hecho así.** Las 49 decisiones de diseño que no son obvias, con lo que se descartó, lo que cuestan y la prueba que impide revertirlas sin querer. Léelo antes de cambiar algo que parezca raro. | `docs/` |
 | `manual/Manual_de_usuario.pdf` | Manual de usuario: paso a paso de cada tarea, con capturas de la aplicación. | `docs/manual/` |
 | `HANDOFF_fase1.md` | Work order de la **Fase 1**: alcance, superficie de API mapeada a R1.x, lógica de dedup, máquina de estados de consentimiento, contrato de cruce entre stores, DoD. **Primer sprint.** | `docs/` |
 | `db/boveda/0001_init.sql` | DDL del **store de bóveda** (Cloud SQL): bóveda de identidad (PII + demográficos) + módulo de paneles. | `db/boveda/` |
@@ -106,13 +108,37 @@ python3 scripts/verificar_esquema.py --sql semantica | psql "$DSN_SEMANTICA"
 Conectarse sí necesita el driver (`pip install "psycopg[binary]"`); el script lo
 dice si falta, y ofrece la vía `--sql`.
 
+Con `--pii` no se conecta a ninguna base: lee los archivos de migración del
+store semántico y sale con 1 si alguno declara una columna con nombre de PII.
+Es el segundo nivel de la regla dura #1 —el primero es un event trigger en la
+base—, y existe porque el trigger no ve una migración que todavía no se
+aplicó, que es justamente la que llega a un pull request. Corre en CI.
+
+`scripts/verificar_coloquio.py` se conecta **con el rol del segundo
+consumidor** y comprueba que la bóveda se defiende sola: que lee la superficie
+del contrato y nada más, que un contacto legítimo queda auditado y uno sin
+consentimiento se rechaza, que una baja le llega y se puede cerrar, y que
+ningún privilegio quedó otorgado fuera de la lista blanca que vive en el repo.
+Es el sustituto honesto de «lo revisamos»:
+
+```bash
+source scripts/pg_pruebas.sh
+python3 scripts/verificar_coloquio.py
+
+# Contra producción, sin escribir nada:
+python3 scripts/verificar_coloquio.py --solo-lectura
+```
+
 ### Puesta en marcha real
 
 El instructivo completo —las dos instancias de Cloud SQL, el conector de VPC,
 los secretos, Voyage, el padrón de usuarios y la verificación paso a paso—
 está en **[`docs/DESPLIEGUE -  Fase 1 .md`](docs/DESPLIEGUE%20-%20%20Fase%201%20.md)**, y
-lo que agrega la Fase 2 en
-**[`docs/DESPLIEGUE - Fase 2.md`](docs/DESPLIEGUE%20-%20Fase%202.md)**.
+lo que agrega cada fase siguiente en
+**[`docs/DESPLIEGUE - Fase 2.md`](docs/DESPLIEGUE%20-%20Fase%202.md)**,
+**[`docs/DESPLIEGUE - Fase 3.md`](docs/DESPLIEGUE%20-%20Fase%203.md)**,
+**[`docs/DESPLIEGUE - Fase 4.md`](docs/DESPLIEGUE%20-%20Fase%204.md)** y
+**[`docs/DESPLIEGUE - COLOQUIO Fase 0.md`](docs/DESPLIEGUE%20-%20COLOQUIO%20Fase%200.md)**.
 
 El resumen, para ubicarse:
 
