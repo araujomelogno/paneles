@@ -543,9 +543,10 @@ usuario de rol `admin`.
 5. **Participación.** Tiene que mostrar tasa de respuesta, distribución de
    último contacto y distribución de convocatorias.
 6. **Usuarios.** Configuración → dá de alta a alguien con rol `analista`.
-   Tiene que aparecer el enlace de restablecimiento **una sola vez**. Después
-   probá sacarte tu propio rol de admin: el selector tiene que estar
-   deshabilitado.
+   Tiene que aparecer el enlace de restablecimiento. Cerrá el modal y tocá
+   «Enlace de acceso» en su fila: tiene que dar uno nuevo, y la auditoría de
+   abajo tiene que sumar una fila «Enlace de acceso». Después probá sacarte tu
+   propio rol de admin: el selector tiene que estar deshabilitado.
 
 ### 8.2 · Que las claves estén enganchadas
 
@@ -662,11 +663,16 @@ incluida la PII de los panelistas. Las restricciones no son adornos:
 | Desactivar no borra | Borrar al usuario borraría el rastro de sus operaciones |
 | Todo queda auditado, con autor y fecha | `usuario_auditoria`, solo de agregar |
 
-**La clave inicial no se muestra de forma persistente.** El alta crea la cuenta
-con una clave aleatoria que no se guarda en ningún lado, y devuelve un enlace de
-restablecimiento marcado para mostrar **una sola vez**. Si se cierra ese modal
-sin copiarlo, no se recupera: la persona entra con «¿Olvidaste tu contraseña?»
-en el login.
+**El enlace de acceso no se guarda.** El alta crea la cuenta con una clave
+aleatoria que no se guarda en ningún lado, y devuelve un enlace de
+restablecimiento que se muestra una vez y tampoco se guarda: un enlace de
+restablecimiento guardado es una credencial guardada.
+
+Si se cierra ese modal sin copiarlo, el enlace no se recupera —**se genera
+otro**, con el botón «Enlace de acceso» de la fila del padrón—. Es la misma
+operación que «¿Olvidaste tu contraseña?» en el login, pedida por un
+administrador, y por eso queda auditada como `enlace_acceso`. Un usuario
+desactivado no recibe enlace: se generaría igual y seguiría sin poder entrar.
 
 **Un cambio de rol vale desde la próxima operación.** El rol se resuelve contra
 la ficha de Firestore en cada request, así que no hace falta que la persona

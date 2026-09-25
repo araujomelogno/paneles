@@ -78,6 +78,11 @@ también en `inscribirse/index.html`, para que el botón «Abrir» no dé 404:
 `python3 -m http.server` no hace los rewrites de Firebase Hosting, que es de
 donde sale `/inscribirse` en producción.
 
+La 43b —el enlace de acceso generado de nuevo desde el padrón— sale del mismo
+recorrido de `capturar.mjs`, que ya la toma. Cuando se agregó hubo que rehacer
+también la 41, la 43 y la 44: la fila del padrón tiene un botón más y el texto
+del modal cambió, así que las viejas mostraban una pantalla que ya no existe.
+
 Las 54 a 59 son del bloque 4B: las sugerencias de una serie, la serie con sus
 dos olas mapeadas, la matriz de evolución, la línea de tiempo de una persona,
 el optimizador con su comparación contra las reglas y las tres alternativas
@@ -121,7 +126,7 @@ node docs/manual/generar_pdf.mjs
 | `portada.html` | Portada, a sangre |
 | `manual.html` | Índice y las catorce secciones |
 | `estilo.css` | Estilos, compartidos por los dos |
-| `capturas/` | Las 61 capturas |
+| `capturas/` | Las 62 capturas |
 | `tipografia/` | Montserrat local, para que el PDF salga igual sin red |
 | `preparar_demo.sh` | Arma y sirve la copia en modo demo |
 | `capturar.mjs` | Toma las capturas |

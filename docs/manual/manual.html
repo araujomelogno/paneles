@@ -2071,22 +2071,34 @@
 
   <figure>
     <img class="recorte" src="capturas/43-usuario-acceso.jpg" alt="Enlace de acceso, visible una sola vez" />
-    <figcaption><b>Se muestra una sola vez.</b> Conviene copiarlo antes de cerrar
-    el cuadro de diálogo.</figcaption>
+    <figcaption><b>El enlace de acceso.</b> Conviene copiarlo antes de cerrar el
+    cuadro de diálogo. Si se pierde, se genera otro desde el padrón.</figcaption>
   </figure>
 
   <div class="aviso">
     <div class="t">La contraseña inicial no queda almacenada</div>
     <p>La cuenta se crea con una contraseña aleatoria que el sistema no guarda y
-    que nadie llega a ver. La persona ingresa por ese enlace y define la suya. Si
-    el cuadro se cierra sin copiarlo, el enlace no se recupera; eso no es una
-    falla, sino lo que evita que quede una contraseña circulando en una pantalla
-    o en un correo.</p>
-    <p>El enlace debe transmitirse por un canal privado. Como alternativa, se
-    puede indicar a la persona que utilice directamente <strong>¿Olvidaste tu
-    contraseña?</strong> en la pantalla de ingreso: el resultado es el
-    mismo.</p>
+    que nadie llega a ver. La persona ingresa por ese enlace y define la suya. El
+    enlace tampoco se almacena: un enlace de restablecimiento guardado equivale a
+    una contraseña guardada.</p>
+    <p>El enlace debe transmitirse por un canal privado.</p>
   </div>
+
+  <p>Si el cuadro se cierra antes de copiar el enlace, el enlace no se recupera,
+  pero puede emitirse uno nuevo: el botón <strong>Enlace de acceso</strong> de la
+  fila correspondiente del padrón genera otro en el momento. Es la misma
+  operación que <strong>¿Olvidaste tu contraseña?</strong> en la pantalla de
+  ingreso, con la diferencia de que la solicita un administrador; por ese motivo
+  queda registrada en la auditoría, con el autor y la fecha.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/43b-usuario-enlace-nuevo.jpg" alt="Enlace de acceso generado nuevamente desde el padrón" />
+    <figcaption><b>Un enlace nuevo.</b> El anterior, si la persona todavía no lo
+    utilizó, sigue siendo válido hasta que venza.</figcaption>
+  </figure>
+
+  <p>Un usuario desactivado no recibe enlace: se generaría igual y la persona
+  seguiría sin poder ingresar. Corresponde reactivarlo primero.</p>
 
   <h3><span class="n">12.2</span> Cambiar un rol</h3>
 

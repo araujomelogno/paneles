@@ -17,9 +17,17 @@ que no son adornos:
   operaciones, que es justo lo que hay que conservar.
 * **Todo queda auditado**, con autor y fecha, en `usuario_auditoria`
   (bóveda). El registro es de solo agregar.
-* **La clave inicial no se muestra de forma persistente.** El alta devuelve
-  un enlace de restablecimiento para mostrar una sola vez; la clave que se
-  usó para crear la cuenta es aleatoria y no se guarda en ningún lado.
+* **El enlace de acceso no se guarda.** El alta devuelve un enlace de
+  restablecimiento para mostrar una sola vez; la clave con la que se creó la
+  cuenta es aleatoria y no se guarda en ningún lado. Un enlace de
+  restablecimiento guardado sería una credencial guardada.
+
+  «No se guarda» no es lo mismo que «no se puede volver a pedir», y confundir
+  las dos cosas dejaba sin entrada a quien cerraba el modal antes de copiar.
+  `generar_acceso()` emite uno nuevo cuando haga falta: es exactamente lo que
+  hace «¿Olvidaste tu contraseña?» en el login, así que no agrega riesgo, y
+  **queda auditado** porque pedir el enlace de otra persona es una operación
+  sensible aunque no cambie nada.
 
 El padrón vive en Firestore (`usuarios/{uid}`) y las cuentas en Firebase
 Auth; la auditoría, en la bóveda. El acceso a Firebase está detrás de la
@@ -33,7 +41,7 @@ desde una app a la que no puede entrar).
 
 import secrets
 
-from . import auditoria, auth
+from . import auditoria, auth, db
 from .errores import Conflicto, DatosInvalidos, NoEncontrado, SinPermiso
 
 ROLES = auth.ROLES
@@ -57,6 +65,28 @@ def _validar_rol(rol):
             {"roles_validos": list(ROLES)},
         )
     return rol
+
+
+ADVERTENCIA_ACCESO = (
+    "Este enlace no queda guardado en ningún lado. Pasáselo a la persona por "
+    "un canal privado; si se pierde, se genera otro desde el padrón."
+)
+
+
+def _acceso(padron, email, motivo):
+    """El bloque que la interfaz muestra con el enlace para fijar la clave.
+
+    `link` puede venir en `None`: Firebase puede fallar al generarlo y eso no
+    invalida el alta —la cuenta quedó creada—, así que se informa y se ofrece
+    la salida de siempre, que es «¿Olvidaste tu contraseña?» en el login.
+    """
+    return {
+        "metodo": "restablecimiento",
+        "motivo": motivo,
+        "link": padron.link_de_reseteo(email),
+        "mostrar_una_vez": True,
+        "advertencia": ADVERTENCIA_ACCESO,
+    }
 
 
 def clave_al_azar(largo=16):
@@ -277,18 +307,10 @@ def alta(conn, padron, cuerpo, actor):
         uid = padron.crear_cuenta(email, nombre, clave_al_azar())["uid"]
         ficha_previa, rol_anterior, estado = {}, None, "creado"
         # La clave con la que se creó la cuenta es aleatoria y no se guarda:
-        # la persona entra por este enlace y fija la suya. Se muestra una
-        # sola vez y no queda en ninguna pantalla ni en ningún log.
-        acceso = {
-            "metodo": "restablecimiento",
-            "link": padron.link_de_reseteo(email),
-            "mostrar_una_vez": True,
-            "advertencia": (
-                "Este enlace se muestra una sola vez y no se vuelve a poder "
-                "consultar. Pasáselo a la persona por un canal privado, o "
-                "pedile que entre con «¿Olvidaste tu contraseña?» en el login."
-            ),
-        }
+        # la persona entra por este enlace y fija la suya. No queda en ninguna
+        # pantalla ni en ningún log; si se pierde, `generar_acceso()` emite
+        # otro.
+        acceso = _acceso(padron, email, "alta")
 
     padron.escribir_ficha(uid, {
         "nombre": nombre or ficha_previa.get("nombre") or email,
@@ -412,6 +434,64 @@ def cambiar(conn, padron, uid, cambios, actor):
         "vigencia": "El cambio aplica desde la próxima operación de esa persona.",
         "auditoria": registros,
     }
+
+
+def generar_acceso(conn, padron, uid, actor):
+    """Emite un enlace nuevo para que la persona fije su clave.
+
+    Es la salida al problema que tenía el alta: el enlace se mostraba una vez
+    y si se cerraba el modal no había forma de recuperarlo. No se recupera
+    —no se guardó—, se genera otro.
+
+    **No baja el listón de seguridad.** Es la misma operación que hace
+    «¿Olvidaste tu contraseña?» en el login, con la diferencia de que la pide
+    un administrador en vez del titular. Por eso queda auditado: es lo único
+    que distingue «le pasé el enlace al compañero que no podía entrar» de un
+    intento de tomar la cuenta de alguien.
+
+    **Un usuario desactivado no recibe enlace.** El enlace funcionaría —Auth
+    lo emite igual— y después la persona no podría entrar, con lo que el
+    administrador creería haber resuelto algo que no resolvió. Primero se
+    reactiva.
+    """
+    ficha = padron.leer_ficha(uid)
+    if not ficha:
+        raise NoEncontrado(f"No hay ficha de usuario para {uid}.")
+
+    activo = ficha.get("activo")
+    if activo is not None and not activo:
+        raise Conflicto(
+            "Ese usuario está desactivado: el enlace se generaría igual y la "
+            "persona seguiría sin poder entrar. Reactivalo primero.",
+            {"uid": uid, "email": ficha.get("email")},
+        )
+
+    email = _normalizar_email(ficha.get("email"))
+    acceso = _acceso(padron, email, "regeneracion")
+
+    registro = auditoria.registrar_usuario(
+        conn, "enlace_acceso", uid, actor=actor, email_objetivo=email,
+        rol_anterior=ficha.get("rol"), rol_nuevo=ficha.get("rol"),
+        # Se registra **si se pudo generar**, no el enlace: guardarlo sería
+        # guardar una credencial, que es justo lo que este diseño evita.
+        detalle={"generado": acceso["link"] is not None},
+    )
+
+    return {
+        "uid": uid,
+        "usuario": obtener(padron, uid),
+        "acceso": acceso,
+        "auditoria": registro,
+    }
+
+
+def acciones_auditables(conn):
+    """El catálogo de acciones, con su etiqueta. La interfaz lo lee de acá en
+    vez de repetir el diccionario y quedarse vieja cuando aparezca una nueva."""
+    filas = db.todas(
+        conn,
+        "select codigo, etiqueta, descripcion from accion_usuario order by orden")
+    return [dict(f) for f in filas]
 
 
 def historial(conn, uid=None, limite=200):

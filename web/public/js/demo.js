@@ -1773,14 +1773,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     if (!usuario) {
       usuario = { uid: `uid-demo-${bd.usuarios.length + 1}`, email, activo: true };
       bd.usuarios.push(usuario);
-      acceso = {
-        metodo: 'restablecimiento',
-        link: `https://gestion-paneles.firebaseapp.com/__/auth/action?modo=demo&email=${encodeURIComponent(email)}`,
-        mostrar_una_vez: true,
-        advertencia: 'Este enlace se muestra una sola vez y no se vuelve a poder '
-          + 'consultar. Pasáselo a la persona por un canal privado, o pedile que '
-          + 'entre con «¿Olvidaste tu contraseña?» en el login.',
-      };
+      acceso = accesoDemo(email, 'alta');
     }
     usuario.nombre = (cuerpo.nombre || '').trim() || usuario.nombre || email;
     usuario.rol = rol;
@@ -1835,8 +1828,32 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     };
   }
 
+  /* Un enlace nuevo para fijar la clave. El del alta se muestra una vez y no
+     se guarda: si se perdió, no se recupera, se genera otro. */
+  if (metodo === 'POST' && partes[0] === 'usuarios' && partes[2] === 'acceso') {
+    const usuario = bd.usuarios.find((u) => u.uid === partes[1]);
+    if (!usuario) throw new ErrorDemo(`No hay ficha de usuario para ${partes[1]}.`, 404);
+    if (!usuario.activo) {
+      throw new ErrorDemo(
+        'Ese usuario está desactivado: el enlace se generaría igual y la persona '
+        + 'seguiría sin poder entrar. Reactivalo primero.', 409);
+    }
+    const acceso = accesoDemo(usuario.email, 'regeneracion');
+    auditarUsuario('enlace_acceso', usuario, usuario.rol, usuario.rol, { generado: true });
+    return {
+      uid: usuario.uid,
+      usuario: { ...usuario, estado: 'activo', rol_valido: true },
+      acceso,
+    };
+  }
+
   if (clave === 'GET /usuarios/auditoria') {
-    return { items: [...bd.auditoriaUsuarios].reverse() };
+    return {
+      items: [...bd.auditoriaUsuarios].reverse(),
+      acciones: Object.entries(ACCIONES_USUARIO).map(([codigo, etiqueta]) => ({
+        codigo, etiqueta, descripcion: '',
+      })),
+    };
   }
 
   /* ══════════════════════════════════════════════════════════════
@@ -3057,13 +3074,40 @@ const esNegativo = (texto) => {
   return palabras.some((p) => NEGADORES.includes(p) || RECHAZO.includes(p));
 };
 
-function auditarUsuario(accion, usuario, rolAnterior, rolNuevo) {
+/* Espejo de `accion_usuario` (bóveda, migración 0015). La etiqueta viaja con
+   cada fila porque la pantalla la lee de ahí y no de un diccionario propio. */
+const ACCIONES_USUARIO = {
+  alta: 'Alta',
+  cambio_rol: 'Cambio de rol',
+  actualizacion: 'Actualización',
+  desactivacion: 'Desactivación',
+  reactivacion: 'Reactivación',
+  enlace_acceso: 'Enlace de acceso',
+};
+
+function auditarUsuario(accion, usuario, rolAnterior, rolNuevo, detalle = {}) {
   bd.auditoriaUsuarios.push({
-    id: siguiente('auditoria'), accion, uid_objetivo: usuario.uid,
+    id: siguiente('auditoria'), accion,
+    accion_etiqueta: ACCIONES_USUARIO[accion] || accion,
+    uid_objetivo: usuario.uid,
     email_objetivo: usuario.email, rol_anterior: rolAnterior, rol_nuevo: rolNuevo,
     actor_uid: 'demo', actor_email: 'demo@equipos.com.uy',
-    detalle: {}, creado_en: ahora(),
+    detalle, creado_en: ahora(),
   });
+}
+
+/* El enlace para fijar la clave. Lo arman el alta y la regeneración: es el
+   mismo bloque, y el `motivo` es lo único que los distingue. */
+function accesoDemo(email, motivo) {
+  return {
+    metodo: 'restablecimiento',
+    motivo,
+    link: 'https://gestion-paneles.firebaseapp.com/__/auth/action?modo=demo&email='
+      + encodeURIComponent(email),
+    mostrar_una_vez: true,
+    advertencia: 'Este enlace no queda guardado en ningún lado. Pasáselo a la '
+      + 'persona por un canal privado; si se pierde, se genera otro desde el padrón.',
+  };
 }
 
 /* Los criterios demográficos se resuelven sobre la bóveda del demo. */

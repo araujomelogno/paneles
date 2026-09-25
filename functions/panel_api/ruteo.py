@@ -671,12 +671,33 @@ def cambiar_usuario(ctx, actor, params, cuerpo, consulta):
     return 200, resultado
 
 
+@ruta("POST", "/usuarios/<uid>/acceso", "gestionar_usuarios", requisito="R2.12")
+def acceso_usuario(ctx, actor, params, cuerpo, consulta):
+    """Un enlace nuevo para que la persona fije su clave.
+
+    Existe porque el del alta se muestra una vez y no se guarda: si se
+    perdió, no se recupera, se genera otro. `POST` y no `GET` porque tiene
+    efecto —emite una credencial de un solo uso y escribe auditoría—, y un
+    `GET` con efectos es algo que un prefetch o un bot de enlaces puede
+    disparar solo.
+    """
+    resultado = usuarios.generar_acceso(ctx.boveda, ctx.padron, params["uid"], actor)
+    ctx.boveda.commit()
+    return 200, resultado
+
+
 @ruta("GET", "/usuarios/auditoria", "gestionar_usuarios", requisito="R2.12")
 def auditoria_usuarios(ctx, actor, params, cuerpo, consulta):
-    return 200, usuarios.historial(
-        ctx.boveda, consulta.get("uid"),
-        min(_entero(consulta.get("limite"), 200) or 200, 1000),
-    )
+    return 200, {
+        **usuarios.historial(
+            ctx.boveda, consulta.get("uid"),
+            min(_entero(consulta.get("limite"), 200) or 200, 1000),
+        ),
+        # El catálogo viaja con la auditoría para que la pantalla pueda
+        # explicar qué significa cada acción sin repetirlo del lado del
+        # navegador.
+        "acciones": usuarios.acciones_auditables(ctx.boveda),
+    }
 
 
 @ruta("GET", "/diagnostico/esquema", "leer")

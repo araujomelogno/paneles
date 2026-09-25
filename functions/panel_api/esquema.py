@@ -103,6 +103,9 @@ MIGRACIONES_BOVEDA = (
         "generar_borrados_pendientes()", "mis_borrados_pendientes()",
         "confirmar_borrado()", "reportar_error_de_borrado()",
     )),
+    ("0015_catalogo_acciones_usuario.sql", (
+        "accion_usuario", "v_usuario_auditoria",
+    )),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -182,6 +185,8 @@ PARA_QUE = {
     "v_borrados_sin_confirmar": "las bajas que llevan demasiado sin confirmar",
     "campo_pii": "la lista de nombres de columna prohibidos del lado semántico, que es la fuente de `pii.CAMPOS_PII`",
     "prohibir_pii_en_ddl()": "la regla dura #1 hecha valer por la base: sin esta función un `alter table` puede meter PII del lado semántico y nadie se entera",
+    "accion_usuario": "las acciones de gestión de usuarios que se auditan; sin ella no se puede registrar que alguien pidió el enlace de acceso de otra persona",
+    "v_usuario_auditoria": "la auditoría de usuarios con la etiqueta de cada acción resuelta",
 }
 
 

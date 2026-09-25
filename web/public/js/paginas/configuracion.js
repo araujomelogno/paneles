@@ -50,9 +50,13 @@ const ROLES = {
   },
 };
 
+/* Respaldo nada más: la etiqueta la manda la API desde `accion_usuario`, así
+   una acción nueva se ve bien el día que se agrega. Esto cubre el caso de una
+   base sin la migración 0015 aplicada todavía. */
 const ACCIONES = {
   alta: 'Alta', cambio_rol: 'Cambio de rol', desactivacion: 'Desactivación',
   reactivacion: 'Reactivación', actualizacion: 'Actualización',
+  enlace_acceso: 'Enlace de acceso',
 };
 
 export async function render(main, ctx) {
@@ -100,8 +104,9 @@ async function cargar() {
     caja.innerHTML = `
       <div class="alert alert-warn">
         Dar de alta a alguien con rol de administración le da acceso a toda la
-        bóveda, incluida la PII de los panelistas. Cada alta, cambio de rol y
-        desactivación queda registrada con tu usuario y la fecha.
+        bóveda, incluida la PII de los panelistas. Cada alta, cambio de rol,
+        desactivación y enlace de acceso generado queda registrado con tu
+        usuario y la fecha.
       </div>` + pintar(padron, auditoria);
     $('#nuevo').onclick = abrirAlta;
     $$('[data-rol]', caja).forEach((select) => {
@@ -109,6 +114,9 @@ async function cargar() {
     });
     $$('[data-estado]', caja).forEach((boton) => {
       boton.onclick = () => cambiarEstado(boton.dataset.estado, boton.dataset.activar === '1');
+    });
+    $$('[data-acceso]', caja).forEach((boton) => {
+      boton.onclick = () => generarAcceso(boton.dataset.acceso);
     });
   } catch (error) {
     caja.innerHTML = alerta(error.message);
@@ -151,7 +159,7 @@ function pintar(padron, auditoria) {
           <thead><tr><th>Cuándo</th><th>Acción</th><th>Sobre</th><th>Rol</th><th>Autor</th></tr></thead>
           <tbody>${auditoria.items.map((r) => `<tr>
             <td class="small">${fechaHora(r.creado_en)}</td>
-            <td><span class="badge">${esc(ACCIONES[r.accion] || r.accion)}</span></td>
+            <td><span class="badge">${esc(r.accion_etiqueta || ACCIONES[r.accion] || r.accion)}</span></td>
             <td class="small">${esc(r.email_objetivo || r.uid_objetivo)}</td>
             <td class="small">${r.rol_anterior && r.rol_anterior !== r.rol_nuevo
               ? `${esc(r.rol_anterior)} → ${esc(r.rol_nuevo || '')}`
@@ -188,6 +196,11 @@ function fila(usuario, propio) {
     <td><span class="est est-${usuario.activo ? 'activo' : 'inactivo'}">
       ${usuario.activo ? 'activo' : 'desactivado'}</span></td>
     <td class="right">
+      <button class="btn btn-outline btn-sm" data-acceso="${esc(usuario.uid)}"
+        ${usuario.activo ? '' : 'disabled title="Está desactivado: el enlace se generaría igual y la persona seguiría sin poder entrar. Reactivalo primero."'}
+        title="Genera un enlace nuevo para que fije su clave. Sirve cuando el del alta se perdió.">
+        Enlace de acceso
+      </button>
       <button class="btn btn-outline btn-sm ${usuario.activo ? 'btn-del' : ''}"
         data-estado="${esc(usuario.uid)}" data-activar="${usuario.activo ? '0' : '1'}"
         ${esUnoMismo && usuario.activo ? 'disabled title="No podés desactivar tu propio usuario: te quedarías afuera."' : ''}>
@@ -244,15 +257,24 @@ function abrirAlta() {
   };
 }
 
+/* El mismo modal para las dos entradas: el alta y el botón «Enlace de
+   acceso» del padrón. El enlace no se guarda en ningún lado —guardarlo sería
+   guardar una credencial—, así que si se pierde no se recupera: se genera
+   otro desde acá. */
 function mostrarAcceso(resultado) {
   const acceso = resultado.acceso;
+  const esAlta = acceso.motivo === 'alta';
+  const quien = resultado.usuario.nombre || resultado.usuario.email;
   modal({
-    titulo: 'Usuario creado',
+    titulo: esAlta ? 'Usuario creado' : 'Enlace de acceso',
     ancho: '640px',
     cuerpo: `
-      <p><strong>${esc(resultado.usuario.nombre || resultado.usuario.email)}</strong>
-        quedó con rol <strong>${esc(ROLES[resultado.usuario.rol]?.etiqueta
-          || resultado.usuario.rol)}</strong>.</p>
+      <p>${esAlta
+        ? `<strong>${esc(quien)}</strong> quedó con rol
+           <strong>${esc(ROLES[resultado.usuario.rol]?.etiqueta
+             || resultado.usuario.rol)}</strong>.`
+        : `Enlace nuevo para <strong>${esc(quien)}</strong>. El anterior, si
+           todavía no lo usó, sigue siendo válido hasta que venza.`}</p>
       <div class="alert alert-warn">${esc(acceso.advertencia)}</div>
       ${acceso.link ? `<div class="form-group"><label>Enlace para fijar la contraseña</label>
         <input type="text" id="acceso-link" readonly value="${esc(acceso.link)}" /></div>`
@@ -260,18 +282,31 @@ function mostrarAcceso(resultado) {
             No se pudo generar el enlace desde el servidor. La persona puede
             entrar con «¿Olvidaste tu contraseña?» en el login.
           </div>`}
-      <p class="small muted">La clave con la que se creó la cuenta es aleatoria
-        y no se guarda en ningún lado.</p>`,
+      <p class="small muted">${esAlta
+        ? 'La clave con la que se creó la cuenta es aleatoria y no se guarda en ningún lado.'
+        : 'Es la misma operación que «¿Olvidaste tu contraseña?», pedida por vos. Queda auditada.'}</p>`,
     acciones: [
       ...(acceso.link ? [{ texto: 'Copiar enlace', clase: 'btn-dark', onClick: async () => {
           try {
             await navigator.clipboard.writeText(acceso.link);
-            toast('Enlace copiado. No se vuelve a mostrar.', 'ok');
+            toast('Enlace copiado.', 'ok');
           } catch { toast('No se pudo copiar.', 'err'); }
         } }] : []),
       { texto: 'Listo', clase: 'btn-outline', onClick: cerrarModal },
     ],
   });
+}
+
+async function generarAcceso(uid) {
+  try {
+    const resultado = await api.usuarios.acceso(uid);
+    mostrarAcceso(resultado);
+    // La auditoría de abajo tiene una fila más: pedir el enlace de otra
+    // persona queda registrado, y se ve en el acto.
+    await cargar();
+  } catch (error) {
+    toast(error.message, 'err');
+  }
 }
 
 /* ── Cambios ────────────────────────────────────────────────────── */

@@ -98,6 +98,7 @@ def test_la_clave_inicial_no_se_muestra_de_forma_persistente(
     acceso = resultado["acceso"]
     assert acceso["metodo"] == "restablecimiento"
     assert acceso["mostrar_una_vez"] is True
+    assert acceso["motivo"] == "alta"
     assert acceso["link"]
     assert "clave" not in acceso
     # Ni en la respuesta ni en la auditoría hay nada que se parezca a una clave.
@@ -338,6 +339,111 @@ def test_un_cambio_rechazado_no_deja_rastro_de_auditoria(conn_boveda, padron, ad
     assert "desactivacion" not in acciones
 
 
+# ── El enlace de acceso se puede volver a generar ────────────────────
+
+def test_el_enlace_del_alta_no_queda_guardado_en_ningun_lado(
+    conn_boveda, padron, admin
+):
+    """Es la mitad correcta del diseño original, y hay que conservarla: un
+    enlace de restablecimiento guardado es una credencial guardada."""
+    resultado = _alta(conn_boveda, padron, admin)
+    conn_boveda.commit()
+    link = resultado["acceso"]["link"]
+
+    ficha = usuarios.obtener(padron, resultado["uid"])
+    assert link not in str(ficha)
+    registro = auditoria.listar_usuario(conn_boveda, resultado["uid"])[0]
+    assert link not in str(registro)
+
+
+def test_se_puede_generar_un_enlace_nuevo_cuando_el_del_alta_se_perdio(
+    conn_boveda, padron, admin
+):
+    """El problema que esto resuelve: quien da el alta cierra el modal antes
+    de copiar el enlace, y la persona nueva queda sin forma de entrar."""
+    alta = _alta(conn_boveda, padron, admin)
+    conn_boveda.commit()
+
+    resultado = usuarios.generar_acceso(conn_boveda, padron, alta["uid"], admin)
+    conn_boveda.commit()
+
+    assert resultado["acceso"]["link"]
+    assert resultado["acceso"]["motivo"] == "regeneracion"
+    assert resultado["usuario"]["email"] == "ana@equipos.com.uy"
+
+
+def test_pedir_el_enlace_de_otra_persona_queda_auditado(
+    conn_boveda, padron, admin
+):
+    """Es lo único que distingue «le pasé el enlace al compañero que no podía
+    entrar» de un intento de tomarle la cuenta a alguien."""
+    alta = _alta(conn_boveda, padron, admin)
+    conn_boveda.commit()
+
+    resultado = usuarios.generar_acceso(conn_boveda, padron, alta["uid"], admin)
+    conn_boveda.commit()
+
+    registro = auditoria.listar_usuario(conn_boveda, alta["uid"])[0]
+    assert registro["accion"] == "enlace_acceso"
+    assert registro["accion_etiqueta"] == "Enlace de acceso"
+    assert registro["actor_email"] == "jefa@equipos.com.uy"
+    assert registro["email_objetivo"] == "ana@equipos.com.uy"
+    # Se registra que se generó, nunca el enlace.
+    assert registro["detalle"] == {"generado": True}
+    assert resultado["acceso"]["link"] not in str(registro)
+
+
+def test_generar_el_enlace_no_cambia_el_rol_ni_el_estado(
+    conn_boveda, padron, admin
+):
+    """No es una operación de escritura sobre la ficha: emite una credencial
+    de un solo uso y nada más."""
+    alta = _alta(conn_boveda, padron, admin, rol="analista")
+    conn_boveda.commit()
+    antes = usuarios.obtener(padron, alta["uid"])
+
+    usuarios.generar_acceso(conn_boveda, padron, alta["uid"], admin)
+    conn_boveda.commit()
+
+    assert usuarios.obtener(padron, alta["uid"]) == antes
+
+
+def test_un_usuario_desactivado_no_recibe_enlace(conn_boveda, padron, admin):
+    """El enlace se generaría igual y la persona seguiría sin poder entrar:
+    quien lo pidió creería haber resuelto algo que no resolvió."""
+    alta = _alta(conn_boveda, padron, admin)
+    usuarios.cambiar(conn_boveda, padron, alta["uid"], {"activo": False}, admin)
+    conn_boveda.commit()
+
+    with pytest.raises(Conflicto) as fallo:
+        usuarios.generar_acceso(conn_boveda, padron, alta["uid"], admin)
+    assert "reactival" in str(fallo.value).lower()
+
+
+def test_pedir_el_enlace_de_alguien_que_no_existe_da_404(
+    conn_boveda, padron, admin
+):
+    with pytest.raises(NoEncontrado):
+        usuarios.generar_acceso(conn_boveda, padron, "uid-inventado", admin)
+
+
+def test_las_acciones_auditables_son_un_catalogo_de_la_base(conn_boveda):
+    """La etiqueta de cada acción sale de `accion_usuario` y no de un
+    diccionario en el frontend: una acción nueva se ve bien el día que se
+    agrega."""
+    codigos = {a["codigo"] for a in usuarios.acciones_auditables(conn_boveda)}
+    assert {"alta", "cambio_rol", "actualizacion", "desactivacion",
+            "reactivacion", "enlace_acceso"} == codigos
+
+
+def test_la_base_rechaza_una_accion_que_no_esta_en_el_catalogo(conn_boveda):
+    """El `check` de la 0004 pasó a ser una FK. Sigue mordiendo."""
+    with pytest.raises(Exception) as fallo:
+        auditoria.registrar_usuario(conn_boveda, "borrado_total", "uid-x")
+    assert "accion" in str(fallo.value).lower()
+    conn_boveda.rollback()
+
+
 # ── Permisos ─────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("rol", ["operaciones", "analista", "dpo"])
@@ -356,7 +462,10 @@ def test_un_no_admin_no_puede_operar_la_gestion_de_usuarios(actor, rol):
         for metodo, _, permiso, _, patron in ruteo.RUTAS
         if patron.startswith("/usuarios")
     ]
-    assert len(rutas_de_usuarios) == 4, "cambió la superficie de /usuarios"
+    # Cinco desde que existe `POST /usuarios/<uid>/acceso`. El número está
+    # escrito para que una ruta nueva bajo `/usuarios` obligue a pasar por
+    # acá: es la superficie que da acceso a toda la bóveda.
+    assert len(rutas_de_usuarios) == 5, "cambió la superficie de /usuarios"
     for metodo, patron, permiso in rutas_de_usuarios:
         assert permiso == "gestionar_usuarios", f"{metodo} {patron}"
         with pytest.raises(SinPermiso):
