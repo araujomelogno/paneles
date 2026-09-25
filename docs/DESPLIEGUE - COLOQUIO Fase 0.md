@@ -70,13 +70,35 @@ export DSN_SEMANTICA="$(scripts/dsn_local.sh semantica)"
 | 3 | `boveda/0014_fase5_superficie_externa.sql` | La superficie externa completa y los `grant` | **Última.** Requiere el rol de §3 |
 | 4 | `semantica/0005_fase5_prohibicion_pii.sql` | Catálogo de PII y event trigger | Independiente; puede ir en paralelo |
 
+**Antes de aplicar nada**, comprobar que la `0013` va a poder pasar (ver 2.2):
+
+```bash
+psql "$DSN_BOVEDA" -c "
+select distinct c.finalidad, c.version_texto
+  from consentimiento c
+ where c.estado = 'vigente'
+   and not exists (select 1 from texto_consentimiento t
+                    where t.finalidad = c.finalidad
+                      and t.version = c.version_texto and t.activo);"
+```
+
+Sin filas, se puede seguir. **Con filas, publicar esos textos primero** (2.2):
+si no, la `0013` aborta a mitad de camino.
+
 ```bash
 for m in 0012_fase5_catalogo_finalidades 0013_fase5_finalidades_cualitativo; do
-  psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 -f "db/boveda/${m}.sql"
+  psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 --single-transaction -f "db/boveda/${m}.sql"
 done
-psql "$DSN_SEMANTICA" -v ON_ERROR_STOP=1 -f db/semantica/0005_fase5_prohibicion_pii.sql
-# La 0014 va después de crear el rol (§3).
+psql "$DSN_SEMANTICA" -v ON_ERROR_STOP=1 --single-transaction \
+  -f db/semantica/0005_fase5_prohibicion_pii.sql
 ```
+
+**La `0014` NO se aplica todavía**: necesita el rol `coloquio_app`, que se crea
+en §3. Se aplica en **3.4**.
+
+> **`--single-transaction` no es opcional.** Sin él, una migración que falla a
+> mitad deja confirmado lo ya ejecutado y hay que reconstruir el estado a mano.
+> Con él, revierte entera y se reintenta limpio.
 
 ### 2.1 · La `0014` va última, y el motivo no es estético
 
@@ -124,8 +146,12 @@ values ('contacto_participacion', 'consentimiento-2026-01', '…el texto real…
 python3 scripts/verificar_esquema.py
 ```
 
-Tiene que decir que las dos bases están al día **y** que ninguna migración del
-store semántico declara una columna de PII.
+En este punto lo correcto es:
+
+- `0012`, `0013` y toda la semántica en **✓**.
+- **`0014` en ✗**, con su lista de objetos faltantes. **Es lo esperado**: se
+  aplica en 3.4, después de crear el rol. No es un error.
+- Ninguna migración del store semántico declara una columna de PII.
 
 ---
 
