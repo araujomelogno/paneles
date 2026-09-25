@@ -143,6 +143,8 @@ privilegio que le revoquemos**, y la lista blanca de R5.4 no valdría nada.
 **Los usuarios de autenticación IAM no reciben ningún rol de base
 automáticamente.** Por eso:
 
+### 3.1 · Crear la cuenta de servicio y el usuario IAM
+
 ```bash
 # 1 · La cuenta de servicio de COLOQUIO
 gcloud iam service-accounts create coloquio-app \
@@ -164,45 +166,71 @@ gcloud sql users create \
     --type=cloud_iam_service_account
 ```
 
-> **El nombre del rol dentro de Postgres es el email truncado de la cuenta de
-> servicio**, no `coloquio_app`. Cloud SQL lo recorta en el `@`:
-> `coloquio-app@gestion-paneles.iam`. Antes de correr la `0014` hay que
-> confirmar cómo quedó y ajustar los `grant` en consecuencia:
->
-> ```sql
-> select rolname from pg_roles where rolname like 'coloquio%';
-> ```
->
-> Si el nombre no es `coloquio_app`, la forma correcta **no** es editar la
-> migración a mano en la base (`CLAUDE.md`: las migraciones son versionadas).
-> Es crear un rol de grupo con el nombre canónico y hacer al usuario IAM
-> miembro suyo, que además deja el nombre estable si la cuenta de servicio
-> cambia algún día:
->
-> ```sql
-> create role coloquio_app;                       -- sin login: es un grupo
-> grant coloquio_app to "coloquio-app@gestion-paneles.iam";
-> ```
->
-> Y en `sistema_consumidor.rol_bd` va **el nombre con el que se conecta**, que
-> es el del usuario IAM, porque `sistema_de_la_conexion()` mira `session_user`:
->
-> ```sql
-> update sistema_consumidor
->    set rol_bd = 'coloquio-app@gestion-paneles.iam'
->  where codigo = 'coloquio';
-> ```
+### 3.2 · Verificar cómo quedó el nombre del rol
 
-Recién ahora:
+**Recién ahora**, con el usuario IAM ya creado, se consulta el nombre real:
 
 ```bash
-psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 -f db/boveda/0014_fase5_superficie_externa.sql
+psql "$DSN_BOVEDA" -c "select rolname from pg_roles where rolname like 'coloquio%';"
+```
+
+Cloud SQL **trunca el email en el `@`**, así que lo esperable es
+`coloquio-app@gestion-paneles.iam`, **no** `coloquio_app`, que es el nombre que
+espera la migración.
+
+> Si se corre esta consulta antes del paso 3.1 devuelve cero filas: todavía no
+> hay nada creado.
+
+### 3.3 · Crear el rol de grupo con el nombre canónico
+
+Si el nombre no es `coloquio_app` —el caso normal—, la forma correcta **no** es
+editar la migración a mano en la base (`CLAUDE.md`: las migraciones son
+versionadas). Es crear un rol de grupo con el nombre canónico y hacer al
+usuario IAM miembro suyo, que además deja el nombre estable si la cuenta de
+servicio cambia algún día:
+
+```bash
+psql "$DSN_BOVEDA" -c "
+create role coloquio_app;
+grant coloquio_app to \"coloquio-app@gestion-paneles.iam\";"
+```
+
+(`coloquio_app` va **sin `login`**: es un grupo, no un usuario que se conecte.)
+
+### 3.4 · Aplicar la migración
+
+```bash
+psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 --single-transaction \
+  -f db/boveda/0014_fase5_superficie_externa.sql
+```
+
+> **`--single-transaction` no es opcional.** Sin él, una migración que falla a
+> mitad deja lo ya ejecutado confirmado, y hay que reconstruir el estado a
+> mano. Con él, revierte entera y se puede reintentar limpio.
+
+### 3.5 · Registrar con qué nombre se conecta COLOQUIO
+
+En `sistema_consumidor.rol_bd` va **el nombre con el que se conecta**, que es el
+del usuario IAM y no el del grupo, porque `sistema_de_la_conexion()` mira
+`session_user`:
+
+```bash
+psql "$DSN_BOVEDA" -c "
+update sistema_consumidor
+   set rol_bd = 'coloquio-app@gestion-paneles.iam'
+ where codigo = 'coloquio';"
+```
+
+Verificar que la fila quedó bien:
+
+```bash
+psql "$DSN_BOVEDA" -c "select codigo, rol_bd from sistema_consumidor;"
 ```
 
 Si el rol no existe, la migración falla con un mensaje que dice exactamente
 esto. Es deliberado: otorgarle privilegios a la nada sería peor que fallar.
 
-### 3.1 · `app_paneles` no se toca
+### 3.6 · `app_paneles` no se toca
 
 Migrarlo a IAM sería un cambio de riesgo innecesario en esta fase. Queda
 anotado como candidato futuro, junto con la asimetría de propiedad: las tablas
