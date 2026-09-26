@@ -128,6 +128,11 @@ def _serializar_usuario(fila):
     return {
         "id": fila["id"],
         "accion": fila["accion"],
+        # La etiqueta viene de `accion_usuario` y no de un diccionario en el
+        # frontend: una acción nueva se ve bien el día que se agrega, sin
+        # tocar el JavaScript. La vista es la que la resuelve, así que en las
+        # escrituras —que devuelven la fila cruda— no viene.
+        "accion_etiqueta": fila.get("accion_etiqueta"),
         "uid_objetivo": fila["uid_objetivo"],
         "email_objetivo": fila["email_objetivo"],
         "rol_anterior": fila["rol_anterior"],
@@ -143,9 +148,9 @@ def listar_usuario(conn, uid_objetivo=None, limite=200):
     filas = db.todas(
         conn,
         """
-        select id, accion, uid_objetivo, email_objetivo, rol_anterior, rol_nuevo,
-               actor_uid, actor_email, detalle, creado_en
-          from usuario_auditoria
+        select id, accion, accion_etiqueta, uid_objetivo, email_objetivo,
+               rol_anterior, rol_nuevo, actor_uid, actor_email, detalle, creado_en
+          from v_usuario_auditoria
          where (%s::text is null or uid_objetivo = %s::text)
          order by creado_en desc, id desc
          limit %s

@@ -235,6 +235,10 @@ export const usuarios = {
   listar: () => GET('/usuarios'),
   alta: (email, rol, nombre) => POST('/usuarios', { email, rol, nombre }),
   cambiar: (uid, cambios) => PATCH(`/usuarios/${uid}`, cambios),
+  /* Un enlace nuevo para que la persona fije su clave. El del alta se
+     muestra una vez y no se guarda: si se perdió, no se recupera, se genera
+     otro. Es POST porque emite una credencial y deja auditoría. */
+  acceso: (uid) => POST(`/usuarios/${uid}/acceso`, {}),
   auditoria: (uid) => GET('/usuarios/auditoria', uid ? { uid } : {}),
 };
 

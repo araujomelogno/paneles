@@ -363,6 +363,17 @@ await esperar(500);
 await tomar('43-usuario-acceso', '.modal-box');
 await p.keyboard.press('Escape');
 await esperar(600);
+
+/* El enlace no se guarda, así que si el modal de arriba se cerró sin copiarlo
+   no se recupera: se genera otro desde la fila del padrón. Esa es la pantalla
+   que el manual necesita mostrar, porque es la salida al problema. */
+await p.locator('tr:has-text("Lucía Torres") [data-acceso]').click();
+await p.waitForSelector('.modal-title:has-text("Enlace de acceso")', { timeout: 8000 });
+await esperar(500);
+await tomar('43b-usuario-enlace-nuevo', '.modal-box');
+await p.keyboard.press('Escape');
+await esperar(800);
+
 await tomar('44-usuarios-auditoria', '.card:has(th:text-is("Acción"))');
 
 console.log(errores.length ? '\nERRORES:\n' + errores.join('\n') : '\nsin errores de consola');
