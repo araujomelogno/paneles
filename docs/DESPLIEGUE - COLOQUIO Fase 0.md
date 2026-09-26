@@ -6,6 +6,11 @@
 
 ---
 
+> **Revisión 2026-09-26.** Agregado el prerrequisito §3.0 (flag
+> `cloudsql.iam_authentication=on`, sin el cual la verificación de §7.1 falla) y
+> corregido el comando del token en §7.1 (`gcloud sql generate-login-token` en
+> lugar de `gcloud auth print-access-token`).
+>
 > **Revisión 2026-09-25.** Corregidos: orden de la `0014` respecto del rol
 > (§2 y §3), chequeo previo de textos de consentimiento movido antes de aplicar
 > migraciones (§2), `--single-transaction` en todas las migraciones, creación
@@ -175,6 +180,43 @@ privilegio que le revoquemos**, y la lista blanca de R5.4 no valdría nada.
 
 **Los usuarios de autenticación IAM no reciben ningún rol de base
 automáticamente.** Por eso:
+
+### 3.0 · Habilitar autenticación IAM en la instancia — **prerrequisito**
+
+Postgres no acepta autenticación IAM salvo que la instancia tenga el flag
+habilitado. Crear el usuario con `--type=cloud_iam_service_account` **no** lo
+activa: son dos cosas distintas. Sin esto, la conexión de §7.1 falla con
+`Cloud SQL IAM service account authentication failed`.
+
+**Verificar primero qué flags tiene:**
+
+```bash
+gcloud sql instances describe paneles-boveda \
+  --format="value(settings.databaseFlags)"
+```
+
+Si **no** aparece `cloudsql.iam_authentication=on`, habilitarlo:
+
+```bash
+gcloud sql instances patch paneles-boveda \
+  --database-flags=cloudsql.iam_authentication=on
+```
+
+> ⚠ **Dos avisos.**
+>
+> **Reinicia la instancia** (un par de minutos sin servicio). Hacerlo fuera de
+> horario de uso.
+>
+> **`--database-flags` reemplaza la lista completa, no agrega.** Si el
+> `describe` devolvió otros flags, hay que repetirlos todos en el mismo
+> comando, separados por coma, o se pierden.
+
+**Confirmar** (tiene que incluir el flag, y la instancia volver a `RUNNABLE`):
+
+```bash
+gcloud sql instances describe paneles-boveda \
+  --format="value(settings.databaseFlags,state)"
+```
 
 ### 3.1 · Crear la cuenta de servicio y el usuario IAM
 
@@ -395,10 +437,12 @@ python3 scripts/verificar_coloquio.py
 # Contra la instancia real, con el Auth Proxy abierto
 export DSN_BOVEDA="$(scripts/dsn_local.sh boveda)"
 # El token TIENE que ser el de la cuenta de servicio, no el tuyo:
-# `gcloud auth print-access-token` a secas devuelve el de tu usuario, y la
-# conexión falla porque el usuario de base es `coloquio-app@…`, no vos.
+# Usar `gcloud sql generate-login-token`, NO `gcloud auth print-access-token`:
+# el segundo emite un token genérico, sin el scope de login de base.
+# Y con `--impersonate-service-account`, porque el usuario de base es
+# `coloquio-app@…`, no vos.
 # Requiere roles/iam.serviceAccountTokenCreator sobre la cuenta (ver abajo).
-TOKEN_COLOQUIO="$(gcloud auth print-access-token \
+TOKEN_COLOQUIO="$(gcloud sql generate-login-token \
   --impersonate-service-account=coloquio-app@gestion-paneles.iam.gserviceaccount.com)"
 export DSN_BOVEDA_COLOQUIO="postgresql://coloquio-app%40gestion-paneles.iam:${TOKEN_COLOQUIO}@127.0.0.1:5432/paneles_boveda?sslmode=disable"
 python3 scripts/verificar_coloquio.py
@@ -425,6 +469,41 @@ Para apuntarlo a producción sin que escriba absolutamente nada:
 ```bash
 python3 scripts/verificar_coloquio.py --solo-lectura
 ```
+
+### 7.1.1 · Los dos chequeos que fallan hoy, y por qué no bloquean
+
+La batería corrida contra Cloud SQL da **12 de 14**. Los dos que fallan no son
+fallas de la bóveda:
+
+**«el contacto legítimo queda auditado».** El test pasa como `p_actor` el rol de
+base (`coloquio-app@gestion-paneles.iam`) y espera ver otra cosa. La función
+está bien: `contacto_para_convocatoria` registra
+`coalesce(p_actor, session_user)`, o sea el actor que informa el llamador, y el
+sistema solo si no viene ninguno.
+
+> **Contrato definido:** `p_actor` es el **email del usuario humano de COLOQUIO**
+> que pidió el contacto, no la cuenta de servicio. De ahí que el test, que pasa
+> la cuenta técnica, verifique algo que no corresponde.
+>
+> **Obligación del cliente:** COLOQUIO **debe** pasar `p_actor` en cada llamada.
+> Si lo omite, la auditoría registra «coloquio» y se pierde quién fue la
+> persona — que es justamente el dato que una reidentificación necesita.
+>
+> **A decidir (P2):** hoy `p_actor` es nullable y el `coalesce` permite que el
+> cliente se olvide sin que nadie se entere hasta mirar la auditoría. Si el
+> dato tiene valor legal, la función podría **rechazar** la llamada sin actor.
+> Queda anotado, no resuelto.
+>
+> **Pendiente:** corregir el test (que pase un email de usuario y verifique que
+> ese email quede registrado). **La migración no se toca.**
+
+**«un rol sin registrar no consigue nada».** Falla con `fe_sendauth: no password
+supplied`: el chequeo intenta conectarse con un rol no registrado y sin
+credenciales. Contra un cluster local funciona; contra Cloud SQL **toda**
+conexión necesita credenciales, así que el chequeo no llega a ejecutarse. **No
+es verificable en este entorno** — ver §7.2.
+
+---
 
 ### 7.2 · Las dos cosas que no se pueden probar en el cluster local
 
@@ -500,6 +579,7 @@ hoy las escribió `paneles`.
 - [ ] `semantica/0005` aplicada, y `pg_event_trigger` tiene `pii_prohibida`
 - [ ] Cuenta de servicio `coloquio-app` creada, con `cloudsql.client` e `instanceUser`
 - [ ] Usuario IAM creado en `paneles-boveda`, **no** con `gcloud sql users create` tradicional
+- [ ] Flag `cloudsql.iam_authentication=on` habilitado en `paneles-boveda` (§3.0)
 - [ ] Nombre real del rol confirmado (§3.2) y rol de grupo `coloquio_app` creado (§3.3)
 - [ ] `boveda/0014` aplicada **con `--single-transaction`** (§3.4)
 - [ ] `sistema_consumidor.rol_bd` ajustado al nombre del usuario IAM (§3.5)
