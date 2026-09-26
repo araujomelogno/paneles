@@ -95,7 +95,41 @@ gcloud compute networks vpc-access connectors describe paneles-conn \
 
 Si tiene más del mínimo, bajarlo con `--min-instances` / `--max-instances`.
 
-### 2.5 · Lo que NO conviene tocar
+### 2.5 · Direct VPC egress: evaluado y descartado (2026-09)
+
+El conector VPC (`paneles-conn`) cuesta ~US$ 10–15/mes y **Direct VPC egress
+haría lo mismo sin costo fijo**. Se evaluó migrar y **no es viable hoy**:
+
+- Direct VPC egress para funciones de 2ª gen está **GA desde febrero de 2026**,
+  y la CLI de Firebase lo soporta desde la 15.10.0 (marzo de 2026).
+- Pero el soporte llegó al **SDK de Node**, no al de Python. Se verificó el
+  paquete `firebase-functions` **0.6.0** (la última en PyPI): no expone
+  `network_interfaces` ni ninguna opción de VPC directa. Las únicas que hay
+  siguen siendo `vpc_connector` y `vpc_connector_egress_settings`.
+
+Alternativas descartadas y por qué:
+
+| Alternativa | Por qué no |
+|---|---|
+| Configurarlo en el Cloud Run de abajo con `gcloud run services update` | El siguiente `firebase deploy` lo pisa: el manifiesto del SDK no lo incluye. Habría que reaplicarlo en cada deploy. |
+| Desplegar esas funciones con `gcloud` en vez de Firebase | Resuelve el problema pero saca al proyecto de su flujo de despliegue, por US$ 10–15/mes. |
+
+**Cuándo revisarlo:** cuando el SDK de Python de `firebase-functions` exponga
+la opción. Se verifica sin desplegar nada:
+
+```bash
+pip download firebase-functions --no-deps -d /tmp/ff
+cd /tmp/ff && unzip -o -q *.whl -d x
+grep -rniE "network_interface|direct_vpc" x/firebase_functions/
+```
+
+Si devuelve resultados, la migración pasa a ser viable.
+
+> **Consecuencia para COLOQUIO.** Si se despliega con Firebase + Python, tampoco
+> va a poder usar Direct VPC egress: **va a necesitar su propio conector VPC**,
+> otros ~US$ 10–15/mes. Conviene tenerlo en el presupuesto desde el arranque.
+
+### 2.6 · Lo que NO conviene tocar
 
 - **Juntar las dos bases en una instancia**: rompe el invariante de privacidad.
 - **Mover a una región más barata**: la PII saldría del continente, con las
