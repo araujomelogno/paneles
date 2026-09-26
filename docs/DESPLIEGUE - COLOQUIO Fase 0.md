@@ -12,6 +12,10 @@
 > del usuario IAM **sin** el sufijo `.gserviceaccount.com` (§3.1), subpasos
 > numerados en §3, token de impersonación de la cuenta de servicio (§7.1),
 > estado real de las IP de las instancias (§4) y checklist (§10).
+>
+> **Revisión 2026-09-26.** Se suma la `boveda/0015` (el enlace de acceso de un
+> usuario se puede volver a generar, PR #37). No es de la Fase 5, pero **viaja
+> con ella**: depende de la `0014`. Ver §2.4.
 
 ## 0 · Qué cambia, en una frase
 
@@ -23,7 +27,8 @@ promesas repetidas en dos bases de código.
 
 | Qué | Dónde | Riesgo si se saltea |
 |---|---|---|
-| Tres migraciones en la bóveda y una en la semántica | `boveda/0012`…`0014`, `semantica/0005` | La aplicación falla con `relation v_persona_convocable does not exist` apenas alguien entre a Panelistas |
+| Cuatro migraciones en la bóveda y una en la semántica | `boveda/0012`…`0015`, `semantica/0005` | La aplicación falla con `relation v_persona_convocable does not exist` apenas alguien entre a Panelistas |
+| **El enlace de acceso de un usuario se puede volver a generar** | `boveda/0015` · §2.4 | Sin ella, Configuración → Usuarios falla al listar la auditoría: lee `v_usuario_auditoria`, que crea esa migración |
 | **El consentimiento deja de poder otorgarse sin texto publicado** | R5.7.d | El alta empieza a fallar si la versión que manda el formulario no está publicada y activa. La `0013` **se niega a aplicar** si ese es el caso: ver §2.2 |
 | Un rol de base nuevo, `coloquio_app`, **creado antes** de la `0014` | §3 | La `0014` falla a propósito, con un mensaje que explica cómo crearlo |
 | El origen de cada reidentificación deja de suponerse | R5.6 | Nada se rompe: las filas históricas quedan correctas como `paneles` |
@@ -76,6 +81,7 @@ export DSN_SEMANTICA="$(scripts/dsn_local.sh semantica)"
 | 2 | `boveda/0013_fase5_finalidades_cualitativo.sql` | Las cuatro finalidades del cualitativo; `consentimiento.ref_estudio`; validación de ámbito; exigencia de texto activo | Depende de la 1 |
 | 3 | `boveda/0014_fase5_superficie_externa.sql` | La superficie externa completa y los `grant` | **Última.** Requiere el rol de §3 |
 | 4 | `semantica/0005_fase5_prohibicion_pii.sql` | Catálogo de PII y event trigger | Independiente; puede ir en paralelo |
+| 5 | `boveda/0015_catalogo_acciones_usuario.sql` | `accion_usuario` y `v_usuario_auditoria`: el enlace de acceso regenerable (§2.4) | **Después de la 3.** Lee la columna `sistema` que agrega la `0014` |
 
 **Antes de aplicar nada**, comprobar que la `0013` va a poder pasar (ver 2.2):
 
@@ -159,6 +165,25 @@ En este punto lo correcto es:
 - **`0014` en ✗**, con su lista de objetos faltantes. **Es lo esperado**: se
   aplica en 3.4, después de crear el rol. No es un error.
 - Ninguna migración del store semántico declara una columna de PII.
+
+### 2.4 · La `0015` no es de la Fase 5, pero viaja con ella
+
+Es de otra entrega —R2.12, el enlace de acceso regenerable del padrón de
+usuarios— y **tiene su propio documento**:
+[`DESPLIEGUE - R2.12 enlace de acceso.md`](DESPLIEGUE%20-%20R2.12%20enlace%20de%20acceso.md).
+
+Aparece acá por una sola razón, que es de orden: `v_usuario_auditoria` lee la
+columna `usuario_auditoria.sistema`, que agrega la `0014`. Así que **la `0015`
+va después de 3.4**, y no antes:
+
+```bash
+psql "$DSN_BOVEDA" -v ON_ERROR_STOP=1 --single-transaction \
+  -f db/boveda/0015_catalogo_acciones_usuario.sql
+```
+
+Si la Fase 5 se despliega sin la `0015`, no pasa nada: la aplicación no la
+necesita mientras no se redesplieguen las funciones del PR #37. Al revés sí
+importa —la `0015` sola falla—, y eso está explicado en su documento.
 
 ---
 
@@ -503,6 +528,7 @@ hoy las escribió `paneles`.
 - [ ] Nombre real del rol confirmado (§3.2) y rol de grupo `coloquio_app` creado (§3.3)
 - [ ] `boveda/0014` aplicada **con `--single-transaction`** (§3.4)
 - [ ] `sistema_consumidor.rol_bd` ajustado al nombre del usuario IAM (§3.5)
+- [ ] `boveda/0015` aplicada, **después de la `0014`** (§2.4)
 - [ ] `python3 scripts/verificar_esquema.py` en verde **después de §3.4**
       (antes de aplicar la `0014`, esa migración figura en ✗ y es lo esperado)
 - [ ] `python3 scripts/verificar_coloquio.py` contra el cluster de pruebas: 14/14
@@ -511,4 +537,5 @@ hoy las escribió `paneles`.
 - [ ] Funciones redesplegadas (`firebase deploy --only functions,hosting`)
 - [ ] Panelistas → alta con consentimiento: funciona
 - [ ] Cumplimiento → Borrados: la pantalla carga
+- [ ] Configuración → Usuarios: la auditoría lista, y el botón «Enlace de acceso» de una fila devuelve un enlace
 - [ ] `sistema_consumidor.activo` de `coloquio` **sigue en `false`** hasta que COLOQUIO salga a producción
