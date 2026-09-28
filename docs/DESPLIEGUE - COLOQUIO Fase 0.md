@@ -133,7 +133,8 @@ Por eso la migración empieza con una comprobación que **aborta** si algún
 consentimiento vigente apunta a una versión que no está publicada y activa:
 
 ```
-ERROR:  Hay consentimientos vigentes con versiones sin publicar: «consentimiento-2026-01».
+ERROR:  Hay consentimientos vigentes cuya versión de texto no está publicada y
+activa: 'consentimiento-2026-01' de la finalidad 'contacto_participacion'.
 ```
 
 No es un obstáculo de la migración: es el hallazgo. Antes de reintentar hay
