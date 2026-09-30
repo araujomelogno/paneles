@@ -20,6 +20,28 @@ RAIZ = pathlib.Path(__file__).resolve().parents[2]
 
 # ── La lista declarada no se puede desactualizar ─────────────────────
 
+def _redefinidos_por_el_ddl(sql):
+    """Lo que la migración **reemplaza** con `create or replace`, no crea.
+
+    La distinción importa: `esquema.py` es la lista de objetos por los que
+    `verificar_esquema.py` pregunta para saber si una migración se aplicó, y
+    una redefinición no se puede ver desde afuera —la función ya existía, con
+    el mismo nombre, antes y después—. Declararla llevaría a dar por aplicada
+    una migración que no corrió.
+    """
+    sql = re.sub(r"'[^']*'", "''", sql)
+    objetos = set()
+    for nombre in re.findall(
+        r"create\s+or\s+replace\s+(?:table|view)\s+([a-z_][a-z0-9_]*)", sql, re.I,
+    ):
+        objetos.add(nombre.lower())
+    for nombre in re.findall(
+        r"create\s+or\s+replace\s+function\s+([a-z_][a-z0-9_]*)", sql, re.I,
+    ):
+        objetos.add(f"{nombre.lower()}()")
+    return objetos
+
+
 def _objetos_del_ddl(sql):
     """Tablas, vistas, funciones y columnas que declara un archivo de migración."""
     # Los literales de texto se sacan primero. La 0005 del store semántico
@@ -63,19 +85,38 @@ def test_lo_declarado_coincide_con_lo_que_crean_las_migraciones(store, migracion
     se despliega con la función. Esta prueba es lo que impide que se
     desactualice: si alguien agrega una migración y no la declara, falla acá y
     no en producción."""
+    # Lo que ya existía cuando le toca el turno a cada migración. Una
+    # migración puede reemplazar algo que creó otra anterior, y eso no es un
+    # objeto nuevo suyo.
+    ya_existian = set()
     for archivo, declarados in migraciones:
         ruta = RAIZ / "db" / store / archivo
         assert ruta.exists(), f"la migración declarada {archivo} no existe"
-        reales = _objetos_del_ddl(ruta.read_text(encoding="utf-8"))
-        faltan = reales - set(declarados)
+        sql = ruta.read_text(encoding="utf-8")
+        reales = _objetos_del_ddl(sql)
+        redefinidos = _redefinidos_por_el_ddl(sql) & ya_existian
+
+        # Un `create or replace` de algo que ya existía no cuenta como objeto
+        # creado acá: la migración se detecta por lo que sí crea.
+        faltan = reales - redefinidos - set(declarados)
         assert not faltan, (
             f"{store}/{archivo} crea {sorted(faltan)} y esquema.py no lo declara"
+        )
+        # Y al revés: declararlo sería peor que no declararlo, porque
+        # `verificar_esquema.py` vería el objeto de la migración vieja y daría
+        # ésta por aplicada sin haber corrido.
+        mal_declarados = sorted(redefinidos & set(declarados))
+        assert not mal_declarados, (
+            f"esquema.py declara {mal_declarados} en {store}/{archivo}, que solo "
+            f"lo reemplaza. Un `create or replace` no se puede ver desde afuera: "
+            f"el objeto queda declarado en la migración que lo creó"
         )
         sobran = set(declarados) - reales
         assert not sobran, (
             f"esquema.py declara {sorted(sobran)} en {store}/{archivo} y el DDL "
             f"no lo crea"
         )
+        ya_existian |= reales
 
 
 @pytest.mark.parametrize("store,migraciones", [

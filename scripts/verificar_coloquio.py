@@ -65,6 +65,12 @@ RELACIONES_PERMITIDAS = {
 
 FUNCIONES_PERMITIDAS = {
     "contacto_para_convocatoria",
+    # R5.2.a — la única escritura del consumidor sobre la bóveda: declarar a
+    # quién convocó en su propio sistema. Sin esto la bóveda le niega todo
+    # contacto, porque sus convocatorias viven en su store y acá no se ven.
+    # No es una puerta de atrás: reaplica el gate de consentimiento, deriva el
+    # sistema de la conexión y deja la declaración escrita.
+    "declarar_convocatoria",
     "mis_borrados_pendientes",
     "confirmar_borrado",
     "reportar_error_de_borrado",
@@ -113,6 +119,10 @@ NEGADAS_EXPLICITAS = (
     "persona", "consentimiento", "participacion", "membresia", "encuesta",
     "reidentificacion", "borrado_pendiente", "inscripcion",
     "verificacion_contacto", "persona_atributo",
+    # Escribe sus declaraciones por función, nunca por tabla: si tuviera
+    # `insert` acá podría declararse una convocatoria sin pasar por el gate
+    # de consentimiento ni por el tope de 60 días.
+    "convocatoria_externa",
 )
 
 
@@ -128,7 +138,9 @@ def conectar(dsn):
 # ════════════════════════════════════════════════════════════════════
 
 class Escenario:
-    """Una persona convocable, una sin consentimiento, y una encuesta abierta.
+    """Tres personas y una encuesta abierta: una convocable y declarada por
+    COLOQUIO, una sin consentimiento, y una que `paneles` convocó pero
+    COLOQUIO no.
 
     Se arma con la conexión del dueño y se borra al final, pase lo que pase.
     Las filas llevan una marca en el documento para que, si una corrida se
@@ -141,6 +153,9 @@ class Escenario:
         self.conn = conn_dueno
         self.convocable = None
         self.sin_consentimiento = None
+        # Consintió y `paneles` la convocó, pero COLOQUIO no: es contra ella
+        # que se prueba que la convocatoria se verifica **por sistema**.
+        self.sin_convocatoria = None
         self.panel_id = None
 
     def __enter__(self):
@@ -173,6 +188,15 @@ class Escenario:
             # sería probar nada.
             self.sin_consentimiento = self._persona(cur, f"{marca}-sin", "099000222")
 
+            # La tercera consintió igual que la primera. La diferencia es que
+            # COLOQUIO no declara haberla convocado.
+            self.sin_convocatoria = self._persona(cur, f"{marca}-nocon", "099000333")
+            cur.execute(
+                """insert into consentimiento
+                          (id_persona, finalidad, estado, version_texto)
+                   values (%s, 'contacto_participacion', 'vigente', %s)""",
+                (self.sin_convocatoria, marca))
+
             cur.execute(
                 """insert into encuesta (panel_id, nombre, estado)
                    values (%s, %s, 'en_campo') returning id""",
@@ -181,7 +205,8 @@ class Escenario:
             # Las dos quedan convocadas: sin convocatoria activa la función de
             # contacto rechaza por otro motivo, y el chequeo del gate diría
             # que pasó cuando en realidad falló por otra cosa.
-            for quien in (self.convocable, self.sin_consentimiento):
+            for quien in (self.convocable, self.sin_consentimiento,
+                          self.sin_convocatoria):
                 cur.execute(
                     """insert into participacion (encuesta_id, id_persona)
                        values (%s, %s)""", (encuesta_id, quien))
@@ -189,6 +214,18 @@ class Escenario:
                     """insert into membresia (id_persona, panel_id)
                        values (%s, %s) on conflict do nothing""",
                     (quien, self.panel_id))
+
+            # R5.2.a — desde la `0016` la participación de arriba habilita a
+            # `paneles` y a nadie más: COLOQUIO necesita su propia
+            # declaración. Se inserta acá, como dato de escenario, para que
+            # los chequeos que vienen después no dependan del orden en que
+            # corran. El camino real —la función, ejercida con el rol del
+            # consumidor— lo prueba `la_convocatoria_se_verifica_por_sistema`.
+            cur.execute(
+                """insert into convocatoria_externa
+                          (id_persona, sistema, referencia, vence_en)
+                   values (%s, 'coloquio', %s, now() + interval '2 days')""",
+                (self.convocable, f"{marca}-sesion"))
         return self
 
     def _persona(self, cur, documento, celular):
@@ -201,7 +238,8 @@ class Escenario:
 
     def __exit__(self, *_):
         with self.conn.cursor() as cur:
-            for quien in (self.convocable, self.sin_consentimiento):
+            for quien in (self.convocable, self.sin_consentimiento,
+                          self.sin_convocatoria):
                 if quien:
                     # `borrado_pendiente` no cascadea: no tiene FK a `persona`
                     # a propósito, porque la baja borra la persona y el
@@ -421,6 +459,65 @@ def un_canal_por_vez(coloquio, escenario):
     return "solo `email` o `celular`"
 
 
+def la_convocatoria_se_verifica_por_sistema(coloquio, escenario, dueno):
+    """R5.2.a — el caso que bloqueaba a COLOQUIO en producción.
+
+    La persona consintió y `paneles` la tiene convocada en una encuesta
+    abierta. Hasta la `0016` eso alcanzaba para que **cualquier** consumidor
+    leyera su contacto; ahora no, y COLOQUIO tiene que declarar la suya.
+    """
+    error = _niega(coloquio, "select contacto_para_convocatoria(%s, 'celular')",
+                   (escenario.sin_convocatoria,))
+    if "convocatoria activa" not in error:
+        raise Falla(f"rechazó, pero por otro motivo: {error}")
+    if "coloquio" not in error:
+        raise Falla("el rechazo no dice en qué sistema falta la convocatoria, "
+                    f"y es lo que el consumidor necesita saber: {error}")
+
+    with coloquio.cursor() as cur:
+        cur.execute(
+            "select declarar_convocatoria(%s, %s, now() + interval '2 days')",
+            (escenario.sin_convocatoria, "sesion-de-verificacion"))
+        cur.execute("select contacto_para_convocatoria(%s, 'celular') as dato",
+                    (escenario.sin_convocatoria,))
+        dato = cur.fetchone()["dato"]
+    if not dato:
+        raise Falla("declaró la convocatoria y el contacto sigue vacío")
+
+    # Y la declaración quedó escrita con el sistema derivado de la conexión,
+    # no con uno que el llamador haya podido elegir.
+    with dueno.cursor() as cur:
+        cur.execute(
+            """select sistema, referencia, vence_en > now() as vigente
+                 from convocatoria_externa where id_persona = %s""",
+            (escenario.sin_convocatoria,))
+        fila = cur.fetchone()
+    if not fila or fila["sistema"] != "coloquio" or not fila["vigente"]:
+        raise Falla(f"la declaración quedó mal escrita: {fila}")
+    return "sin declarar: rechazado · declarado: entrega el contacto"
+
+
+def la_declaracion_tiene_tope(coloquio, escenario):
+    """Sin tope, «declarar» sería «tener acceso permanente»: una declaración
+    a cien años dejaría a esa persona fuera del gate para siempre."""
+    error = _niega(
+        coloquio,
+        "select declarar_convocatoria(%s, 'sesion-larga', now() + interval '90 days')",
+        (escenario.convocable,))
+    if "60 días" not in error:
+        raise Falla(f"aceptó 90 días, o rechazó por otro motivo: {error}")
+
+    # Y tampoco se declara a quien no consintió: el gate va también acá, no
+    # solo al leer el contacto.
+    error = _niega(
+        coloquio,
+        "select declarar_convocatoria(%s, 'sesion', now() + interval '1 day')",
+        (escenario.sin_consentimiento,))
+    if "consentimiento vigente" not in error:
+        raise Falla(f"declaró una convocatoria de quien no consintió: {error}")
+    return "tope de 60 días y gate de consentimiento, los dos al declarar"
+
+
 def la_cascada_llega_y_se_cierra(coloquio, escenario, dueno):
     with dueno.cursor() as cur:
         # COLOQUIO entra al registro inactivo: se activa el día que sale a
@@ -532,6 +629,9 @@ CON_DATOS = (
     ("el contacto sin consentimiento se rechaza",
      contacto_sin_consentimiento_es_rechazado),
     ("un canal por vez", un_canal_por_vez),
+    ("la convocatoria se verifica por sistema",
+     la_convocatoria_se_verifica_por_sistema),
+    ("la declaración tiene tope y gate", la_declaracion_tiene_tope),
     ("la cascada de baja llega y se cierra", la_cascada_llega_y_se_cierra),
     ("no confirma el borrado de otro", no_confirma_por_otro),
     ("un rol sin registrar no consigue nada", un_rol_sin_registrar_no_consigue_nada),
@@ -571,7 +671,8 @@ def correr(dsn_dueno, dsn_coloquio, dsn_intruso=None, solo_lectura=False,
                                  f"sin DSN_BOVEDA_INTRUSO{FIN}")
                         continue
                     registrar(nombre, funcion, dsn_intruso, escenario)
-                elif funcion in (solo_ve_a_quien_consintio, un_canal_por_vez):
+                elif funcion in (solo_ve_a_quien_consintio, un_canal_por_vez,
+                                 la_declaracion_tiene_tope):
                     registrar(nombre, funcion, coloquio, escenario)
                 else:
                     registrar(nombre, funcion, coloquio, escenario, dueno)

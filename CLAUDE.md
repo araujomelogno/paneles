@@ -27,6 +27,7 @@ La consecuencia para quien escribe código acá: **una invariante de cumplimient
 
 - El gate de consentimiento es `v_persona_convocable`, **no** un `select` en Python. `consentimiento.esta_vigente()` y `filtrar_con_consentimiento()` leen esa vista; no vuelvan a calcular la regla.
 - Leer un dato de contacto es `contacto_para_convocatoria()`: un canal, con el gate reaplicado y la auditoría en la misma transacción. No hay un segundo camino.
+- Y exige una convocatoria activa **en el sistema que llama**: `paneles` la tiene en sus tablas, un consumidor externo la declara con `declarar_convocatoria()` —su única escritura sobre la bóveda—. No agreguen excepciones por sistema al chequeo: confiar en el consumidor deja el gate en nada.
 - Una baja genera pendientes para **todos** los consumidores activos (`generar_borrados_pendientes()`), y la bóveda nunca espera a ninguno.
 - La fatiga es la excepción deliberada: se expone como **hechos** (`v_fatiga_panelista`) y cada consumidor pone su umbral. El consentimiento es legal y no se negocia; la fatiga es negocio.
 - El origen de cada fila de auditoría se deriva de la conexión (`sistema_de_la_conexion()`, sobre `session_user`), nunca de un parámetro del llamador.

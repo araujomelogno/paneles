@@ -2150,6 +2150,73 @@ para otro lado.
 
 ---
 
+<a id="d50"></a>
+## D50 · La convocatoria activa se verifica por sistema, y el consumidor declara la suya
+
+**El problema.** R5.2 pide que `contacto_para_convocatoria()` exija «una
+convocatoria activa **en el sistema que llama**». La `0014` implementó el caso
+de `paneles` —una `participacion` en una `encuesta` abierta— y se lo aplicó a
+todos. Con un solo consumidor eso no se nota: el que llama es el dueño de las
+tablas donde está la convocatoria.
+
+Con el segundo apareció, y de la peor forma. COLOQUIO convoca a grupos, sus
+sesiones viven en Firestore, y la bóveda no las ve; así que pedía el contacto
+de alguien que efectivamente había convocado y la bóveda le contestaba que esa
+persona **no tiene convocatoria activa**. No es un mensaje de «esto no está
+implementado»: suena a dato sobre la persona, y es un defecto nuestro.
+
+Y COLOQUIO no lo podía resolver de su lado sin romper otra cosa: escribir en
+`participacion` le está negado por R5.4, y tiene que estarlo —fabricar
+participaciones en encuestas ajenas para poder leer un contacto es justo lo
+que la superficie externa existe para impedir—.
+
+**La alternativa corta, y por qué se descartó.** Relajar el chequeo cuando el
+sistema es `coloquio`: confiar en el consumidor. Es una línea de SQL y deja al
+único rol sobre el que el gate se aplica pudiendo barrer la agenda entera de a
+una persona por vez, que es exactamente lo que el chequeo existe para impedir.
+El gate dejaría de ser un gate para el único que lo necesita.
+
+**La decisión.** El consumidor **declara** su convocatoria en la bóveda, y el
+chequeo se ramifica por sistema: `paneles` la tiene en sus tablas, un
+consumidor externo la declara. Las dos ramas son el mismo gate —hace falta un
+motivo, y el motivo queda escrito—.
+
+**Cuatro cosas que hacen que declarar no sea lo mismo que tener acceso:**
+
+1. **Se declara por función, no por tabla.** `declarar_convocatoria()` es la
+   única escritura de un consumidor sobre la bóveda. Por tabla no habría
+   forma de reaplicar el gate ni de derivar el sistema de la conexión.
+2. **Reaplica el consentimiento.** No se declara una convocatoria de quien no
+   consintió; si no, la bóveda guardaría «tal sistema convocó a esta persona»
+   de alguien que nunca aceptó que lo contacten.
+3. **Vence, y como mucho a 60 días.** Sin tope, una declaración a cien años
+   sacaría a esa persona del gate para siempre.
+4. **Queda escrita.** Barrer la agenda sigue siendo posible y ahora cuesta
+   dejar una fila por persona barrida, con sistema y fecha. La bóveda no lo
+   impide: lo deja a la vista, que para un consumidor auditado es suficiente.
+
+**Retención.** Una declaración vencida no habilita nada, así que conservarla
+es guardar un dato sin finalidad: se purgan a los 30 días del vencimiento
+(`purgar_convocatorias_externas()`, que llama la aplicación, como el
+vencimiento de puntos). La baja se las lleva antes: la FK a `persona` cubre el
+borrado total y `generar_borrados_pendientes()` cubre el retiro parcial de
+`contacto_participacion`. Va en la función de base y no en `bajas.py` por lo
+de siempre: una invariante de cumplimiento escrita en Python es una promesa
+repetida en dos bases de código.
+
+**Lo que esto le cuesta a la bóveda.** Una tabla más de la que es responsable,
+que dice quién convocó a quién en otro sistema. Es un dato nuevo sobre las
+personas, y por eso vence y se purga en vez de acumularse. La alternativa
+—que no exista— significaba o bien que el segundo consumidor no pudiera
+operar, o bien confiar en él sin registro, y la segunda es peor que guardar
+la fila.
+
+**Dónde vive.** `db/boveda/0016_convocatoria_externa.sql`,
+`scripts/verificar_coloquio.py`,
+`functions/tests/test_fase5_convocatoria_externa.py`.
+
+---
+
 ## Anexo · Decisiones que no se tomaron
 
 Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
@@ -2181,4 +2248,6 @@ Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 | Quién es dueño del vocabulario de series | Sin definir, y es el mismo riesgo que con los segmentadores: sin un responsable, cada equipo arma las suyas y las comparaciones dejan de ser comparables entre equipos | [D40](#d40) |
 | Un solver de programación entera para el muestreo | **Descartado a propósito:** da una asignación mejor en el margen y ninguna explicación por persona | [D41](#d41) |
 | Calibrar los pesos del optimizador contra datos de Equipos | Pendiente, igual que los umbrales de fatiga. Los defaults están documentados pero no medidos | [D41](#d41) |
+| Revocar una convocatoria declarada antes de que venza | **No se hizo.** Una sesión que se cancela deja la declaración viva hasta su vencimiento. Se puede agregar como función de la superficie si aparece el caso; hoy el tope de 60 días y la purga acotan la exposición | [D50](#d50) |
+| Quién llama a `purgar_convocatorias_externas()` y cada cuánto | Pendiente: la función existe y es idempotente, pero todavía no está enganchada a ninguna rutina ni pantalla | [D50](#d50) |
 | Alinear el voseo de la interfaz con el registro formal del manual | Sin decidir; requeriría recapturar las 44 pantallas | PR de la Fase 2 |
