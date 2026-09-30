@@ -608,8 +608,23 @@ def _fila_actual(conn, id_persona, atributo_id):
     )
 
 
+def _es_pendiente(fila):
+    """Una fila que solo guarda el crudo, sin valor resuelto.
+
+    R-MAP.4 — un valor del archivo que quedó sin mapear se guarda así, para
+    que un remapeo posterior lo pueda resolver sin volver a pedir el archivo.
+    No es un valor: `f_atributo_persona` la filtra, la persona no tiene ese
+    atributo, y acá hay que tratarla como si no existiera —si no, un valor
+    bueno que llegue después se leería como discrepancia contra una nada—.
+    """
+    return bool(fila) and (fila["categoria_id"] is None
+                           and fila["valor_num"] is None
+                           and fila["valor_fecha"] is None)
+
+
 def fijar(conn, id_persona, clave, valor, origen="edicion", crudo=None,
-          fecha_referencia=None, pisar=True, vigencia_desde=None):
+          fecha_referencia=None, pisar=True, vigencia_desde=None,
+          guardar_crudo=False):
     """Fija el valor de un atributo para una persona.
 
     `pisar=False` implementa la regla del addendum R3.9.d, que es la que rige
@@ -633,9 +648,16 @@ def fijar(conn, id_persona, clave, valor, origen="edicion", crudo=None,
             atributo["tipo"] == "derivado" and atributo["clave"] == "tramo_etario"):
         categoria = _resolver_categoria(conn, atributo, valor)
         if not categoria:
-            # R3.14.c — no se inventa la categoría. La fila queda sin este
+            # R3.14.c — no se inventa la categoría. La persona queda sin este
             # atributo y el resultado de la carga lo informa: inventarla es
             # exactamente lo que rompe la aritmética de las cuotas.
+            #
+            # R-MAP.4 — pero el crudo sí se guarda, si lo piden. La fila no
+            # es un valor (la vista la filtra) y es lo que después permite
+            # corregir el mapeo y recalcular sin volver a pedir el archivo.
+            if guardar_crudo:
+                guardar_crudo_pendiente(conn, id_persona, atributo, crudo,
+                                        origen)
             return {"estado": "sin_categoria", "clave": atributo["clave"],
                     "valor_crudo": crudo}
         categoria_id, canonico = categoria["id"], categoria["clave"]
@@ -651,6 +673,24 @@ def fijar(conn, id_persona, clave, valor, origen="edicion", crudo=None,
         canonico = str(valor_num)
 
     actual = _fila_actual(conn, id_persona, atributo["id"])
+    if _es_pendiente(actual):
+        # Había un crudo sin resolver y ahora llega un valor bueno: se
+        # completa la misma fila. Tratarla como valor anterior diría que la
+        # persona «tenía» algo distinto, y es lo contrario: no tenía nada.
+        db.ejecutar(
+            conn,
+            """
+            update persona_atributo
+               set categoria_id = %s, valor_num = %s, valor_fecha = %s,
+                   valor_crudo = %s, origen = %s, fecha_referencia = %s,
+                   actualizado_en = now()
+             where id = %s
+            """,
+            (categoria_id, valor_num, valor_fecha, crudo, origen,
+             fecha_referencia, actual["id"]))
+        return {"estado": "completado", "clave": atributo["clave"],
+                "valor": canonico}
+
     if actual:
         mismo = (
             (categoria_id is not None and actual["categoria_id"] == categoria_id)
@@ -761,6 +801,39 @@ def fijar(conn, id_persona, clave, valor, origen="edicion", crudo=None,
     return resultado
 
 
+def guardar_crudo_pendiente(conn, id_persona, atributo, crudo, origen):
+    """Guarda el valor del archivo sin resolver, para poder remapearlo.
+
+    Solo cuando la persona **no tiene** valor para ese atributo: un pendiente
+    nunca pisa un dato bueno. Si ya había otro pendiente se actualiza, porque
+    el último archivo es el que describe mejor de dónde salió el dato.
+    """
+    if crudo is None or not str(crudo).strip():
+        return
+    actual = _fila_actual(conn, id_persona, atributo["id"])
+    if actual and not _es_pendiente(actual):
+        return
+    if actual:
+        db.ejecutar(
+            conn,
+            "update persona_atributo set valor_crudo = %s, origen = %s, "
+            "       actualizado_en = now() where id = %s",
+            (str(crudo), origen, actual["id"]))
+        return
+    # `-infinity`, igual que un primer valor: el día que se remapee, esta
+    # fila pasa a ser el primer valor conocido de la persona y tiene que
+    # contar en las composiciones retroactivas, no empezar el día de la carga.
+    db.ejecutar(
+        conn,
+        """
+        insert into persona_atributo
+               (id_persona, atributo_id, valor_crudo, origen, desde,
+                actualizado_en)
+             values (%s, %s, %s, %s, '-infinity'::timestamptz, now())
+        """,
+        (id_persona, atributo["id"], str(crudo), origen))
+
+
 def borrar_valor(conn, id_persona, clave):
     """Deja a la persona sin valor vigente para el atributo.
 
@@ -786,19 +859,45 @@ def borrar_valor(conn, id_persona, clave):
 
 # ── R3.14.h · Corregir un mapeo sin recargar el archivo ──────────────
 
-def recalcular(conn, atributo_id, actor=None):
+def recalcular(conn, atributo_id, actor=None, mapeo=None):
     """Recalcula los valores canónicos a partir de los crudos guardados.
 
     Es la salvaguarda de la canonización: si el vocabulario se corrigió
     —se agregó la categoría que faltaba, se arregló una etiqueta— los valores
     que habían quedado mal apuntados se vuelven a resolver contra el catálogo
     actual, sin volver a pedir el archivo original.
+
+    R-MAP.5 — con `mapeo` (`{valor crudo: categoría}`) se corrige además lo
+    que el catálogo no puede resolver solo: un archivo que codificó
+    `1=Bajo` contra categorías `primaria/secundaria` no se arregla agregando
+    etiquetas, se arregla diciendo qué significaba cada código. El mapeo
+    manda sobre la resolución por etiqueta.
     """
     atributo = obtener(conn, atributo_id)
     if atributo["tipo"] != "categorico":
         raise DatosInvalidos(
             f"El recálculo resuelve valores crudos contra las categorías del "
             f"atributo, y «{atributo['clave']}» es de tipo {atributo['tipo']}.")
+
+    # El mapeo se valida entero **antes** de tocar una fila: a mitad de
+    # camino dejaría unas personas recalculadas y otras no, sin forma de
+    # saber dónde quedó.
+    por_crudo = {}
+    if mapeo:
+        validas = {c["clave"]: c["id"]
+                   for c in categorias_de(conn, atributo["id"])}
+        for crudo, clave in mapeo.items():
+            valor = str(crudo).strip()
+            if not valor or clave in (None, ""):
+                continue
+            if str(clave).strip() not in validas:
+                raise DatosInvalidos(
+                    f"«{clave}» no es una categoría de «{atributo['clave']}». "
+                    f"Las categorías las define un admin en Configuración; "
+                    f"el recálculo no las crea.",
+                    {"valor": valor, "categorias_validas": sorted(validas)})
+            por_crudo[valor] = {"clave": str(clave).strip(),
+                                "id": validas[str(clave).strip()]}
 
     filas = db.todas(
         conn,
@@ -811,7 +910,8 @@ def recalcular(conn, atributo_id, actor=None):
 
     cambiados, sin_categoria = 0, []
     for fila in filas:
-        categoria = _resolver_categoria(conn, atributo, fila["valor_crudo"])
+        categoria = (por_crudo.get(str(fila["valor_crudo"]).strip())
+                     or _resolver_categoria(conn, atributo, fila["valor_crudo"]))
         if not categoria:
             sin_categoria.append(fila["valor_crudo"])
             continue
@@ -829,6 +929,10 @@ def recalcular(conn, atributo_id, actor=None):
         "revisados": len(filas),
         "recalculados": cambiados,
         "sin_categoria": sorted(set(sin_categoria)),
+        # Qué mapeo se aplicó queda en la auditoría junto con el autor y la
+        # fecha: un recálculo cambia la categoría de gente real y «se
+        # recalculó» sin decir con qué regla no es rastro de nada.
+        "mapeo_aplicado": {v: d["clave"] for v, d in sorted(por_crudo.items())},
     }
     _auditar(conn, atributo["id"], atributo["clave"], "recalculo", actor, resultado)
     return resultado

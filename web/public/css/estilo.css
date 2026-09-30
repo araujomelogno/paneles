@@ -430,6 +430,21 @@ td .btn, th .btn { white-space: nowrap; }
    completarlo. */
 .pregunta-fila .inerte { background: var(--gray-xlight); color: var(--gray); cursor: not-allowed; }
 /* El aviso de la fila ocupa el ancho entero, debajo de sus campos. */
+/* R-MAP.1 — el mapeo de valores a categorías, debajo de su variable. Va
+   como bloque aparte y no adentro de la fila porque una fila es una grilla de
+   columnas fijas y esto es una lista de largo variable. */
+.p-mapeo { margin: 0.2rem 0 0.6rem 1.2rem; padding: 0.5rem 0.7rem;
+  border-left: 3px solid var(--orange); background: var(--bg-suave, rgba(0,0,0,0.03));
+  border-radius: 0 6px 6px 0; }
+.p-mapeo-titulo { font-size: 0.75rem; color: var(--texto-suave, #666); margin-bottom: 0.4rem; }
+.p-mapeo-valores { display: flex; flex-wrap: wrap; gap: 0.4rem 0.9rem; }
+.p-mapeo-valor { display: flex; align-items: center; gap: 0.35rem; font-size: 0.78rem; }
+.p-mapeo-crudo { min-width: 6rem; font-family: var(--mono, monospace); }
+.p-mapeo-crudo em { font-style: normal; color: var(--texto-suave, #888); }
+.p-mapeo-valor .m-cat { min-width: 9rem; }
+.p-mapeo-pendiente { font-size: 0.72rem; margin-top: 0.4rem; }
+.p-mapeo-pendiente.hay-pendientes { color: var(--orange); font-weight: 600; }
+
 .pregunta-fila .p-aviso { grid-column: 1 / -1; font-size: 0.72rem; color: var(--orange); font-weight: 600; margin-top: 0.15rem; }
 @media (max-width: 860px) { .pregunta-fila { grid-template-columns: 1fr 1fr; } }
 

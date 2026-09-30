@@ -322,12 +322,174 @@ def _sugerir_demografica(codigo, etiqueta, claves_del_catalogo=()):
     return None
 
 
+# ── R-MAP.1 · Qué significa cada código del archivo ──────────────────
+#
+# El marcado decía «esta variable es nivel educativo» y nada más. Con eso,
+# un archivo que trae `1, 2, 3` no tiene cómo conectarse con las categorías
+# canónicas del atributo (`primaria`, `secundaria`, `terciaria`), y como cada
+# estudio codifica distinto —uno usa `1=Primaria`, otro `1=Bajo`— el dato
+# entraba crudo o no entraba.
+#
+# Ahora el marcado puede llevar, además del campo, **qué categoría del
+# catálogo corresponde a cada valor del archivo**:
+#
+#     {"NIVEL_EDUC": {"campo": "nivel_educativo",
+#                     "mapeo": {"1": "primaria", "2": "secundaria"}}}
+#
+# La forma vieja (`{"SEXO": "sexo"}`) se sigue aceptando y significa «sin
+# mapeo declarado»: se resuelve como siempre, por las etiquetas del `.sav`
+# contra el catálogo.
+
+
+def campo_de(entrada):
+    """El campo destino de una entrada del marcado, en cualquiera de las dos
+    formas."""
+    if isinstance(entrada, dict):
+        return entrada.get("campo") or SOLO_EXCLUIR
+    return entrada
+
+
+def mapeo_de(entrada):
+    """El mapeo declarado de una entrada del marcado; `{}` si no hay."""
+    return dict((entrada or {}).get("mapeo") or {}) if isinstance(entrada, dict) else {}
+
+
+def _normalizar_entrada(entrada):
+    """Lleva las dos formas del marcado a `{"campo": …, "mapeo": {…}}`."""
+    if isinstance(entrada, dict):
+        return {"campo": entrada.get("campo"), "mapeo": entrada.get("mapeo") or {}}
+    return {"campo": entrada, "mapeo": {}}
+
+
+def _validar_mapeo(conn, variable, campo, mapeo):
+    """El mapeo apunta a categorías que existen, y solo donde tiene sentido.
+
+    Es la última línea contra un mapeo inventado: la pantalla ofrece un
+    desplegable, pero la pantalla no es la autoridad. Y un mapeo sobre un
+    atributo `numerico`, `fecha` o `derivado` no es un error de tipeo del
+    llamador: es una confusión sobre qué significa mapear, así que se
+    rechaza en vez de ignorarse.
+    """
+    from . import atributos as _atributos
+
+    if not mapeo:
+        return {}
+    if not isinstance(mapeo, dict):
+        raise DatosInvalidos(
+            f"El mapeo de «{variable}» es un objeto «valor del archivo → "
+            f"categoría del catálogo».",
+            {"ejemplo": {"1": "primaria", "2": "secundaria"}})
+
+    if campo in CAMPOS_DEMOGRAFICOS or campo == SOLO_EXCLUIR:
+        raise DatosInvalidos(
+            f"«{campo}» no es un atributo del catálogo, así que no tiene "
+            f"categorías a las que mapear. El mapeo aplica solo a los "
+            f"atributos de tipo categórico.",
+            {"variable": variable})
+
+    if conn is None:
+        # Sin base no se puede validar contra el catálogo, y un mapeo sin
+        # validar es justamente lo que este requisito existe para impedir.
+        raise DatosInvalidos(
+            f"No se puede validar el mapeo de «{variable}» sin acceso al "
+            f"catálogo de atributos.", {"variable": variable})
+
+    atributo = _atributos.obtener(conn, campo)
+    if atributo["tipo"] != "categorico":
+        raise DatosInvalidos(
+            f"«{campo}» es un atributo de tipo {atributo['tipo']}: no tiene "
+            f"categorías, así que no hay nada que mapear. El mapeo aplica "
+            f"solo a los categóricos.",
+            {"variable": variable, "tipo": atributo["tipo"]})
+
+    categorias = {c["clave"]: c["clave"]
+                  for c in _atributos.categorias_de(conn, atributo["id"])}
+    normalizado = {}
+    for crudo, categoria in mapeo.items():
+        valor = str(crudo).strip()
+        if not valor:
+            continue
+        if categoria is None or str(categoria).strip() == "":
+            # «No mapear» explícito: se escribe igual que no declararlo, y
+            # llega acá porque la pantalla lo manda así.
+            continue
+        clave = str(categoria).strip()
+        if clave not in categorias:
+            raise DatosInvalidos(
+                f"«{clave}» no es una categoría de «{campo}». Las categorías "
+                f"las define un admin en Configuración → Atributos "
+                f"demográficos; no se crean durante una carga.",
+                {"variable": variable, "valor": valor,
+                 "categorias_validas": sorted(categorias)})
+        normalizado[valor] = clave
+    return normalizado
+
+
+def _sin_acentos(texto):
+    import unicodedata
+
+    return "".join(
+        c for c in unicodedata.normalize("NFD", str(texto or "").strip().lower())
+        if unicodedata.category(c) != "Mn")
+
+
+def sugerir_mapeo(conn, campo, valores, etiquetas=None):
+    """R-MAP.2 — propone a qué categoría corresponde cada valor del archivo.
+
+    Compara la **etiqueta** del valor —y, si no tiene, el valor mismo—
+    contra la clave y la etiqueta de cada categoría del atributo, sin
+    distinguir mayúsculas ni acentos.
+
+    Devuelve `{valor: categoria|None}`. El `None` es parte de la respuesta y
+    no un hueco: es lo que la pantalla muestra como pendiente. **Nada se
+    aplica solo**: esto es una propuesta y quien carga confirma o corrige.
+    """
+    from . import atributos as _atributos
+
+    atributo = _atributos.obtener(conn, campo)
+    if atributo["tipo"] != "categorico":
+        raise DatosInvalidos(
+            f"«{campo}» es de tipo {atributo['tipo']}: no tiene categorías, "
+            f"así que no hay mapeo que sugerir.",
+            {"tipo": atributo["tipo"]})
+
+    indice = {}
+    for categoria in _atributos.categorias_de(conn, atributo["id"],
+                                              solo_activas=True):
+        for forma in (categoria["clave"], categoria.get("etiqueta")):
+            if forma:
+                indice.setdefault(_sin_acentos(forma), categoria["clave"])
+
+    etiquetas = etiquetas or {}
+    propuesta = {}
+    for crudo in valores or []:
+        valor = str(crudo).strip()
+        if not valor:
+            continue
+        candidatos = [etiquetas.get(valor), valor]
+        propuesta[valor] = next(
+            (indice[_sin_acentos(c)] for c in candidatos
+             if c and _sin_acentos(c) in indice), None)
+    return {
+        "atributo": atributo["clave"],
+        "categorias": [
+            {"clave": c["clave"], "etiqueta": c.get("etiqueta")}
+            for c in _atributos.categorias_de(conn, atributo["id"],
+                                              solo_activas=True)
+        ],
+        "mapeo": propuesta,
+        "sin_sugerencia": sorted(v for v, c in propuesta.items() if c is None),
+    }
+
+
 def normalizar_demograficas(demograficas, codigos_del_archivo=None,
-                            campos_validos=None):
+                            campos_validos=None, conn=None):
     """Valida el marcado de variables demográficas y lo deja canónico.
 
-    Forma esperada: `{"SEXO": "sexo", "EDAD": "(no guardar)"}` — la variable
-    del archivo apunta al campo de `persona` que trae, o a `SOLO_EXCLUIR`.
+    Devuelve `{variable: {"campo": …, "mapeo": {valor: categoria}}}`.
+
+    Acepta las dos formas de entrada: la vieja `{"SEXO": "sexo"}` y la de
+    R-MAP.1, `{"NIVEL_EDUC": {"campo": …, "mapeo": {…}}}`.
     """
     if not demograficas:
         return {}
@@ -340,11 +502,12 @@ def normalizar_demograficas(demograficas, codigos_del_archivo=None,
 
     validos = set(campos_validos or campos_demograficos()) | {SOLO_EXCLUIR}
     normalizado = {}
-    for variable, campo in demograficas.items():
+    for variable, entrada in demograficas.items():
         codigo = str(variable).strip()
         if not codigo:
             continue
-        destino = (campo or SOLO_EXCLUIR)
+        entrada = _normalizar_entrada(entrada)
+        destino = (entrada["campo"] or SOLO_EXCLUIR)
         destino = SOLO_EXCLUIR if destino is True else str(destino).strip()
         if not destino:
             destino = SOLO_EXCLUIR
@@ -356,7 +519,10 @@ def normalizar_demograficas(demograficas, codigos_del_archivo=None,
                 f"vuelo durante una carga.",
                 {"variable": codigo, "campos_validos": sorted(validos)},
             )
-        normalizado[codigo] = destino
+        normalizado[codigo] = {
+            "campo": destino,
+            "mapeo": _validar_mapeo(conn, codigo, destino, entrada["mapeo"]),
+        }
 
     if codigos_del_archivo is not None:
         ausentes = sorted(set(normalizado) - set(codigos_del_archivo))
@@ -370,10 +536,10 @@ def normalizar_demograficas(demograficas, codigos_del_archivo=None,
     # Dos variables para el mismo campo no se puede resolver sola: cuál gana
     # es una decisión, no un detalle de implementación.
     por_campo = {}
-    for variable, campo in normalizado.items():
-        if campo == SOLO_EXCLUIR:
+    for variable, entrada in normalizado.items():
+        if entrada["campo"] == SOLO_EXCLUIR:
             continue
-        por_campo.setdefault(campo, []).append(variable)
+        por_campo.setdefault(entrada["campo"], []).append(variable)
     repetidos = {c: sorted(v) for c, v in por_campo.items() if len(v) > 1}
     if repetidos:
         raise DatosInvalidos(
@@ -436,10 +602,72 @@ def mapeo_por_campo(demograficas):
     """Da vuelta el marcado a `{campo: variable}`, que es lo que espera el
     alta de personas. Las marcadas «no guardar» quedan afuera."""
     return {
-        campo: variable
-        for variable, campo in (demograficas or {}).items()
-        if campo != SOLO_EXCLUIR
+        campo_de(entrada): variable
+        for variable, entrada in (demograficas or {}).items()
+        if campo_de(entrada) != SOLO_EXCLUIR
     }
+
+
+def mapeos_por_variable(demograficas):
+    """`{variable: {valor: categoria}}` de lo que se declaró explícitamente."""
+    return {
+        variable: mapeo_de(entrada)
+        for variable, entrada in (demograficas or {}).items()
+        if mapeo_de(entrada)
+    }
+
+
+# Cuántos valores distintos se devuelven por variable. Una variable
+# categórica de verdad tiene unos pocos; si tiene doscientos, no es un
+# segmentador y mostrar doscientos desplegables no ayudaría a nadie. El tope
+# existe para que la pantalla no se vuelva impracticable con una variable mal
+# marcada, no para censurar datos.
+MAX_VALORES_POR_VARIABLE = 60
+
+
+def _valores_distintos(datos, columnas):
+    """Los valores distintos de cada columna, con cuántas filas trae cada uno.
+
+    El conteo es la mitad del requisito: avisar «el 99 quedó sin mapear» sin
+    decir a cuánta gente afecta no alcanza para decidir si se sigue o se
+    corrige. Ordenados como números cuando todos lo son —`1, 2, 10` y no
+    `1, 10, 2`—, porque los códigos de un `.sav` casi siempre lo son.
+    """
+    valores = {}
+    for columna in columnas:
+        try:
+            serie = datos[columna]
+        except Exception:  # noqa: BLE001 — una columna rara no voltea el análisis
+            continue
+        conteo = {}
+        demasiados = False
+        for bruto in serie:
+            # `None` y `NaN` no son valores del archivo: son celdas vacías.
+            # Sin este filtro entrarían como «None» y «nan» y la pantalla
+            # pediría mapearlos.
+            if bruto is None or bruto != bruto:  # noqa: PLR0124 — NaN
+                continue
+            texto = _clave(bruto)
+            if not texto:
+                continue
+            if texto not in conteo and len(conteo) >= MAX_VALORES_POR_VARIABLE:
+                demasiados = True
+                break
+            conteo[texto] = conteo.get(texto, 0) + 1
+        if demasiados:
+            # Se devuelve vacío en vez de una lista truncada: media lista
+            # invita a mapear la mitad y creer que está completo. Una
+            # variable con más de `MAX_VALORES_POR_VARIABLE` valores
+            # distintos no es un segmentador.
+            valores[columna] = []
+            continue
+        orden = list(conteo)
+        try:
+            orden.sort(key=lambda v: (0, float(v)))
+        except (TypeError, ValueError):
+            orden.sort()
+        valores[columna] = [{"valor": v, "filas": conteo[v]} for v in orden]
+    return valores
 
 
 def analizar(archivo, claves_del_catalogo=()):
@@ -454,6 +682,8 @@ def analizar(archivo, claves_del_catalogo=()):
     datos, meta = _leer(archivo)
     etiquetas = dict(zip(meta.column_names, meta.column_labels or []))
     value_labels = meta.variable_value_labels or {}
+
+    valores_por_variable = _valores_distintos(datos, meta.column_names)
 
     variables = []
     for orden, codigo in enumerate(meta.column_names):
@@ -477,6 +707,12 @@ def analizar(archivo, claves_del_catalogo=()):
             # `null` significa «no parece demográfica», no «no lo es».
             "demografica_sugerida": _sugerir_demografica(
                 codigo, etiqueta, claves_del_catalogo),
+            # R-MAP.1 — los valores distintos que trae el archivo. Es lo que
+            # la pantalla necesita para ofrecer un desplegable **por valor**:
+            # sin esto solo podría mostrar los que tienen etiqueta, y las
+            # variables sin etiquetas —un `.xlsx`, un `.sav` mal exportado—
+            # son justo las que más necesitan el mapeo a mano.
+            "valores": valores_por_variable.get(codigo) or [],
         })
 
     con_avisos = [v["codigo"] for v in variables if v["avisos"]]
@@ -826,12 +1062,22 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
     """
     import json
 
-    desconocidos = set(mapeo) - set(CAMPOS_PATRONIMICOS)
+    # El alta escribe los patronímicos y nada más. Un atributo del catálogo
+    # —`nivel_educativo`, o cualquiera que un admin haya definido— viaja en
+    # el mismo marcado y **no se rechaza**: lo escribe
+    # `completar_demograficos()` después de crear a la persona, que es donde
+    # vive la regla de no pisar y donde se aplica el mapeo de categorías.
+    #
+    # Rechazarlo acá era un defecto: dejaba sin poder usar el modo «crear
+    # individuos» a cualquier archivo que trajera un segmentador del
+    # catálogo, que desde R3.14 es el caso normal.
+    validos = set(CAMPOS_PATRONIMICOS) | set(campos_demograficos(conn_boveda))
+    desconocidos = set(mapeo) - validos
     if desconocidos:
         raise DatosInvalidos(
             f"El mapeo tiene campos que no existen en la bóveda: "
             f"{sorted(desconocidos)}.",
-            {"campos_validos": list(CAMPOS_PATRONIMICOS)},
+            {"campos_validos": sorted(validos)},
         )
     if not columna_id:
         raise DatosInvalidos(

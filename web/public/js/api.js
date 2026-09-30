@@ -350,7 +350,15 @@ export const atributos = {
     PATCH(`/atributos/${id}/categorias/${categoriaId}`, cambios),
   // R3.14.h — corregido el vocabulario, se recalculan los canónicos desde el
   // valor crudo que quedó guardado. Sin volver a pedir el archivo original.
-  recalcular: (id) => POST(`/atributos/${id}/recalcular`, {}),
+  // R-MAP.5 — con `mapeo` se corrige qué significaba cada código y se
+  // recalcula desde los crudos, sin volver a subir el archivo.
+  recalcular: (id, mapeo) => POST(`/atributos/${id}/recalcular`,
+    mapeo ? { mapeo } : {}),
+  // R-MAP.2 — qué categoría parece corresponderle a cada valor. Es una
+  // propuesta: la pantalla la precarga y quien carga confirma.
+  sugerirMapeo: (clave, valores, etiquetas) =>
+    POST(`/atributos/${encodeURIComponent(clave)}/sugerir-mapeo`,
+      { valores, etiquetas: etiquetas || {} }),
   auditoria: (atributoId) =>
     GET('/atributos-auditoria', atributoId ? { atributo_id: atributoId } : {}),
   deLaPersona: (idPersona) => GET(`/panelistas/${idPersona}/atributos`),
