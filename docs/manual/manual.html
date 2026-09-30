@@ -862,6 +862,42 @@
     <em>el</em> dato en uno sobre barrios—.</p>
   </div>
 
+  <h4>Qué significa cada código del archivo</h4>
+
+  <p>Marcar que una variable es «nivel educativo» dice dónde va el dato, pero
+  no qué dice. El archivo trae códigos —<code>1</code>, <code>2</code>,
+  <code>3</code>— y el atributo tiene categorías con nombre —primaria,
+  secundaria, terciaria—. Cada estudio codifica distinto: en uno el
+  <code>1</code> es «Primaria» y en otro es «Bajo».</p>
+
+  <p>Por eso, cuando se marca una variable como un atributo <strong>con
+  categorías</strong>, debajo de la fila aparece un desplegable
+  <strong>por cada valor que trae el archivo</strong>, con las categorías de
+  ese atributo y la opción «no mapear». Si el archivo tiene etiquetas que
+  coinciden con el catálogo, el sistema las precarga: solo hay que
+  confirmarlas.</p>
+
+  <div class="aviso info">
+    <div class="t">Lo que queda sin mapear se avisa antes de ingestar</div>
+    <p>Si algún valor quedó sin asignar, el sistema lo dice antes de empezar,
+    con cuántas personas afecta cada uno. Se puede continuar igual —un
+    <code>99</code> de «no contesta» no corresponde a ninguna categoría y está
+    bien que no se mapee—, pero la decisión queda tomada a la vista y no
+    descubierta semanas después en una cuota que no cierra.</p>
+    <p>Esas personas quedan <strong>sin ese atributo</strong>: el código no se
+    guarda como si fuera una categoría, porque eso arruinaría el cálculo de
+    las cuotas. Lo que sí se guarda es el valor tal como vino del archivo, así
+    que un mapeo mal hecho se puede corregir después <strong>sin volver a
+    subir el archivo</strong>.</p>
+  </div>
+
+  <p>Si la categoría que hace falta no está en el catálogo, hay que pedirle a
+  un administrador que la agregue en <strong>Configuración → Atributos
+  demográficos</strong>. No se pueden crear categorías durante una carga, a
+  propósito: el vocabulario con el que se segmenta el panel se define en un
+  solo lugar, y dejarlo crecer desde cada archivo lo llenaría de variantes de
+  lo mismo.</p>
+
   <p>De los demográficos marcados, el sistema completa lo que falte en la ficha
   del panelista. Lo que ya está cargado <strong>no se pisa</strong>: si el
   archivo trae un valor distinto, se informa la discrepancia al terminar y la

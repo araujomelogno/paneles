@@ -329,9 +329,11 @@ def completar_demograficos(conn, filas, demograficas, columna_id, mapa,
     campos = sav.mapeo_por_campo(demograficas)
     if not campos:
         return {"demograficos_completados": 0, "discrepancias_demograficas": [],
-                "valores_sin_categoria": []}
+                "valores_sin_categoria": [], "mapeo_de_categorias": []}
 
     por_variable = {variable: campo for campo, variable in campos.items()}
+    # R-MAP.1 — el mapeo declarado en la pantalla, por variable.
+    mapeos = sav.mapeos_por_variable(demograficas)
     opciones_por_variable = opciones_por_variable or {}
     completados, discrepancias = 0, []
     # R3.14.c — los valores del archivo que no corresponden a ninguna
@@ -339,6 +341,11 @@ def completar_demograficos(conn, filas, demograficas, columna_id, mapa,
     # ese atributo y se informa, con el listado para que se pueda corregir el
     # vocabulario y después recalcular.
     sin_categoria = {}
+    # R-MAP.3 — el informe por atributo: qué valor se mapeó y a qué, cuál
+    # quedó sin mapear, y cuántas personas afecta cada uno. Sin esto, un
+    # código que nadie mapeó desaparece en silencio y se descubre semanas
+    # después en una cuota que no cierra.
+    conteo = {}
     vistos = set()
     for fila in filas:
         id_en_origen = str(fila.get(columna_id) or "").strip()
@@ -347,18 +354,54 @@ def completar_demograficos(conn, filas, demograficas, columna_id, mapa,
             continue
         vistos.add(id_persona)
 
-        datos = {}
+        datos, crudos = {}, {}
         for variable, campo in por_variable.items():
+            bruto = fila.get(variable)
+            texto = "" if bruto is None else str(bruto).strip()
+            mapeo = mapeos.get(variable)
+            if mapeo:
+                # Declarado: el mapeo manda, y lo que no está en él es un
+                # valor **sin mapear**, no un valor para adivinar por
+                # etiqueta. Adivinarlo sería desoír lo que dijo quien carga.
+                if not texto:
+                    continue
+                canonico = mapeo.get(texto)
+                registro = conteo.setdefault(
+                    (campo, texto), {"categoria": canonico, "personas": 0})
+                registro["personas"] += 1
+                if canonico is None:
+                    # R-MAP.4 — la persona queda sin el atributo, pero el
+                    # crudo se guarda para poder remapear.
+                    datos[campo] = None
+                    crudos[campo] = texto
+                    continue
+                datos[campo] = canonico
+                crudos[campo] = texto
+                continue
+            # Sin mapeo declarado, la resolución es la de siempre: el
+            # código contra las etiquetas del archivo y la etiqueta contra el
+            # catálogo. El crudo que se guarda es esa etiqueta y **no** el
+            # código, porque es contra ella que `recalcular()` vuelve a
+            # resolver (R3.14.h). Guardar el código dejaría esos valores
+            # irrecuperables sin un mapeo explícito.
             valor = sav.valor_demografico(
-                campo, fila.get(variable), opciones_por_variable.get(variable))
+                campo, bruto, opciones_por_variable.get(variable))
             if valor:
                 datos[campo] = valor
+        # Los que quedaron en `None` no viajan como valor: se escriben
+        # aparte, como crudo pendiente.
+        pendientes = {c: crudos[c] for c, v in datos.items() if v is None}
+        datos = {c: v for c, v in datos.items() if v is not None}
+        if pendientes:
+            personas.guardar_crudos_pendientes(
+                conn, id_persona, pendientes, origen=origen)
         if not datos:
             continue
 
         resultado = personas.completar_desde_archivo(
             conn, id_persona, datos, origen=origen,
-            fecha_referencia=fecha_referencia)
+            fecha_referencia=fecha_referencia, crudos=crudos,
+            guardar_crudo=True)
         completados += len(resultado["completados"])
         for discrepancia in resultado["discrepancias"]:
             discrepancias.append({"id_persona": id_persona, **discrepancia})
@@ -373,7 +416,28 @@ def completar_demograficos(conn, filas, demograficas, columna_id, mapa,
             {"atributo": clave, "motivo": motivo, "valores": sorted(valores)}
             for (clave, motivo), valores in sorted(sin_categoria.items())
         ],
+        "mapeo_de_categorias": _informe_de_mapeo(conteo),
     }
+
+
+def _informe_de_mapeo(conteo):
+    """R-MAP.3 — por atributo: qué se mapeó, qué no, y a cuántos afecta."""
+    por_atributo = {}
+    for (campo, valor), registro in conteo.items():
+        entrada = por_atributo.setdefault(
+            campo, {"atributo": campo, "mapeados": [], "sin_mapear": []})
+        destino = ("mapeados" if registro["categoria"] is not None
+                   else "sin_mapear")
+        entrada[destino].append({
+            "valor": valor,
+            **({"categoria": registro["categoria"]}
+               if registro["categoria"] is not None else {}),
+            "personas": registro["personas"],
+        })
+    for entrada in por_atributo.values():
+        entrada["mapeados"].sort(key=lambda v: v["valor"])
+        entrada["sin_mapear"].sort(key=lambda v: v["valor"])
+    return [por_atributo[c] for c in sorted(por_atributo)]
 
 
 # ── R3.12.a · Exportar la muestra para precargar el instrumento ──────
@@ -548,7 +612,8 @@ def ingestar(conn_boveda, conn_semantica, encuesta_id, preguntas, filas,
     """
     encuesta = obtener(conn_boveda, encuesta_id)
     demograficas = sav.normalizar_demograficas(
-        demograficas, campos_validos=sav.campos_demograficos(conn_boveda))
+        demograficas, campos_validos=sav.campos_demograficos(conn_boveda),
+        conn=conn_boveda)
 
     marcadas = set(demograficas)
     excluidas = sorted(

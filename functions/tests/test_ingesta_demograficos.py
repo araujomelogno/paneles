@@ -214,7 +214,8 @@ def test_dos_variables_para_el_mismo_campo_se_rechazan():
 def test_dos_variables_pueden_ser_no_guardar_a_la_vez():
     marcado = sav.normalizar_demograficas(
         {"EDAD": sav.SOLO_EXCLUIR, "NSE": sav.SOLO_EXCLUIR})
-    assert marcado == {"EDAD": sav.SOLO_EXCLUIR, "NSE": sav.SOLO_EXCLUIR}
+    assert {v: sav.campo_de(e) for v, e in marcado.items()} == {
+        "EDAD": sav.SOLO_EXCLUIR, "NSE": sav.SOLO_EXCLUIR}
 
 
 def test_marcar_una_variable_que_no_esta_en_el_archivo_se_detecta():

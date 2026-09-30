@@ -69,7 +69,10 @@ def test_un_admin_define_un_atributo_y_queda_disponible_en_la_carga(
     assert "nse" in sav.campos_demograficos(conn_boveda)
     marcado = sav.normalizar_demograficas(
         {"NSE": "nse"}, campos_validos=sav.campos_demograficos(conn_boveda))
-    assert marcado == {"NSE": "nse"}
+    # Desde R-MAP.1 cada entrada lleva el campo y su mapeo de categorías; la
+    # forma vieja del pedido se sigue aceptando y significa «sin mapeo».
+    assert marcado == {"NSE": {"campo": "nse", "mapeo": {}}}
+    assert sav.campo_de(marcado["NSE"]) == "nse"
 
 
 def test_un_atributo_derivado_no_se_puede_inventar_desde_la_app(conn_boveda, actor):

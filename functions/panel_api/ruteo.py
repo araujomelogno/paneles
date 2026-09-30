@@ -992,7 +992,7 @@ def ingestar_sav(ctx, actor, params, cuerpo, consulta):
     # compatibilidad para las llamadas viejas, no como un mecanismo aparte.
     demograficas = sav.normalizar_demograficas(
         cuerpo.get("demograficas"), {c for fila in filas for c in fila},
-        campos_validos=sav.campos_demograficos(ctx.boveda))
+        campos_validos=sav.campos_demograficos(ctx.boveda), conn=ctx.boveda)
     mapeo = sav.mapeo_por_campo(demograficas) or (
         cuerpo.get("mapeo_patronimico") or {})
     # Los value labels de cada variable, para traducir el código del archivo
@@ -1089,7 +1089,7 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
 
     demograficas = sav.normalizar_demograficas(
         cuerpo.get("demograficas"), {c for fila in filas for c in fila},
-        campos_validos=sav.campos_demograficos(ctx.boveda))
+        campos_validos=sav.campos_demograficos(ctx.boveda), conn=ctx.boveda)
     opciones_por_variable = {
         p.get("codigo"): (p.get("opciones") or {}) for p in preguntas
     }
@@ -1293,9 +1293,28 @@ def editar_categoria(ctx, actor, params, cuerpo, consulta):
 def recalcular_atributo(ctx, actor, params, cuerpo, consulta):
     """R3.14.h — corregido el vocabulario, se recalculan los canónicos desde
     los valores crudos guardados. Sin volver a pedir el archivo original."""
-    salida = atributos.recalcular(ctx.boveda, params["atributo_id"], actor=actor)
+    salida = atributos.recalcular(
+        ctx.boveda, params["atributo_id"], actor=actor,
+        # R-MAP.5 — corregir el mapeo y recalcular desde los crudos, sin
+        # volver a subir el archivo.
+        mapeo=(cuerpo or {}).get("mapeo"))
     ctx.boveda.commit()
     return 200, salida
+
+
+@ruta("POST", "/atributos/<atributo_id>/sugerir-mapeo", "ingestar",
+      requisito="R-MAP.2")
+def sugerir_mapeo_de_atributo(ctx, actor, params, cuerpo, consulta):
+    """R-MAP.2 — qué categoría parece corresponderle a cada valor del archivo.
+
+    Es una propuesta y nada más: la pantalla la precarga en el desplegable y
+    quien carga confirma o corrige. No escribe nada.
+    """
+    cuerpo = cuerpo or {}
+    return 200, sav.sugerir_mapeo(
+        ctx.boveda, params["atributo_id"],
+        cuerpo.get("valores") or [],
+        etiquetas=cuerpo.get("etiquetas") or {})
 
 
 @ruta("GET", "/atributos-auditoria", "cumplimiento", requisito="R3.14")

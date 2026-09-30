@@ -2217,6 +2217,69 @@ la fila.
 
 ---
 
+<a id="d51"></a>
+## D51 · El mapeo a categorías se declara valor por valor, y lo que no se mapea se guarda igual
+
+**El problema.** R3.14.c pedía que los valores de una variable marcada como
+atributo categórico se mapearan a las categorías canónicas «igual que se hace
+con las etiquetas de una pregunta cerrada». Quedó a medias: el marcado que
+armaba la pantalla era `{variable: campo}` y decía *«esta variable es nivel
+educativo»*, nada más.
+
+Con eso, un archivo con códigos `1, 2, 3` no tenía cómo conectarse con
+`primaria`, `secundaria`, `terciaria`. Funcionaba de casualidad —cuando las
+etiquetas del `.sav` coincidían con el catálogo— y fallaba en silencio el
+resto de las veces: los filtros demográficos, la composición contra objetivo
+y las cuotas del muestreo quedaban trabajando sobre un atributo vacío, y nadie
+se enteraba en el momento de cargar.
+
+**Por qué un desplegable por valor y no un campo de texto.** Las opciones de
+una pregunta cerrada se cargan como texto (`1=Fernet; 2=Whisky`) y está bien:
+su destino es un embedding, y no hay vocabulario que respetar. Acá el destino
+es una categoría de un catálogo cerrado. Un texto libre dejaría escribir
+`primarai`, que no es ninguna categoría, y el error aparecería recién al
+ingestar. El desplegable hace dos cosas que el texto no: impide inventar una
+categoría, y **muestra cuáles quedaron sin asignar**.
+
+**Tres decisiones sobre qué pasa con lo que no se mapea:**
+
+1. **No entra como categoría.** Guardar el `99` como si fuera un valor del
+   atributo es lo que rompe la aritmética de las cuotas sin que falle nada.
+2. **Pero el crudo se guarda.** La fila queda con `valor_crudo` y sin
+   `categoria_id`. No es un valor —`f_atributo_persona` la filtra por su
+   `coalesce(...) is not null`, así que la persona no tiene ese atributo en
+   ninguna vista, consulta ni cuota— y es lo que permite corregir el mapeo
+   más adelante sin volver a pedir el archivo.
+3. **Se avisa antes, con el conteo.** «El 99 quedó sin mapear» no alcanza
+   para decidir; «el 99 quedó sin mapear, son 412 personas» sí. Se puede
+   seguir igual: un código de no respuesta no corresponde a ninguna
+   categoría y está bien que así sea.
+
+**La sugerencia propone y no aplica.** Cuando el `.sav` trae value labels que
+coinciden con el catálogo —sin distinguir mayúsculas ni acentos— el mapeo
+llega precargado. Nunca aplicado: una misma etiqueta puede significar cosas
+distintas en dos estudios, y aplicar sola una coincidencia de texto es
+exactamente el tipo de decisión que después nadie recuerda haber tomado.
+
+**Y el mapeo declarado gana sobre las etiquetas del archivo.** Si quien carga
+dijo que el `1` es primaria, el `1=Bajo` del `.sav` no lo contradice: para eso
+se le preguntó.
+
+**Una asimetría deliberada en qué se guarda como crudo.** Con mapeo declarado
+se guarda **el valor del archivo** (`1`), que es contra lo que se remapea. Sin
+mapeo declarado se sigue guardando **la etiqueta** (`Bajo`), que es contra lo
+que `recalcular()` resolvía desde R3.14.h. Cambiar eso habría dejado
+irrecuperables, sin un mapeo explícito, todos los valores cargados por el
+camino viejo.
+
+**Dónde vive.** `functions/panel_api/sav.py` (contrato, sugerencia y valores
+del archivo), `functions/panel_api/encuestas.py` (aplicación e informe),
+`functions/panel_api/atributos.py` (la fila pendiente y el recálculo con
+mapeo), `web/public/js/paginas/encuestas.js`,
+`functions/tests/test_mapeo_categorias.py`.
+
+---
+
 ## Anexo · Decisiones que no se tomaron
 
 Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
@@ -2250,4 +2313,6 @@ Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 | Calibrar los pesos del optimizador contra datos de Equipos | Pendiente, igual que los umbrales de fatiga. Los defaults están documentados pero no medidos | [D41](#d41) |
 | Revocar una convocatoria declarada antes de que venza | **No se hizo.** Una sesión que se cancela deja la declaración viva hasta su vencimiento. Se puede agregar como función de la superficie si aparece el caso; hoy el tope de 60 días y la purga acotan la exposición | [D50](#d50) |
 | Quién llama a `purgar_convocatorias_externas()` y cada cuánto | Pendiente: la función existe y es idempotente, pero todavía no está enganchada a ninguna rutina ni pantalla | [D50](#d50) |
+| Mapear a categorías desde la pantalla de atributos, no solo al cargar | **No se hizo.** Corregir un mapeo ya cargado se hace por API (`POST /atributos/{id}/recalcular` con `mapeo`); no hay pantalla para eso todavía | [D51](#d51) |
+| Mapear una variable con más de 60 valores distintos | **Deliberado:** no se ofrece. Una variable así no es un segmentador, y media lista de desplegables invita a mapear la mitad y creer que está completo | [D51](#d51) |
 | Alinear el voseo de la interfaz con el registro formal del manual | Sin decidir; requeriría recapturar las 44 pantallas | PR de la Fase 2 |

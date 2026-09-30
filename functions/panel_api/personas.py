@@ -80,18 +80,26 @@ def _atributos_del_cuerpo(cuerpo, datos_persona=None):
 
 
 def _fijar_atributos(conn, id_persona, valores, origen="alta", pisar=True,
-                     fecha_referencia=None):
+                     fecha_referencia=None, crudos=None, guardar_crudo=False):
     """Escribe los atributos del catálogo. Devuelve qué pasó con cada uno.
 
     Los que no corresponden a ninguna categoría no se inventan (R3.14.c): se
     informan, y la persona queda sin ese atributo.
+
+    `crudos` es `{clave: valor tal como vino del archivo}`. Importa cuando el
+    valor que se intenta fijar ya pasó por un mapeo declarado: lo que hay que
+    conservar para poder remapear es lo que decía el archivo, no lo que el
+    mapeo dedujo. Con `guardar_crudo`, un valor que no resuelve a ninguna
+    categoría deja esa fila guardada sin valor (R-MAP.4).
     """
     fijados, sin_categoria, discrepancias = [], [], []
+    crudos = crudos or {}
     for clave, valor in (valores or {}).items():
         try:
             resultado = atributos.fijar(
                 conn, id_persona, clave, valor, origen=origen,
-                pisar=pisar, fecha_referencia=fecha_referencia)
+                pisar=pisar, fecha_referencia=fecha_referencia,
+                crudo=crudos.get(clave), guardar_crudo=guardar_crudo)
         except NoEncontrado:
             # El atributo no existe en el catálogo. No se crea al vuelo: el
             # vocabulario lo define un admin (no-goal explícito de R3.14).
@@ -213,8 +221,31 @@ def _comparable(valor):
     return str(valor).strip().lower()
 
 
+def guardar_crudos_pendientes(conn, id_persona, crudos, origen="ingesta"):
+    """R-MAP.4 — guarda el valor del archivo de lo que quedó sin mapear.
+
+    La persona **no** queda con el atributo: la fila no tiene categoría y
+    `f_atributo_persona` la filtra. Lo único que hace es conservar lo que
+    decía el archivo, para que corregir el mapeo más adelante no obligue a
+    volver a pedirlo.
+    """
+    guardados = []
+    for clave, crudo in (crudos or {}).items():
+        try:
+            atributo = atributos.obtener(conn, clave)
+        except NoEncontrado:
+            continue
+        if atributo["tipo"] != "categorico":
+            continue
+        atributos.guardar_crudo_pendiente(conn, id_persona, atributo, crudo,
+                                          origen)
+        guardados.append(clave)
+    return guardados
+
+
 def completar_desde_archivo(conn, id_persona, datos, origen="ingesta",
-                           fecha_referencia=None):
+                           fecha_referencia=None, crudos=None,
+                           guardar_crudo=False):
     """Completa los demográficos vacíos con lo que trae un archivo de campo.
 
     Addendum de R3.9 · R3.9.d. Dos reglas, y la segunda es la que importa:
@@ -246,7 +277,8 @@ def completar_desde_archivo(conn, id_persona, datos, origen="ingesta",
 
     escritos = _fijar_atributos(
         conn, id_persona, del_catalogo, origen=origen, pisar=False,
-        fecha_referencia=fecha_referencia)
+        fecha_referencia=fecha_referencia, crudos=crudos,
+        guardar_crudo=guardar_crudo)
 
     if not limpio:
         return {"completados": list(escritos["fijados"]),

@@ -14,6 +14,12 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Revisión 2026-10-01.** La sección de ingesta suma «Qué significa cada
+> código del archivo»: el mapeo valor por valor de una variable marcada como
+> atributo categórico, el aviso previo de lo que quedó sin mapear y qué pasa
+> con esos valores (R-MAP). Es texto: no hizo falta recapturar ninguna
+> pantalla, solo regenerar el PDF.
+
 ## Cómo se rehace
 
 Las capturas se toman recorriendo la app de verdad en **modo demo**, que es el

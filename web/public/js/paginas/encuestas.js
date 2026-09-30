@@ -269,6 +269,22 @@ function resumirSinMapear(resultado) {
 /* «localidad (3), sexo (1)»: qué campos discreparon y cuántas veces. La
    lista completa puede ser larga y lo que hace falta para decidir si mirarla
    es saber de qué se trata. */
+/* R-MAP.3 — «nivel_educativo: 3 valor(es) mapeados; sin mapear 99 (12
+   personas)». Se nombra el valor y a cuánta gente afecta: sin el conteo, el
+   aviso no alcanza para decidir si se corrige o se sigue. */
+function resumirMapeo(porAtributo) {
+  const conPendientes = (porAtributo || []).filter((a) => a.sin_mapear?.length);
+  if (!conPendientes.length) return null;
+  return conPendientes.map((a) => {
+    const valores = a.sin_mapear.map(
+      (v) => `${v.valor} (${v.personas} persona${v.personas === 1 ? '' : 's'})`);
+    return `${a.atributo}: quedaron sin mapear ${valores.join(', ')}`;
+  }).join('. ')
+    + '. Esas personas no tienen ese atributo, pero el valor del archivo quedó '
+    + 'guardado: se puede corregir el mapeo desde Configuración → Atributos '
+    + 'demográficos y recalcular, sin volver a subir el archivo.';
+}
+
 function resumirDiscrepancias(discrepancias) {
   const porCampo = {};
   discrepancias.forEach((d) => { porCampo[d.campo] = (porCampo[d.campo] || 0) + 1; });
@@ -737,8 +753,9 @@ function abrirIngesta(destino, alTerminar) {
     ? Object.entries(opciones).map(([c, e]) => `${c}=${e}`).join('; ') : '');
 
   const filaPregunta = (codigo = '', texto = '', tipo = 'cerrada',
-                        opciones = null, rol = '') => `
-    <div class="pregunta-fila" data-tenia-etiquetas="${opciones ? '1' : '0'}">
+                        opciones = null, rol = '', valores = null) => `
+    <div class="pregunta-fila" data-tenia-etiquetas="${opciones ? '1' : '0'}"
+         data-valores="${esc(JSON.stringify(valores || []))}">
       <input type="text" class="p-codigo" placeholder="P1" value="${esc(codigo)}" />
       <input type="text" class="p-texto" placeholder="Texto de la pregunta" value="${esc(texto)}" />
       <select class="fselect p-tipo">
@@ -750,6 +767,120 @@ function abrirIngesta(destino, alTerminar) {
       <select class="fselect p-rol" title="Qué es esta variable">${opcionesDeRol(rol)}</select>
       <button class="modal-close p-quitar" title="Quitar">×</button>
     </div>`;
+
+  /* ── R-MAP.1 · Qué significa cada código del archivo ────────────────
+
+     Marcar «esta variable es nivel educativo» no alcanza: el archivo trae
+     `1, 2, 3` y el atributo tiene categorías `primaria, secundaria,
+     terciaria`. Sin decir cuál es cuál, el dato entra crudo o no entra.
+
+     Va como desplegable y no como texto libre —que es como se cargan las
+     opciones de una pregunta cerrada— porque el destino es un vocabulario
+     cerrado: el desplegable impide inventar una categoría y deja a la vista
+     cuáles quedaron sin asignar. */
+
+  const SIN_MAPEAR = '';
+
+  /* Los valores a mapear de una fila: los del archivo si se analizó, y si no
+     los códigos que alguien haya escrito en «1=Fernet; 2=Whisky». */
+  function valoresDeLaFila(fila) {
+    let delArchivo = [];
+    try { delArchivo = JSON.parse(fila.dataset.valores || '[]'); } catch { /* vacío */ }
+    // El análisis los manda como `{valor, filas}`; cuando la fila se cargó a
+    // mano solo están los códigos de «1=Fernet», sin conteo.
+    if (delArchivo.length) {
+      return delArchivo.map((v) => (typeof v === 'string'
+        ? { valor: v, filas: null } : v));
+    }
+    return Object.keys(parsearOpciones(fila.querySelector('.p-opciones').value) || {})
+      .map((v) => ({ valor: v, filas: null }));
+  }
+
+  /* Las etiquetas que el archivo le puso a cada código, para mostrarlas al
+     lado del valor: mapear «1» a ciegas es adivinar; mapear «1 · Primaria»
+     es confirmar. */
+  const etiquetasDeLaFila = (fila) =>
+    parsearOpciones(fila.querySelector('.p-opciones').value) || {};
+
+  function pintarMapeo(fila, atributo, propuesta, categorias) {
+    let caja$ = fila.parentElement.querySelector(
+      `.p-mapeo[data-de="${CSS.escape(fila.dataset.clave || '')}"]`);
+    caja$?.remove();
+    if (!atributo) return;
+
+    const etiquetas = etiquetasDeLaFila(fila);
+    const valores = valoresDeLaFila(fila);
+    if (!valores.length) return;
+
+    const opciones = (elegida) => [
+      `<option value="" ${!elegida ? 'selected' : ''}>— no mapear —</option>`,
+      ...categorias.map((c) => `<option value="${esc(c.clave)}" ${
+        c.clave === elegida ? 'selected' : ''}>${esc(c.etiqueta || c.clave)}</option>`),
+    ].join('');
+
+    const bloque = document.createElement('div');
+    bloque.className = 'p-mapeo';
+    bloque.dataset.de = fila.dataset.clave || '';
+    bloque.innerHTML = `
+      <div class="p-mapeo-titulo">Qué significa cada valor de
+        <strong>${esc(fila.querySelector('.p-codigo').value)}</strong>
+        en «${esc(atributo)}»</div>
+      <div class="p-mapeo-valores">
+        ${valores.map(({ valor, filas }) => `
+          <label class="p-mapeo-valor">
+            <span class="p-mapeo-crudo">${esc(valor)}${
+              etiquetas[valor] ? ` · ${esc(etiquetas[valor])}` : ''}${
+              filas ? ` <em>(${filas})</em>` : ''}</span>
+            <select class="fselect m-cat" data-valor="${esc(valor)}"
+                    data-filas="${filas == null ? '' : filas}">${
+              opciones(propuesta[valor] || SIN_MAPEAR)}</select>
+          </label>`).join('')}
+      </div>
+      <div class="p-mapeo-pendiente"></div>`;
+    fila.after(bloque);
+    bloque.querySelectorAll('.m-cat').forEach((sel) => {
+      sel.onchange = () => avisarDePendientes(bloque);
+    });
+    avisarDePendientes(bloque);
+  }
+
+  function avisarDePendientes(bloque) {
+    const pendientes = [...bloque.querySelectorAll('.m-cat')]
+      .filter((s) => !s.value)
+      .map((s) => s.dataset.valor);
+    const nota = bloque.querySelector('.p-mapeo-pendiente');
+    nota.textContent = pendientes.length
+      ? `Sin mapear: ${pendientes.join(', ')}. Esas personas quedan sin el `
+        + 'atributo; puede estar bien si son códigos de no respuesta.'
+      : '';
+    nota.classList.toggle('hay-pendientes', Boolean(pendientes.length));
+  }
+
+  /* Pide la sugerencia y repinta. El atributo cambió, así que lo que hubiera
+     elegido antes ya no aplica: las categorías son otras. */
+  async function refrescarMapeo(fila) {
+    const rol = fila.querySelector('.p-rol').value;
+    const atributo = catalogoDeAtributos.find((a) => a.clave === rol);
+    const esCategorico = atributo && atributo.tipo === 'categorico';
+    if (!esCategorico) {
+      fila.parentElement.querySelector(
+        `.p-mapeo[data-de="${CSS.escape(fila.dataset.clave || '')}"]`)?.remove();
+      return;
+    }
+    const valores = valoresDeLaFila(fila);
+    if (!valores.length) return;
+    try {
+      const r = await api.atributos.sugerirMapeo(
+        rol, valores.map((v) => v.valor), etiquetasDeLaFila(fila));
+      pintarMapeo(fila, atributo.etiqueta || rol, r.mapeo || {},
+                  r.categorias || []);
+    } catch {
+      // Sin sugerencia se mapea a mano: es peor no poder mapear que mapear
+      // sin ayuda.
+      pintarMapeo(fila, atributo.etiqueta || rol, {},
+                  catalogo.categoriasDe(catalogoDeAtributos, rol));
+    }
+  }
 
   /* R3.9.e — el campo de códigos según el tipo, y los avisos que van con él.
 
@@ -820,18 +951,33 @@ function abrirIngesta(destino, alTerminar) {
     nota.textContent = aviso;
   }
 
-  const agregarFila = (codigo, texto, tipo, opciones, rol) => {
+  let proximaClave = 0;
+  const agregarFila = (codigo, texto, tipo, opciones, rol, valores) => {
     preguntas$.insertAdjacentHTML(
-      'beforeend', filaPregunta(codigo, texto, tipo, opciones, rol));
+      'beforeend', filaPregunta(codigo, texto, tipo, opciones, rol, valores));
     const fila = preguntas$.lastElementChild;
+    // Una clave propia por fila: el bloque de mapeo va **después** de la
+    // fila, no adentro, y sin esto dos variables con el mismo código —o una
+    // fila recién agregada, todavía sin código— compartirían bloque.
+    fila.dataset.clave = `v${proximaClave += 1}`;
     fila.querySelector('.p-quitar').onclick = (e) => {
       e.preventDefault();
-      e.target.closest('.pregunta-fila').remove();
+      const f = e.target.closest('.pregunta-fila');
+      f.parentElement.querySelector(
+        `.p-mapeo[data-de="${CSS.escape(f.dataset.clave)}"]`)?.remove();
+      f.remove();
     };
     fila.querySelector('.p-tipo').onchange = () => ajustarFila(fila);
-    fila.querySelector('.p-rol').onchange = () => ajustarFila(fila);
+    fila.querySelector('.p-rol').onchange = () => {
+      ajustarFila(fila);
+      // R-MAP.1 — cambiar el atributo reinicia el mapeo: las categorías del
+      // nuevo son otras, y conservar lo elegido apuntaría a claves que ya no
+      // existen.
+      refrescarMapeo(fila);
+    };
     fila.querySelector('.p-opciones').oninput = () => ajustarFila(fila);
     ajustarFila(fila);
+    if (rol) refrescarMapeo(fila);
   };
   agregarFila();
   $('#add-pregunta', caja).onclick = (e) => { e.preventDefault(); agregarFila(); };
@@ -955,7 +1101,8 @@ function abrirIngesta(destino, alTerminar) {
       // su marca para confirmar o corregir. Una variable puede ser
       // segmentador en un estudio y ser el objeto de análisis en otro.
       .forEach((v) => agregarFila(
-        v.codigo, v.texto, v.tipo, v.opciones, v.demografica_sugerida || ''));
+        v.codigo, v.texto, v.tipo, v.opciones, v.demografica_sugerida || '',
+        v.valores));
     if (!preguntas$.children.length) agregarFila();
 
     $('#resumen-archivo', caja).textContent =
@@ -998,9 +1145,70 @@ function abrirIngesta(destino, alTerminar) {
     $$('.pregunta-fila', preguntas$).forEach((fila) => {
       const codigo = fila.querySelector('.p-codigo').value.trim();
       const rol = fila.querySelector('.p-rol').value;
-      if (codigo && rol) marcado[codigo] = rol;
+      if (!codigo || !rol) return;
+      // R-MAP.1 — el campo y, cuando es un atributo categórico, qué
+      // categoría le corresponde a cada valor del archivo. El backend
+      // acepta las dos formas; se manda la nueva solo cuando hay mapeo, para
+      // que un archivo sin categóricas siga mandando lo de siempre.
+      const mapeo = mapeoDeLaFila(fila);
+      marcado[codigo] = mapeo ? { campo: rol, mapeo } : rol;
     });
     return marcado;
+  }
+
+  /* `{valor: categoria}` de lo elegido en el bloque de esta fila, o `null`
+     si la fila no tiene bloque. «No mapear» no viaja: un valor ausente del
+     objeto **es** un valor sin mapear, y mandarlo en `null` diría lo mismo
+     con más ruido. */
+  function mapeoDeLaFila(fila) {
+    const bloque = preguntas$.querySelector(
+      `.p-mapeo[data-de="${CSS.escape(fila.dataset.clave || '')}"]`);
+    if (!bloque) return null;
+    const mapeo = {};
+    bloque.querySelectorAll('.m-cat').forEach((sel) => {
+      if (sel.value) mapeo[sel.dataset.valor] = sel.value;
+    });
+    return mapeo;
+  }
+
+  /* El aviso. Es un `confirm` y no un modal propio a propósito: la pantalla
+     ya tiene un modal abierto —éste— y anidar otro para una pregunta de sí o
+     no complica más de lo que aclara. */
+  function confirmarPendientes(pendientes) {
+    const detalle = pendientes.map((p) => {
+      const valores = p.valores.map(
+        (v) => `${v.valor}${v.filas ? ` (${v.filas} fila${v.filas === 1 ? '' : 's'})` : ''}`);
+      return `· ${p.variable} → ${p.atributo}: ${valores.join(', ')}`;
+    }).join('\n');
+    return Promise.resolve(window.confirm(
+      'Hay valores del archivo sin mapear a ninguna categoría:\n\n'
+      + `${detalle}\n\n`
+      + 'Esas personas van a quedar **sin** ese atributo. El valor del '
+      + 'archivo se guarda igual, así que se puede corregir el mapeo más '
+      + 'adelante sin volver a subirlo.\n\n'
+      + '¿Ingestar así?'));
+  }
+
+  /* R-MAP.3 — qué quedó sin mapear, para avisar **antes** de ingestar. */
+  function valoresSinMapear() {
+    const pendientes = [];
+    $$('.pregunta-fila', preguntas$).forEach((fila) => {
+      const bloque = preguntas$.querySelector(
+        `.p-mapeo[data-de="${CSS.escape(fila.dataset.clave || '')}"]`);
+      if (!bloque) return;
+      const sinMapear = [...bloque.querySelectorAll('.m-cat')]
+        .filter((s) => !s.value)
+        .map((s) => ({ valor: s.dataset.valor,
+                       filas: Number(s.dataset.filas) || null }));
+      if (sinMapear.length) {
+        pendientes.push({
+          variable: fila.querySelector('.p-codigo').value.trim(),
+          atributo: fila.querySelector('.p-rol').value,
+          valores: sinMapear,
+        });
+      }
+    });
+    return pendientes;
   }
 
   /* Arma el cuerpo del modo «crear individuos». Valida acá lo que el
@@ -1086,6 +1294,14 @@ function abrirIngesta(destino, alTerminar) {
         'Cada pregunta necesita su código y su texto: el texto es lo que se embebe.'));
       return;
     }
+
+    // R-MAP.3 — los valores sin mapear se avisan **antes** de ingestar, con
+    // cuánta gente afecta cada uno. Se puede seguir igual —un `99` de no
+    // respuesta no se mapea a ninguna categoría y está bien que así sea—,
+    // pero de forma consciente: descubrirlo semanas después en una cuota que
+    // no cierra es lo que este aviso existe para evitar.
+    const pendientes = valoresSinMapear();
+    if (pendientes.length && !(await confirmarPendientes(pendientes))) return;
 
     let extraSav = {};
     if (datosArchivo.savBase64 && $('#modo-sav', caja).value === 'crear_individuos') {
@@ -1190,6 +1406,10 @@ function abrirIngesta(destino, alTerminar) {
         (resultado.discrepancias_demograficas || []).length
           ? `${resultado.discrepancias_demograficas.length} dato(s) del archivo difieren de lo que ya estaba en la ficha del panelista y no se pisaron: ${resumirDiscrepancias(resultado.discrepancias_demograficas)}. El archivo de un estudio no es autoridad sobre la ficha; revisalo desde Panelistas.`
           : null,
+        // R-MAP.3 — por atributo, qué valor se mapeó y cuál quedó sin
+        // mapear. Es el informe que cierra el círculo: lo que la pantalla
+        // avisó antes de ingestar, confirmado con lo que realmente pasó.
+        resumirMapeo(resultado.mapeo_de_categorias),
       ].filter(Boolean).join(' '));
       if (esCarga) {
         // La pantalla que abrió la carga es la de panelistas, y la gente
