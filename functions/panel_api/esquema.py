@@ -106,6 +106,10 @@ MIGRACIONES_BOVEDA = (
     ("0015_catalogo_acciones_usuario.sql", (
         "accion_usuario", "v_usuario_auditoria",
     )),
+    ("0016_convocatoria_externa.sql", (
+        "convocatoria_externa", "declarar_convocatoria()",
+        "purgar_convocatorias_externas()",
+    )),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -187,6 +191,9 @@ PARA_QUE = {
     "prohibir_pii_en_ddl()": "la regla dura #1 hecha valer por la base: sin esta función un `alter table` puede meter PII del lado semántico y nadie se entera",
     "accion_usuario": "las acciones de gestión de usuarios que se auditan; sin ella no se puede registrar que alguien pidió el enlace de acceso de otra persona",
     "v_usuario_auditoria": "la auditoría de usuarios con la etiqueta de cada acción resuelta",
+    "convocatoria_externa": "a quién convocó cada consumidor en su propio sistema; sin ella la bóveda le niega el contacto porque no ve esa convocatoria",
+    "declarar_convocatoria()": "la única escritura de un consumidor externo: declarar a quién convocó, con el gate de consentimiento reaplicado",
+    "purgar_convocatorias_externas()": "borra las declaraciones vencidas hace más de 30 días; vencida no habilita nada y guardarla sería retención sin finalidad",
 }
 
 

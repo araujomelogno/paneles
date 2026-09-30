@@ -130,6 +130,47 @@ La tabla de auditoría ya existe: `reidentificacion`, con `motivo` que contempla
 - Dado un rol de consumidor, cuando intenta `select email from persona`, entonces la base lo rechaza (R5.4). La función es la única vía.
 - Dado un canal que no existe para esa persona, entonces devuelve vacío explícito, no error, y registra el intento.
 
+
+##### R5.2.a — La convocatoria activa se verifica por sistema *(agregado 2026-09-30)*
+
+La `0014` implementó el chequeo de convocatoria activa mirando **solo las
+tablas de `paneles`** —`participacion` sobre una `encuesta` no cerrada— y se
+lo aplicó a todo consumidor. Eso no es lo que pide el párrafo de arriba, y
+para el segundo consumidor no es un gate sino un muro: sus convocatorias
+viven en su propio store, la bóveda no las ve, y escribir en `participacion`
+le está negado por R5.4 —con razón—.
+
+**`declarar_convocatoria(id_persona uuid, referencia text, vence_en timestamptz)`**,
+`security definer`, otorgada al rol de cada consumidor.
+
+- El consumidor declara a quién convocó en su sistema, con una referencia
+  opaca a su sesión y un vencimiento. Es su **única escritura** sobre la
+  bóveda.
+- Reaplica el gate de consentimiento: no se declara una convocatoria de quien
+  no consintió `contacto_participacion`.
+- El vencimiento tiene tope de **60 días** y no puede estar en el pasado.
+- El sistema se deriva de la conexión (R5.6), no lo declara el llamador.
+
+Y `contacto_para_convocatoria()` acepta las dos formas: la participación
+abierta cuando quien llama es `paneles`, y una declaración vigente del sistema
+que llama cuando es cualquier otro.
+
+**Criterios de aceptación**
+
+- Dada una persona con consentimiento vigente y una `participacion` abierta de
+  `paneles`, cuando **otro** sistema pide su contacto, entonces la función
+  falla: la convocatoria de `paneles` no es la suya.
+- Dada la misma persona, cuando ese sistema declara su convocatoria y vuelve a
+  pedir, entonces recibe el contacto y la lectura queda auditada como siempre.
+- Dada una declaración vencida, o de otro sistema, entonces la función falla.
+- Dado un vencimiento a más de 60 días, entonces la declaración se rechaza.
+- Dada una persona sin consentimiento vigente, entonces no se puede declarar
+  una convocatoria suya.
+- Dado un retiro de `contacto_participacion` o una baja total, entonces las
+  declaraciones de esa persona se borran.
+- Las declaraciones vencidas hace más de 30 días se purgan: vencidas no
+  habilitan nada, y conservarlas sería retención sin finalidad.
+
 ---
 
 #### R5.3 — Cascada de baja extensible

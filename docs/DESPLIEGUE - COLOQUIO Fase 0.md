@@ -521,6 +521,11 @@ sistema solo si no viene ninguno.
 > **Pendiente:** corregir el test (que pase un email de usuario y verifique que
 > ese email quede registrado). **La migración no se toca.**
 
+> **Desde la `0016` son 16 chequeos, no 14.** Los dos nuevos —«la
+> convocatoria se verifica por sistema» y «la declaración tiene tope y
+> gate»— prueban R5.2.a, y pasan. Los dos de acá abajo siguen fallando por
+> los mismos motivos: 14 de 16.
+
 **«un rol sin registrar no consigue nada».** Falla con `fe_sendauth: no password
 supplied`: el chequeo intenta conectarse con un rol no registrado y sin
 credenciales. Contra un cluster local funciona; contra Cloud SQL **toda**
@@ -611,7 +616,11 @@ hoy las escribió `paneles`.
 - [ ] `python3 scripts/verificar_esquema.py` en verde **después de §3.4**
       (antes de aplicar la `0014`, esa migración figura en ✗ y es lo esperado)
 - [ ] `python3 scripts/verificar_coloquio.py` contra el cluster de pruebas: 14/14
+      (16/16 una vez aplicada la `0016`, ver más abajo)
 - [ ] `python3 scripts/verificar_coloquio.py` contra la instancia real: 14/14
+      — hoy da 12/14 por los dos de §7.1.1, que no son de la bóveda
+- [ ] `boveda/0016` aplicada: sin ella COLOQUIO no puede convocar. Ver
+      [`DESPLIEGUE - R5.2.a convocatoria externa.md`](DESPLIEGUE%20-%20R5.2.a%20convocatoria%20externa.md)
 - [ ] `pytest` en verde
 - [ ] Funciones redesplegadas (`firebase deploy --only functions,hosting`)
 - [ ] Panelistas → alta con consentimiento: funciona
