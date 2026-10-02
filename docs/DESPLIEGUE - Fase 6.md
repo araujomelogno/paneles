@@ -8,6 +8,21 @@
 
 ---
 
+> ### ⚠ El paso 5 de este documento quedó superado por R6.1.a
+>
+> Este manual hace entrar al panelista con un **enlace de un solo uso por
+> visita**. R6.1.a lo reemplazó por **usuario y contraseña**, y el enlace
+> quedó solo para crearla y recuperarla.
+>
+> * **Si todavía no desplegaste la Fase 6**, seguí este documento igual
+>   —la migración `0017` y los pasos 7 a 10 siguen valiendo— pero **saltéate
+>   el paso 5** y, en su lugar, hacé el despliegue de
+>   **[`DESPLIEGUE - R6.1.a acceso con contraseña.md`](DESPLIEGUE%20-%20R6.1.a%20acceso%20con%20contrase%C3%B1a.md)**
+>   a continuación, que habilita el proveedor que corresponde.
+> * **Si ya la desplegaste**, lo que te toca es solo ese otro documento.
+
+---
+
 ## Lo primero que hay que entender de este despliegue
 
 **Esta fase da vuelta la postura de seguridad del sistema.** Hasta ahora la

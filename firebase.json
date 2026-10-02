@@ -23,7 +23,7 @@
         "destination": "/portal.html"
       },
       {
-        "source": "/entrar",
+        "source": "/clave",
         "destination": "/portal.html"
       },
       {

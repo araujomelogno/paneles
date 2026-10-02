@@ -91,10 +91,14 @@ PUBLICAS = frozenset({
     # límite de tasa y por el desafío anti-automatización.
     ("POST", "/inscripciones/verificacion"),
     ("POST", "/inscripciones/verificacion/comprobar"),
-    # R6.1 — pedir el enlace de acceso al portal es público por definición:
-    # quien lo pide todavía no tiene sesión. Su protección no es el token
-    # sino el límite de tasa y que la respuesta sea siempre la misma.
-    ("POST", "/portal/acceso"),
+    # R6.1.a — las tres rutas con las que se entra al portal son públicas
+    # por definición: quien las usa todavía no tiene sesión. Su protección
+    # no es el token sino el límite de tasa y que la respuesta no revele
+    # nada —la misma exista o no el correo, la misma sea cual sea el motivo
+    # por el que una credencial no entra—.
+    ("POST", "/portal/clave/enlace"),   # «creá» o «recuperá» mi contraseña
+    ("POST", "/portal/clave"),          # la fijo con el token del enlace
+    ("POST", "/portal/sesion/clave"),   # entro con correo y contraseña
 })
 
 # R6.2 — las rutas del portal se autentican contra Firebase Auth pero **no**
@@ -906,7 +910,11 @@ def pedir_verificacion(ctx, actor, params, cuerpo, consulta):
     envío de códigos es lo que cuesta plata y lo que puede molestar a un
     tercero, así que es lo que hay que proteger.
     """
-    origen = (cuerpo.get("origen_ip") or "").strip() or None
+    # El cuerpo puede declarar un origen —lo usan las pruebas y el
+    # emulador—, pero lo que vale en producción es el que `main.py` derivó
+    # de los headers: si el límite se contara por un campo que manda el
+    # cliente, bastaría con cambiarlo en cada intento.
+    origen = ctx.origen or (cuerpo.get("origen_ip") or "").strip() or None
     desafio.validar(cuerpo.get("desafio_token"), origen=origen)
     return 200, verificacion_contacto.pedir_codigo(
         ctx.boveda, cuerpo.get("canal"), cuerpo.get("destino"), origen=origen)
@@ -1376,6 +1384,33 @@ def fijar_atributo_de_persona(ctx, actor, params, cuerpo, consulta):
 #  Fase 4 · 4A — Contacto
 # ════════════════════════════════════════════════════════════════════
 
+@ruta("POST", "/panelistas/<id_persona>/acceso-portal", "enrolar",
+      requisito="R6.1.a")
+def emitir_acceso_al_portal(ctx, actor, params, cuerpo, consulta):
+    """Le manda al panelista el enlace para crear su contraseña.
+
+    Va con `enrolar` y no con `gestionar_usuarios`: no es dar de alta a nadie
+    en la aplicación de administración —el panelista no es un usuario del
+    sistema y no tiene rol—, es un trámite sobre la ficha de una persona que
+    ya está en el panel, igual que corregirle el celular.
+
+    `POST` y no `GET` por lo mismo que la ruta equivalente de R2.12: tiene
+    efecto —emite una credencial de un solo uso y escribe el rastro—, y un
+    `GET` con efectos lo dispara solo cualquier prefetch.
+    """
+    salida = portal.emitir_para_panelista(
+        ctx.boveda, params["id_persona"], actor=actor)
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("GET", "/panelistas/<id_persona>/acceso-portal", "leer",
+      requisito="R6.1.a")
+def historial_de_acceso_al_portal(ctx, actor, params, cuerpo, consulta):
+    """Qué enlaces se le emitieron, quién los pidió y cuáles siguen vivos."""
+    return 200, {"items": portal.emisiones_de(ctx.boveda, params["id_persona"])}
+
+
 @ruta("GET", "/panelistas/<id_persona>/canales", "leer", requisito="R4.4")
 def canales_de_persona(ctx, actor, params, cuerpo, consulta):
     return 200, {"items": preferencias.listar(ctx.boveda, params["id_persona"])}
@@ -1683,21 +1718,75 @@ def _yo(ctx, actor):
     return portal.persona_de(ctx.boveda, actor.uid)
 
 
-@ruta("POST", "/portal/acceso", None, requisito="R6.1")
-def portal_pedir_acceso(ctx, actor, params, cuerpo, consulta):
-    """Pide el enlace de acceso. Contesta lo mismo exista o no el correo."""
-    salida = portal.pedir_acceso(
-        ctx.boveda, (cuerpo or {}).get("email"),
-        origen=(cuerpo or {}).get("origen"))
+@ruta("POST", "/portal/clave/enlace", None, requisito="R6.1.a, R6.1.c")
+def portal_pedir_enlace(ctx, actor, params, cuerpo, consulta):
+    """«Crear mi contraseña» y «me la olvidé» son la misma ruta.
+
+    El cliente dice cuál de los dos textos mostró, y eso va al registro como
+    motivo; lo que hace el servidor es idéntico, y la respuesta también.
+    Separarlas en dos rutas con dos respuestas sería darle a quien prueba
+    direcciones una segunda forma de preguntar lo mismo.
+    """
+    cuerpo = cuerpo or {}
+    motivo = (cuerpo.get("motivo") or portal.RECUPERACION)
+    if motivo not in portal.MOTIVOS_DE_ENLACE:
+        motivo = portal.RECUPERACION
+    salida = portal.pedir_enlace_de_clave(
+        ctx.boveda, cuerpo.get("email"), motivo=motivo,
+        origen=ctx.origen or cuerpo.get("origen"))
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("POST", "/portal/clave", None, requisito="R6.1.a")
+def portal_fijar_clave(ctx, actor, params, cuerpo, consulta):
+    """Fija la contraseña con el token del enlace, y deja la sesión abierta."""
+    cuerpo = cuerpo or {}
+    salida = portal.fijar_clave(ctx.boveda, cuerpo.get("token"),
+                                cuerpo.get("clave"), ctx.credenciales)
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("POST", "/portal/sesion/clave", None, requisito="R6.1.b")
+def portal_entrar(ctx, actor, params, cuerpo, consulta):
+    """Correo y contraseña. Todo lo que falla contesta lo mismo.
+
+    El commit va **también cuando falla**: el intento fallido se registra en
+    la misma transacción, y si se perdiera con el rollback el límite de tasa
+    no contaría nada. Es el detalle que convierte la regla en control.
+    """
+    cuerpo = cuerpo or {}
+    try:
+        salida = portal.iniciar_sesion(
+            ctx.boveda, cuerpo.get("email"), cuerpo.get("clave"),
+            ctx.credenciales, origen=ctx.origen or cuerpo.get("origen"))
+    except ErrorApi:
+        ctx.boveda.commit()
+        raise
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("POST", "/portal/clave/cambio", None, requisito="R6.1.c")
+def portal_cambiar_clave(ctx, actor, params, cuerpo, consulta):
+    """Con sesión abierta y la contraseña actual. Cierra las demás sesiones."""
+    cuerpo = cuerpo or {}
+    try:
+        salida = portal.cambiar_clave(
+            ctx.boveda, _yo(ctx, actor), cuerpo.get("actual"),
+            cuerpo.get("nueva"), ctx.credenciales, origen=ctx.origen or cuerpo.get("origen"))
+    except ErrorApi:
+        ctx.boveda.commit()
+        raise
     ctx.boveda.commit()
     return 200, salida
 
 
 @ruta("POST", "/portal/sesion", None, requisito="R6.2")
 def portal_sesion(ctx, actor, params, cuerpo, consulta):
-    """Ata la cuenta recién autenticada a su persona, o confirma el vínculo."""
-    salida = portal.vincular(ctx.boveda, actor.uid, actor.email,
-                             token=(cuerpo or {}).get("token"))
+    """Confirma el vínculo de la sesión ya abierta con su persona."""
+    salida = portal.vincular(ctx.boveda, actor.uid, actor.email)
     ctx.boveda.commit()
     return 200, {**salida, "id_persona": str(salida["id_persona"])}
 
@@ -1720,15 +1809,21 @@ def portal_pedir_verificacion(ctx, actor, params, cuerpo, consulta):
     cuerpo = cuerpo or {}
     return 200, portal.pedir_verificacion_de_contacto(
         ctx.boveda, _yo(ctx, actor), cuerpo.get("canal"), cuerpo.get("destino"),
-        origen=cuerpo.get("origen"))
+        origen=ctx.origen or cuerpo.get("origen"))
 
 
-@ruta("POST", "/portal/contacto", None, requisito="R6.6")
+@ruta("POST", "/portal/contacto", None, requisito="R6.6, R6.1.d, R6.1.f")
 def portal_confirmar_contacto(ctx, actor, params, cuerpo, consulta):
     cuerpo = cuerpo or {}
-    salida = portal.confirmar_contacto(
-        ctx.boveda, _yo(ctx, actor), cuerpo.get("canal"), cuerpo.get("destino"),
-        cuerpo.get("codigo"))
+    try:
+        salida = portal.confirmar_contacto(
+            ctx.boveda, _yo(ctx, actor), cuerpo.get("canal"),
+            cuerpo.get("destino"), cuerpo.get("codigo"),
+            clave=cuerpo.get("clave"), credenciales=ctx.credenciales,
+            origen=ctx.origen or cuerpo.get("origen"))
+    except ErrorApi:
+        ctx.boveda.commit()
+        raise
     ctx.boveda.commit()
     return 200, salida
 
@@ -1775,12 +1870,25 @@ def portal_finalidades(ctx, actor, params, cuerpo, consulta):
     return 200, {"items": portal.finalidades(ctx.boveda, _yo(ctx, actor))}
 
 
-@ruta("DELETE", "/portal/finalidades/<finalidad>", None, requisito="R6.8")
+@ruta("POST", "/portal/finalidades/<finalidad>/retiro", None,
+      requisito="R6.8, R6.1.d")
 def portal_retirar_finalidad(ctx, actor, params, cuerpo, consulta):
-    """Retirar una finalidad **no** es darse de baja: el panel queda intacto."""
-    salida = portal.retirar_finalidad(
-        ctx.boveda, _yo(ctx, actor), params["finalidad"],
-        conn_semantica=ctx.semantica)
+    """Retirar una finalidad **no** es darse de baja: el panel queda intacto.
+
+    `POST .../retiro` y no `DELETE` desde que R6.1.d le agregó la
+    contraseña: un `DELETE` con cuerpo es legal pero hay intermediarios que
+    lo descartan, y un cuerpo descartado acá dejaría a la gente sin poder
+    retirar nada.
+    """
+    cuerpo = cuerpo or {}
+    try:
+        salida = portal.retirar_finalidad(
+            ctx.boveda, _yo(ctx, actor), params["finalidad"],
+            conn_semantica=ctx.semantica, clave=cuerpo.get("clave"),
+            credenciales=ctx.credenciales, origen=ctx.origen or cuerpo.get("origen"))
+    except ErrorApi:
+        ctx.boveda.commit()
+        raise
     ctx.boveda.commit()
     return 200, salida
 
@@ -1791,9 +1899,16 @@ def portal_previo_a_la_baja(ctx, actor, params, cuerpo, consulta):
     return 200, portal.previo_a_la_baja(ctx.boveda, _yo(ctx, actor))
 
 
-@ruta("POST", "/portal/baja", None, requisito="R6.9")
+@ruta("POST", "/portal/baja", None, requisito="R6.9, R6.1.d")
 def portal_darse_de_baja(ctx, actor, params, cuerpo, consulta):
-    salida = portal.darse_de_baja(ctx.boveda, _yo(ctx, actor),
-                                  conn_semantica=ctx.semantica)
+    cuerpo = cuerpo or {}
+    try:
+        salida = portal.darse_de_baja(
+            ctx.boveda, _yo(ctx, actor), conn_semantica=ctx.semantica,
+            clave=cuerpo.get("clave"), credenciales=ctx.credenciales,
+            origen=ctx.origen or cuerpo.get("origen"))
+    except ErrorApi:
+        ctx.boveda.commit()
+        raise
     ctx.boveda.commit()
     return 200, salida

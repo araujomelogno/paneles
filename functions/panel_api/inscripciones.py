@@ -461,7 +461,33 @@ def obtener(conn, inscripcion_id, con_candidatos=True):
     return salida
 
 
-def aprobar(conn, inscripcion_id, actor, panel_id=None, id_persona=None):
+def _emitir_acceso_al_portal(conn, id_persona, actor, enviar=None):
+    """R6.1.a — la inscripción aprobada sale con su enlace para crear la
+    contraseña.
+
+    **No puede hacer fallar la aprobación.** Mandar un correo depende de un
+    proveedor de afuera, y una aprobación que se deshace porque el servicio
+    de correo está caído dejaría a la persona sin alta *y* sin enlace, que es
+    estrictamente peor que con alta y sin enlace: lo segundo se arregla
+    reenviándolo desde la ficha, lo primero hay que volver a aprobarlo.
+
+    Por eso el resultado se informa en vez de propagarse. Si dice `error`,
+    la salida es el botón de reenvío de la ficha del panelista.
+    """
+    from . import portal
+
+    try:
+        salida = portal.emitir_para_panelista(
+            conn, id_persona, actor=actor, enviar=enviar)
+        return {"estado": "emitido",
+                **{k: v for k, v in salida.items()
+                   if k in ("horas", "enlace_sin_enviar", "aviso")}}
+    except Exception as error:  # noqa: BLE001
+        return {"estado": "error", "detalle": str(error)}
+
+
+def aprobar(conn, inscripcion_id, actor, panel_id=None, id_persona=None,
+            enviar_acceso=None):
     """Convierte una inscripción en panelista.
 
     Recién acá se crea la persona, y con ella el consentimiento que el
@@ -525,6 +551,8 @@ def aprobar(conn, inscripcion_id, actor, panel_id=None, id_persona=None):
              where id = %s
             """,
             (id_persona, getattr(actor, "uid", None), panel_id, inscripcion_id))
+        acceso = _emitir_acceso_al_portal(conn, id_persona, actor,
+                                          enviar=enviar_acceso)
         conn.commit()
         return {
             "estado": "aprobada",
@@ -532,6 +560,7 @@ def aprobar(conn, inscripcion_id, actor, panel_id=None, id_persona=None):
             "id_persona": str(id_persona),
             "persona": "fusionada",
             "panel_id": destino,
+            "acceso_al_portal": acceso,
         }
 
     cuerpo = {
@@ -580,6 +609,8 @@ def aprobar(conn, inscripcion_id, actor, panel_id=None, id_persona=None):
         (resultado["id_persona"], getattr(actor, "uid", None), panel_id,
          inscripcion_id),
     )
+    acceso = _emitir_acceso_al_portal(conn, resultado["id_persona"], actor,
+                                      enviar=enviar_acceso)
     conn.commit()
     return {
         "estado": "aprobada",
@@ -587,6 +618,10 @@ def aprobar(conn, inscripcion_id, actor, panel_id=None, id_persona=None):
         "id_persona": resultado["id_persona"],
         "persona": resultado["estado"],   # 'creada' | 'reutilizada'
         "panel_id": cuerpo["panel_id"],
+        # R6.1.a — el enlace para crear la contraseña sale con el alta: si
+        # no saliera solo, cada aprobación quedaría esperando que alguien se
+        # acuerde de mandarlo.
+        "acceso_al_portal": acceso,
     }
 
 

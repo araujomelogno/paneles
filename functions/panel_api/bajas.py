@@ -120,8 +120,18 @@ def _confirmar_borrado_semantica(conn, id_persona, error=None):
     )
 
 
-def retirar(conn_boveda, id_persona, finalidad=TODAS, actor=None, conn_semantica=None):
-    """Retira el consentimiento y ejecuta la cascada que corresponda."""
+def retirar(conn_boveda, id_persona, finalidad=TODAS, actor=None,
+            conn_semantica=None, credenciales=None):
+    """Retira el consentimiento y ejecuta la cascada que corresponda.
+
+    R6.1.e — una baja total **corta el acceso al portal**, y eso vive acá y
+    no en el camino del portal a propósito: la baja la puede ejecutar el
+    titular desde `/portal`, el DPO desde la administración o un job de
+    cumplimiento, y si el corte viviera en uno de los tres caminos los otros
+    dos dejarían la credencial viva y las sesiones abiertas. Es la misma
+    razón por la que el gate de consentimiento es una vista y no un `select`
+    en Python.
+    """
     if finalidad != TODAS and finalidad not in consentimiento.FINALIDADES:
         raise DatosInvalidos(
             f"Finalidad desconocida: {finalidad!r}.",
@@ -176,6 +186,18 @@ def retirar(conn_boveda, id_persona, finalidad=TODAS, actor=None, conn_semantica
                 if borra_pii:
                     _confirmar_borrado_semantica(conn_boveda, id_persona, str(error))
 
+    # R6.1.e — antes del `delete`, porque `cuenta_panelista` cascadea con la
+    # persona y después ya no hay `uid` que deshabilitar. Perder esa fila es
+    # la mitad del corte —sin ella la sesión no resuelve a nadie—; la otra
+    # mitad es apagar la credencial en Auth, que es lo que impide volver a
+    # entrar y lo que invalida las sesiones de otros dispositivos.
+    acceso = {"estado": "no_aplica"}
+    if borra_pii:
+        from . import portal
+
+        acceso = portal.cortar_acceso(conn_boveda, id_persona,
+                                      credenciales=credenciales)
+
     pii_borrada = 0
     if borra_pii:
         # Borra la PII. Las FK con `on delete cascade` se llevan alias,
@@ -191,6 +213,10 @@ def retirar(conn_boveda, id_persona, finalidad=TODAS, actor=None, conn_semantica
         "membresias_dadas_de_baja": membresias_bajas,
         "pii_borrada": bool(pii_borrada),
         "semantica": resultado_semantica,
+        # Qué pasó con la credencial del portal. Se informa en vez de
+        # hacerse el distraído: si Firebase estaba caído, el DPO tiene que
+        # poder ver que esa cuenta quedó por apagar.
+        "acceso_al_portal": acceso,
         # Cuántos sistemas quedaron notificados, y cuáles siguen sin
         # confirmar. Es lo que convierte «la cascada anda» en algo que se
         # puede mirar.

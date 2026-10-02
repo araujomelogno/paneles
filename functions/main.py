@@ -63,6 +63,13 @@ SECRETOS = [
     # entre ambientes y no puede vivir en el código»: el enlace apunta acá, y
     # apuntarlo mal manda a los panelistas a otro lado.
     "PORTAL_URL",
+    # ── R6.1.a ──
+    # La *web API key* del proyecto. Es pública por diseño —va en la
+    # configuración del frontend— pero igual se declara acá, porque la
+    # función la necesita en el runtime para comprobar contraseñas contra
+    # Identity Toolkit, que es la única operación de Auth que el Admin SDK
+    # no hace. Sin ella no entra nadie al portal.
+    "FIREBASE_WEB_API_KEY",
 ]
 
 PREFIJO = "/api"
@@ -74,6 +81,26 @@ def _json(status, cuerpo):
         status=status,
         headers={"Content-Type": "application/json; charset=utf-8"},
     )
+
+
+def _origen_de(req):
+    """De dónde viene la request, para los límites por origen.
+
+    Sale de `X-Forwarded-For`, que es lo que pone Firebase Hosting delante
+    de la función, y no de un campo del cuerpo. La diferencia no es de
+    estilo: un límite cuyo identificador lo elige quien lo sufre no limita
+    nada —alcanza con mandar un `origen` distinto en cada intento—.
+
+    Se toma la **primera** dirección de la cadena, que es la del cliente;
+    las que siguen son los proxies. Un cliente puede mandar su propio
+    `X-Forwarded-For` y Hosting le antepone la IP real, así que el primer
+    valor puede ser inventado; por eso el límite por origen es el secundario
+    y el que muerde de verdad es el de por correo, que es por cuenta.
+    """
+    cadena = (req.headers.get("X-Forwarded-For")
+              or req.headers.get("x-forwarded-for") or "")
+    primera = cadena.split(",")[0].strip()
+    return primera or (req.remote_addr or None)
 
 
 def _camino_de(req):
@@ -135,7 +162,7 @@ def api(req: https_fn.Request) -> https_fn.Response:
 
     try:
         cfg = config.cargar()
-        with contexto.abrir(cfg) as ctx:
+        with contexto.abrir(cfg, origen=_origen_de(req)) as ctx:
             status, respuesta = ruteo.despachar(
                 req.method, _camino_de(req), cuerpo, consulta, actor, ctx
             )

@@ -321,8 +321,11 @@ def test_las_rutas_publicas_son_solo_esas_dos():
     desde la landing sería imposible. Las dos tienen su propio límite de tasa
     y pasan por el desafío anti-automatización.
 
-    La Fase 6 suma una quinta, por el mismo motivo: pedir el enlace de
-    acceso al portal es lo que hace quien **todavía no** tiene sesión.
+    La Fase 6 suma las del portal, por el mismo motivo: son lo que hace
+    quien **todavía no** tiene sesión. Desde R6.1.a son tres —pedir el
+    enlace, fijar la contraseña con él, y entrar— y conviene mirarlas de
+    cerca: ninguna lee un dato de nadie, las tres contestan lo mismo gane o
+    pierda el intento, y las tres tienen su propio límite de tasa.
     """
     from panel_api import ruteo
 
@@ -331,13 +334,18 @@ def test_las_rutas_publicas_son_solo_esas_dos():
         ("POST", "/inscripciones"),
         ("POST", "/inscripciones/verificacion"),
         ("POST", "/inscripciones/verificacion/comprobar"),
-        # R6.1 — pedir el enlace de acceso al portal. Quien lo pide todavía
-        # no tiene sesión, así que exigir token sería imposible. No lee ni
-        # devuelve ningún dato: contesta lo mismo exista o no el correo, y
-        # está protegida por su propio límite de tasa.
-        ("POST", "/portal/acceso"),
+        ("POST", "/portal/clave/enlace"),
+        ("POST", "/portal/clave"),
+        ("POST", "/portal/sesion/clave"),
     })
-    # Y ninguna de las cuatro lee datos de otros panelistas.
+    # Lo que **no** es público del portal: todo lo que muestra o cambia un
+    # dato. Si alguna de éstas cayera en la lista, el portal entero se
+    # abriría sin sesión.
+    for camino in ("/portal/perfil", "/portal/puntos", "/portal/baja",
+                   "/portal/clave/cambio", "/portal/sesion"):
+        assert ruteo.es_publica("POST", camino) is False, camino
+        assert ruteo.es_publica("GET", camino) is False, camino
+    # Y ninguna de las de inscripción lee datos de otros panelistas.
     assert ruteo.es_publica("GET", "/inscripciones/1") is False
     assert ruteo.es_publica("POST", "/inscripciones") is True
     assert ruteo.es_publica("GET", "/inscripciones") is False, (

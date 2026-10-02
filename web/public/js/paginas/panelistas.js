@@ -642,6 +642,28 @@ async function renderFicha(main, idPersona) {
         </div>
 
         <div class="card">
+          <div class="card-header">
+            <span class="card-header-title">Acceso al portal</span>
+            <span class="small muted">R6.1.a</span>
+          </div>
+          <div class="card-body">
+            <p class="small muted" style="margin-bottom:1rem">
+              El panelista entra a <span class="mono">/portal</span> con su
+              correo y una contraseña que elige él. <strong>Nadie de Equipos
+              la ve ni la define:</strong> lo único que se puede hacer desde
+              acá es mandarle el enlace para que la cree o la cambie, y queda
+              registrado quién lo pidió.
+            </p>
+            <div class="toolbar">
+              <button class="btn btn-outline btn-sm" id="mandar-acceso">
+                Mandarle el enlace</button>
+            </div>
+            <div id="historial-acceso" class="small muted"
+                 style="margin-top:0.75rem"></div>
+          </div>
+        </div>
+
+        <div class="card">
           <div class="card-header"><span class="card-header-title">Derechos del titular</span></div>
           <div class="card-body">
             <p class="small muted" style="margin-bottom:1rem">
@@ -673,6 +695,67 @@ async function renderFicha(main, idPersona) {
   });
   $$('[data-retiro]', main).forEach((boton) => {
     boton.onclick = () => retirar(idPersona, boton.dataset.retiro, p.nombre);
+  });
+  $('#mandar-acceso').onclick = () => mandarAccesoAlPortal(idPersona, p.email);
+  pintarAccesosAlPortal(idPersona);
+}
+
+
+/* R6.1.a — el rastro de los enlaces emitidos.
+   Se muestra porque es la mitad útil de la auditoría: sin verlo, quien
+   atiende a una persona que «no puede entrar» no sabe si el enlace salió,
+   si ya lo usó o si venció, y vuelve a mandar otro a ciegas. */
+async function pintarAccesosAlPortal(idPersona) {
+  const caja = $('#historial-acceso');
+  if (!caja) return;
+  try {
+    const { items } = await api.panelistas.accesosAlPortal(idPersona);
+    if (!items.length) {
+      caja.textContent = 'Todavía no se le mandó ningún enlace.';
+      return;
+    }
+    caja.innerHTML = items.slice(0, 5).map((e) => `
+      <div>${fechaHora(e.creado_en)} · ${esc(e.motivo_etiqueta)}
+        · pedido por ${esc(e.pedido_por)}
+        · ${e.usado_en ? `usado el ${fechaCorta(e.usado_en)}`
+            : (e.sigue_sirviendo ? 'sin usar, todavía sirve' : 'sin usar, vencido')}
+      </div>`).join('');
+  } catch (error) {
+    caja.textContent = error.message;
+  }
+}
+
+async function mandarAccesoAlPortal(idPersona, email) {
+  modal({
+    titulo: 'Mandarle el enlace del portal',
+    cuerpo: `
+      <p>Le va a llegar a <strong>${esc(email || 'su correo registrado')}</strong>
+         un enlace para que cree su contraseña del portal.</p>
+      <p class="small muted">El enlace vence a las 24 horas y sirve una sola
+         vez. Vos no vas a ver la contraseña: la elige la persona. Esta
+         emisión queda registrada con tu nombre.</p>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      {
+        texto: 'Mandar el enlace',
+        clase: 'btn-orange',
+        onClick: async () => {
+          try {
+            const salida = await api.panelistas.emitirAccesoAlPortal(idPersona);
+            cerrarModal();
+            toast(salida.mensaje, 'ok');
+            if (salida.enlace_sin_enviar) {
+              // Modo desarrollo: sin proveedor de envío el enlace vuelve en
+              // la respuesta, y se dice con todas las letras que así no
+              // prueba nada.
+              toast(`Sin proveedor de envío configurado. Enlace: ${salida.enlace_sin_enviar}`,
+                    'error');
+            }
+            pintarAccesosAlPortal(idPersona);
+          } catch (error) { toast(error.message, 'error'); }
+        },
+      },
+    ],
   });
 }
 

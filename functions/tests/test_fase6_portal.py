@@ -3,9 +3,13 @@
 Esta fase **da vuelta la postura de seguridad del sistema**: hasta acá la
 bóveda la tocaban empleados de Equipos y un consumidor registrado; ahora
 autentica a miles de externos contra el store que tiene toda la PII. Por eso
-el archivo arranca por lo que no se puede ver y no por lo que sí:
-enumeración de correos, enlaces reusados, una sesión mirando a otra persona,
-y un panelista probando si de paso le sirve para entrar a la administración.
+el archivo arranca por lo que no se puede ver y no por lo que sí: una sesión
+mirando a otra persona, y un panelista probando si de paso le sirve para
+entrar a la administración.
+
+Lo de **entrar** —contraseñas, enlaces de alta, límites de intentos,
+reautenticación— se mudó a `test_r6_1a_clave.py` cuando R6.1.a reemplazó el
+enlace mágico. Acá quedó lo que esa sustitución no tocó.
 
 Lo demás —puntos, canje, perfil, derechos— viene después, y buena parte se
 apoya en mecanismos que ya existían: el saldo bloqueado de R3.5, la
@@ -24,6 +28,10 @@ from panel_api.errores import Conflicto, DatosInvalidos, NoAutenticado, SinPermi
 from conftest import VERSION_TEXTO, consentimientos
 
 AMBAS = ("contacto_participacion", "uso_semantico")
+
+# La contraseña de las pruebas. Una constante y no un literal suelto: las
+# acciones sensibles la piden en tres lugares distintos y tienen que coincidir.
+CLAVE = "contrasena-de-prueba"
 
 
 # ── Escenario ────────────────────────────────────────────────────────
@@ -46,94 +54,29 @@ def quien(conn_boveda):
     return id_persona
 
 
-def _enlace(conn, email, origen=None):
-    """Pide acceso en modo desarrollo —sin proveedor de envío— y devuelve lo
-    que contestó, incluido el enlace cuando se emitió."""
-    return portal.pedir_acceso(
-        conn, email, origen=origen,
-        enviar=lambda canal, destino, cuerpo: {"sin_proveedor": True},
-        generar_enlace=lambda email, token: f"https://portal/entrar?t={token}")
+@pytest.fixture
+def con_clave(conn_boveda, quien, credenciales):
+    """La misma persona, con una contraseña que se puede volver a escribir.
 
-
-def _token_de(respuesta):
-    enlace = respuesta.get("enlace_sin_enviar")
-    return enlace.split("t=")[1] if enlace else None
+    Desde R6.1.d las tres acciones irreversibles la piden, así que probarlas
+    exige que exista: sin esto, «la baja dispara la cascada» no se podría
+    comprobar sin saltearse la baranda que la protege.
+    """
+    # Con el mismo `uid` que `quien` dejó en `cuenta_panelista`: la
+    # reautenticación comprueba que la cuenta que entra sea **esa**, no
+    # cualquiera que tenga el mismo correo.
+    credenciales.sembrar("uid-1", "panelista@ejemplo.invalid", CLAVE)
+    return quien
 
 
 # ════════════════════════════════════════════════════════════════════
-#  6A · Acceso
+#  6A · El vínculo entre la cuenta y la persona
 # ════════════════════════════════════════════════════════════════════
-
-def test_la_respuesta_es_identica_exista_o_no_el_correo(conn_boveda):
-    """El vector más probable de esta fase: probar direcciones para averiguar
-    quién integra el panel. Si la respuesta difiere en algo —el texto, las
-    claves, el tipo de error— la filtración ya ocurrió, aunque nunca se
-    muestre un perfil."""
-    _panelista(conn_boveda)
-
-    existe = _enlace(conn_boveda, "panelista@ejemplo.invalid")
-    no_existe = _enlace(conn_boveda, "cualquiera@ejemplo.invalid")
-
-    assert existe["mensaje"] == no_existe["mensaje"]
-    assert existe["minutos"] == no_existe["minutos"]
-    # Lo único que difiere es el enlace de desarrollo, que en producción no
-    # existe: con proveedor de envío configurado las dos respuestas son
-    # idénticas campo por campo.
-    assert set(no_existe) <= {"mensaje", "minutos"}
-
-
-def test_a_quien_no_es_panelista_no_se_le_emite_enlace(conn_boveda):
-    respuesta = _enlace(conn_boveda, "nadie@ejemplo.invalid")
-    assert _token_de(respuesta) is None
-    # Pero el intento queda registrado: es lo que hace que probar direcciones
-    # consuma el límite de tasa en vez de salir gratis.
-    assert db.una(conn_boveda, "select count(*)::int as n from acceso_portal")["n"] == 1
-
-
-def test_un_enlace_usado_dos_veces_falla_la_segunda(conn_boveda):
-    _panelista(conn_boveda)
-    token = _token_de(_enlace(conn_boveda, "panelista@ejemplo.invalid"))
-
-    assert portal.canjear_enlace(conn_boveda, token)
-    with pytest.raises(NoAutenticado, match="ya haber sido usado|no sirve"):
-        portal.canjear_enlace(conn_boveda, token)
-
-
-def test_un_enlace_vencido_no_sirve(conn_boveda):
-    _panelista(conn_boveda)
-    token = _token_de(_enlace(conn_boveda, "panelista@ejemplo.invalid"))
-    db.ejecutar(conn_boveda,
-                "update acceso_portal set vence_en = now() - interval '1 minute'")
-    with pytest.raises(NoAutenticado):
-        portal.canjear_enlace(conn_boveda, token)
-
-
-def test_se_limita_la_tasa_por_origen(conn_boveda):
-    """Sin esto, enumerar direcciones es gratis: el límite por correo no
-    frena a quien prueba uno distinto cada vez."""
-    for numero in range(portal.MAX_POR_ORIGEN_POR_HORA):
-        _enlace(conn_boveda, f"prueba{numero}@ejemplo.invalid", origen="1.2.3.4")
-    with pytest.raises(Conflicto, match="dispositivo"):
-        _enlace(conn_boveda, "uno-mas@ejemplo.invalid", origen="1.2.3.4")
-
-
-def test_se_limita_la_tasa_por_correo(conn_boveda):
-    _panelista(conn_boveda)
-    for _ in range(portal.MAX_POR_CORREO_POR_HORA):
-        _enlace(conn_boveda, "panelista@ejemplo.invalid")
-    with pytest.raises(Conflicto, match="dirección"):
-        _enlace(conn_boveda, "panelista@ejemplo.invalid")
-
-
-def test_el_correo_no_viaja_en_claro_al_registro_de_accesos(conn_boveda):
-    """Un intento puede ser de alguien que no es panelista: guardar su
-    dirección sería juntar datos de quien no aceptó nada."""
-    _enlace(conn_boveda, "ajeno@ejemplo.invalid")
-    fila = db.una(conn_boveda, "select email_hash from acceso_portal")
-    assert "ajeno@ejemplo.invalid" not in fila["email_hash"]
-
-
-# ── R6.2 · El vínculo ───────────────────────────────────────────────
+# El **acceso** —cómo se entra— dejó de vivir acá: R6.1.a lo reemplazó por
+# usuario y contraseña, y sus pruebas están en `test_r6_1a_clave.py`. Lo que
+# queda en este archivo es lo que esa sustitución no tocó, empezando por la
+# regla que sostiene a todo el portal: una cuenta, una persona, y el
+# `id_persona` sale del vínculo y nunca del pedido.
 
 def test_el_vinculo_exige_que_el_correo_coincida(conn_boveda):
     _panelista(conn_boveda)
@@ -168,8 +111,12 @@ def test_ninguna_ruta_del_portal_recibe_un_id_persona(conn_boveda):
             f"{metodo} {expresion.pattern} toma un id_persona de la URL")
         codigo = funcion.__code__
         fuente_de_la_persona = "_yo" in codigo.co_names or "persona_de" in codigo.co_names
-        assert fuente_de_la_persona or metodo == "POST" and "acceso" in expresion.pattern \
-            or "sesion" in expresion.pattern, (
+        # Las excepciones son las tres rutas de entrada (R6.1.a), que corren
+        # **antes** de que haya sesión: ahí la persona se resuelve desde el
+        # token del enlace o desde la credencial, nunca desde un parámetro.
+        de_entrada = any(x in expresion.pattern
+                         for x in ("/clave", "/sesion"))
+        assert fuente_de_la_persona or de_entrada, (
             f"{metodo} {expresion.pattern} no resuelve la persona desde la sesión")
 
 
@@ -378,7 +325,9 @@ def test_el_cambio_crea_vigencia_nueva_y_conserva_la_anterior(conn_boveda,
 
 # ── R6.6 · Contacto ─────────────────────────────────────────────────
 
-def test_el_correo_nuevo_se_verifica_antes_de_reemplazar(conn_boveda, quien):
+def test_el_correo_nuevo_se_verifica_antes_de_reemplazar(conn_boveda, con_clave,
+                                                        credenciales):
+    quien = con_clave
     pedido = portal.pedir_verificacion_de_contacto(
         conn_boveda, quien, "email", "nuevo@ejemplo.invalid",
         enviar=lambda c, d, codigo: {"sin_proveedor": True, "codigo": codigo})
@@ -389,7 +338,8 @@ def test_el_correo_nuevo_se_verifica_antes_de_reemplazar(conn_boveda, quien):
 
     portal.confirmar_contacto(conn_boveda, quien, "email",
                               "nuevo@ejemplo.invalid",
-                              pedido["codigo_sin_enviar"])
+                              pedido["codigo_sin_enviar"],
+                              clave=CLAVE, credenciales=credenciales)
     assert db.una(conn_boveda, "select email from persona where id_persona = %s",
                   (str(quien),))["email"] == "nuevo@ejemplo.invalid"
 
@@ -420,10 +370,13 @@ def test_revocar_un_canal_no_afecta_a_los_otros_ni_implica_baja(conn_boveda,
                   (str(quien),))["estado"] == "activa"
 
 
-def test_retirar_uso_semantico_deja_el_panel_intacto(conn_boveda, quien,
-                                                     conn_semantica):
+def test_retirar_uso_semantico_deja_el_panel_intacto(conn_boveda, con_clave,
+                                                     conn_semantica,
+                                                     credenciales):
+    quien = con_clave
     portal.retirar_finalidad(conn_boveda, quien, "uso_semantico",
-                             conn_semantica=conn_semantica)
+                             conn_semantica=conn_semantica, clave=CLAVE,
+                             credenciales=credenciales)
 
     vigentes = {c["finalidad"] for c in portal.finalidades(conn_boveda, quien)
                 if c["estado"] == "vigente"}
@@ -433,9 +386,13 @@ def test_retirar_uso_semantico_deja_el_panel_intacto(conn_boveda, quien,
                   (str(quien),))["estado"] == "activa"
 
 
-def test_retirar_una_finalidad_desconocida_se_rechaza(conn_boveda, quien):
+def test_retirar_una_finalidad_desconocida_se_rechaza(conn_boveda, con_clave,
+                                                      credenciales):
+    """Y se rechaza **antes** de pedir la contraseña: una finalidad que no
+    existe es un error de programa, no un intento de hacer algo sensible."""
     with pytest.raises(DatosInvalidos, match="Finalidad desconocida"):
-        portal.retirar_finalidad(conn_boveda, quien, "telepatia")
+        portal.retirar_finalidad(conn_boveda, con_clave, "telepatia",
+                                 clave=CLAVE, credenciales=credenciales)
 
 
 def test_antes_de_la_baja_se_muestra_lo_que_se_pierde(conn_boveda, quien):
@@ -452,10 +409,13 @@ def test_antes_de_la_baja_se_muestra_lo_que_se_pierde(conn_boveda, quien):
     assert any("pedido(s) de premio" in a for a in previo["advertencias"])
 
 
-def test_la_baja_dispara_la_cascada_y_deja_la_lapida(conn_boveda, quien,
-                                                     conn_semantica):
+def test_la_baja_dispara_la_cascada_y_deja_la_lapida(conn_boveda, con_clave,
+                                                     conn_semantica,
+                                                     credenciales):
+    quien = con_clave
     salida = portal.darse_de_baja(conn_boveda, quien,
-                                  conn_semantica=conn_semantica)
+                                  conn_semantica=conn_semantica,
+                                  clave=CLAVE, credenciales=credenciales)
     assert salida["pii_borrada"] is True
     assert "se está ejecutando" in salida["mensaje"]
     assert db.una(conn_boveda,
@@ -466,8 +426,11 @@ def test_la_baja_dispara_la_cascada_y_deja_la_lapida(conn_boveda, quien,
                   (str(quien),))["n"] == 0
 
 
-def test_tras_la_baja_el_acceso_se_corta(conn_boveda, quien, conn_semantica):
-    portal.darse_de_baja(conn_boveda, quien, conn_semantica=conn_semantica)
+def test_tras_la_baja_el_acceso_se_corta(conn_boveda, con_clave, conn_semantica,
+                                         credenciales):
+    quien = con_clave
+    portal.darse_de_baja(conn_boveda, quien, conn_semantica=conn_semantica,
+                         clave=CLAVE, credenciales=credenciales)
     with pytest.raises(SinPermiso):
         portal.persona_de(conn_boveda, "uid-1")
     # Y la cuenta se fue con la persona: no queda un vínculo colgando que

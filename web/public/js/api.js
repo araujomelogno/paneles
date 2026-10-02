@@ -123,6 +123,11 @@ export const panelistas = {
     POST(`/panelistas/${idPersona}/alias`, { origen, id_en_origen: idEnOrigen }),
   quitarAlias: (idPersona, origen, idEnOrigen) =>
     DELETE(`/panelistas/${idPersona}/alias/${encodeURIComponent(origen)}/${encodeURIComponent(idEnOrigen)}`),
+  // R6.1.a — dispara el envío del enlace para que la persona cree su
+  // contraseña del portal. No devuelve ninguna credencial: quien lo pide no
+  // ve ni define nada, solo hace que salga el correo.
+  emitirAccesoAlPortal: (idPersona) => POST(`/panelistas/${idPersona}/acceso-portal`, {}),
+  accesosAlPortal: (idPersona) => GET(`/panelistas/${idPersona}/acceso-portal`),
 };
 
 export const revisiones = {
