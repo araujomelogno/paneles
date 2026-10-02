@@ -137,9 +137,15 @@ def conn_semantica(dsn_semantica):
 
 @pytest.fixture
 def proveedor():
-    from panel_api.embeddings import Deterministico
+    """El doble sin red, **en la misma dimensión que el proveedor real**.
 
-    return Deterministico(dims=1024)
+    Si acá dijera otra cosa que `DIMS_POR_DEFECTO`, las pruebas insertarían
+    vectores que la columna no acepta —o peor, aceptarían los que producción
+    rechazaría— y no estarían probando el sistema que se despliega.
+    """
+    from panel_api.embeddings import DIMS_POR_DEFECTO, Deterministico
+
+    return Deterministico(dims=DIMS_POR_DEFECTO)
 
 
 def consentimientos(*finalidades):

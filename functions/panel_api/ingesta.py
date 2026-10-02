@@ -20,7 +20,7 @@ el `id_persona`. La PII se queda de este lado.
 
 import re
 
-from . import consentimiento, db, embeddings as mod_embeddings, semantica
+from . import consentimiento, db, embeddings as mod_embeddings, esquema, semantica
 from .errores import DatosInvalidos
 
 
@@ -303,6 +303,15 @@ def ingestar(
             a_embeber.append(fila)
 
     if a_embeber:
+        # Antes de mandar nada al proveedor: que la dimensión que va a
+        # devolver sea la que la columna acepta. Es una consulta, y lo que
+        # evita es pagar el embedding de todo el lote para que después el
+        # insert lo rechace. Con 200.000 respuestas esa factura no es
+        # teórica.
+        desajuste = esquema.desajuste_de_dimension(
+            conn_semantica, getattr(proveedor, "dims", None))
+        if desajuste:
+            raise DatosInvalidos(desajuste, {"motivo": "dimension_de_embeddings"})
         vectores = proveedor.embeber_en_lotes([f["texto_embebido"] for f in a_embeber])
         for fila, vector in zip(a_embeber, vectores):
             fila["embedding"] = vector

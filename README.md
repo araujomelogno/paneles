@@ -17,6 +17,7 @@ Empezá leyendo `CLAUDE.md`, después el PRD, y desarrollá por fases empezando 
 | `DESPLIEGUE - Fase 6.md` | Manual de despliegue de la Fase 6, el portal del panelista: la migración `0017`, el ingreso por enlace en Firebase Auth, `PORTAL_URL`, y los dos pasos que deciden si la fase está bien desplegada —que no se filtre quién integra el panel y que un panelista no entre a la administración—. | `docs/` |
 | `MANUAL_panelista.md` | Guía para los panelistas: crear la contraseña la primera vez, entrar, recuperarla, puntos y premios, mantener los datos al día, elegir canales, retirar permisos y darse de baja. Escrita para pegarse en una ayuda en línea o mandarse por correo. | `docs/manual/` |
 | `DESPLIEGUE - R6.1.a acceso con contraseña.md` | **Instructivo paso a paso** del cambio que reemplaza el enlace mágico del portal por usuario y contraseña: la migración `0018`, la protección contra enumeración en Firebase Auth, `FIREBASE_WEB_API_KEY`, y el paso 9 —que los panelistas ya enrolados creen su contraseña—, sin el cual queda arriba un portal que nadie puede usar. | `docs/` |
+| `DESPLIEGUE - 512 dimensiones.md` | **Instructivo paso a paso** para bajar los embeddings de 1024 a 512: la migración `0006` del store semántico, el parámetro que había que mandarle a Voyage y nunca se mandaba, y el paso 7 —validar la calidad con 5.000 respuestas antes de cargar 200.000—, que es el que decide si el ahorro valió la pena. | `docs/` |
 | `DESPLIEGUE - COLOQUIO Fase 0.md` | Manual de despliegue de la Fase 5: la bóveda deja de tener un solo consumidor. Migraciones, el rol IAM del segundo sistema y por qué no puede crearse con `gcloud sql users create`, la conectividad, y la verificación conectada como ese rol. | `docs/` |
 | `DESPLIEGUE - R5.2.a convocatoria externa.md` | **Instructivo paso a paso** de la `boveda/0016`, sin la cual COLOQUIO no puede convocar: la convocatoria activa pasa a verificarse por sistema y un consumidor externo declara la suya. Ocho pasos, con la verificación de privilegios uno por uno. | `docs/` |
 | `DESPLIEGUE - R2.12 enlace de acceso.md` | **Instructivo paso a paso** para poner en producción el enlace de acceso regenerable, desde la base tal como está hoy: trece pasos numerados, con la salida esperada de cada uno y qué hacer si no coincide. Incluye la Fase 5, de la que la `0015` depende. Los manuales por **fase** cubren una entrega entera; los que llevan **número de requerimiento** cubren un cambio que salió por su cuenta. | `docs/` |
@@ -62,7 +63,7 @@ Empezá leyendo `CLAUDE.md`, después el PRD, y desarrollá por fases empezando 
 
 - **App:** Firebase — Auth + Cloud Functions (Python) + Hosting.
 - **Datos:** dos instancias **Cloud SQL for Postgres** separadas — bóveda (PII + paneles) y semántica (vector, con pgvector). Nunca en la misma instancia.
-- **Embeddings:** Voyage `voyage-3.5` (1024 dims) por defecto, detrás de una interfaz para cambiar de proveedor.
+- **Embeddings:** Voyage `voyage-3.5` a **512 dimensiones**, detrás de una interfaz para cambiar de proveedor. 512 y no las 1024 del default porque la mitad de vector es la mitad de instancia (D54); la dimensión tiene que coincidir con `respuesta.embedding` en el store semántico, y la ingesta lo comprueba antes de mandar nada a embeber.
 
 ## Cómo arrancar
 

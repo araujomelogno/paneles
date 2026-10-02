@@ -54,11 +54,11 @@ MIGRACIONES_BOVEDA = (
     ("0008_atributos_demograficos.sql", (
         "atributo_demografico", "atributo_categoria", "persona_atributo",
         "atributo_auditoria", "v_atributo_persona",
-        # La 0008 **reescribe** `v_demografia` sobre el catálogo, conservando
-        # su nombre y sus columnas. Se declara acá además de en la 0001 porque
-        # esta migración también la crea, y la prueba que compara esta lista
-        # con el DDL real lo exige.
-        "v_demografia",
+        # `v_demografia` **no** va acá aunque la 0008 la reescriba sobre el
+        # catálogo: la vista existe desde la 0001, así que preguntarle a la
+        # base si está no distingue una migración de la otra y daría la 0008
+        # por aplicada sin haber corrido. Lo detectable de esta migración son
+        # las cuatro relaciones de arriba.
     )),
     ("0009_fase4_contacto.sql", (
         "preferencia_canal", "verificacion_contacto",
@@ -75,7 +75,11 @@ MIGRACIONES_BOVEDA = (
         # llamadas suyas. Si faltara, las columnas estarían y todo lo que
         # segmenta seguiría roto.
         "f_atributo_persona()",
-        "v_atributo_persona", "v_demografia",
+        # `v_atributo_persona` y `v_demografia` **no** van acá: la 0010 las
+        # tira y las rehace sobre la función nueva, pero existen desde antes
+        # (0001 y 0008). Declararlas daría esta migración por aplicada sin
+        # haber corrido, que es justo el estado peligroso: las vistas
+        # andarían y la función que resuelve los atributos no estaría.
     )),
     ("0011_fase4_inteligencia.sql", ("serie_auditoria", "peso_optimizador")),
     # ── Fase 5 ──
@@ -135,6 +139,15 @@ MIGRACIONES_SEMANTICA = (
     # ── Fase 5 ──
     ("0005_fase5_prohibicion_pii.sql", (
         "campo_pii", "excepcion_pii", "prohibir_pii_en_ddl()",
+    )),
+    # Esta migración **cambia el tipo** de `respuesta.embedding` y
+    # `pregunta.embedding_texto` de `vector(1024)` a `vector(512)`, y por eso
+    # no las declara: las dos columnas existen desde antes, así que
+    # preguntarle a la base «¿están?» diría que sí con la migración sin
+    # aplicar. Lo detectable que sí crea es la vista, y ésa es la razón de
+    # que exista (misma lección que la 0015 en la bóveda, D45).
+    ("0006_embeddings_512.sql", (
+        "v_dimension_embeddings",
     )),
 )
 
@@ -215,6 +228,7 @@ PARA_QUE = {
     "acceso_portal.emitido_por": "qué responsable disparó el envío del enlace; es la auditoría que pide R6.1.a",
     "acceso_portal.emitido_por_email": "el correo de ese responsable, para que el rastro se lea sin tener que resolver un uid",
     "v_acceso_portal": "los pedidos de acceso al portal con su motivo resuelto: qué enlaces siguen sirviendo y qué intentos fallaron",
+    "v_dimension_embeddings": "en cuántas dimensiones está cada columna vectorial; es con lo que se comprueba que el proveedor y la base estén de acuerdo antes de pagar un embedding",
 }
 
 
@@ -306,13 +320,83 @@ def verificar(conn, migraciones):
     }
 
 
-def revisar_stores(conn_boveda, conn_semantica):
+# ── La dimensión de los embeddings ──────────────────────────────────
+
+def dimension_de_la_columna(conn_semantica, columna="respuesta.embedding"):
+    """En cuántas dimensiones está esa columna vectorial, o `None`.
+
+    `None` cuando la vista no existe todavía —la migración `0006` no se
+    aplicó—, que es un caso distinto de «no coinciden» y por eso no se
+    confunde con cero.
+
+    Lo que se atrapa es **solo** que la relación no exista, y no cualquier
+    excepción. Un `except Exception` acá sería un desastre silencioso: este
+    valor alimenta una guarda, así que tragarse un error de verdad no dejaría
+    un diagnóstico incompleto —dejaría la guarda apagada, que es peor que no
+    tenerla, porque nadie se enteraría—.
+    """
+    # El import va acá adentro por lo mismo que en `_presentes`: este módulo
+    # se consulta desde herramientas que no abren ninguna conexión.
+    import psycopg
+
+    from . import db
+
+    try:
+        # Un `savepoint` y no la transacción entera. La diferencia importa:
+        # la ingesta llama a esto **en el medio** de su transacción, con los
+        # individuos ya creados, y un `rollback()` acá se los llevaría
+        # puestos sin que nadie lo note.
+        with conn_semantica.transaction():
+            fila = db.una(
+                conn_semantica,
+                "select dimension from v_dimension_embeddings where columna = %s",
+                (columna,))
+    except psycopg.errors.UndefinedTable:
+        # La `0006` no está aplicada. Es un estado legítimo y lo reporta
+        # `verificar()` por su lado, con el nombre de la migración.
+        return None
+    return fila["dimension"] if fila else None
+
+
+def desajuste_de_dimension(conn_semantica, dims_proveedor,
+                           columna="respuesta.embedding"):
+    """El mensaje a mostrar si el proveedor y la base no están de acuerdo.
+
+    Devuelve `None` cuando está todo bien o cuando no se puede saber.
+
+    Existe por un modo de falla caro: si `EMBEDDINGS_DIMS` dice 1024 y la
+    columna es `vector(512)`, cada ingesta falla **al insertar**, es decir
+    después de haber mandado el lote entero a embeber y haberlo pagado. Con
+    200.000 respuestas eso es una factura por nada. Comprobarlo antes cuesta
+    una consulta.
+    """
+    de_la_base = dimension_de_la_columna(conn_semantica, columna)
+    if de_la_base is None or not dims_proveedor or de_la_base == dims_proveedor:
+        return None
+    return (
+        f"El proveedor de embeddings está configurado en {dims_proveedor} "
+        f"dimensiones y `{columna}` es vector({de_la_base}). Con esa "
+        f"diferencia, embeber sale caro y después el insert falla igual. "
+        f"Alineá `EMBEDDINGS_DIMS` con la columna, o aplicá la migración que "
+        f"cambia la columna."
+    )
+
+
+def revisar_stores(conn_boveda, conn_semantica, dims_proveedor=None):
     """El estado de los dos stores, con las instrucciones para arreglarlo."""
     salida = {
         "boveda": verificar(conn_boveda, MIGRACIONES_BOVEDA),
         "semantica": verificar(conn_semantica, MIGRACIONES_SEMANTICA),
     }
     salida["completo"] = all(s["completo"] for s in salida.values() if isinstance(s, dict))
+    # La dimensión no es una migración que falte, así que no entra en
+    # `completo`: es una desalineación entre el código y la base que se
+    # informa aparte, con su propio texto.
+    salida["embeddings"] = {
+        "dimension_del_proveedor": dims_proveedor,
+        "dimension_de_la_columna": dimension_de_la_columna(conn_semantica),
+        "desajuste": desajuste_de_dimension(conn_semantica, dims_proveedor),
+    }
     salida["como_aplicar"] = [
         f"psql -h 127.0.0.1 -p {puerto} -U app_paneles -d paneles_{store} "
         f"-v ON_ERROR_STOP=1 -f db/{store}/{m['migracion']}"

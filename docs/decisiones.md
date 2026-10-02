@@ -2486,6 +2486,116 @@ pantallas—, así que no cuesta un `update` por cada cosa que el portal pinta.
 
 ---
 
+<a id="d54"></a>
+## D54 · Los embeddings van en 512 dimensiones, y la dimensión es un contrato con la base
+
+**La decisión.** `voyage-3.5` devuelve 1024 dimensiones por omisión. El
+sistema le pide **512**.
+
+### Por qué, con números
+
+| | 1024 dims | 512 dims |
+|---|---:|---:|
+| Vectores de 200.000 respuestas | ~820 MB | ~410 MB |
+| Con el índice HNSW | ~1,5–2 GB | ~0,8–1 GB |
+| Instancia necesaria | ~4 GB RAM (custom) | `db-g1-small` (1,7 GB) |
+| Costo mensual de esa instancia | ~US$ 50–70 | ~US$ 34 |
+
+Son unos US$ 20–35 por mes, para siempre, y el cambio en sí cuesta cero: el
+corpus era de una respuesta cuando se tomó la decisión.
+
+**Lo que se resigna**, dicho sin maquillaje: entre uno y dos puntos
+porcentuales de calidad de recuperación según los benchmarks de Voyage.
+Truncar no es cortar al azar —`voyage-3.5` está entrenado con *Matryoshka*,
+así que las primeras dimensiones concentran la mayor parte de la
+información— pero esos benchmarks **no son sobre respuestas de encuesta en
+español rioplatense**. Por eso la decisión no se da por buena hasta la
+validación con corpus propio que documenta el paso 7 de
+`DESPLIEGUE - 512 dimensiones.md`, y por eso esa validación se hace con 5.000
+y no con 200.000: para que volver atrás siga siendo barato.
+
+### El bug que había que arreglar igual
+
+`embeddings.py` guardaba `self.dims` y **nunca se lo mandaba a Voyage**. El
+cuerpo del pedido no llevaba el parámetro, así que la API devolvía su default
+pase lo que pase: `EMBEDDINGS_DIMS` se leía, se propagaba por tres módulos y
+no hacía nada.
+
+Es el tipo de falla que no da error. El valor estaba ahí, el código lo movía
+de un lado a otro, y la única forma de notarlo era contar las dimensiones de
+un vector devuelto. Arreglarlo es una línea —`output_dimension`, nombre
+verificado contra la documentación de Voyage—, y lo que sigue es lo que
+importa de esta entrada.
+
+### La dimensión es un contrato entre tres cosas
+
+```
+EMBEDDINGS_DIMS   →  lo que el proveedor le pide a la API
+output_dimension  →  lo que la API devuelve
+vector(512)       →  lo que la columna acepta
+```
+
+Si las tres no dicen lo mismo, **el síntoma no es un error claro: es una
+factura.** La ingesta embebe el lote entero —ésa es la parte que cuesta
+plata— y recién al insertar Postgres rechaza el vector por largo. Con 200.000
+respuestas, eso es pagar por nada y encima quedarse sin ingesta.
+
+Tres controles, en tres lugares distintos porque fallan distinto:
+
+| Dónde | Qué atrapa |
+|---|---|
+| `Voyage.__init__` | Una dimensión que el modelo no genera (777). Falla al construir, no cuando la API conteste un 400 a mitad de una ingesta larga |
+| `_controlar_largo()` | Que lo devuelto tenga el largo pedido. Cubre el caso en que el parámetro cambie de nombre y la API lo **ignore en silencio** |
+| `esquema.desajuste_de_dimension()` | Que el proveedor y la columna estén de acuerdo. Lo llama la ingesta **antes de mandar nada a embeber**, que es el único momento en que sirve |
+
+El tercero es el que ahorra dinero, y por eso corre antes del `embeber` y no
+antes del `insert`.
+
+### Dos cosas que salieron al implementarlo
+
+**El plan no preveía una dependencia.** `v_respuesta_estudio` —la vista de
+procedencia de la `0002`— selecciona `r.embedding`, así que el `drop column`
+del plan fallaba con *«other objects depend on it»*. La migración la tira y
+la recrea idéntica. Se descubrió ensayando contra un Postgres de verdad, que
+es la única forma en que se descubren estas cosas.
+
+**Y una migración que borra datos necesita dos guardas, no una.** La primera
+es la del plan: abortar si el corpus ya creció, con una salida de escape
+explícita. La segunda no estaba y hace falta igual: abortar si **ya está
+aplicada**. Sin ella, una segunda corrida accidental borra el corpus antes de
+fallar — y acá la segunda corrida es probable, porque `scripts/pg_pruebas.sh`
+reaplica todas las migraciones cada vez que se lo invoca.
+
+### Por qué la migración crea una vista que parece decorativa
+
+`v_dimension_embeddings` existe por dos razones y la segunda es la que la
+hace obligatoria:
+
+* El diagnóstico la lee para comparar contra `EMBEDDINGS_DIMS`.
+* **Una migración que solo cambia un tipo es invisible para
+  `verificar_esquema.py`.** `respuesta.embedding` existe desde la `0001`, así
+  que preguntarle a la base «¿está?» diría que sí con la `0006` sin aplicar.
+  Es la misma lección de la `0015` en la bóveda ([D45](#d45)): lo que no crea
+  ningún objeto nuevo no se puede detectar, y entonces hay que crear uno que
+  valga la pena.
+
+Como efecto lateral, la baranda que compara `esquema.py` con el DDL aprendió
+a reconocer `drop` + `create` como un **reemplazo** y no como una creación.
+Antes solo entendía `create or replace`, y eso obligaba a declarar objetos
+que ya existían: `v_demografia` figuraba en la `0008` y la `0010`, y
+`v_atributo_persona` en la `0010`, cuando esas migraciones solo las
+reescriben. Declararlas daba esas migraciones por aplicadas sin haber
+corrido, que es exactamente el estado peligroso —en la `0010`, las vistas
+andando y la función que resuelve los atributos sin existir—. Quedaron
+sacadas.
+
+**Dónde vive.** `db/semantica/0006_embeddings_512.sql`,
+`functions/panel_api/embeddings.py`, `functions/panel_api/esquema.py`,
+`functions/panel_api/ingesta.py`, `functions/panel_api/config.py`,
+`functions/tests/test_dimension_embeddings.py`.
+
+---
+
 ## Anexo · Decisiones que no se tomaron
 
 Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
@@ -2529,4 +2639,7 @@ Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 | Protección contra enumeración de Firebase Auth | **Pendiente de activar en la consola.** No es la defensa —el mensaje genérico lo escribe el servidor— pero sí defensa en profundidad para quien llame a Identity Toolkit por fuera del portal | [D53](#d53), `DESPLIEGUE - R6.1.a` §3 |
 | Panelistas cuyo correo registrado está desactualizado | **Abierto, y es operativo.** No van a poder recibir el enlace y quedan sin acceso. Conviene detectarlos **antes** de anunciar el portal; hoy la salida es que un responsable los contacte por otra vía y les corrija el correo desde la ficha | `SPEC_R6.1a` §9 |
 | Pantalla para que un responsable vea quién no activó nunca su contraseña | **No se hizo.** El dato está (`v_acceso_portal` y `cuenta_panelista`), pero no hay una lista de «invitados que no entraron»; hoy se ve persona por persona desde la ficha | [D53](#d53) |
+| Si 512 dimensiones alcanzan para este corpus | **Abierta, y es la pregunta de fondo.** Los benchmarks de Voyage dicen que se pierde poco, pero no son sobre respuestas de encuesta en español rioplatense. Se decide con la validación del paso 7, sobre 5.000–10.000 respuestas y antes de cargar 200.000 | [D54](#d54) |
+| Cuantización int8 o binaria de los vectores | **No se evaluó.** `voyage-3.5` la soporta y bajaría otro tanto la memoria, pero son dos variables a la vez: primero hay que saber qué cuesta bajar la dimensión | [D54](#d54) |
+| Línea de base de tiempos por etapa de una consulta | **Pendiente, y conviene antes de la carga masiva.** Sin ella no se va a poder decir dentro de seis meses si el sistema se puso lento ni por qué | `DESPLIEGUE - 512 dimensiones` §7 |
 | Alinear el voseo de la interfaz con el registro formal del manual | Sin decidir; requeriría recapturar las 44 pantallas | PR de la Fase 2 |
