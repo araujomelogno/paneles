@@ -34,6 +34,27 @@ La consecuencia para quien escribe código acá: **una invariante de cumplimient
 
 `scripts/verificar_coloquio.py` se conecta **como `coloquio_app`** y comprueba todo eso, incluida una lista blanca de privilegios efectivos que vive en el repo. Si una migración abre un acceso de más, esa prueba rompe. Correrlo después de tocar cualquier `grant`, vista o función de la superficie externa.
 
+## El portal del panelista es otra superficie
+
+Desde la Fase 6 la bóveda autentica también a **miles de externos**: cada
+panelista entra a `/portal` a ver sus puntos, corregir sus datos y ejercer sus
+derechos. Comparte Firebase Auth con la app de administración y **nada más**.
+
+Lo que hay que respetar al tocar `panel_api/portal.py` o sus rutas:
+
+- **El `id_persona` no se recibe nunca.** Sale de `cuenta_panelista` a partir
+  del `uid` del token (`portal.persona_de()`). Hay una prueba que recorre
+  todas las rutas de `/portal/` y falla si alguna lo toma de la URL.
+- **Una sesión del portal no tiene rol.** `auth.actor_de_portal()` devuelve
+  `rol = None` a propósito: así no puede ejecutar ningún permiso interno
+  aunque una ruta quede mal registrada. No le agreguen un rol «panelista».
+- **La respuesta de `POST /portal/acceso` es una constante** del módulo, y es
+  la misma exista o no el correo. Dos textos parecidos en dos lugares
+  terminan divergiendo, y la diferencia *es* la filtración.
+- **Lo editable es una lista blanca** (`editable_por_panelista`), y un valor
+  con `origen = 'panelista'` es autoritativo: una ingesta posterior lo informa
+  como discrepancia y no lo pisa.
+
 ## Reglas de negocio que el código debe respetar
 
 - No se puede convocar ni incluir en muestreo a una persona sin `consentimiento` **vigente** para la finalidad correspondiente.

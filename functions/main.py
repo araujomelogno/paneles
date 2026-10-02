@@ -57,6 +57,12 @@ SECRETOS = [
     "WHATSAPP_TOKEN",             # R4.5 — token de la app de Meta
     "WHATSAPP_PHONE_NUMBER_ID",   # R4.5 — el número emisor
     "WHATSAPP_WABA_ID",           # R4.5 — de acá sale la lista de plantillas
+    # ── Fase 6 ──
+    # A dónde vuelve el enlace de acceso del portal. No es un secreto en el
+    # sentido de confidencial, pero sí en el de «configuración que cambia
+    # entre ambientes y no puede vivir en el código»: el enlace apunta acá, y
+    # apuntarlo mal manda a los panelistas a otro lado.
+    "PORTAL_URL",
 ]
 
 PREFIJO = "/api"
@@ -106,6 +112,15 @@ def api(req: https_fn.Request) -> https_fn.Response:
     # agujero que nadie eligió abrir.
     if ruteo.es_publica(req.method, _camino_de(req)):
         actor = auth.Actor(uid=None, email=None, rol=None, nombre="público")
+    elif ruteo.es_del_portal(_camino_de(req)):
+        # Fase 6 — el portal autentica contra Firebase Auth pero **no**
+        # contra el padrón interno: un panelista no es usuario de la
+        # administración. El actor que sale de acá no tiene rol, así que no
+        # puede entrar a ninguna ruta interna aunque se cuele en el ruteo.
+        try:
+            actor = auth.actor_de_portal(req.headers)
+        except ErrorApi as error:
+            return _json(error.status, error.como_dict())
     else:
         try:
             actor = auth.actor_de_request(req.headers)

@@ -19,6 +19,14 @@
         "destination": "/inscribirse.html"
       },
       {
+        "source": "/portal",
+        "destination": "/portal.html"
+      },
+      {
+        "source": "/entrar",
+        "destination": "/portal.html"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

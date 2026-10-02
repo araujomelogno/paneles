@@ -93,6 +93,11 @@ PERMISOS = {
 class Actor:
     """Quién está haciendo la operación."""
 
+    # R6.2 — una sesión del portal no es un usuario interno. La marca vive
+    # en el actor para que las rutas del portal puedan exigirla, y nace en
+    # `False` para que el default sea el caso seguro.
+    es_panelista = False
+
     def __init__(self, uid, email=None, rol=None, nombre=None):
         self.uid = uid
         self.email = email
@@ -120,6 +125,42 @@ def token_de(headers):
     if not autorizacion.lower().startswith("bearer "):
         raise NoAutenticado("Falta el token de Firebase Auth (header Authorization).")
     return autorizacion.split(" ", 1)[1].strip()
+
+
+def actor_de_portal(headers, verificar_token=None):
+    """R6.2 — el actor de una sesión del **portal del panelista**.
+
+    Es una resolución distinta de la interna, y la diferencia es el punto:
+
+    * **No consulta el padrón de usuarios.** Un panelista no tiene fila ahí,
+      y si la tuviera —alguien de Equipos que además es panelista— no es por
+      eso que entra al portal.
+    * **No lleva rol.** `rol = None` hace que `puede()` sea falso para todo
+      permiso de la administración, así que una sesión del portal no puede
+      tocar ninguna ruta interna aunque alguien se equivoque al registrarla.
+    * **No resuelve a ninguna persona.** Eso lo hace `portal.persona_de()`
+      contra `cuenta_panelista`, con la conexión a la bóveda, que es donde
+      vive el vínculo. Acá solo se sabe quién se autenticó.
+    """
+    if verificar_token is None:
+        from firebase_admin import auth as fb_auth
+
+        def verificar_token(token):  # noqa: F811
+            return fb_auth.verify_id_token(token)
+
+    token = token_de(headers)
+    try:
+        decodificado = verificar_token(token)
+    except Exception as error:
+        raise NoAutenticado(f"Token inválido: {error}")
+
+    uid = decodificado.get("uid") or decodificado.get("user_id")
+    if not uid:
+        raise NoAutenticado("El token no identifica a ninguna cuenta.")
+    actor = Actor(uid=uid, email=decodificado.get("email"), rol=None,
+                  nombre=decodificado.get("name"))
+    actor.es_panelista = True
+    return actor
 
 
 def actor_de_request(headers, verificar_token=None, buscar_usuario=None):

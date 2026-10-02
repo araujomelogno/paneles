@@ -28,6 +28,7 @@ from . import (
     paneles,
     participacion,
     personas,
+    portal,
     preferencias,
     premios,
     puntos,
@@ -90,7 +91,23 @@ PUBLICAS = frozenset({
     # límite de tasa y por el desafío anti-automatización.
     ("POST", "/inscripciones/verificacion"),
     ("POST", "/inscripciones/verificacion/comprobar"),
+    # R6.1 — pedir el enlace de acceso al portal es público por definición:
+    # quien lo pide todavía no tiene sesión. Su protección no es el token
+    # sino el límite de tasa y que la respuesta sea siempre la misma.
+    ("POST", "/portal/acceso"),
 })
+
+# R6.2 — las rutas del portal se autentican contra Firebase Auth pero **no**
+# contra el padrón interno: un panelista no es un usuario de la aplicación
+# de administración. `main.py` consulta esto para elegir con qué resolución
+# de actor entrar, y el prefijo es seguro acá —a diferencia de `PUBLICAS`—
+# porque no abre nada: una ruta nueva bajo `/portal/` sigue exigiendo token
+# y sigue resolviendo a la persona por su vínculo.
+PREFIJO_PORTAL = "/portal/"
+
+
+def es_del_portal(camino):
+    return ("/" + (camino or "").strip("/") + "/").startswith(PREFIJO_PORTAL)
 
 
 def es_publica(metodo, camino):
@@ -1652,3 +1669,131 @@ def guardar_pesos(ctx, actor, params, cuerpo, consulta):
 @ruta("GET", "/yo", None)
 def quien_soy(ctx, actor, params, cuerpo, consulta):
     return 200, actor.como_dict()
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Fase 6 · El portal del panelista
+# ════════════════════════════════════════════════════════════════════
+# Ninguna de estas rutas recibe un `id_persona`. Sale de `portal.persona_de`,
+# que lo resuelve desde el `uid` del token contra `cuenta_panelista`. Es la
+# única forma de que «solo puede ver y modificar su propia persona» no
+# dependa de que cada ruta se acuerde de comprobarlo.
+
+def _yo(ctx, actor):
+    return portal.persona_de(ctx.boveda, actor.uid)
+
+
+@ruta("POST", "/portal/acceso", None, requisito="R6.1")
+def portal_pedir_acceso(ctx, actor, params, cuerpo, consulta):
+    """Pide el enlace de acceso. Contesta lo mismo exista o no el correo."""
+    salida = portal.pedir_acceso(
+        ctx.boveda, (cuerpo or {}).get("email"),
+        origen=(cuerpo or {}).get("origen"))
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("POST", "/portal/sesion", None, requisito="R6.2")
+def portal_sesion(ctx, actor, params, cuerpo, consulta):
+    """Ata la cuenta recién autenticada a su persona, o confirma el vínculo."""
+    salida = portal.vincular(ctx.boveda, actor.uid, actor.email,
+                             token=(cuerpo or {}).get("token"))
+    ctx.boveda.commit()
+    return 200, {**salida, "id_persona": str(salida["id_persona"])}
+
+
+@ruta("GET", "/portal/perfil", None, requisito="R6.5")
+def portal_perfil(ctx, actor, params, cuerpo, consulta):
+    return 200, portal.perfil(ctx.boveda, _yo(ctx, actor))
+
+
+@ruta("PATCH", "/portal/perfil", None, requisito="R6.5")
+def portal_editar_perfil(ctx, actor, params, cuerpo, consulta):
+    salida = portal.editar_atributos(
+        ctx.boveda, _yo(ctx, actor), (cuerpo or {}).get("atributos") or {})
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("POST", "/portal/contacto/verificacion", None, requisito="R6.6")
+def portal_pedir_verificacion(ctx, actor, params, cuerpo, consulta):
+    cuerpo = cuerpo or {}
+    return 200, portal.pedir_verificacion_de_contacto(
+        ctx.boveda, _yo(ctx, actor), cuerpo.get("canal"), cuerpo.get("destino"),
+        origen=cuerpo.get("origen"))
+
+
+@ruta("POST", "/portal/contacto", None, requisito="R6.6")
+def portal_confirmar_contacto(ctx, actor, params, cuerpo, consulta):
+    cuerpo = cuerpo or {}
+    salida = portal.confirmar_contacto(
+        ctx.boveda, _yo(ctx, actor), cuerpo.get("canal"), cuerpo.get("destino"),
+        cuerpo.get("codigo"))
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("GET", "/portal/puntos", None, requisito="R6.3")
+def portal_puntos(ctx, actor, params, cuerpo, consulta):
+    return 200, portal.resumen_de_puntos(ctx.boveda, _yo(ctx, actor))
+
+
+@ruta("GET", "/portal/premios", None, requisito="R6.4")
+def portal_premios(ctx, actor, params, cuerpo, consulta):
+    return 200, portal.catalogo(ctx.boveda, _yo(ctx, actor))
+
+
+@ruta("GET", "/portal/canjes", None, requisito="R6.4")
+def portal_canjes(ctx, actor, params, cuerpo, consulta):
+    return 200, {"items": portal.mis_canjes(ctx.boveda, _yo(ctx, actor))}
+
+
+@ruta("POST", "/portal/canjes", None, requisito="R6.4")
+def portal_canjear(ctx, actor, params, cuerpo, consulta):
+    salida = portal.solicitar_canje(
+        ctx.boveda, _yo(ctx, actor), _entero((cuerpo or {}).get("premio_id")))
+    ctx.boveda.commit()
+    return 201, salida
+
+
+@ruta("GET", "/portal/canales", None, requisito="R6.7")
+def portal_canales(ctx, actor, params, cuerpo, consulta):
+    return 200, {"items": portal.canales(ctx.boveda, _yo(ctx, actor))}
+
+
+@ruta("PUT", "/portal/canales/<canal>", None, requisito="R6.7")
+def portal_cambiar_canal(ctx, actor, params, cuerpo, consulta):
+    salida = portal.cambiar_canal(
+        ctx.boveda, _yo(ctx, actor), params["canal"],
+        bool((cuerpo or {}).get("activo")))
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("GET", "/portal/finalidades", None, requisito="R6.8")
+def portal_finalidades(ctx, actor, params, cuerpo, consulta):
+    return 200, {"items": portal.finalidades(ctx.boveda, _yo(ctx, actor))}
+
+
+@ruta("DELETE", "/portal/finalidades/<finalidad>", None, requisito="R6.8")
+def portal_retirar_finalidad(ctx, actor, params, cuerpo, consulta):
+    """Retirar una finalidad **no** es darse de baja: el panel queda intacto."""
+    salida = portal.retirar_finalidad(
+        ctx.boveda, _yo(ctx, actor), params["finalidad"],
+        conn_semantica=ctx.semantica)
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("GET", "/portal/baja", None, requisito="R6.9")
+def portal_previo_a_la_baja(ctx, actor, params, cuerpo, consulta):
+    """Lo que hay que leer antes de confirmar, con el saldo a la vista."""
+    return 200, portal.previo_a_la_baja(ctx.boveda, _yo(ctx, actor))
+
+
+@ruta("POST", "/portal/baja", None, requisito="R6.9")
+def portal_darse_de_baja(ctx, actor, params, cuerpo, consulta):
+    salida = portal.darse_de_baja(ctx.boveda, _yo(ctx, actor),
+                                  conn_semantica=ctx.semantica)
+    ctx.boveda.commit()
+    return 200, salida

@@ -110,6 +110,13 @@ MIGRACIONES_BOVEDA = (
         "convocatoria_externa", "declarar_convocatoria()",
         "purgar_convocatorias_externas()",
     )),
+    # ── Fase 6 ──
+    ("0017_fase6_portal_panelista.sql", (
+        "atributo_demografico.editable_por_panelista",
+        "atributo_editable_coherente()",
+        "cuenta_panelista", "acceso_portal",
+        "canje.aprobado_por", "canje.aprobado_en", "v_canje_panelista",
+    )),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -194,6 +201,10 @@ PARA_QUE = {
     "convocatoria_externa": "a quién convocó cada consumidor en su propio sistema; sin ella la bóveda le niega el contacto porque no ve esa convocatoria",
     "declarar_convocatoria()": "la única escritura de un consumidor externo: declarar a quién convocó, con el gate de consentimiento reaplicado",
     "purgar_convocatorias_externas()": "borra las declaraciones vencidas hace más de 30 días; vencida no habilita nada y guardarla sería retención sin finalidad",
+    "atributo_demografico.editable_por_panelista": "qué puede cambiar el panelista de sí mismo desde el portal; sin esta columna el portal no sabría qué mostrar",
+    "cuenta_panelista": "qué persona es cada cuenta del portal; es de donde sale el `id_persona` de la sesión, que nunca viene del pedido",
+    "acceso_portal": "los enlaces de acceso emitidos y los intentos; sin ella no hay límite de tasa ni enlace de un solo uso",
+    "v_canje_panelista": "el canje como lo ve quien lo pidió, con el estado en palabras",
 }
 
 

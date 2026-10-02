@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mi panel — Equipos Consultores</title>
+  <meta name="description" content="Portal del panelista: tus puntos, tus datos y tus derechos." />
+  <link rel="icon" href="assets/logo-equipos-vertical.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/estilo.css" />
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       PORTAL DEL PANELISTA (Fase 6)
+
+       Superficie **separada** de la aplicación de administración. Comparte
+       Firebase Auth y nada más: una sesión de acá no tiene rol, así que no
+       puede entrar a ninguna ruta interna aunque alguien la registre mal.
+
+       Habla con `/api/portal/*`. La única ruta pública es pedir el enlace
+       de acceso —quien lo pide todavía no tiene sesión—; el resto exige
+       token y resuelve a la persona desde el vínculo `uid ↔ id_persona`,
+       nunca desde un identificador que mande esta página.
+
+       Lo que esta pantalla **no** muestra, a propósito: las respuestas
+       anteriores del panelista (verlas condiciona lo que responde ahora) y
+       a qué estudios fue convocado (no es asunto suyo saber la muestra).
+  ═══════════════════════════════════════════════════════════════════ -->
+  <script>window.API_BASE = "/api";</script>
+  <style>
+    .portal { max-width: 720px; margin: 0 auto; padding: 24px 18px 64px; }
+    .portal header { text-align: center; margin-bottom: 24px; }
+    .portal header img { height: 48px; margin-bottom: 12px; }
+    .portal h1 { font-size: 26px; margin: 0 0 6px; }
+    .portal .bajada { color: var(--tenue, #667); margin: 0; font-size: 15px; }
+
+    .saldo { text-align: center; padding: 22px; border-radius: 12px;
+             background: var(--fondo-suave, #fafbfc);
+             border: 1px solid var(--borde, #dde); margin-bottom: 20px; }
+    .saldo .numero { font-size: 44px; font-weight: 800; line-height: 1;
+                     color: var(--orange, #e8590c); }
+    .saldo .rotulo { color: var(--tenue, #667); font-size: 14px; margin-top: 4px; }
+
+    nav.pestanas { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 18px;
+                   border-bottom: 1px solid var(--borde, #dde); }
+    nav.pestanas button { background: none; border: none; padding: 10px 14px;
+                          font: inherit; font-size: 14px; cursor: pointer;
+                          color: var(--tenue, #667); border-bottom: 3px solid transparent; }
+    nav.pestanas button[aria-selected="true"] {
+      color: var(--orange, #e8590c); border-bottom-color: var(--orange, #e8590c);
+      font-weight: 600; }
+
+    .tarjeta { border: 1px solid var(--borde, #dde); border-radius: 10px;
+               padding: 16px; margin-bottom: 12px; }
+    .tarjeta h3 { margin: 0 0 4px; font-size: 16px; }
+    .tarjeta p { margin: 0 0 10px; color: var(--tenue, #667); font-size: 14px; }
+
+    .fila-entre { display: flex; align-items: center; justify-content: space-between;
+                  gap: 12px; flex-wrap: wrap; }
+    .movimiento { display: flex; justify-content: space-between; gap: 12px;
+                  padding: 10px 0; border-bottom: 1px solid var(--borde, #eef); }
+    .movimiento:last-child { border-bottom: none; }
+    .movimiento .puntos { font-weight: 700; white-space: nowrap; }
+    .movimiento .puntos.suma { color: #2b8a3e; }
+    .movimiento .puntos.resta { color: #c92a2a; }
+    .movimiento .cuando { color: var(--tenue, #889); font-size: 12px; }
+
+    .estado-canje { font-size: 12px; padding: 2px 8px; border-radius: 99px;
+                    background: var(--fondo-suave, #f1f3f5); white-space: nowrap; }
+
+    .peligro { border-color: #ffc9c9; background: #fff5f5; }
+    .peligro h3 { color: #c92a2a; }
+    .peligro ul { margin: 8px 0 14px 18px; padding: 0; font-size: 14px; }
+
+    .oculto { display: none !important; }
+    @media (max-width: 480px) {
+      .saldo .numero { font-size: 36px; }
+      nav.pestanas button { padding: 9px 10px; font-size: 13px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="portal">
+    <header>
+      <img src="assets/logo-equipos-vertical.png" alt="Equipos Consultores" />
+      <h1>Mi panel</h1>
+      <p class="bajada">Tus puntos, tus datos y tus derechos.</p>
+    </header>
+
+    <div id="alerta"></div>
+
+    <!-- ── Sin sesión: pedir el enlace ─────────────────────────────── -->
+    <section id="acceso" class="tarjeta">
+      <h3>Entrar</h3>
+      <p>Escribí tu correo y te mandamos un enlace para entrar. No hace falta
+         contraseña.</p>
+      <form id="form-acceso" class="fila-entre">
+        <input class="finput" id="email" type="email" required
+               placeholder="tu@correo.com" style="flex:1 1 220px" />
+        <button class="btn-orange" type="submit">Mandame el enlace</button>
+      </form>
+      <p style="margin-top:12px;font-size:13px">
+        ¿Todavía no sos panelista?
+        <a href="/inscribirse">Inscribite acá</a>.
+      </p>
+    </section>
+
+    <!-- ── Con sesión ──────────────────────────────────────────────── -->
+    <div id="adentro" class="oculto">
+      <div class="saldo">
+        <div class="numero" id="saldo">—</div>
+        <div class="rotulo">puntos disponibles</div>
+      </div>
+
+      <nav class="pestanas" role="tablist">
+        <button role="tab" data-panel="puntos" aria-selected="true">Puntos</button>
+        <button role="tab" data-panel="premios" aria-selected="false">Premios</button>
+        <button role="tab" data-panel="perfil" aria-selected="false">Mis datos</button>
+        <button role="tab" data-panel="derechos" aria-selected="false">Mis derechos</button>
+      </nav>
+
+      <section id="panel-puntos"></section>
+      <section id="panel-premios" class="oculto"></section>
+      <section id="panel-perfil" class="oculto"></section>
+      <section id="panel-derechos" class="oculto"></section>
+
+      <p style="text-align:center;margin-top:24px">
+        <button class="btn-outline" id="salir">Cerrar sesión</button>
+      </p>
+    </div>
+  </main>
+
+  <script type="module" src="js/portal.js"></script>
+</body>
+</html>

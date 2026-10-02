@@ -84,6 +84,11 @@ def test_las_garantias_que_afirma_siguen_siendo_ciertas():
         ("POST", "/inscripciones"),
         ("POST", "/inscripciones/verificacion"),
         ("POST", "/inscripciones/verificacion/comprobar"),
+        # R6.1 — pedir el enlace de acceso al portal. Quien lo pide todavía
+        # no tiene sesión, así que exigir token sería imposible. No lee ni
+        # devuelve ningún dato: contesta lo mismo exista o no el correo, y
+        # está protegida por su propio límite de tasa.
+        ("POST", "/portal/acceso"),
     })
     assert not ruteo.es_publica("GET", "/inscripciones"), (
         "la bandeja de aprobación lista datos de personas: no puede ser pública"

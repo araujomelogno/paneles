@@ -25,6 +25,9 @@ const SOLAPAS = {
 
 const ESTADO_CANJE = {
   solicitado: ['aviso', 'Solicitado'],
+  // R6.4 — «lo revisé» y «lo entregué» no son lo mismo, y entre los dos
+  // puede pasar una semana. El panelista ve este estado en su portal.
+  aprobado: ['aviso', 'Aprobado'],
   entregado: ['ok', 'Entregado'],
   cancelado: ['off', 'Cancelado'],
 };
@@ -137,12 +140,17 @@ async function pintarCanjes(cuerpo) {
         <td>${esc(c.premio)}</td><td>${c.costo_puntos}</td>
         <td>${token(ESTADO_CANJE[c.estado][1])}</td>
         <td>${fechaCorta(c.creado_en)}</td>
-        <td>${c.estado === 'solicitado' ? `
+        <td>${['solicitado', 'aprobado'].includes(c.estado) ? `
+          ${c.estado === 'solicitado'
+            ? `<button class="btn btn-sm" data-aprobar="${c.id}">Aprobar</button>` : ''}
           <button class="btn btn-sm" data-entregar="${c.id}">Entregado</button>
           <button class="btn btn-sm btn-danger" data-cancelar="${c.id}">Cancelar</button>` : ''}</td>
       </tr>`).join('')}</tbody></table>` : vacio('Todavía no hay canjes.', '🎟️')}
     </div></div>`;
 
+  $$('[data-aprobar]').forEach((b) => {
+    b.onclick = () => resolverCanje(Number(b.dataset.aprobar), 'aprobado');
+  });
   $$('[data-entregar]').forEach((b) => {
     b.onclick = () => resolverCanje(Number(b.dataset.entregar), 'entregado');
   });
@@ -161,7 +169,11 @@ async function pintarCanjes(cuerpo) {
 async function resolverCanje(id, estadoNuevo) {
   try {
     await api.canjes.resolver(id, estadoNuevo);
-    toast(estadoNuevo === 'entregado' ? 'Marcado como entregado.' : 'Cancelado y puntos devueltos.', 'ok');
+    toast({
+      aprobado: 'Aprobado. El panelista ya lo ve en su portal.',
+      entregado: 'Marcado como entregado.',
+      cancelado: 'Cancelado y puntos devueltos.',
+    }[estadoNuevo], 'ok');
     cargar();
   } catch (error) { toast(error.message, 'error'); }
 }
