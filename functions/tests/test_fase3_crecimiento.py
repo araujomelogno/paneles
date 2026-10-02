@@ -320,6 +320,9 @@ def test_las_rutas_publicas_son_solo_esas_dos():
     verificación y comprobarlo. Si necesitaran token, verificar el contacto
     desde la landing sería imposible. Las dos tienen su propio límite de tasa
     y pasan por el desafío anti-automatización.
+
+    La Fase 6 suma una quinta, por el mismo motivo: pedir el enlace de
+    acceso al portal es lo que hace quien **todavía no** tiene sesión.
     """
     from panel_api import ruteo
 
@@ -328,6 +331,11 @@ def test_las_rutas_publicas_son_solo_esas_dos():
         ("POST", "/inscripciones"),
         ("POST", "/inscripciones/verificacion"),
         ("POST", "/inscripciones/verificacion/comprobar"),
+        # R6.1 — pedir el enlace de acceso al portal. Quien lo pide todavía
+        # no tiene sesión, así que exigir token sería imposible. No lee ni
+        # devuelve ningún dato: contesta lo mismo exista o no el correo, y
+        # está protegida por su propio límite de tasa.
+        ("POST", "/portal/acceso"),
     })
     # Y ninguna de las cuatro lee datos de otros panelistas.
     assert ruteo.es_publica("GET", "/inscripciones/1") is False

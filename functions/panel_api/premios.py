@@ -19,12 +19,22 @@ from . import db, puntos
 from .errores import DatosInvalidos, NoEncontrado
 
 SOLICITADO = "solicitado"
+# R6.4 — «lo revisé» y «lo entregué» eran el mismo estado, y entre los dos
+# puede pasar una semana. Sin el del medio, el portal solo puede decir
+# «solicitado» hasta que el premio llega.
+APROBADO = "aprobado"
 ENTREGADO = "entregado"
 CANCELADO = "cancelado"
-ESTADOS = (SOLICITADO, ENTREGADO, CANCELADO)
+ESTADOS = (SOLICITADO, APROBADO, ENTREGADO, CANCELADO)
 # Un canje ya entregado no se cancela: el premio salió. Corregir eso es un
 # ajuste manual con motivo, no una transición de estado.
-TRANSICIONES = {SOLICITADO: (ENTREGADO, CANCELADO)}
+# Aprobar es opcional: un premio que se entrega en el acto no necesita pasar
+# por el estado del medio, y obligar a dos clics donde alcanza uno haría que
+# nadie use el primero.
+TRANSICIONES = {
+    SOLICITADO: (APROBADO, ENTREGADO, CANCELADO),
+    APROBADO: (ENTREGADO, CANCELADO),
+}
 
 
 # ── Catálogo ────────────────────────────────────────────────────────
@@ -238,10 +248,10 @@ def listar_canjes(conn, id_persona=None, estado=None, limite=200):
 
 def resolver(conn, canje_id, estado, actor=None, nota=None):
     """`solicitado → entregado | cancelado`. Cancelar devuelve los puntos."""
-    if estado not in (ENTREGADO, CANCELADO):
+    if estado not in (APROBADO, ENTREGADO, CANCELADO):
         raise DatosInvalidos(
             f"«{estado}» no es una resolución de canje.",
-            {"estados_validos": [ENTREGADO, CANCELADO]},
+            {"estados_validos": [APROBADO, ENTREGADO, CANCELADO]},
         )
     with conn.transaction():
         fila = db.una(
@@ -280,17 +290,37 @@ def resolver(conn, canje_id, estado, actor=None, nota=None):
                 (fila["premio_id"],),
             )
 
-        nueva = db.una(
-            conn,
-            """
-            update canje set estado = %s, resuelto_en = now(),
-                             resuelto_por = %s, nota = %s
-             where id = %s
-            returning id, id_persona, premio_id, costo_puntos, estado,
-                      movimiento_id, creado_en, resuelto_en, resuelto_por, nota
-            """,
-            (estado, getattr(actor, "uid", None), nota, canje_id),
-        )
+        # Aprobar no es resolver: el canje sigue abierto y lo que queda
+        # registrado es quién lo revisó y cuándo. `resuelto_en` se reserva
+        # para el final del ciclo, que es lo que hace que «cuánto tardamos en
+        # entregar» siga siendo medible.
+        if estado == APROBADO:
+            nueva = db.una(
+                conn,
+                """
+                update canje set estado = %s, aprobado_en = now(),
+                                 aprobado_por = %s,
+                                 nota = coalesce(%s, nota)
+                 where id = %s
+                returning id, id_persona, premio_id, costo_puntos, estado,
+                          movimiento_id, creado_en, resuelto_en, resuelto_por,
+                          nota
+                """,
+                (estado, getattr(actor, "uid", None), nota, canje_id),
+            )
+        else:
+            nueva = db.una(
+                conn,
+                """
+                update canje set estado = %s, resuelto_en = now(),
+                                 resuelto_por = %s, nota = %s
+                 where id = %s
+                returning id, id_persona, premio_id, costo_puntos, estado,
+                          movimiento_id, creado_en, resuelto_en, resuelto_por,
+                          nota
+                """,
+                (estado, getattr(actor, "uid", None), nota, canje_id),
+            )
 
     resultado = _serializar_canje({**nueva, "premio": fila["premio"]})
     resultado["saldo_restante"] = puntos.saldo(conn, fila["id_persona"])

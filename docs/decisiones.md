@@ -2280,6 +2280,71 @@ mapeo), `web/public/js/paginas/encuestas.js`,
 
 ---
 
+<a id="d52"></a>
+## D52 · El portal es una superficie separada, aunque comparta el proveedor de identidad
+
+**El problema.** Hasta la Fase 5 la bóveda la tocaban empleados de Equipos
+—una decena de cuentas, todas con un rol del padrón interno— y un segundo
+sistema registrado. El portal del panelista **da vuelta esa postura**:
+autentica a miles de externos contra el store que tiene toda la PII.
+
+La tentación era reusar lo que ya existía: la misma resolución de actor, las
+mismas rutas con un permiso nuevo, el mismo sitio. Habría funcionado el
+primer día y habría sido un error, porque la API interna está escrita sobre
+suposiciones que dejan de valer: que el llamador es de confianza, que puede
+nombrar a cualquier persona, y que un pedido raro es un error y no un ataque.
+
+**La decisión: una superficie aparte que comparte Firebase Auth y nada más.**
+
+| | |
+|---|---|
+| **Resolución de actor propia** | `auth.actor_de_portal()` no consulta el padrón interno y devuelve `rol = None`. Un panelista no puede ejecutar ningún permiso de la administración, y no porque alguien se acuerde de comprobarlo: porque no tiene con qué |
+| **El `id_persona` nunca se recibe** | Sale de `cuenta_panelista`, a partir del `uid` del token. Hay una prueba que recorre **todas** las rutas del portal y falla si alguna lo toma de la URL o no lo resuelve desde la sesión |
+| **Lista blanca, no excepciones** | Un atributo se edita solo si alguien lo marcó editable. Por omisión, nada |
+| **Página y módulo propios** | `web/public/portal.html` + `web/public/js/portal.js` + `functions/panel_api/portal.py`. El código del portal no importa nada de la app interna |
+
+**Por qué la respuesta de «pedir acceso» es una constante del módulo.** Si
+el sistema contesta distinto ante un correo que existe y uno que no,
+cualquiera averigua quién integra el panel probando direcciones. Eso es una
+filtración de datos personales aunque nunca se muestre un perfil. El mensaje
+vive en **una sola constante** porque dos textos parecidos escritos en dos
+lugares terminan divergiendo, y la diferencia *es* la filtración. Los
+intentos fallidos se registran igual —hasheando el correo— porque si solo
+contaran los de panelistas reales, probar direcciones ajenas no tendría
+límite.
+
+**Lo que no se guarda en claro.** El registro de accesos hashea el correo: un
+intento puede ser de alguien que no es panelista, y juntar su dirección sería
+recolectar datos de quien no aceptó nada, en la tabla que menos lo justifica.
+
+**Precedencia: la persona gana.** Un valor con `origen = 'panelista'` es
+autoritativo sobre sí mismo. La jerarquía es **panelista > operador >
+archivo**, y una ingesta que traiga otro valor lo informa como discrepancia
+igual que hoy hace con un campo ya cargado. Nadie sabe mejor que la persona
+en qué barrio vive. Efecto secundario valioso: como el historial de R4.1.a
+guarda cada vigencia, se aprende **cuándo** cambió su situación, no solo cuál
+es hoy.
+
+**Granular, no todo o nada.** El sistema ya modela finalidades y canales por
+separado, y el portal lo respeta: se puede dejar WhatsApp sin dejar el panel,
+y salir del análisis entre estudios sin dejar de participar. Colapsar todo en
+«darse de baja» perdería una distinción que la arquitectura ya sostiene.
+
+**La pérdida de puntos se dice antes.** Está decidido que la baja los pierde.
+La decisión no es el problema; el problema sería que apareciera después de
+confirmar. Por eso el saldo va a la vista, con los canjes pendientes nombrados
+uno por uno, **antes** del botón.
+
+**Y la baja se confirma como «en curso», no como «hecha».** La cascada
+incluye consumidores externos que confirman de forma asincrónica (R5.3):
+decir «listo, ya borramos todo» sería afirmar algo verificable y falso.
+
+**Dónde vive.** `db/boveda/0017_fase6_portal_panelista.sql`,
+`functions/panel_api/portal.py`, `functions/panel_api/auth.py`,
+`web/public/portal.html`, `functions/tests/test_fase6_portal.py`.
+
+---
+
 ## Anexo · Decisiones que no se tomaron
 
 Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
@@ -2315,4 +2380,8 @@ Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 | Quién llama a `purgar_convocatorias_externas()` y cada cuánto | Pendiente: la función existe y es idempotente, pero todavía no está enganchada a ninguna rutina ni pantalla | [D50](#d50) |
 | Mapear a categorías desde la pantalla de atributos, no solo al cargar | **No se hizo.** Corregir un mapeo ya cargado se hace por API (`POST /atributos/{id}/recalcular` con `mapeo`); no hay pantalla para eso todavía | [D51](#d51) |
 | Mapear una variable con más de 60 valores distintos | **Deliberado:** no se ofrece. Una variable así no es un segmentador, y media lista de desplegables invita a mapear la mitad y creer que está completo | [D51](#d51) |
+| Verificación del celular por SMS en el portal | **Pendiente.** El mecanismo de R4.3 ya existe y el portal lo usa; falta contratar el proveedor de SMS. Hasta entonces, un celular nuevo no habilita WhatsApp | [D52](#d52) |
+| Que el panelista vea a qué estudios fue convocado | **No se hace, y no es un olvido.** Ver la muestra es información sobre el diseño del estudio, no sobre la persona | `SPEC_fase6.md` §3 |
+| Que el panelista vea sus respuestas anteriores | **Descartado:** contamina la investigación —ver lo que respondió antes condiciona lo que responde ahora— y complica lo prometido sobre confidencialidad | `SPEC_fase6.md` §3 |
+| Auditar los cambios de atributos editables | **Anotado, no hecho.** Se evaluó el gameo y se consideró poco probable; si algún atributo pasa a definir cuotas o premios, conviene auditarlo o limitar su frecuencia | [D52](#d52) |
 | Alinear el voseo de la interfaz con el registro formal del manual | Sin decidir; requeriría recapturar las 44 pantallas | PR de la Fase 2 |

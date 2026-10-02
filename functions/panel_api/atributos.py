@@ -84,6 +84,10 @@ def _serializar(fila, categorias=None, con_datos=None):
         "activo": fila["activo"],
         "orden": fila["orden"],
         "del_nucleo": fila["clave"] in CLAVES_DEL_NUCLEO,
+        # R6.5 — si el panelista puede cambiarlo desde el portal. Va en el
+        # serializador y no solo en el portal porque la pantalla de
+        # administración es donde se marca.
+        "editable_por_panelista": fila.get("editable_por_panelista", False),
         "creado_en": fila["creado_en"].isoformat(),
     }
     if categorias is not None:
@@ -175,7 +179,7 @@ def listar(conn, solo_activos=False, con_categorias=True, incluir_especiales=Tru
         conn,
         """
         select a.id, a.clave, a.etiqueta, a.tipo, a.descripcion, a.es_especial,
-               a.activo, a.orden, a.creado_en,
+               a.activo, a.orden, a.editable_por_panelista, a.creado_en,
                exists (select 1 from persona_atributo pa
                         where pa.atributo_id = a.id) as tiene_datos
           from atributo_demografico a
@@ -202,13 +206,13 @@ def obtener(conn, referencia):
             isinstance(referencia, str) and referencia.isdigit()):
         fila = db.una(
             conn,
-            "select id, clave, etiqueta, tipo, descripcion, es_especial, activo, "
+            "select id, clave, etiqueta, tipo, descripcion, es_especial, activo, editable_por_panelista, "
             "orden, creado_en from atributo_demografico where id = %s",
             (int(referencia),))
     else:
         fila = db.una(
             conn,
-            "select id, clave, etiqueta, tipo, descripcion, es_especial, activo, "
+            "select id, clave, etiqueta, tipo, descripcion, es_especial, activo, editable_por_panelista, "
             "orden, creado_en from atributo_demografico where clave = %s",
             (str(referencia).strip(),))
     if not fila:
@@ -378,6 +382,10 @@ def editar(conn, atributo_id, cambios, actor=None):
         nueva_clave = actual["clave"]
 
     es_especial = cambios.get("es_especial")
+    # R6.5 — habilitar la edición desde el portal es una decisión del
+    # administrador, y se toma acá. El trigger de la `0017` impide marcarlo
+    # sobre un derivado; el aviso de abajo es para el otro caso delicado.
+    editable = cambios.get("editable_por_panelista")
     fila = db.una(
         conn,
         """
@@ -386,24 +394,36 @@ def editar(conn, atributo_id, cambios, actor=None):
                etiqueta = coalesce(%s, etiqueta),
                descripcion = coalesce(%s, descripcion),
                orden = coalesce(%s, orden),
-               es_especial = coalesce(%s, es_especial)
+               es_especial = coalesce(%s, es_especial),
+               editable_por_panelista = coalesce(%s, editable_por_panelista)
          where id = %s
      returning id, clave, etiqueta, tipo, descripcion, es_especial, activo,
-               orden, creado_en
+               orden, editable_por_panelista, creado_en
         """,
         (nueva_clave,
          (cambios.get("etiqueta") or "").strip() or None,
          (cambios.get("descripcion") or "").strip() or None,
          cambios.get("orden"),
          None if es_especial is None else bool(es_especial),
+         None if editable is None else bool(editable),
          actual["id"]),
     )
     _auditar(conn, actual["id"], nueva_clave, "edicion", actor,
              {"antes": {k: actual[k] for k in
-                        ("clave", "etiqueta", "es_especial", "orden")}})
+                        ("clave", "etiqueta", "es_especial", "orden",
+                         "editable_por_panelista")}})
     salida = obtener(conn, fila["id"])
     if es_especial and not actual["es_especial"]:
         salida["advertencia"] = ADVERTENCIA_ESPECIAL
+    if editable and salida.get("es_especial"):
+        # R6.5 — una categoría especial editable sin decidirlo es el caso
+        # que la spec pide no dejar pasar en silencio. No se prohíbe: se
+        # nombra, porque puede haber un motivo.
+        salida["advertencia"] = (
+            f"«{salida['clave']}» está marcado como categoría especial y "
+            f"ahora es editable desde el portal. Son datos con exigencias "
+            f"propias: revisá que corresponda que la persona los cambie sin "
+            f"intervención.")
     return salida
 
 

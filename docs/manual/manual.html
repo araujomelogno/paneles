@@ -56,8 +56,11 @@
     <li><a href="#s12"><span><span class="num">12</span> Configuración</span></a>
       <ul><li>Alta de usuarios · Roles · Desactivación · Auditoría ·
       Atributos demográficos</li></ul></li>
-    <li><a href="#s13"><span><span class="num">13</span> Preguntas frecuentes</span></a></li>
-    <li><a href="#s14"><span><span class="num">14</span> Glosario</span></a></li>
+    <li><a href="#s13b"><span><span class="num">13</span> El portal del panelista</span></a>
+      <ul><li>Cómo entra · Qué ve · Canjes con aprobación · Canales y
+      permisos · La baja</li></ul></li>
+    <li><a href="#s13"><span><span class="num">14</span> Preguntas frecuentes</span></a></li>
+    <li><a href="#s14"><span><span class="num">15</span> Glosario</span></a></li>
   </ol>
 
 </div>
@@ -2234,6 +2237,28 @@
     los objetivos de composición y la ficha de cada persona.</figcaption>
   </figure>
 
+  <h4>Qué puede cambiar el panelista de sí mismo</h4>
+
+  <p>Desde el portal del panelista, cada persona puede mantener al día sus
+  propios datos. Qué datos exactamente lo decide quien administra el catálogo:
+  en la ficha del atributo hay una marca, <strong>«El panelista puede
+  cambiarlo desde el portal»</strong>, y por omisión está apagada en todos.</p>
+
+  <div class="aviso">
+    <div class="t">Lo que cambia al marcarlo</div>
+    <p>El valor que cargue la persona pasa a ser <strong>autoritativo</strong>:
+    una ingesta posterior que traiga otro valor lo informa como discrepancia y
+    <strong>no lo pisa</strong>. El orden de precedencia es
+    <strong>panelista &gt; operador &gt; archivo</strong>, y el motivo es
+    simple: nadie sabe mejor que la persona en qué barrio vive o a qué se
+    dedica.</p>
+    <p>Los atributos <strong>derivados</strong> no se pueden marcar: su valor
+    se calcula, así que ofrecer editarlo mostraría un control que no hace
+    nada. Y marcar una <strong>categoría especial</strong> como editable es
+    una decisión aparte —el sistema la permite y la advierte—: son datos con
+    exigencias propias.</p>
+  </div>
+
   <div class="aviso">
     <div class="t">Qué se puede corregir después, y qué no</div>
     <p>El <strong>nombre visible</strong>, la descripción y las etiquetas de
@@ -2312,11 +2337,124 @@
   </div>
 </section>
 
+<!-- ════════════════ El portal ════════════════ -->
+<section id="s13b">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 13</div>
+    <h2>El portal del panelista</h2>
+    <p>Qué puede hacer cada panelista por su cuenta, y qué queda del lado de
+    Equipos.</p>
+  </div>
+
+  <p>Hasta ahora, todo lo que un panelista quería hacer con sus propios datos
+  pasaba por una persona de Equipos: preguntar cuántos puntos tenía, avisar
+  que cambió de celular, pedir que dejen de mandarle WhatsApp, irse del panel.
+  El portal le da una puerta propia.</p>
+
+  <p>No es solamente una pantalla de puntos: es <strong>la interfaz de
+  derechos del titular</strong>. Los puntos son lo que hace que la gente
+  entre; lo que sostiene el portal es que acceso, rectificación, retiro de
+  consentimiento y baja se puedan ejercer sin intermediarios y queden
+  registrados.</p>
+
+  <h3>Cómo entra un panelista</h3>
+
+  <p>Con su correo, sin contraseña. Escribe su dirección, recibe un enlace y
+  entra. El enlace <strong>vence a los quince minutos y sirve una sola
+  vez</strong>.</p>
+
+  <div class="aviso">
+    <div class="t">El sistema nunca dice si un correo es de un panelista</div>
+    <p>La respuesta al pedir el enlace es idéntica exista o no esa dirección:
+    «si esa dirección corresponde a un panelista, va a recibir un enlace».
+    Contestar distinto permitiría averiguar quién integra el panel probando
+    direcciones, que es una filtración de datos personales aunque nunca se
+    muestre un perfil.</p>
+    <p>La consecuencia práctica para quien atiende consultas: si alguien dice
+    que no le llega el enlace, <strong>el portal no puede confirmar ni negar
+    que esté en el padrón</strong>. Eso se mira desde la administración.</p>
+  </div>
+
+  <h3>Qué ve y qué puede hacer</h3>
+
+  <table>
+    <thead><tr><th>Sección</th><th>Qué permite</th></tr></thead>
+    <tr><td class="destacado">Puntos</td>
+      <td>El saldo y cada movimiento, con el motivo explicado en castellano y
+      la fecha de vencimiento cuando corresponde. El saldo sale siempre del
+      extracto: no hay un acumulado aparte que pueda desincronizarse.</td></tr>
+    <tr><td class="destacado">Premios</td>
+      <td>El catálogo con el costo de cada uno y si está al alcance del saldo.
+      Al pedir uno, los puntos <strong>se reservan</strong> y el pedido queda
+      en «solicitado».</td></tr>
+    <tr><td class="destacado">Mis datos</td>
+      <td>Corregir correo y celular —con un código de confirmación— y
+      actualizar los atributos que se hayan marcado editables.</td></tr>
+    <tr><td class="destacado">Mis derechos</td>
+      <td>Activar o revocar cada canal por separado, retirar cada permiso por
+      separado, y darse de baja.</td></tr>
+  </table>
+
+  <h3>Los canjes ahora pasan por una aprobación</h3>
+
+  <p>El ciclo de un canje tiene un estado más: <strong>solicitado →
+  aprobado → entregado</strong>, o cancelado. «Lo revisé» y «lo entregué» eran
+  el mismo estado y no son lo mismo: entre los dos puede pasar una semana, y
+  durante esa semana el panelista necesita ver que su pedido avanzó.</p>
+
+  <p>Desde <strong>Gamificación → Canjes</strong>, un canje solicitado ahora
+  ofrece tres acciones: <i>Aprobar</i>, <i>Entregado</i> y <i>Cancelar</i>.
+  Aprobar es opcional —un premio que se entrega en el acto puede ir directo a
+  entregado— y lo que cambia es lo que la persona lee en su portal.</p>
+
+  <div class="aviso">
+    <div class="t">Cancelar devuelve los puntos</div>
+    <p>La devolución entra como un <strong>movimiento nuevo</strong>: el
+    descuento original queda en el extracto porque ocurrió. Es la misma regla
+    de siempre.</p>
+  </div>
+
+  <h3>Lo que el portal no muestra, a propósito</h3>
+
+  <ul>
+    <li><strong>Las respuestas anteriores del panelista.</strong> Ver lo que
+    respondió antes condiciona lo que responde ahora, y complica lo prometido
+    sobre confidencialidad.</li>
+    <li><strong>A qué estudios fue convocado.</strong> La muestra es
+    información sobre el diseño del estudio, no sobre la persona.</li>
+    <li><strong>Resultados de ningún estudio.</strong></li>
+  </ul>
+
+  <h3>Revocar un canal no es darse de baja</h3>
+
+  <p>Son cosas distintas y el portal las mantiene separadas. Alguien puede
+  dejar de recibir WhatsApp y seguir participando por correo; o retirar el
+  permiso de análisis entre estudios —sus respuestas salen del store
+  semántico— y seguir siendo panelista. Colapsar todo en «darse de baja»
+  perdería una distinción que el sistema ya sostiene.</p>
+
+  <h3>La baja, y los puntos</h3>
+
+  <p>Antes de confirmar, el portal muestra en texto claro qué va a pasar: que
+  se eliminan los datos, <strong>que los puntos acumulados se pierden</strong>
+  —con el saldo a la vista— y que los pedidos de premio pendientes se
+  cancelan.</p>
+
+  <div class="aviso">
+    <div class="t">La baja se confirma como «en curso», no como «hecha»</div>
+    <p>El mensaje dice que el pedido quedó registrado y se está ejecutando. No
+    es una fórmula de cortesía: la cascada de borrado incluye sistemas
+    externos que confirman de forma asincrónica, y afirmar que ya terminó
+    sería decir algo verificable y falso.</p>
+  </div>
+</section>
+
 <!-- ════════════════ 11 ════════════════ -->
 <section id="s13">
   <div class="cab">
     <div class="barra"></div>
-    <div class="kicker">Sección 13</div>
+    <div class="kicker">Sección 14</div>
     <h2>Preguntas frecuentes</h2>
     <p>Situaciones habituales y su explicación.</p>
   </div>
@@ -2427,7 +2565,7 @@
 <section id="s14">
   <div class="cab">
     <div class="barra"></div>
-    <div class="kicker">Sección 14</div>
+    <div class="kicker">Sección 15</div>
     <h2>Glosario</h2>
     <p>Los términos que aparecen en pantalla.</p>
   </div>

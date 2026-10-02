@@ -513,6 +513,20 @@ function abrirAtributo(atributo) {
       </div>
 
       <label class="finalidad" style="margin-top:0.5rem">
+        <input type="checkbox" name="editable_por_panelista"
+               ${atributo?.editable_por_panelista ? 'checked' : ''}
+               ${atributo?.tipo === 'derivado' ? 'disabled' : ''} />
+        <span>
+          <span class="f-titulo">El panelista puede cambiarlo desde el portal</span>
+          <span class="f-desc">Aparece en «Mis datos» del portal y la persona
+          lo mantiene al día sola. Su valor pasa a ser autoritativo: una
+          ingesta posterior que traiga otro lo informa como discrepancia y no
+          lo pisa. Los atributos derivados nunca pueden serlo —su valor se
+          calcula—.</span>
+        </span>
+      </label>
+
+      <label class="finalidad" style="margin-top:0.5rem">
         <input type="checkbox" name="es_especial" ${atributo?.es_especial ? 'checked' : ''} />
         <span>
           <span class="f-titulo">Es una categoría especial de datos</span>
@@ -578,12 +592,14 @@ async function guardarAtributo(caja, atributo) {
       await api.atributos.crear({
         clave: datos.clave, etiqueta: datos.etiqueta, tipo: datos.tipo,
         descripcion: datos.descripcion, es_especial: !!datos.es_especial,
+        editable_por_panelista: !!datos.editable_por_panelista,
         categorias: categorias.map(({ clave, etiqueta }) => ({ clave, etiqueta })),
       });
     } else {
       await api.atributos.editar(atributo.id, {
         etiqueta: datos.etiqueta, descripcion: datos.descripcion,
         es_especial: !!datos.es_especial,
+        editable_por_panelista: !!datos.editable_por_panelista,
       });
       // Las categorías nuevas se agregan de a una: cada una es su propia
       // decisión y el servidor rechaza las repetidas por separado.
