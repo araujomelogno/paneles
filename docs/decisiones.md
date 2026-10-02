@@ -2343,6 +2343,147 @@ decir «listo, ya borramos todo» sería afirmar algo verificable y falso.
 `functions/panel_api/portal.py`, `functions/panel_api/auth.py`,
 `web/public/portal.html`, `functions/tests/test_fase6_portal.py`.
 
+<a id="d53"></a>
+## D53 · El login del portal pasa por el backend, no por el SDK del navegador
+
+**El cambio.** R6.1.a reemplaza el acceso por enlace mágico —un correo por
+visita— por usuario y contraseña. Para un portal al que se vuelve cada
+varios meses, pedir un correo cada vez es la diferencia entre un portal que
+se usa y uno al que nadie vuelve, y además deja el acceso a merced de la
+entregabilidad del correo.
+
+Lo natural en Firebase habría sido que la página llame a
+`signInWithEmailAndPassword` y que el servidor se limite a verificar el
+token. **No se hizo, y el porqué es lo que vale documentar**, porque la
+decisión tiene un costo visible.
+
+### Tres cosas que R6.1.b pide y que desde el navegador no se pueden hacer valer
+
+| Lo que pide la spec | Por qué no alcanza con el SDK |
+|---|---|
+| «Intentos fallidos repetidos se limitan por correo y por origen» | Un límite que se aplica en el cliente no es un límite. El contador tiene que vivir del lado del servidor y la decisión también |
+| «Un panelista dado de baja no puede entrar» | Con login en el cliente la persona obtiene un token válido y recién se la rechaza adentro. Acá se la rechaza en la puerta |
+| «El mensaje es genérico, sin distinguir cuál de los dos falló» | Firebase distingue «ese correo no existe» de «contraseña incorrecta» salvo que esté activada la protección contra enumeración, que es **una casilla de la consola**. Una constante del módulo no depende de una casilla |
+
+El tercero es el que no se negocia: un formulario de ingreso que distingue
+los dos casos es un buscador de panelistas, y eso es una filtración de datos
+personales aunque nunca muestre un perfil.
+
+### El costo, dicho sin vueltas
+
+**La contraseña pasa por nuestra Cloud Function.** En memoria, nunca a un
+log ni a una tabla —no hay un solo `print` ni un solo `insert` con la clave—,
+pero pasa. Con el SDK del navegador iría directo de la página a Firebase y
+nuestro código no la vería nunca.
+
+Se paga una vez y se aprovecha: por eso **fijar** la contraseña también
+entra por el backend (`POST /portal/clave`) en vez de mandar a la persona a
+la pantalla de Firebase. Un sistema con dos caminos para las contraseñas
+tiene dos conjuntos de reglas, y el segundo envejece.
+
+Una aclaración honesta sobre el alcance: la *web API key* de Firebase es
+pública por diseño, así que alguien decidido puede llamar a Identity Toolkit
+directamente y saltearse nuestro límite. Lo que nuestro límite protege es el
+camino del portal; lo que **no** se puede saltear es la no-revelación, porque
+la respuesta que ve quien usa el portal la escribe el servidor. Conviene,
+además, dejar activada la protección contra enumeración en la consola: es
+defensa en profundidad, no la defensa.
+
+### La contraseña la guarda Firebase, el enlace lo controlamos nosotros
+
+Lo que **no** se escribió a mano: hash, almacenamiento y política de
+longitud. Eso es Firebase Auth, detrás de `credenciales.py`, con un doble en
+memoria para las pruebas.
+
+Lo que **sí** es nuestro: el token del enlace con el que se crea o recupera
+la contraseña. Vive en `acceso_portal` y su «una sola vez» es un
+`update ... where usado_en is null and vence_en > now()`, en una sola
+sentencia, así que dos pedidos simultáneos con el mismo token no ganan los
+dos. La alternativa era usar el enlace de restablecimiento de Firebase —el
+mismo mecanismo que R2.12 usa con los usuarios internos—, y se descartó por
+una razón concreta: con ese enlace, «sirve una sola vez» y «vence a las 24
+horas» son promesas de una consola, y la prueba del Definition of Done que
+las comprueba estaría probando un doble. Con el nuestro, las comprueba
+Postgres.
+
+### Qué pide reautenticar, y qué no
+
+| | |
+|---|---|
+| **Pide la contraseña de nuevo** | Darse de baja, retirar una finalidad, cambiar el correo |
+| **Alcanza con la sesión** | Ver puntos, pedir un canje, editar atributos, prender o apagar un canal |
+
+El criterio es **lo que no se deshace**, no «lo importante». Revocar WhatsApp
+se deshace volviéndolo a activar; retirar `uso_semantico` borra embeddings y
+volver a consentir no los devuelve. Con contraseña esto es barato —un campo
+más, no un correo que esperar—, que es parte de por qué el enlace mágico
+hacía inviable este control.
+
+Dos detalles de implementación que son la decisión y no un accidente:
+
+* **Falla cerrado.** Sin proveedor de credenciales la acción no ocurre. Una
+  baja que se ejecuta porque la comprobación no estaba disponible es peor
+  que una que no se ejecuta.
+* **La contraseña se comprueba antes que el código de verificación** al
+  cambiar el correo. Al revés, el intento sin contraseña que hace la
+  pantalla antes de abrir el modal quemaría el código —`verificar()` lo
+  consume al acertarlo— y la persona tendría que pedir otro. La spec pide
+  justo lo contrario: que tras reautenticar la acción siga sin volver a
+  empezar.
+
+### El corte tras la baja vive en `bajas.retirar`, no en el portal
+
+R6.1.e pide que una baja invalide **todas** las sesiones de inmediato. La
+baja la puede ejecutar el titular desde `/portal`, el DPO desde la
+administración o un job de cumplimiento: si el corte viviera en el camino
+del portal, los otros dos dejarían la credencial viva y las sesiones
+abiertas. Es la misma razón por la que el gate de consentimiento es una
+vista y no un `select` en Python.
+
+Y «de inmediato» exige una cosa más: `auth.actor_de_portal()` verifica el
+token con `check_revoked=True`. Sin eso, revocar sería efectivo recién
+cuando venciera el id token, hasta una hora después. Cuesta una consulta a
+Firebase por request del portal y se paga: es lo que convierte dos promesas
+del spec en comportamiento.
+
+Como la bóveda nunca espera a un sistema de afuera, un Firebase caído **no**
+frena la baja: el resultado trae `acceso_al_portal: {estado: "error"}` para
+que el DPO pueda ver qué cuenta quedó por apagar. La persona pierde el
+acceso igual en cuanto `cuenta_panelista` desaparece con la cascada, porque
+sin esa fila la sesión no resuelve a nadie.
+
+### Por qué hay una migración si la spec dice que no hace falta
+
+La spec (§6) dice que no hay cambios de esquema, y para la credencial es
+cierto. Lo que no mira es el límite de intentos fallidos: ese contador no
+puede compartir fila con el de los enlaces, porque si la compartiera,
+**cinco intentos de adivinar una contraseña dejarían a la víctima sin poder
+pedir el enlace para recuperarla** —el ataque le cerraría justo la puerta de
+salida—. `0018` agrega `motivo` a `acceso_portal`, con su catálogo, y
+`emitido_por` para el rastro de quién disparó un envío.
+
+Ese rastro no va a `usuario_auditoria`, que es donde está el de los usuarios
+internos, y la razón es de lectura: esa tabla es el registro de escalada de
+privilegios entre empleados de Equipos, y es lo que se mira para contestar
+«quién puede ver la bóveda». Mezclarle miles de panelistas —que no son
+usuarios de la aplicación y no tienen rol— la volvería ilegible justo para
+la pregunta que existe para contestar.
+
+### La inactividad la mide la bóveda
+
+«La sesión persiste hasta que el panelista cierre sesión o venza por
+inactividad prolongada» (R6.1.b). Firebase no vence sesiones por
+inactividad, así que la mide `cuenta_panelista.ultimo_acceso_en`: noventa
+días sin entrar y hay que volver a poner la contraseña. La marca se refresca
+con una hora de gracia —es un reloj que se lee en meses, no un contador de
+pantallas—, así que no cuesta un `update` por cada cosa que el portal pinta.
+
+**Dónde vive.** `db/boveda/0018_r6_1a_acceso_con_contrasena.sql`,
+`functions/panel_api/credenciales.py`, `functions/panel_api/portal.py`,
+`functions/panel_api/bajas.py`, `functions/panel_api/auth.py`,
+`functions/panel_api/inscripciones.py`, `web/public/portal.html`,
+`functions/tests/test_r6_1a_clave.py`.
+
 ---
 
 ## Anexo · Decisiones que no se tomaron
@@ -2384,4 +2525,8 @@ Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 | Que el panelista vea a qué estudios fue convocado | **No se hace, y no es un olvido.** Ver la muestra es información sobre el diseño del estudio, no sobre la persona | `SPEC_fase6.md` §3 |
 | Que el panelista vea sus respuestas anteriores | **Descartado:** contamina la investigación —ver lo que respondió antes condiciona lo que responde ahora— y complica lo prometido sobre confidencialidad | `SPEC_fase6.md` §3 |
 | Auditar los cambios de atributos editables | **Anotado, no hecho.** Se evaluó el gameo y se consideró poco probable; si algún atributo pasa a definir cuotas o premios, conviene auditarlo o limitar su frecuencia | [D52](#d52) |
+| Segundo factor en el portal | **Descartado para esta versión, y anotado.** Las contraseñas traen lo que el enlace evitaba: gente que reutiliza la misma de otros servicios, y un objetivo que robar. Si el portal llega a exponer más datos, vale reevaluarlo | [D53](#d53) |
+| Protección contra enumeración de Firebase Auth | **Pendiente de activar en la consola.** No es la defensa —el mensaje genérico lo escribe el servidor— pero sí defensa en profundidad para quien llame a Identity Toolkit por fuera del portal | [D53](#d53), `DESPLIEGUE - R6.1.a` §3 |
+| Panelistas cuyo correo registrado está desactualizado | **Abierto, y es operativo.** No van a poder recibir el enlace y quedan sin acceso. Conviene detectarlos **antes** de anunciar el portal; hoy la salida es que un responsable los contacte por otra vía y les corrija el correo desde la ficha | `SPEC_R6.1a` §9 |
+| Pantalla para que un responsable vea quién no activó nunca su contraseña | **No se hizo.** El dato está (`v_acceso_portal` y `cuenta_panelista`), pero no hay una lista de «invitados que no entraron»; hoy se ve persona por persona desde la ficha | [D53](#d53) |
 | Alinear el voseo de la interfaz con el registro formal del manual | Sin decidir; requeriría recapturar las 44 pantallas | PR de la Fase 2 |

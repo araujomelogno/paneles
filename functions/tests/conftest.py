@@ -18,6 +18,13 @@ import pytest
 RAIZ = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(RAIZ / "functions"))
 
+# R6.1.a — a dónde apunta el enlace para fijar la contraseña. En producción
+# es una variable del entorno declarada en `SECRETOS`; acá se define para que
+# las pruebas corran contra el mismo código que corre allá, en vez de
+# inyectarle un armador de enlaces a cada llamada y dejar sin probar la
+# función que de verdad arma el enlace.
+os.environ.setdefault("PORTAL_URL", "https://portal.ejemplo.invalid")
+
 TABLAS_BOVEDA = [
     "alta_en_revision", "persona_borrada", "canje", "puntos_movimiento",
     "objetivo_composicion", "participacion", "encuesta", "consentimiento",
@@ -174,15 +181,18 @@ class ContextoDePrueba:
     """
 
     def __init__(self, conn_boveda, conn_semantica, embeddings,
-                 reranker=None, verificador=None, padron=None):
+                 reranker=None, verificador=None, padron=None,
+                 credenciales=None, origen=None):
         self.boveda = conn_boveda
         self.cfg = None
+        self.origen = origen
         self.embeddings = embeddings
         self._semantica = conn_semantica
         self.abrio_semantica = False
         self._reranker = reranker
         self._verificador = verificador
         self._padron = padron
+        self._credenciales = credenciales
 
     @property
     def semantica(self):
@@ -212,6 +222,14 @@ class ContextoDePrueba:
         if self._padron is None:
             self._padron = usuarios.PadronEnMemoria()
         return self._padron
+
+    @property
+    def credenciales(self):
+        from panel_api import credenciales as mod
+
+        if self._credenciales is None:
+            self._credenciales = mod.CredencialesEnMemoria()
+        return self._credenciales
 
 
 @pytest.fixture
@@ -249,6 +267,16 @@ def padron():
     from panel_api import usuarios
 
     return usuarios.PadronEnMemoria()
+
+
+@pytest.fixture
+def credenciales():
+    """Firebase Auth de mentira. R6.1.a se prueba entera contra Postgres de
+    verdad y este doble: las reglas que importan —quién entra, con qué
+    límite, qué pasa tras una baja— son nuestras, no de Firebase."""
+    from panel_api import credenciales as mod
+
+    return mod.CredencialesEnMemoria()
 
 
 @pytest.fixture

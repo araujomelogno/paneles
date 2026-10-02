@@ -14,6 +14,12 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Revisión 2026-10-02.** La sección 13 (el portal del panelista) pasa del
+> ingreso por enlace al **ingreso con contraseña** (R6.1.a): cómo se crea la
+> primera vez, cómo se reenvía el enlace desde la ficha de un panelista, y
+> las tres acciones que piden la contraseña otra vez aunque la sesión esté
+> abierta. Es texto: no hizo falta recapturar ninguna pantalla.
+
 > **Revisión 2026-10-01.** La sección de ingesta suma «Qué significa cada
 > código del archivo»: el mapeo valor por valor de una variable marcada como
 > atributo categórico, el aviso previo de lo que quedó sin mapear y qué pasa

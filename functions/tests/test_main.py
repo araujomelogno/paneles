@@ -32,6 +32,10 @@ NO_SON_SECRETOS = frozenset({
     "RERANKER_PROVEEDOR", "RERANKER_MODELO",
     "VERIFICACION_PROVEEDOR", "CLAUDE_MODELO",
     "PADRON_USUARIOS",
+    # R6.1.a — el interruptor del doble de credenciales, igual que
+    # `PADRON_USUARIOS`: dice qué implementación usar, no qué clave. La
+    # clave de verdad es `FIREBASE_WEB_API_KEY`, que sí va declarada.
+    "CREDENCIALES_PORTAL",
     # R4.3 — el nombre del proveedor no es secreto; su clave sí, y esa es
     # `DESAFIO_SECRETO`, que va declarada.
     "DESAFIO_PROVEEDOR",

@@ -12,6 +12,9 @@ Todo se abre en forma perezosa, y no por prolijidad:
   consulta es un secreto menos leído.
 * **El padrón de usuarios.** Levanta el cliente de Firestore. Solo lo usan
   las rutas de Configuración.
+* **Las credenciales del portal** (R6.1.a). Levantan el Admin SDK de Auth y
+  leen la *web API key*. Solo las usan las rutas de `/portal/` que tocan una
+  contraseña; una consulta semántica no tiene por qué instanciarlas.
 """
 
 import contextlib
@@ -26,14 +29,20 @@ from . import (
 
 
 class Contexto:
-    def __init__(self, conn_boveda, cfg=None):
+    def __init__(self, conn_boveda, cfg=None, origen=None):
         self.boveda = conn_boveda
         self.cfg = cfg
+        # R4.3/R6.1.b — de dónde viene la request, para los límites por
+        # origen. Se deriva de los headers en `main.py` y **no** de un campo
+        # del cuerpo: un límite cuyo identificador lo elige quien lo sufre no
+        # limita nada.
+        self.origen = origen
         self._semantica = None
         self._embeddings = None
         self._reranker = None
         self._verificador = None
         self._padron = None
+        self._credenciales = None
         self._pila = contextlib.ExitStack()
 
     @property
@@ -78,16 +87,24 @@ class Contexto:
             self._padron = usuarios.crear_padron(self.cfg)
         return self._padron
 
+    @property
+    def credenciales(self):
+        if self._credenciales is None:
+            from . import credenciales as mod
+
+            self._credenciales = mod.crear(self.cfg)
+        return self._credenciales
+
     def cerrar(self):
         self._pila.close()
         self._semantica = None
 
 
 @contextlib.contextmanager
-def abrir(cfg=None):
+def abrir(cfg=None, origen=None):
     cfg = cfg or config.cargar()
     with db.conectar(cfg.dsn_boveda) as conn_boveda:
-        ctx = Contexto(conn_boveda, cfg)
+        ctx = Contexto(conn_boveda, cfg, origen=origen)
         try:
             yield ctx
         finally:

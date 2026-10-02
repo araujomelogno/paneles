@@ -48,12 +48,30 @@ Lo que hay que respetar al tocar `panel_api/portal.py` o sus rutas:
 - **Una sesión del portal no tiene rol.** `auth.actor_de_portal()` devuelve
   `rol = None` a propósito: así no puede ejecutar ningún permiso interno
   aunque una ruta quede mal registrada. No le agreguen un rol «panelista».
-- **La respuesta de `POST /portal/acceso` es una constante** del módulo, y es
-  la misma exista o no el correo. Dos textos parecidos en dos lugares
-  terminan divergiendo, y la diferencia *es* la filtración.
+- **Los textos que no revelan son constantes** del módulo
+  (`RESPUESTA_DE_ENLACE`, `MENSAJE_CREDENCIAL_INVALIDA`), y son los mismos
+  exista o no el correo. Dos textos parecidos en dos lugares terminan
+  divergiendo, y la diferencia *es* la filtración.
 - **Lo editable es una lista blanca** (`editable_por_panelista`), y un valor
   con `origen = 'panelista'` es autoritativo: una ingesta posterior lo informa
   como discrepancia y no lo pisa.
+
+Desde **R6.1.a** se entra con contraseña y no con un enlace por visita, y eso
+agrega tres reglas más:
+
+- **El login pasa por el backend** (`portal.iniciar_sesion`), no por
+  `signInWithEmailAndPassword` en la página. El límite de intentos y el
+  rechazo de quien se dio de baja se deciden del lado del servidor o no se
+  deciden. La contraseña nunca se guarda, se loguea ni se devuelve: va a
+  Firebase Auth detrás de `credenciales.py`.
+- **Lo irreversible pide la contraseña de nuevo** —baja, retiro de finalidad,
+  cambio de correo— y `_exigir_reautenticacion()` **falla cerrado**: sin
+  proveedor de credenciales la acción no ocurre. No le agreguen un camino
+  alternativo «por si acaso».
+- **El corte de acceso tras una baja vive en `bajas.retirar()`**, no en el
+  portal: la baja también la ejecutan el DPO y los jobs, y si el corte
+  viviera en un solo camino los otros dejarían la credencial viva. Misma
+  razón por la que el gate de consentimiento es una vista y no Python.
 
 ## Reglas de negocio que el código debe respetar
 

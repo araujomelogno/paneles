@@ -2360,20 +2360,80 @@
 
   <h3>Cómo entra un panelista</h3>
 
-  <p>Con su correo, sin contraseña. Escribe su dirección, recibe un enlace y
-  entra. El enlace <strong>vence a los quince minutos y sirve una sola
-  vez</strong>.</p>
+  <p>Con su correo y una <strong>contraseña que elige él</strong>. La primera
+  vez no la tiene —nadie se la pidió nunca—, así que la crea con un enlace
+  que recibe por correo: toca «Todavía no tengo contraseña», le llega el
+  enlace, elige la suya y queda adentro. Ese enlace <strong>vence a las 24
+  horas y sirve una sola vez</strong>.</p>
+
+  <p>Después entra cuando quiere, sin depender de que le llegue ningún mail.
+  Si se la olvida —va a pasar seguido, porque al portal se entra cada varios
+  meses—, «Olvidé mi contraseña» le manda un enlace nuevo.</p>
+
+  <div class="aviso">
+    <div class="t">Nadie de Equipos ve ni define la contraseña de un panelista</div>
+    <p>No es una política interna: <strong>no hay forma</strong>. La
+    contraseña la guarda el proveedor de identidad y el sistema nunca la
+    recibe para almacenarla. Lo único que se puede hacer desde la
+    administración es disparar el envío del enlace para que la persona ponga
+    una nueva.</p>
+    <p>Si alguien llama pidiendo «que le pasen su contraseña», la respuesta
+    correcta es mandarle el enlace desde su ficha.</p>
+  </div>
 
   <div class="aviso">
     <div class="t">El sistema nunca dice si un correo es de un panelista</div>
     <p>La respuesta al pedir el enlace es idéntica exista o no esa dirección:
-    «si esa dirección corresponde a un panelista, va a recibir un enlace».
-    Contestar distinto permitiría averiguar quién integra el panel probando
+    «si esa dirección corresponde a un panelista, va a recibir un enlace». Y
+    cuando una credencial no entra, el mensaje es siempre el mismo —«correo o
+    contraseña incorrectos»— sin decir cuál de los dos falló. Contestar
+    distinto permitiría averiguar quién integra el panel probando
     direcciones, que es una filtración de datos personales aunque nunca se
     muestre un perfil.</p>
     <p>La consecuencia práctica para quien atiende consultas: si alguien dice
     que no le llega el enlace, <strong>el portal no puede confirmar ni negar
     que esté en el padrón</strong>. Eso se mira desde la administración.</p>
+  </div>
+
+  <h3>Mandarle el enlace a alguien que ya está en el panel</h3>
+
+  <p>Los panelistas enrolados antes de esta versión no tienen contraseña, y
+  el que tenga el correo desactualizado no va a poder pedirla solo. Desde la
+  ficha de la persona, en <strong>Panelistas → Ver ficha → Acceso al
+  portal</strong>, está el botón <i>Mandarle el enlace</i>.</p>
+
+  <p>Debajo del botón se ve el rastro de los últimos envíos: cuándo salió
+  cada uno, quién lo pidió —la persona o alguien de Equipos, con nombre— y si
+  ya lo usó, si todavía sirve o si venció. Es lo que hace falta para atender
+  un «no puedo entrar» sin mandar enlaces a ciegas.</p>
+
+  <div class="aviso">
+    <div class="t">Una inscripción aprobada ya sale con su enlace</div>
+    <p>No hace falta mandarlo a mano: aprobar una inscripción lo emite sola.
+    Si el envío falla —el proveedor de correo caído, por ejemplo— la
+    aprobación <strong>no se deshace</strong>: la persona queda dada de alta y
+    el aviso dice que el enlace no salió. La salida es el botón de la ficha.</p>
+  </div>
+
+  <h3>Tres acciones piden la contraseña otra vez</h3>
+
+  <p>Aunque la sesión esté abierta, el portal vuelve a pedir la contraseña
+  para <strong>darse de baja</strong>, <strong>retirar un permiso</strong> y
+  <strong>cambiar el correo</strong>. Para todo lo demás —mirar puntos, pedir
+  un canje, corregir un atributo, apagar un canal— alcanza con estar
+  adentro.</p>
+
+  <p>El criterio es lo que no se deshace, no lo que parece importante:
+  revocar WhatsApp se arregla volviéndolo a activar; retirar el permiso de
+  análisis borra las respuestas de esa persona del store semántico, y volver
+  a consentir no las trae de vuelta.</p>
+
+  <div class="aviso">
+    <div class="t">Una baja corta el acceso en el momento</div>
+    <p>Se cierran todas las sesiones de esa persona, en todos sus
+    dispositivos, y su credencial queda inutilizable: no puede volver a
+    entrar ni recuperar la contraseña. Vale para cualquier baja, también la
+    que ejecuta el DPO desde la administración.</p>
   </div>
 
   <h3>Qué ve y qué puede hacer</h3>
@@ -2389,8 +2449,10 @@
       Al pedir uno, los puntos <strong>se reservan</strong> y el pedido queda
       en «solicitado».</td></tr>
     <tr><td class="destacado">Mis datos</td>
-      <td>Corregir correo y celular —con un código de confirmación— y
-      actualizar los atributos que se hayan marcado editables.</td></tr>
+      <td>Corregir correo y celular —con un código de confirmación— ,
+      actualizar los atributos que se hayan marcado editables y
+      <strong>cambiar la contraseña</strong>, lo que cierra las sesiones
+      abiertas en otros dispositivos.</td></tr>
     <tr><td class="destacado">Mis derechos</td>
       <td>Activar o revocar cada canal por separado, retirar cada permiso por
       separado, y darse de baja.</td></tr>

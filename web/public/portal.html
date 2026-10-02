@@ -18,10 +18,17 @@
        Firebase Auth y nada más: una sesión de acá no tiene rol, así que no
        puede entrar a ninguna ruta interna aunque alguien la registre mal.
 
-       Habla con `/api/portal/*`. La única ruta pública es pedir el enlace
-       de acceso —quien lo pide todavía no tiene sesión—; el resto exige
-       token y resuelve a la persona desde el vínculo `uid ↔ id_persona`,
-       nunca desde un identificador que mande esta página.
+       Habla con `/api/portal/*`. Las únicas rutas públicas son las tres de
+       entrada —pedir el enlace, fijar la contraseña y entrar—, porque quien
+       las usa todavía no tiene sesión; el resto exige token y resuelve a la
+       persona desde el vínculo `uid ↔ id_persona`, nunca desde un
+       identificador que mande esta página.
+
+       R6.1.a — se entra con **contraseña**, no con un enlace por visita. El
+       enlace quedó para crearla y recuperarla. Y las tres acciones que no
+       se deshacen —darse de baja, retirar un permiso, cambiar el correo—
+       piden escribirla de nuevo aunque la sesión esté abierta: esta página
+       abre el modal, pero quien lo exige es el servidor.
 
        Lo que esta pantalla **no** muestra, a propósito: las respuestas
        anteriores del panelista (verlas condiciona lo que responde ahora) y
@@ -73,6 +80,20 @@
     .peligro h3 { color: #c92a2a; }
     .peligro ul { margin: 8px 0 14px 18px; padding: 0; font-size: 14px; }
 
+    /* El modal de reautenticación (R6.1.d). Deliberadamente sobrio: pedir
+       la contraseña tiene que parecerse a pedir la contraseña, no a una
+       promoción. */
+    .velo { position: fixed; inset: 0; background: rgba(20, 22, 28, .55);
+            display: flex; align-items: center; justify-content: center;
+            padding: 18px; z-index: 50; }
+    .velo .tarjeta { background: var(--fondo, #fff); max-width: 420px;
+                     width: 100%; margin: 0; }
+    .enlaces { margin-top: 12px; font-size: 13px; display: flex; gap: 14px;
+               flex-wrap: wrap; }
+    .enlaces button { background: none; border: none; padding: 0;
+                      font: inherit; font-size: 13px; color: var(--orange, #e8590c);
+                      text-decoration: underline; cursor: pointer; }
+
     .oculto { display: none !important; }
     @media (max-width: 480px) {
       .saldo .numero { font-size: 36px; }
@@ -90,20 +111,46 @@
 
     <div id="alerta"></div>
 
-    <!-- ── Sin sesión: pedir el enlace ─────────────────────────────── -->
+    <!-- ── Sin sesión: correo y contraseña ─────────────────────────── -->
     <section id="acceso" class="tarjeta">
       <h3>Entrar</h3>
-      <p>Escribí tu correo y te mandamos un enlace para entrar. No hace falta
-         contraseña.</p>
-      <form id="form-acceso" class="fila-entre">
+      <p>Con tu correo y tu contraseña.</p>
+      <form id="form-acceso">
         <input class="finput" id="email" type="email" required
-               placeholder="tu@correo.com" style="flex:1 1 220px" />
-        <button class="btn-orange" type="submit">Mandame el enlace</button>
+               autocomplete="username" placeholder="tu@correo.com"
+               style="width:100%;margin-bottom:8px" />
+        <input class="finput" id="clave" type="password" required
+               autocomplete="current-password" placeholder="Tu contraseña"
+               style="width:100%;margin-bottom:12px" />
+        <button class="btn-orange" type="submit" style="width:100%">Entrar</button>
       </form>
+      <!-- Los dos enlaces van juntos y a la vista. Entrar cada varios meses
+           y olvidar la contraseña va a ser lo habitual: si recuperar cuesta
+           más que entrar, la gente abandona. -->
+      <div class="enlaces">
+        <button type="button" id="crear-clave">Todavía no tengo contraseña</button>
+        <button type="button" id="olvide-clave">Olvidé mi contraseña</button>
+      </div>
       <p style="margin-top:12px;font-size:13px">
         ¿Todavía no sos panelista?
         <a href="/inscribirse">Inscribite acá</a>.
       </p>
+    </section>
+
+    <!-- ── Con el enlace: elegir la contraseña (R6.1.a) ─────────────── -->
+    <section id="fijar-clave" class="tarjeta oculto">
+      <h3>Elegí tu contraseña</h3>
+      <p>Es la que vas a usar para entrar de ahora en adelante. Mínimo seis
+         caracteres.</p>
+      <form id="form-fijar">
+        <input class="finput" id="clave-nueva" type="password" required
+               autocomplete="new-password" placeholder="Tu contraseña nueva"
+               style="width:100%;margin-bottom:8px" />
+        <input class="finput" id="clave-repetida" type="password" required
+               autocomplete="new-password" placeholder="Repetila"
+               style="width:100%;margin-bottom:12px" />
+        <button class="btn-orange" type="submit" style="width:100%">Guardar y entrar</button>
+      </form>
     </section>
 
     <!-- ── Con sesión ──────────────────────────────────────────────── -->

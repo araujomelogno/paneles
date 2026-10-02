@@ -141,12 +141,21 @@ def actor_de_portal(headers, verificar_token=None):
     * **No resuelve a ninguna persona.** Eso lo hace `portal.persona_de()`
       contra `cuenta_panelista`, con la conexión a la bóveda, que es donde
       vive el vínculo. Acá solo se sabe quién se autenticó.
+    * **Comprueba que el token no esté revocado** (R6.1.c/e), que la
+      resolución interna no hace. Sin eso, «el cambio de contraseña cierra
+      las otras sesiones» y «la baja invalida las sesiones abiertas en otros
+      dispositivos» serían ciertas recién cuando venciera el id token, que
+      es hasta una hora después. Una hora es mucho para una cuenta que se
+      acaba de dar de baja o que se sospecha tomada.
+
+      Cuesta una consulta al registro de usuarios de Firebase por request.
+      Se paga: es lo que convierte dos promesas del spec en comportamiento.
     """
     if verificar_token is None:
         from firebase_admin import auth as fb_auth
 
         def verificar_token(token):  # noqa: F811
-            return fb_auth.verify_id_token(token)
+            return fb_auth.verify_id_token(token, check_revoked=True)
 
     token = token_de(headers)
     try:

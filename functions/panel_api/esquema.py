@@ -117,6 +117,11 @@ MIGRACIONES_BOVEDA = (
         "cuenta_panelista", "acceso_portal",
         "canje.aprobado_por", "canje.aprobado_en", "v_canje_panelista",
     )),
+    ("0018_r6_1a_acceso_con_contrasena.sql", (
+        "acceso_portal.motivo", "acceso_portal.emitido_por",
+        "acceso_portal.emitido_por_email",
+        "motivo_acceso_portal", "v_acceso_portal",
+    )),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -205,6 +210,11 @@ PARA_QUE = {
     "cuenta_panelista": "qué persona es cada cuenta del portal; es de donde sale el `id_persona` de la sesión, que nunca viene del pedido",
     "acceso_portal": "los enlaces de acceso emitidos y los intentos; sin ella no hay límite de tasa ni enlace de un solo uso",
     "v_canje_panelista": "el canje como lo ve quien lo pidió, con el estado en palabras",
+    "acceso_portal.motivo": "para qué se emitió cada fila; sin ella, adivinar una contraseña consumiría los pedidos de recuperación de la víctima",
+    "motivo_acceso_portal": "el catálogo de motivos de acceso al portal, que separa los enlaces emitidos de los intentos fallidos",
+    "acceso_portal.emitido_por": "qué responsable disparó el envío del enlace; es la auditoría que pide R6.1.a",
+    "acceso_portal.emitido_por_email": "el correo de ese responsable, para que el rastro se lea sin tener que resolver un uid",
+    "v_acceso_portal": "los pedidos de acceso al portal con su motivo resuelto: qué enlaces siguen sirviendo y qué intentos fallaron",
 }
 
 
