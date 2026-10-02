@@ -91,7 +91,7 @@ Capa de aplicación en **Firebase**; los datos en **Postgres**. Firebase NO reem
 - **Store semántico (vector):** Cloud SQL for Postgres + pgvector (full GCP).
 - **Bóveda (PII + paneles):** Cloud SQL for Postgres, en una instancia dedicada y separada (proyecto/VPC aparte, acceso bloqueado). "Separado" = control de acceso, misma nube.
 - **Ambos stores en Cloud SQL**, en instancias distintas: nunca en la misma instancia (la separación bóveda/semántico es parte del diseño de privacidad).
-- **Embeddings:** Voyage `voyage-3.5` (1024 dims) por defecto, detrás de una interfaz para cambiar de proveedor.
+- **Embeddings:** Voyage `voyage-3.5` a **512 dimensiones**, detrás de una interfaz para cambiar de proveedor. 512 y no las 1024 del default porque la mitad de vector es la mitad de instancia (D54); la dimensión tiene que coincidir con `respuesta.embedding` en el store semántico, y la ingesta lo comprueba antes de mandar nada a embeber.
 
 ### Por qué los datos siguen en Postgres (no Firestore)
 La búsqueda semántica depende de **pgvector** y de consultas relacionales (joins respuesta↔pregunta↔persona, rollup a individuo, puente bóveda↔semántico por `id_persona`, distancia a fuerza bruta sobre subconjuntos). Firestore no cubre ese patrón: su vector search es un KNN plano, sin joins ni agregación. Y el módulo de paneles necesita integridad relacional (membresías N:M, estados de consentimiento, ledger de puntos con saldo ≥ 0, índices únicos de dedup). Mover los datos a Firestore sería deshacer el diseño. Firebase se usa para auth, funciones y hosting; los datos, en Postgres.

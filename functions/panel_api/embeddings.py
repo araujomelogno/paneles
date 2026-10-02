@@ -1,8 +1,28 @@
 """Proveedor de embeddings, detrás de una interfaz.
 
-Por defecto Voyage `voyage-3.5` (1024 dims), que es lo que fija CLAUDE.md.
-La interfaz existe para poder cambiar de proveedor sin tocar la ingesta:
-el resto del código solo conoce `embeber(textos) -> [[float]]`.
+Por defecto Voyage `voyage-3.5` a **512 dimensiones**, que es lo que fija
+CLAUDE.md. La interfaz existe para poder cambiar de proveedor sin tocar la
+ingesta: el resto del código solo conoce `embeber(textos) -> [[float]]`.
+
+── Por qué 512 y no las 1024 del default de Voyage ──
+
+Porque la mitad de vector es la mitad de instancia. Con 200.000 respuestas,
+1024 dims son ~820 MB de vectores y ~1,5–2 GB con el índice HNSW, que no
+entran en la instancia chica; 512 son ~410 MB y entran. La diferencia es de
+unos US$ 20–35 por mes, para siempre.
+
+Lo que se resigna son uno o dos puntos de calidad de recuperación según los
+benchmarks de Voyage. Truncar no es cortar al azar: `voyage-3.5` está
+entrenado con *Matryoshka*, así que las primeras dimensiones concentran la
+mayor parte de la información. Pero esos benchmarks no son sobre respuestas
+de encuesta en español rioplatense, y por eso el cambio no se da por bueno
+sin la validación con corpus propio que documenta
+`docs/DESPLIEGUE - 512 dimensiones.md`.
+
+**La dimensión es un contrato con la base.** `respuesta.embedding` es
+`vector(512)`: si el proveedor devolviera otra cosa, el insert falla. Por eso
+`embeber()` comprueba el largo de lo que vuelve, y la ingesta compara contra
+la columna antes de mandar nada a embeber (ver `esquema.desajuste_de_dimension`).
 """
 
 import hashlib
@@ -13,16 +33,40 @@ import struct
 VOYAGE_URL = "https://api.voyageai.com/v1/embeddings"
 LOTE_MAXIMO = 128
 
+# Las dimensiones que `voyage-3.5` acepta. Está acá para poder rechazar un
+# valor imposible al construir el proveedor en vez de cuando la API conteste
+# un 400 a mitad de una ingesta de 200.000 respuestas.
+DIMS_VALIDAS = (256, 512, 1024, 2048)
+DIMS_POR_DEFECTO = 512
+
 
 class ErrorEmbeddings(RuntimeError):
     pass
 
 
 class ProveedorEmbeddings:
-    dims = 1024
+    dims = DIMS_POR_DEFECTO
 
     def embeber(self, textos):
         raise NotImplementedError
+
+    def _controlar_largo(self, vectores):
+        """Que lo que vuelve tenga la dimensión que este proveedor promete.
+
+        Existe por un modo de falla concreto y silencioso: si el parámetro
+        que pide la dimensión se escribiera mal, la API lo **ignora** y
+        devuelve su default. Sin este control, el síntoma aparecería recién
+        al insertar —un error de pgvector sobre un vector de largo
+        equivocado— después de haber pagado el embedding del lote entero.
+        """
+        largos = {len(v) for v in vectores}
+        if largos and largos != {self.dims}:
+            raise ErrorEmbeddings(
+                f"El proveedor devolvió vectores de {sorted(largos)} "
+                f"dimensiones y se le pidieron {self.dims}. La base espera "
+                f"{self.dims}: con otra cosa, el insert falla. Revisá "
+                f"`EMBEDDINGS_DIMS` y que el modelo soporte esa dimensión.")
+        return vectores
 
     def embeber_en_lotes(self, textos, tamano_lote=LOTE_MAXIMO):
         vectores = []
@@ -32,12 +76,16 @@ class ProveedorEmbeddings:
 
 
 class Voyage(ProveedorEmbeddings):
-    def __init__(self, api_key, modelo="voyage-3.5", dims=1024):
+    def __init__(self, api_key, modelo="voyage-3.5", dims=DIMS_POR_DEFECTO):
         if not api_key:
             raise ErrorEmbeddings(
                 "Falta EMBEDDINGS_API_KEY para Voyage (por variable de entorno; "
                 "nunca en el repo)."
             )
+        if dims not in DIMS_VALIDAS:
+            raise ErrorEmbeddings(
+                f"`voyage-3.5` no genera vectores de {dims} dimensiones. "
+                f"Los valores que acepta son {list(DIMS_VALIDAS)}.")
         self.api_key = api_key
         self.modelo = modelo
         self.dims = dims
@@ -51,7 +99,19 @@ class Voyage(ProveedorEmbeddings):
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
             },
-            json={"input": list(textos), "model": self.modelo, "input_type": "document"},
+            json={
+                "input": list(textos),
+                "model": self.modelo,
+                "input_type": "document",
+                # Sin esto la API devuelve su default (1024) pase lo que
+                # pase, y `EMBEDDINGS_DIMS` no haría nada. El nombre del
+                # parámetro está verificado contra la documentación de
+                # Voyage: `output_dimension`, con valores 256/512/1024/2048
+                # para los modelos entrenados con Matryoshka. Si alguna vez
+                # cambiara, `_controlar_largo()` lo detecta en el acto en vez
+                # de dejar pasar vectores de la dimensión equivocada.
+                "output_dimension": self.dims,
+            },
             timeout=60,
         )
         if respuesta.status_code != 200:
@@ -64,7 +124,7 @@ class Voyage(ProveedorEmbeddings):
             raise ErrorEmbeddings(
                 f"Voyage devolvió {len(vectores)} vectores para {len(textos)} textos."
             )
-        return vectores
+        return self._controlar_largo(vectores)
 
 
 class BolsaDePalabras(ProveedorEmbeddings):
@@ -88,7 +148,7 @@ class BolsaDePalabras(ProveedorEmbeddings):
     Voyage.
     """
 
-    def __init__(self, dims=1024):
+    def __init__(self, dims=DIMS_POR_DEFECTO):
         self.dims = dims
 
     def _direccion(self, palabra):
@@ -123,7 +183,8 @@ def crear(cfg=None, entorno=None):
     proveedor = (
         cfg.proveedor_embeddings if cfg else entorno.get("EMBEDDINGS_PROVEEDOR", "voyage")
     ).lower()
-    dims = cfg.dims_embeddings if cfg else int(entorno.get("EMBEDDINGS_DIMS", "1024"))
+    dims = (cfg.dims_embeddings if cfg
+            else int(entorno.get("EMBEDDINGS_DIMS", str(DIMS_POR_DEFECTO))))
 
     if proveedor in ("deterministico", "bolsa", "fake", "test"):
         return BolsaDePalabras(dims=dims)

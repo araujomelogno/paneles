@@ -702,7 +702,7 @@ function ingestarEn(encuesta, cuerpo, { sinPanel }) {
       } else {
         bd.semantica.respuestas.push({
           individuo_id: individuo.id, pregunta_id: preguntaSemantica.id,
-          valor_texto: etiqueta, texto_embebido: texto, embedding: '[…1024 dims…]',
+          valor_texto: etiqueta, texto_embebido: texto, embedding: '[…512 dims…]',
         });
       }
       escritas++;

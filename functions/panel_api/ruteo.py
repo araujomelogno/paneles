@@ -729,7 +729,9 @@ def diagnostico_esquema(ctx, actor, params, cuerpo, consulta):
     que una que no se aplicó no se nota hasta que alguien usa la pantalla que
     la necesitaba. Esta ruta lo hace visible antes de eso.
     """
-    estado = esquema.revisar_stores(ctx.boveda, ctx.semantica)
+    estado = esquema.revisar_stores(
+        ctx.boveda, ctx.semantica,
+        dims_proveedor=getattr(ctx.embeddings, "dims", None))
     return (200 if estado["completo"] else 500), estado
 
 

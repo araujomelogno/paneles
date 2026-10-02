@@ -20,14 +20,12 @@ RAIZ = pathlib.Path(__file__).resolve().parents[2]
 
 # ── La lista declarada no se puede desactualizar ─────────────────────
 
-def _redefinidos_por_el_ddl(sql):
-    """Lo que la migración **reemplaza** con `create or replace`, no crea.
+def _reemplazados_por_el_ddl(sql):
+    """Lo que la migración redefine con `create or replace`.
 
-    La distinción importa: `esquema.py` es la lista de objetos por los que
-    `verificar_esquema.py` pregunta para saber si una migración se aplicó, y
-    una redefinición no se puede ver desde afuera —la función ya existía, con
-    el mismo nombre, antes y después—. Declararla llevaría a dar por aplicada
-    una migración que no corrió.
+    `create or replace` no prueba por sí mismo que el objeto existiera: la
+    primera migración que crea una función suele escribirlo así. Por eso
+    quien llama lo cruza con lo que ya existía.
     """
     sql = re.sub(r"'[^']*'", "''", sql)
     objetos = set()
@@ -39,6 +37,36 @@ def _redefinidos_por_el_ddl(sql):
         r"create\s+or\s+replace\s+function\s+([a-z_][a-z0-9_]*)", sql, re.I,
     ):
         objetos.add(f"{nombre.lower()}()")
+    return objetos
+
+
+def _tirados_y_recreados(sql):
+    """Lo que la migración **tira y vuelve a crear**.
+
+    Es la otra forma de reemplazar, y la única posible cuando cambia algo que
+    no se puede alterar en el lugar: el tipo de una columna vectorial
+    (`semantica/0006`), o una vista que pasa a leer de otra tabla
+    (`boveda/0008`).
+
+    A diferencia de `create or replace`, acá **el `drop` es la prueba**: no se
+    puede tirar lo que no existe, así que no hace falta cruzarlo con nada. Si
+    no se reconociera, una migración que no agrega ningún objeto nuevo
+    quedaría obligada a declarar cosas que ya existían, que es justo lo que
+    estas pruebas existen para impedir.
+    """
+    sql = re.sub(r"'[^']*'", "''", sql)
+    objetos = set()
+    for nombre in re.findall(
+        r"drop\s+(?:table|view)\s+(?:if\s+exists\s+)?([a-z_][a-z0-9_]*)", sql, re.I,
+    ):
+        objetos.add(nombre.lower())
+    for tabla, cuerpo in re.findall(
+        r"alter\s+table\s+(?:only\s+)?([a-z_][a-z0-9_]*)(.*?);", sql, re.I | re.S,
+    ):
+        for columna in re.findall(
+            r"drop\s+column\s+(?:if\s+exists\s+)?([a-z_][a-z0-9_]*)", cuerpo, re.I,
+        ):
+            objetos.add(f"{tabla.lower()}.{columna.lower()}")
     return objetos
 
 
@@ -94,10 +122,14 @@ def test_lo_declarado_coincide_con_lo_que_crean_las_migraciones(store, migracion
         assert ruta.exists(), f"la migración declarada {archivo} no existe"
         sql = ruta.read_text(encoding="utf-8")
         reales = _objetos_del_ddl(sql)
-        redefinidos = _redefinidos_por_el_ddl(sql) & ya_existian
+        # Lo que esta migración reemplaza en vez de crear. El `create or
+        # replace` se cruza con lo que ya existía; el `drop` + `create` no
+        # hace falta cruzarlo, porque tirar algo ya prueba que estaba.
+        redefinidos = ((_reemplazados_por_el_ddl(sql) & ya_existian)
+                       | _tirados_y_recreados(sql))
 
-        # Un `create or replace` de algo que ya existía no cuenta como objeto
-        # creado acá: la migración se detecta por lo que sí crea.
+        # Lo que se reemplaza no cuenta como objeto creado acá: la migración
+        # se detecta por lo que sí crea.
         faltan = reales - redefinidos - set(declarados)
         assert not faltan, (
             f"{store}/{archivo} crea {sorted(faltan)} y esquema.py no lo declara"
@@ -108,8 +140,10 @@ def test_lo_declarado_coincide_con_lo_que_crean_las_migraciones(store, migracion
         mal_declarados = sorted(redefinidos & set(declarados))
         assert not mal_declarados, (
             f"esquema.py declara {mal_declarados} en {store}/{archivo}, que solo "
-            f"lo reemplaza. Un `create or replace` no se puede ver desde afuera: "
-            f"el objeto queda declarado en la migración que lo creó"
+            f"lo reemplaza. Un reemplazo no se puede ver desde afuera —el "
+            f"objeto existe igual, antes y después—, así que declararlo daría "
+            f"la migración por aplicada sin haber corrido. El objeto queda "
+            f"declarado en la migración que lo creó"
         )
         sobran = set(declarados) - reales
         assert not sobran, (

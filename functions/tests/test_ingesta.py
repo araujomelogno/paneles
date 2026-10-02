@@ -181,7 +181,7 @@ def test_el_embedding_llega_con_la_dimension_del_esquema(conn_boveda, conn_seman
     dims = db.una(
         conn_semantica, "select vector_dims(embedding) as d from respuesta limit 1"
     )["d"]
-    assert dims == 1024
+    assert dims == 512
 
 
 def test_una_fila_de_alguien_que_no_es_panelista_no_se_ingesta(

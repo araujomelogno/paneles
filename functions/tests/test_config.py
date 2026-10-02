@@ -14,7 +14,7 @@ def test_carga_los_dos_dsn():
     cfg = config.cargar(BASE)
     assert cfg.dsn_boveda != cfg.dsn_semantica
     assert cfg.proveedor_embeddings == "voyage"
-    assert cfg.dims_embeddings == 1024
+    assert cfg.dims_embeddings == 512
 
 
 def test_falla_si_los_dos_stores_apuntan_a_la_misma_base():

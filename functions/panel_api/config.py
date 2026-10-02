@@ -7,6 +7,8 @@ apunta a la misma base.
 
 import os
 
+from . import embeddings as mod_embeddings
+
 
 class ErrorConfig(RuntimeError):
     pass
@@ -64,7 +66,11 @@ def cargar(entorno=None):
         proveedor_embeddings=entorno.get("EMBEDDINGS_PROVEEDOR", "voyage"),
         api_key_embeddings=entorno.get("EMBEDDINGS_API_KEY", ""),
         modelo_embeddings=entorno.get("EMBEDDINGS_MODELO", "voyage-3.5"),
-        dims_embeddings=int(entorno.get("EMBEDDINGS_DIMS", "1024")),
+        # El default vive en `embeddings.DIMS_POR_DEFECTO` y no repetido
+        # acá: dos defaults distintos para la misma cosa es cómo se llega a
+        # que la ingesta embeba en una dimensión y la consulta en otra.
+        dims_embeddings=int(entorno.get(
+            "EMBEDDINGS_DIMS", str(mod_embeddings.DIMS_POR_DEFECTO))),
         proveedor_reranker=entorno.get("RERANKER_PROVEEDOR", "voyage"),
         api_key_reranker=entorno.get("RERANKER_API_KEY", ""),
         modelo_reranker=entorno.get("RERANKER_MODELO", "rerank-2.5"),

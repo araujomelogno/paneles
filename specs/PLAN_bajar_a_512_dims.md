@@ -1,5 +1,26 @@
 # Plan — Bajar los embeddings de 1024 a 512 dimensiones
 
+> ### ✅ Implementado. Para desplegarlo, usá el otro documento.
+>
+> Este plan ya está en el código: la migración es
+> `db/semantica/0006_embeddings_512.sql` y el paso a paso con las salidas
+> reales está en
+> **[`DESPLIEGUE - 512 dimensiones.md`](DESPLIEGUE%20-%20512%20dimensiones.md)**.
+>
+> **No sigas el SQL del paso 4 de abajo tal cual.** Al ensayarlo contra un
+> Postgres de verdad aparecieron dos cosas que este plan no previó:
+>
+> * `v_respuesta_estudio` (la vista de procedencia de la `0002`) selecciona
+>   `respuesta.embedding`, así que el `drop column` falla con *«other objects
+>   depend on it»*. La migración del repo la tira y la recrea.
+> * `respuesta.embedding` es `not null`, y no se puede agregar una columna
+>   `not null` a una tabla con filas. Por eso la migración borra las
+>   respuestas antes, con una guarda que aborta si el corpus ya creció.
+>
+> Y una corrección menor al paso 4: para `vector`, `atttypmod` **es** la
+> dimensión. No lleva el «+4» de los tipos de largo variable, así que la
+> consulta de verificación no necesita restar nada.
+
 **Sistema:** Gestión de paneles · store semántico
 **Cuándo:** **antes** de cargar las 200.000 respuestas
 **Última actualización:** 2026-10-02
