@@ -103,6 +103,44 @@ forma de retomar: se vuelve a empezar, repitiendo el trabajo y el gasto.
       (sugerido: **3 tareas en paralelo**), para no saturar Voyage ni la
       instancia de base.
 
+### R-ASYNC.2.b — Embeber y guardar en sub-lotes, sin acumular (P0)
+
+Partir en tareas resuelve el techo de tiempo, pero **no arregla el patrón de
+memoria**: dentro de cada tarea el código sigue embebiendo todo y recién después
+insertando.
+
+Hoy `embeddings.embeber_en_lotes()` hace `vectores = []` y acumula con
+`extend()` cada lote de 128, y `ingesta.py` lo llama con la lista completa de
+textos. Con 200.000 respuestas eso son ~100 millones de números como objetos de
+Python: del orden de **varios GB**, contra **1 GiB** configurado en `main.py`.
+
+- Dado un lote en proceso, entonces se **embebe un sub-lote, se guarda y se
+  libera**, antes de pedir el siguiente: en ningún momento hay más de un
+  sub-lote de vectores vivo en memoria.
+- Dada esa escritura, entonces cada sub-lote se inserta con el mismo upsert
+  idempotente que hoy: un corte a mitad de tarea no deja datos inconsistentes,
+  y el reintento no duplica.
+- Dado el fin de la tarea, entonces el resultado parcial refleja lo que
+  realmente se escribió, no lo que se intentó.
+- [ ] El tamaño de sub-lote es el de la llamada al proveedor (hoy 128), no el
+      del lote de la tarea.
+- [ ] `embeber_en_lotes()` deja de devolver la lista completa: se reemplaza por
+      una forma que entregue lote a lote (generador o callback), de modo que el
+      llamador no pueda acumular sin darse cuenta.
+
+> **Por qué como requisito y no como consecuencia del tamaño del lote.** Con
+> lotes de 2.000 el problema no aparece: son ~30 MB y entran cómodos. Pero eso
+> funciona **por el tamaño elegido**, no porque el patrón esté bien. Si mañana
+> alguien sube el lote a 20.000 buscando velocidad, la función vuelve a quedarse
+> sin memoria y el síntoma es un error genérico, difícil de atribuir. Arreglar
+> el patrón hace que el tamaño de lote sea una decisión de rendimiento y no una
+> condición de supervivencia.
+>
+> **Y que no se confunda con el plan de 512 dimensiones:** ese reduce la memoria
+> de **la base** (que el índice HNSW entre en RAM) y el costo de la instancia.
+> La memoria de la función es otra cosa y no la toca: bajar a 512 solo divide
+> por dos lo que se acumula, deja el orden de magnitud igual.
+
 ### R-ASYNC.3 — Estado y progreso visibles (P0)
 
 - Dada una carga, entonces tiene estado: `encolada`, `procesando`, `terminada`,
@@ -194,6 +232,11 @@ Migración aditiva. Sin cambios en el store semántico.
 - [ ] Una carga chica no tarda más que antes (medición, no test).
 - [ ] El guardrail de PII sigue activo en la vía asincrónica (test de no
       regresión).
+- [ ] Una tarea con un lote grande (p. ej. 20.000 respuestas) termina sin
+      agotar la memoria de la función: se embebe y se guarda por sub-lotes
+      (test, o medición del pico de memoria).
+- [ ] `embeber_en_lotes()` ya no devuelve la lista completa de vectores (test
+      de forma).
 
 ## 9. Costos
 
@@ -214,6 +257,10 @@ Migración aditiva. Sin cambios en el store semántico.
 - **[ingeniería]** Los límites de tasa de Voyage son el techo real de la
   concurrencia. Con varias tareas en paralelo mandando lotes, un 429 es
   esperable: el manejo de reintentos tiene que contemplarlo explícitamente.
+- **[ingeniería]** El tamaño de lote deja de ser una condición de supervivencia
+  una vez arreglado el patrón de memoria (R-ASYNC.2.b), pero sigue afectando
+  cuánto se pierde al reintentar una tarea. Lotes muy grandes rehacen más
+  trabajo ante un fallo.
 - **[ingeniería]** Persistir el trabajo despivotado de 200.000 respuestas ocupa
   espacio temporal en la base. Conviene limpiarlo al terminar la carga y decidir
   qué pasa si una carga queda a medias para siempre.
