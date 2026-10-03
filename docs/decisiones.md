@@ -2596,6 +2596,7 @@ sacadas.
 
 ---
 
+<a id="d55"></a>
 ## D55 · La ingesta deja de vivir en una request, y el estado vive en la base
 
 **La decisión.** Confirmar una carga ya no la procesa: la **persiste, la parte

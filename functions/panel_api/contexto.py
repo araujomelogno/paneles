@@ -61,7 +61,8 @@ class Contexto:
     def semantica(self):
         if self._semantica is None:
             cfg = self.cfg or config.cargar()
-            self._semantica = self._pila.enter_context(db.conectar(cfg.dsn_semantica))
+            self._semantica = self._pila.enter_context(
+                db.conectar(cfg.dsn_semantica, "semántico"))
         return self._semantica
 
     @property
@@ -114,7 +115,7 @@ class Contexto:
 @contextlib.contextmanager
 def abrir(cfg=None, origen=None):
     cfg = cfg or config.cargar()
-    with db.conectar(cfg.dsn_boveda) as conn_boveda:
+    with db.conectar(cfg.dsn_boveda, "bóveda") as conn_boveda:
         ctx = Contexto(conn_boveda, cfg, origen=origen)
         try:
             yield ctx

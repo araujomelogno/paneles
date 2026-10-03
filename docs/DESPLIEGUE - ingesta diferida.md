@@ -369,6 +369,23 @@ gcloud functions describe "$FUNCION_INGESTA" \
 El nombre observado es `procesar_ingesta`. La URL debe terminar en
 `/procesar_ingesta`. El deploy debe conservar el conector VPC.
 
+Que lo conserve hay que **verlo**: si la clave falta, el `yaml` la omite sin
+decir nada. Las dos funciones tienen que devolver el mismo conector.
+
+```bash
+for f in api "$FUNCION_INGESTA"; do
+  printf '%s: ' "$f"
+  gcloud functions describe "$f" --gen2 --region="$REGION" --project="$PROYECTO" \
+    --format='value(serviceConfig.vpcConnector,serviceConfig.vpcConnectorEgressSettings)'
+done
+```
+
+Una vacía significa que ese deploy corrió sin `VPC_CONNECTOR` exportado.
+`main.py` lo lee del entorno **del deploy**, y `None` es un valor válido: la
+función sale sin conector y sin un solo error. Reexportar y volver a
+desplegar; el síntoma, si no, aparece recién en el paso 8 y no se parece a
+esto.
+
 Si el secreto se había guardado con el nombre incorrecto, corregirlo y
 redesplegar la API para que tome la nueva versión:
 
@@ -549,6 +566,7 @@ tablas.
 | Tarea recibe 403 | Revisar invoker y cuenta OIDC. |
 | Tarea recibe 404 | Corregir URL y redesplegar api. |
 | `Falta TAREAS_URL` | Revisar secreto, declaración en SECRETOS y deploy. |
+| `no se pudo conectar al store «…»`, la tarea muere a los **127 s** | La función quedó sin conector VPC: el SYN no llega a la IP privada (127 s = `tcp_syn_retries=6`). Verificar las dos funciones, paso 7.2. |
 | Timeout de Cloud SQL | Revisar conector VPC y DSN. |
 | Función fuera de lista: `purgar_ingestas_terminadas` | Revisar los dos REVOKE de la migración 0019. |
 | Carga guardada sin tareas | Revisar `sin_encolar`, corregir la causa y comprobar qué lotes permite reintentar la aplicación. |
@@ -565,6 +583,7 @@ tablas.
 - [ ] Cola procesaringesta en RUNNING, tres tareas simultáneas y cinco intentos.
 - [ ] Cuenta real de api con permiso de encolado y actAs sobre la cuenta OIDC.
 - [ ] Conector VPC exportado antes de cada deploy.
+- [ ] **Verificado** que api y procesar_ingesta devuelven el mismo conector.
 - [ ] Función procesar_ingesta desplegada y permiso invoker aplicado.
 - [ ] API redesplegada si cambió el secreto.
 - [ ] Carga pequeña finaliza incluso tras recargar la página.
