@@ -1,65 +1,107 @@
-# Despliegue — La ingesta pasa a diferido con Cloud Tasks
+# Despliegue — Ingesta diferida con Cloud Tasks
 
-**Sistema:** Gestión de paneles · ingesta
-**Cubre:** `specs/SPEC_ingesta_diferida_cloud_tasks.md`
-**Migración:** `db/boveda/0019_ingesta_diferida.sql` · **una sola base**
-**Duración estimada:** 50 a 70 minutos, la mitad en `gcloud`
-**Precondición:** la bóveda al día hasta la `0018` y el store semántico hasta
-la `0006`
+**Proyecto:** `gestion-paneles` · **Región:** `southamerica-east1`  
+**Actualización:** 3 de octubre de 2026  
+**Migración:** `db/boveda/0019_ingesta_diferida.sql`
 
----
+Guía corregida para reemplazar `DESPLIEGUE - ingesta diferida.md`.
+Ejecutar desde la raíz del repositorio `paneles`, en la misma terminal.
+No repetir migraciones ni recrear recursos que ya estén correctamente configurados.
 
-## Lo primero que hay que entender de este despliegue
+| Recurso | Nombre |
+|---|---|
+| Función y final de su URL | `procesar_ingesta` |
+| Cola que usa el código por defecto | `procesaringesta` |
+| Usuario PostgreSQL de COLOQUIO | `coloquio-app@gestion-paneles.iam` |
+| Cuenta IAM de COLOQUIO | `coloquio-app@gestion-paneles.iam.gserviceaccount.com` |
+| Cuenta OIDC elegida para las tareas | `gestion-paneles@appspot.gserviceaccount.com` |
 
-**Hay infraestructura nueva, y es la primera vez.** Hasta ahora todo el
-backend era una función HTTP. Desde acá hay **una segunda función** —la que
-procesa un lote— y **una cola** que la invoca. Las dos cosas se despliegan con
-`firebase deploy`, pero la cola solo existe después del primer deploy, y la
-función que encola necesita saber **a qué URL** pegarle. Ése es el nudo de
-este despliegue y el paso 5 existe para desatarlo.
+**La función lleva guion bajo; la cola no.** El código usa `TAREAS_COLA`,
+con valor por defecto `procesaringesta`. La URL de destino se configura por separado.
 
-**Y el orden importa más que de costumbre.** Si se despliega el código antes
-de aplicar la migración, la primera carga que alguien confirme falla al
-escribir en una tabla que no existe. Si se aplica la migración y no se
-despliega, no cambia nada: la ingesta sigue sincrónica. El orden es
-migración → deploy → configurar la URL → deploy otra vez.
+## Paso 0 · Preparar la terminal
 
-### El camino, en una mirada
-
-| # | Paso | Dónde |
-|---|---|---|
-| 1 | Túnel y DSN | Terminal |
-| 2 | Confirmar que falta solo la `0019` | Terminal |
-| 3 | Aplicar `boveda/0019` | Bóveda |
-| 4 | Verificar el esquema y los privilegios | Bóveda |
-| 5 | **Habilitar Cloud Tasks y resolver la URL** | gcloud |
-| 6 | Permisos de la cuenta de servicio | gcloud |
-| 7 | Desplegar las dos funciones | Terminal |
-| 8 | **Probar una carga chica de punta a punta** | Navegador |
-| 9 | **Probar que un lote fallido se reintenta solo** | Navegador + gcloud |
-| 10 | Enganchar la purga del espacio temporal | gcloud |
-
-**Los pasos 1 a 4 están ensayados** contra un Postgres levantado al estado
-que deja la `0018`; las salidas de abajo son las de ese ensayo. Del 5 al 10
-son de GCP y del navegador.
-
----
-
-## Paso 1 · Túnel y DSN
-
-Esta migración toca **solo la bóveda**, pero el diagnóstico mira las dos.
+En macOS con zsh, permitir comentarios interactivos:
 
 ```bash
-cloud-sql-proxy gestion-paneles:southamerica-east1:paneles-boveda    --port 5432 &
-cloud-sql-proxy gestion-paneles:southamerica-east1:paneles-semantica --port 5433 &
-
-export DSN_BOVEDA="$(scripts/dsn_local.sh boveda)"
-export DSN_SEMANTICA="$(scripts/dsn_local.sh semantica)"
-
-psql "$DSN_BOVEDA" -tAc "select current_database()"   # → paneles_boveda
+setopt INTERACTIVE_COMMENTS
 ```
 
----
+Definir explícitamente todas las variables. Se pierden al abrir otra terminal:
+
+```bash
+export PROYECTO="gestion-paneles"
+export REGION="southamerica-east1"
+export FUNCION_INGESTA="procesar_ingesta"
+export COLA_INGESTA="procesaringesta"
+export CUENTA="${PROYECTO}@appspot.gserviceaccount.com"
+export URL="https://${REGION}-${PROYECTO}.cloudfunctions.net/${FUNCION_INGESTA}"
+gcloud config set project "$PROYECTO"
+printf 'URL: %s\nCuenta OIDC: %s\n' "$URL" "$CUENTA"
+```
+
+Copiar solo el contenido de los bloques. Las barras de continuación deben ser
+el último carácter de la línea, sin espacios detrás. No pegar enlaces Markdown
+como URL dentro de comandos.
+
+## Paso 1 · Túneles y conexiones
+
+Precondición: bóveda al día hasta `0018` y semántica hasta `0006`.
+La migración toca solo la bóveda, pero el diagnóstico consulta ambas bases.
+
+### 1.1 · Proxies
+
+Si ya están abiertos, no iniciar otra copia:
+
+```bash
+cloud-sql-proxy gestion-paneles:southamerica-east1:paneles-boveda --port 5432 &
+cloud-sql-proxy gestion-paneles:southamerica-east1:paneles-semantica --port 5433 &
+```
+
+Para comprobar los puertos en macOS:
+
+```bash
+lsof -nP -iTCP:5432 -sTCP:LISTEN
+lsof -nP -iTCP:5433 -sTCP:LISTEN
+```
+
+### 1.2 · DSN del dueño
+
+```bash
+export DSN_BOVEDA="$(scripts/dsn_local.sh boveda)"
+export DSN_SEMANTICA="$(scripts/dsn_local.sh semantica)"
+psql "$DSN_BOVEDA" -tAc "select current_database()"
+```
+
+Debe devolver `paneles_boveda`. Resolver cualquier error de lectura de secretos
+antes de continuar. No imprimir ni compartir los DSN.
+
+### 1.3 · Conexión IAM de COLOQUIO
+
+El usuario observado es `CLOUD_IAM_SERVICE_ACCOUNT`, no un usuario con
+contraseña PostgreSQL. Usar un token temporal de esa cuenta como contraseña:
+
+```bash
+TOKEN_COLOQUIO="$(gcloud auth print-access-token \
+  --impersonate-service-account=coloquio-app@gestion-paneles.iam.gserviceaccount.com \
+  --project="$PROYECTO")" && \
+export DSN_BOVEDA_COLOQUIO="postgresql://coloquio-app%40gestion-paneles.iam:${TOKEN_COLOQUIO}@127.0.0.1:5432/paneles_boveda"
+```
+
+Continuar solo si tuvo éxito. Repetir cuando expire el token; no guardarlo en el
+repositorio. Si aparece `iam.serviceAccounts.getAccessToken denied`, la cuenta
+que ejecuta gcloud necesita permiso para impersonar esta cuenta, por ejemplo
+`roles/iam.serviceAccountTokenCreator` sobre esa cuenta de servicio concreta.
+
+Sin `DSN_BOVEDA_COLOQUIO`, el script deriva un usuario `coloquio_app` sin
+contraseña, previsto para pruebas locales. En Cloud SQL produjo
+`fe_sendauth: no password supplied`.
+
+Para comprobar los usuarios sin mostrar contraseñas:
+
+```bash
+gcloud sql users list --instance=paneles-boveda --project="$PROYECTO"
+```
 
 ## Paso 2 · Confirmar que falta solo la `0019`
 
@@ -122,181 +164,240 @@ vista y una función; no toca ninguna fila existente.
 
 ---
 
-## Paso 4 · Verificar el esquema y los privilegios
+## Paso 4 · Verificar esquema y privilegios
 
 ```bash
-python3 scripts/verificar_esquema.py      # → Las dos bases están al día.
-python3 scripts/verificar_coloquio.py     # → Pasaron los 16 chequeos.
+python3 scripts/verificar_esquema.py
+python3 scripts/verificar_coloquio.py --solo-lectura
 ```
 
-**Los dos, no solo el primero.** El segundo es el que comprueba que la
-superficie externa no se abrió de más, y esta migración agrega una función
-que por omisión habría quedado abierta.
+El primero debe indicar que las dos bases están al día. En producción usar
+`--solo-lectura`: ejecuta siete chequeos, sin crear el escenario de prueba.
+**No se esperan 16 chequeos en este modo.**
 
-Y los catálogos:
+La batería completa escribe datos de prueba y requiere conexiones adicionales,
+incluida una conexión de intruso válida. Reservarla para un entorno de pruebas;
+no crear un usuario intruso en producción para completar el contador.
 
 ```bash
 psql "$DSN_BOVEDA" -c "select codigo, etiqueta, terminal from estado_ingesta order by orden"
 ```
 
-```
-        codigo         |       etiqueta        | terminal
------------------------+-----------------------+----------
- encolada              | Encolada              | f
- procesando            | Procesando            | f
- terminada             | Terminada             | t
- terminada_con_errores | Terminada con errores | t
- fallida               | Fallida               | t
-```
+Deben aparecer `encolada`, `procesando`, `terminada`, `terminada_con_errores` y `fallida`.
 
-Un estado o un destino inventados los rechaza la base, no el código:
+## Paso 5 · Cloud Tasks, secretos y cola
 
-```
-ERROR:  insert or update on table "ingesta_trabajo" violates foreign key constraint "ingesta_trabajo_estado_fkey"
-DETAIL:  Key (estado)=(inventado) is not present in table "estado_ingesta".
-
-ERROR:  new row for relation "ingesta_trabajo" violates check constraint "ingesta_trabajo_destino_check"
-```
-
----
-
-## Paso 5 · Habilitar Cloud Tasks y resolver la URL
-
-### 5.1 · La API
+### 5.1 · Habilitar la API
 
 ```bash
-gcloud services enable cloudtasks.googleapis.com --project=gestion-paneles
+gcloud services enable cloudtasks.googleapis.com --project="$PROYECTO"
 ```
 
-### 5.2 · El nudo: la URL que todavía no existe
-
-La función que encola necesita saber a qué URL pegarle, y esa URL es la de
-la función que procesa, **que todavía no está desplegada**. Hay que romper el
-círculo en dos pasos, y por eso el paso 7 despliega dos veces.
-
-La forma de la URL es predecible, así que se puede escribir antes:
-
-```
-https://<REGION>-<PROYECTO>.cloudfunctions.net/procesaringesta
-```
-
-Para este proyecto:
+### 5.2 · Crear los secretos que falten
 
 ```bash
-PROYECTO=gestion-paneles
-REGION=southamerica-east1
-URL="https://$REGION-$PROYECTO.cloudfunctions.net/procesaringesta"
-echo "$URL"
+gcloud secrets list --project="$PROYECTO" --format='value(name)'
 ```
 
-> **El nombre de la función es `procesaringesta`, todo junto y en
-> minúsculas.** En Python el decorador la declara como `procesar_ingesta` y
-> Firebase le saca el guión bajo al desplegarla. Si la URL lleva el guión, la
-> tarea sale, Cloud Tasks recibe un 404 y lo reintenta cinco veces antes de
-> darse por vencida: el síntoma es una carga que se queda en «procesando»
-> para siempre sin un error visible en ningún lado. **Verificar el nombre
-> real después del primer deploy** (paso 7.2) y no darlo por sentado.
-
-### 5.3 · Cargar la URL y la cuenta
+Ejecutar solo el comando correspondiente a cada secreto que todavía no exista:
 
 ```bash
-CUENTA="$PROYECTO@appspot.gserviceaccount.com"   # la cuenta por defecto
-
-for SECRETO in TAREAS_URL TAREAS_CUENTA; do
-  gcloud secrets create "$SECRETO" --replication-policy=automatic 2>/dev/null \
-    || echo "$SECRETO ya existe"
-done
-printf '%s' "$URL"    | gcloud secrets versions add TAREAS_URL    --data-file=-
-printf '%s' "$CUENTA" | gcloud secrets versions add TAREAS_CUENTA --data-file=-
+gcloud secrets create TAREAS_URL --replication-policy=automatic --project="$PROYECTO"
+gcloud secrets create TAREAS_CUENTA --replication-policy=automatic --project="$PROYECTO"
 ```
 
-> **Si `TAREAS_URL` queda vacía, nadie toma los lotes.** El sistema no se
-> rompe de forma visible: la carga se guarda, los lotes quedan en
-> `pendiente`, y la pantalla muestra una barra que no avanza. El código lo
-> dice con todas las letras cuando no puede encolar —*«Falta `TAREAS_URL`…»*—
-> y la respuesta de la confirmación trae el aviso, pero hay que mirarlo.
+`ALREADY_EXISTS` significa que ya existe. No ocultar otros errores con un mensaje
+«ya existe»; resolverlos antes de seguir.
 
----
+### 5.3 · Guardar los valores
 
-## Paso 6 · Permisos de la cuenta de servicio
-
-La cuenta necesita tres cosas, y las tres fallan distinto si faltan:
+Si se abrió otra terminal, repetir el paso 0.
 
 ```bash
-# 1 · Poder encolar tareas.
+printf 'URL: %s\nCUENTA: %s\n' "$URL" "$CUENTA"
+
+if [ -n "$URL" ] && [ -n "$CUENTA" ]; then
+  printf '%s' "$URL" | gcloud secrets versions add TAREAS_URL --project="$PROYECTO" --data-file=-
+  printf '%s' "$CUENTA" | gcloud secrets versions add TAREAS_CUENTA --project="$PROYECTO" --data-file=-
+else
+  printf '%s\n' "Faltan URL o CUENTA. Ejecutar el paso 0."
+fi
+```
+
+Ambas operaciones deben confirmar `Created version [...]`.
+`Secret Payload cannot be empty` indica una variable vacía.
+
+### 5.4 · Crear o verificar la cola explícitamente
+
+Durante este despliegue la función existía, pero el listado de colas devolvió
+cero resultados. No asumir que Firebase creó la cola automáticamente.
+
+```bash
+gcloud tasks queues list --location="$REGION" --project="$PROYECTO"
+```
+
+Si falta `procesaringesta`, crearla:
+
+```bash
+gcloud tasks queues create "$COLA_INGESTA" \
+  --location="$REGION" \
+  --project="$PROYECTO" \
+  --max-concurrent-dispatches=3 \
+  --max-attempts=5 \
+  --min-backoff=10s \
+  --max-backoff=300s
+```
+
+Si ya existe y hay que corregir los límites, usar:
+
+```bash
+gcloud tasks queues update "$COLA_INGESTA" \
+  --location="$REGION" \
+  --project="$PROYECTO" \
+  --max-concurrent-dispatches=3 \
+  --max-attempts=5 \
+  --min-backoff=10s \
+  --max-backoff=300s
+```
+
+```bash
+gcloud tasks queues describe "$COLA_INGESTA" --location="$REGION" --project="$PROYECTO"
+```
+
+Se espera `state: RUNNING`. Cinco intentos incluye el inicial. Si el runtime
+sobrescribe `TAREAS_COLA`, debe coincidir con esta cola; el valor por defecto
+actual del código ya coincide. Cada tarea contiene por separado la URL de la función.
+
+## Paso 6 · Permisos de la API que encola
+
+### 6.1 · Obtener la cuenta real de ejecución
+
+La cuenta OIDC guardada en `TAREAS_CUENTA` puede ser distinta de la cuenta
+que ejecuta `api`. No asumir que una función Gen 2 usa la cuenta App Engine.
+
+```bash
+CUENTA_API="$(gcloud functions describe api \
+  --gen2 \
+  --region="$REGION" \
+  --project="$PROYECTO" \
+  --format='value(serviceConfig.serviceAccountEmail)')"
+printf 'Cuenta API: %s\nCuenta OIDC: %s\n' "$CUENTA_API" "$CUENTA"
+```
+
+Si `CUENTA_API` está vacía o el comando falló, resolverlo antes de asignar permisos.
+
+### 6.2 · Autorizar encolado y uso de la cuenta OIDC
+
+```bash
 gcloud projects add-iam-policy-binding "$PROYECTO" \
-  --member="serviceAccount:$CUENTA" --role="roles/cloudtasks.enqueuer"
+  --member="serviceAccount:$CUENTA_API" \
+  --role="roles/cloudtasks.enqueuer" \
+  --condition=None
 
-# 2 · Poder firmar el token OIDC con el que la tarea se autentica.
-gcloud projects add-iam-policy-binding "$PROYECTO" \
-  --member="serviceAccount:$CUENTA" --role="roles/iam.serviceAccountTokenCreator"
-
-# 3 · Poder invocar la función que procesa.
-gcloud functions add-invoker-policy-binding procesaringesta \
-  --region="$REGION" --member="serviceAccount:$CUENTA" --project="$PROYECTO"
+gcloud iam service-accounts add-iam-policy-binding "$CUENTA" \
+  --project="$PROYECTO" \
+  --member="serviceAccount:$CUENTA_API" \
+  --role="roles/iam.serviceAccountUser" \
+  --condition=None
 ```
 
-El tercero **se corre después del paso 7**, porque la función tiene que
-existir. Los dos primeros, antes.
+El segundo permiso incluye `iam.serviceAccounts.actAs`, necesario para crear
+una tarea que usa esa cuenta OIDC. `TokenCreator` a nivel proyecto, indicado
+por la guía anterior, no sustituye ese permiso ni hace falta otorgarlo de
+forma general para este flujo. Esta guía no revoca permisos anteriores.
 
-| Si falta | Qué se ve |
-|---|---|
-| `cloudtasks.enqueuer` | La confirmación responde igual, con `sin_encolar` y el aviso; los lotes quedan `pendiente` |
-| `serviceAccountTokenCreator` | Idem: el `create_task` falla al armar el token |
-| El invoker | La tarea sale y la función devuelve 403. Cloud Tasks reintenta cinco veces y el lote queda fallido con «403» en el error |
+`--condition=None` evita la pregunta interactiva que apareció porque existen
+otros bindings condicionales. Si aparece el selector, elegir `None`; no usar
+las condiciones de las bases Firestore para estos permisos.
 
----
+El permiso de invocación se aplica en el paso 7.3, cuando la función ya existe.
 
-## Paso 7 · Desplegar
+## Paso 7 · Desplegar y verificar
 
-### 7.1 · Primer deploy, que crea la función y la cola
+### 7.1 · Recuperar el conector VPC y desplegar
+
+«El de siempre» era un marcador de la guía, no un valor para copiar.
+Recuperar el conector de la API existente:
 
 ```bash
-export VPC_CONNECTOR=<el de siempre>
-firebase deploy --only functions
+export VPC_CONNECTOR="$(gcloud functions describe api \
+  --gen2 \
+  --region="$REGION" \
+  --project="$PROYECTO" \
+  --format='value(serviceConfig.vpcConnector)')"
+printf 'Conector VPC: %s\n' "$VPC_CONNECTOR"
 ```
 
-Despliega las dos: `api` (la de siempre) y `procesaringesta` (nueva).
-**Firebase crea la cola de Cloud Tasks sola**, con el nombre de la función y
-la concurrencia y los reintentos que están declarados en `main.py`:
-
-```python
-retry_config=options.RetryConfig(max_attempts=5, min_backoff_seconds=10, ...)
-rate_limits=options.RateLimits(max_concurrent_dispatches=3)
-```
-
-> **Tres tareas en paralelo es conservador a propósito.** El techo real no es
-> la función sino los límites de tasa de Voyage y la instancia de la base.
-> Con `paneles-semantica` en un tier chico, subirlo degrada o fuerza a
-> agrandarla (~US$ 24/mes de `db-f1-micro` a `db-g1-small`).
-
-### 7.2 · Verificar el nombre real y corregir la URL si hace falta
+Si devuelve vacío, listar los conectores y elegir el conectado a la red de Cloud SQL:
 
 ```bash
-gcloud functions list --project="$PROYECTO" --regions="$REGION" \
-  --format='value(name)'
+gcloud compute networks vpc-access connectors list \
+  --project="$PROYECTO" \
+  --region="$REGION"
 ```
 
-Si el nombre no es `procesaringesta`, hay que cargar la URL correcta y volver
-a desplegar:
+Solo si es necesario asignarlo manualmente, este bloque de zsh solicita el
+nombre completo, evitando un marcador que se pueda copiar por error:
 
 ```bash
-printf '%s' "https://$REGION-$PROYECTO.cloudfunctions.net/<nombre real>" \
-  | gcloud secrets versions add TAREAS_URL --data-file=-
-firebase deploy --only functions:api
+read "VPC_CONNECTOR?Pegá el nombre completo del conector VPC: "
+export VPC_CONNECTOR
 ```
 
-Y la cola, que ya tiene que existir:
+No desplegar con la variable vacía si las bases usan IP privada.
+Con el conector exportado:
 
 ```bash
-gcloud tasks queues describe procesaringesta --location="$REGION"
+firebase deploy --only functions --project="$PROYECTO"
 ```
 
-### 7.3 · El invoker, ahora que la función existe
+Comprobar que el deploy termine correctamente. No aceptar borrados de funciones
+ajenas al cambio si Firebase los propone sin haberlos previsto.
 
-El comando 3 del paso 6.
+### 7.2 · Verificar el nombre real, la URL y la cola
 
----
+```bash
+gcloud functions list --project="$PROYECTO" --regions="$REGION" --format='value(name)'
+
+gcloud functions describe "$FUNCION_INGESTA" \
+  --gen2 \
+  --region="$REGION" \
+  --project="$PROYECTO" \
+  --format='yaml(name,state,serviceConfig.uri,serviceConfig.vpcConnector,serviceConfig.serviceAccountEmail)'
+```
+
+El nombre observado es `procesar_ingesta`. La URL debe terminar en
+`/procesar_ingesta`. El deploy debe conservar el conector VPC.
+
+Si el secreto se había guardado con el nombre incorrecto, corregirlo y
+redesplegar la API para que tome la nueva versión:
+
+```bash
+URL="https://${REGION}-${PROYECTO}.cloudfunctions.net/${FUNCION_INGESTA}"
+printf '%s' "$URL" | gcloud secrets versions add TAREAS_URL --project="$PROYECTO" --data-file=-
+firebase deploy --only functions:api --project="$PROYECTO"
+```
+
+Mantener `VPC_CONNECTOR` exportado también en este deploy. No repetirlo si
+el secreto ya era correcto al desplegar.
+
+La cola se verifica con su propio nombre:
+
+```bash
+gcloud tasks queues describe "$COLA_INGESTA" --location="$REGION" --project="$PROYECTO"
+```
+
+### 7.3 · Otorgar el permiso de invocación
+
+```bash
+gcloud functions add-invoker-policy-binding "$FUNCION_INGESTA" \
+  --region="$REGION" \
+  --member="serviceAccount:$CUENTA" \
+  --project="$PROYECTO"
+```
+
+Aquí se usa la **función** `procesar_ingesta`. Un 404 contra
+`functions/procesaringesta` indica que se usó el nombre de la cola por error.
 
 ## Paso 8 · Probar una carga chica de punta a punta
 
@@ -329,43 +430,29 @@ select trabajo_id, estado, lotes_total, lotes_ok, lotes_fallidos,
 > 6. Mirar la cola, que dice si las tareas están saliendo:
 >
 > ```bash
-> gcloud tasks queues describe procesaringesta --location="$REGION"
-> gcloud logging read \
->   'resource.labels.function_name="procesaringesta"' --limit=20
+> gcloud tasks queues describe "$COLA_INGESTA" --location="$REGION" --project="$PROYECTO"
+> gcloud functions logs read "$FUNCION_INGESTA" --gen2 \
+>   --region="$REGION" --project="$PROYECTO" --limit=30
 > ```
 
 ---
 
-## Paso 9 · Probar que un lote fallido se reintenta
+## Paso 9 · Validar recuperación en un entorno de pruebas
 
-Lo que esta entrega promete no es solo que las cargas grandes terminen: es
-que **un fallo parcial no obliga a rehacer todo**. Sin probarlo, eso es una
-suposición.
+Con una carga pequeña y un entorno aislado, provocar un fallo transitorio
+controlado del proveedor, observar los reintentos y restaurar la configuración
+válida. Usar un mecanismo de inyección de fallos apropiado para ese entorno.
 
-La forma más limpia de provocarlo sin tocar datos es quitarle temporalmente a
-la función el acceso al proveedor de embeddings:
+La guía anterior proponía publicar una clave de embeddings vacía. No hacerlo
+sobre el secreto compartido de producción: afecta a las funciones que adopten
+esa versión y puede ser rechazado por contenido vacío.
 
-```bash
-# Una versión vacía de la clave: las llamadas fallan con un error transitorio.
-printf '%s' '' | gcloud secrets versions add EMBEDDINGS_API_KEY --data-file=-
-firebase deploy --only functions:procesaringesta
-```
-
-Ingestar una carga chica y mirar:
-
-| # | Qué tiene que pasar |
-|---|---|
-| 9.1 | Los lotes quedan fallidos **después de cinco intentos**, no del primero |
-| 9.2 | La pantalla dice qué lote falló y con qué error |
-| 9.3 | La carga queda `terminada_con_errores` o `fallida`, no colgada |
-
-Restaurar la clave, redesplegar, y entonces:
-
-| # | Qué tiene que pasar |
-|---|---|
-| 9.4 | El botón **«Reintentar los lotes fallidos»** los reencola |
-| 9.5 | Terminan bien y la carga pasa a `terminada` |
-| 9.6 | **No se duplicó nada**: las respuestas son las mismas de antes |
+Verificar que los errores transitorios se reintenten, los errores de datos
+muestren su detalle, y «Reintentar los lotes fallidos» permita completar la
+carga sin duplicar lo ingresado. La política de la cola y el estado de la
+aplicación son distintos: no asumir que la pantalla espera cinco intentos
+para mostrar un fallo. Un 403 anterior a la función tampoco actualiza por sí
+solo el estado del lote.
 
 ```bash
 psql "$DSN_SEMANTICA" -c "
@@ -373,10 +460,8 @@ select count(*) as respuestas, count(distinct (individuo_id, pregunta_id)) as pa
   from respuesta;"
 ```
 
-Los dos números tienen que coincidir: la unicidad está en el esquema, así que
-si difirieran sería un bug de otra cosa.
-
----
+Los conteos deben coincidir. Revisar también los registros de la encuesta de
+prueba; la igualdad global no demuestra toda la correctitud de la carga.
 
 ## Paso 10 · Enganchar la purga del espacio temporal
 
@@ -407,15 +492,19 @@ Conviene engancharla a una rutina semanal.
 
 ## Rollback
 
+Coordinarlo sin cargas activas. Mantener VPC_CONNECTOR exportado durante el
+deploy del código anterior. No aceptar borrados de funciones ajenas al cambio.
+
+
 El código y la base vuelven atrás juntos, y **en este orden**:
 
 ```bash
 # 1 · Primero el código: con la 0019 revertida y el código nuevo arriba,
 #     confirmar una carga falla al escribir en una tabla que no existe.
-firebase deploy --only functions   # desde el commit anterior
+firebase deploy --only functions --project="$PROYECTO"   # desde el commit anterior
 
 # 2 · Y la función de tareas, que ya no tiene razón de existir.
-firebase functions:delete procesaringesta --region="$REGION"
+firebase functions:delete procesar_ingesta --region="$REGION" --project="$PROYECTO"
 ```
 
 ```sql
@@ -443,36 +532,50 @@ tablas.
 
 ---
 
-## Errores que se pueden encontrar
+## Errores y correcciones
 
-| Mensaje | Qué pasó | Qué hacer |
-|---|---|---|
-| `Falta TAREAS_URL: sin la dirección de la función que procesa los lotes…` | El secreto no está cargado o no se montó | Paso 5.3, y redesplegar: `firebase deploy` solo monta los declarados |
-| La respuesta trae `sin_encolar` y un aviso | La cola rechazó las tareas | Casi siempre permisos: paso 6. La carga quedó guardada y se puede reintentar |
-| La barra no avanza y los lotes siguen `pendiente` | Nadie está tomando las tareas | `gcloud tasks queues describe` y los logs de la función. URL mal, cola inexistente, o invoker faltante |
-| El lote falla con `403` | A la cuenta le falta el rol de invoker | Comando 3 del paso 6 |
-| `Las filas de este lote ya se purgaron` | Se reintentó un lote de una carga vieja | Volver a cargar el archivo: no hay con qué reprocesarlo |
-| `El lote N no está fallido: no hay nada que reintentar` | Se pidió reintentar algo que está bien | Nada |
-| `funciones ejecutables fuera de la lista blanca: purgar_ingestas_terminadas` | Se aplicó la `0019` sin sus dos `REVOKE` finales | Correrlos a mano y volver a correr `verificar_coloquio.py` |
-| Una carga queda en `procesando` sin lotes en curso | Una tarea murió sin marcar su lote | Reintentar desde la pantalla: `_tomar_lote` la vuelve a tomar |
-
----
+| Error | Corrección |
+|---|---|
+| `fe_sendauth: no password supplied` | DSN IAM de COLOQUIO, paso 1.3. |
+| `getAccessToken denied` | Autorizar la impersonación de COLOQUIO. |
+| `zsh: command not found: #` | `setopt INTERACTIVE_COMMENTS`. |
+| `Secret Payload cannot be empty` | Definir URL y CUENTA, paso 0. |
+| Selector de condiciones IAM | `--condition=None` para estos bindings. |
+| «el de siempre» | Recuperar el conector VPC real, paso 7.1. |
+| Función `procesaringesta` no encontrada | Usar `procesar_ingesta` para función y URL. |
+| Queue ID `procesar_ingesta` inválido | Usar `procesaringesta` para la cola. |
+| `Listed 0 items` en colas | Crear explícitamente la cola, paso 5.4. |
+| `iam.serviceAccounts.actAs` denegado | Dar a la cuenta real de api Service Account User sobre la cuenta OIDC. |
+| Tarea recibe 403 | Revisar invoker y cuenta OIDC. |
+| Tarea recibe 404 | Corregir URL y redesplegar api. |
+| `Falta TAREAS_URL` | Revisar secreto, declaración en SECRETOS y deploy. |
+| Timeout de Cloud SQL | Revisar conector VPC y DSN. |
+| Función fuera de lista: `purgar_ingestas_terminadas` | Revisar los dos REVOKE de la migración 0019. |
+| Carga guardada sin tareas | Revisar `sin_encolar`, corregir la causa y comprobar qué lotes permite reintentar la aplicación. |
 
 ## Checklist
 
-- [ ] 1 · Túnel abierto y `DSN_BOVEDA` apuntando a `paneles_boveda`
-- [ ] 2 · El diagnóstico dice que falta solo la `0019`
-- [ ] 3 · `0019` aplicada, con los dos `REVOKE` al final
-- [ ] 4 · «Las dos bases están al día» **y** `verificar_coloquio.py` 16/16
-- [ ] 5 · API de Cloud Tasks habilitada, `TAREAS_URL` y `TAREAS_CUENTA` cargadas
-- [ ] 6 · `cloudtasks.enqueuer` y `serviceAccountTokenCreator` otorgados
-- [ ] 7 · Las dos funciones desplegadas; el **nombre real** de la función de tareas verificado
-- [ ] 7 · La cola existe (`gcloud tasks queues describe`)
-- [ ] 7 · El invoker otorgado, después del deploy
-- [ ] 8 · **Una carga chica termina sola y el resumen es el de siempre**
-- [ ] 8 · **Recargar la página a mitad de carga no pierde el progreso**
-- [ ] 9 · **Un lote fallido se reintenta y no duplica nada**
-- [ ] 10 · La purga corrida una vez a mano, y anotado que falta engancharla
+- [ ] Variables definidas en la terminal actual.
+- [ ] Proxies y DSN de ambas bases correctos.
+- [ ] Token IAM de COLOQUIO vigente.
+- [ ] Migración 0019 aplicada, incluidos REVOKE.
+- [ ] Esquema actualizado y siete chequeos de solo lectura aprobados.
+- [ ] TAREAS_URL termina en /procesar_ingesta.
+- [ ] TAREAS_CUENTA contiene la cuenta OIDC elegida.
+- [ ] Cola procesaringesta en RUNNING, tres tareas simultáneas y cinco intentos.
+- [ ] Cuenta real de api con permiso de encolado y actAs sobre la cuenta OIDC.
+- [ ] Conector VPC exportado antes de cada deploy.
+- [ ] Función procesar_ingesta desplegada y permiso invoker aplicado.
+- [ ] API redesplegada si cambió el secreto.
+- [ ] Carga pequeña finaliza incluso tras recargar la página.
+- [ ] Recuperación validada en pruebas o anotada como pendiente.
+- [ ] Purga realizada cuando corresponde; automatización semanal pendiente si no existe.
 
-**El despliegue no está hecho hasta el paso 9.** Los anteriores dejan la
-infraestructura arriba; el 8 y el 9 son los que dicen si sirve.
+## Referencias
+
+- [Encolador](https://github.com/araujomelogno/paneles/blob/main/functions/panel_api/diferida.py)
+- [Funciones](https://github.com/araujomelogno/paneles/blob/main/functions/main.py)
+- [Verificación COLOQUIO](https://github.com/araujomelogno/paneles/blob/main/scripts/verificar_coloquio.py)
+- [Cloud SQL IAM](https://docs.cloud.google.com/sql/docs/postgres/iam-logins)
+- [Crear colas](https://docs.cloud.google.com/sdk/gcloud/reference/tasks/queues/create)
+- [Crear tareas y permisos](https://docs.cloud.google.com/tasks/docs/create-tasks)
