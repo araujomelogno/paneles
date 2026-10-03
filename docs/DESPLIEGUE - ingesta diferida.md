@@ -10,14 +10,26 @@ No repetir migraciones ni recrear recursos que ya estén correctamente configura
 
 | Recurso | Nombre |
 |---|---|
-| Función y final de su URL | `procesar_ingesta` |
-| Cola que usa el código por defecto | `procesaringesta` |
+| Función, cola y final de su URL | `procesaringesta` |
 | Usuario PostgreSQL de COLOQUIO | `coloquio-app@gestion-paneles.iam` |
 | Cuenta IAM de COLOQUIO | `coloquio-app@gestion-paneles.iam.gserviceaccount.com` |
 | Cuenta OIDC elegida para las tareas | `gestion-paneles@appspot.gserviceaccount.com` |
 
-**La función lleva guion bajo; la cola no.** El código usa `TAREAS_COLA`,
-con valor por defecto `procesaringesta`. La URL de destino se configura por separado.
+**Un solo nombre, y sin guion bajo.** El SDK de Python deriva el id del
+endpoint del nombre de la función —no hay opción para fijarlo— y el CLI crea
+la cola de Cloud Tasks con ese id. Un Queue ID solo admite letras, números y
+guiones, así que una función `procesar_ingesta` **despliega y después rompe el
+deploy entero**:
+
+```
+Request to …/queues/procesar_ingesta had HTTP Error: 400,
+Queue ID "procesar_ingesta" can contain only letters ([A-Za-z]),
+numbers ([0-9]), or hyphens (-).
+```
+
+Por eso la función se llama `procesaringesta`: el nombre de la función **es**
+el nombre de la cola. `TAREAS_COLA` tiene ese mismo valor por defecto. La URL
+de destino se configura por separado, en `TAREAS_URL`.
 
 ## Paso 0 · Preparar la terminal
 
@@ -32,8 +44,8 @@ Definir explícitamente todas las variables. Se pierden al abrir otra terminal:
 ```bash
 export PROYECTO="gestion-paneles"
 export REGION="southamerica-east1"
-export FUNCION_INGESTA="procesar_ingesta"
-export COLA_INGESTA="procesaringesta"
+export FUNCION_INGESTA="procesaringesta"
+export COLA_INGESTA="procesaringesta"   # el mismo: ver arriba
 export CUENTA="${PROYECTO}@appspot.gserviceaccount.com"
 export URL="https://${REGION}-${PROYECTO}.cloudfunctions.net/${FUNCION_INGESTA}"
 gcloud config set project "$PROYECTO"
@@ -366,8 +378,8 @@ gcloud functions describe "$FUNCION_INGESTA" \
   --format='yaml(name,state,serviceConfig.uri,serviceConfig.vpcConnector,serviceConfig.serviceAccountEmail)'
 ```
 
-El nombre observado es `procesar_ingesta`. La URL debe terminar en
-`/procesar_ingesta`. El deploy debe conservar el conector VPC.
+El nombre observado es `procesaringesta`. La URL debe terminar en
+`/procesaringesta`. El deploy debe conservar el conector VPC.
 
 Que lo conserve hay que **verlo**: si la clave falta, el `yaml` la omite sin
 decir nada. Las dos funciones tienen que devolver el mismo conector.
@@ -398,6 +410,15 @@ firebase deploy --only functions:api --project="$PROYECTO"
 Mantener `VPC_CONNECTOR` exportado también en este deploy. No repetirlo si
 el secreto ya era correcto al desplegar.
 
+Si una versión anterior se desplegó con la función llamada
+`procesar_ingesta`, queda huérfana: el CLI la ofrece para borrar en el
+siguiente deploy, y si se saltea el prompt se borra a mano.
+
+```bash
+gcloud functions list --project="$PROYECTO" --regions="$REGION" --format='value(name)'
+firebase functions:delete procesar_ingesta --region="$REGION" --project="$PROYECTO"
+```
+
 La cola se verifica con su propio nombre:
 
 ```bash
@@ -413,8 +434,8 @@ gcloud functions add-invoker-policy-binding "$FUNCION_INGESTA" \
   --project="$PROYECTO"
 ```
 
-Aquí se usa la **función** `procesar_ingesta`. Un 404 contra
-`functions/procesaringesta` indica que se usó el nombre de la cola por error.
+La función y la cola se llaman igual, así que acá no hay nada que
+confundir. Un 404 significa que la función no llegó a desplegarse.
 
 ## Paso 8 · Probar una carga chica de punta a punta
 
@@ -521,7 +542,7 @@ El código y la base vuelven atrás juntos, y **en este orden**:
 firebase deploy --only functions --project="$PROYECTO"   # desde el commit anterior
 
 # 2 · Y la función de tareas, que ya no tiene razón de existir.
-firebase functions:delete procesar_ingesta --region="$REGION" --project="$PROYECTO"
+firebase functions:delete procesaringesta --region="$REGION" --project="$PROYECTO"
 ```
 
 ```sql
@@ -559,8 +580,7 @@ tablas.
 | `Secret Payload cannot be empty` | Definir URL y CUENTA, paso 0. |
 | Selector de condiciones IAM | `--condition=None` para estos bindings. |
 | «el de siempre» | Recuperar el conector VPC real, paso 7.1. |
-| Función `procesaringesta` no encontrada | Usar `procesar_ingesta` para función y URL. |
-| Queue ID `procesar_ingesta` inválido | Usar `procesaringesta` para la cola. |
+| `Queue ID "procesar_ingesta" can contain only letters…`, con `api` ya actualizada | Quedó una versión del código con la función nombrada con guion bajo. La cola la crea el CLI con el id de la función: renombrarla a `procesaringesta` y volver a desplegar. |
 | `Listed 0 items` en colas | Crear explícitamente la cola, paso 5.4. |
 | `iam.serviceAccounts.actAs` denegado | Dar a la cuenta real de api Service Account User sobre la cuenta OIDC. |
 | Tarea recibe 403 | Revisar invoker y cuenta OIDC. |
@@ -578,13 +598,13 @@ tablas.
 - [ ] Token IAM de COLOQUIO vigente.
 - [ ] Migración 0019 aplicada, incluidos REVOKE.
 - [ ] Esquema actualizado y siete chequeos de solo lectura aprobados.
-- [ ] TAREAS_URL termina en /procesar_ingesta.
+- [ ] TAREAS_URL termina en /procesaringesta.
 - [ ] TAREAS_CUENTA contiene la cuenta OIDC elegida.
 - [ ] Cola procesaringesta en RUNNING, tres tareas simultáneas y cinco intentos.
 - [ ] Cuenta real de api con permiso de encolado y actAs sobre la cuenta OIDC.
 - [ ] Conector VPC exportado antes de cada deploy.
-- [ ] **Verificado** que api y procesar_ingesta devuelven el mismo conector.
-- [ ] Función procesar_ingesta desplegada y permiso invoker aplicado.
+- [ ] **Verificado** que api y procesaringesta devuelven el mismo conector.
+- [ ] Función procesaringesta desplegada y permiso invoker aplicado.
 - [ ] API redesplegada si cambió el secreto.
 - [ ] Carga pequeña finaliza incluso tras recargar la página.
 - [ ] Recuperación validada en pruebas o anotada como pendiente.

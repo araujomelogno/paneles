@@ -230,6 +230,17 @@ def api(req: https_fn.Request) -> https_fn.Response:
 #
 # Reintentar cinco veces un lote que falla por una fila mal formada gasta
 # tiempo y embeddings en algo que va a fallar igual.
+#
+# **El nombre va sin guión bajo, y no es estética.** El SDK de Python deriva
+# el id del endpoint del nombre de esta función —no hay opción para fijarlo—
+# y el CLI crea la cola de Cloud Tasks con ese id. Un Queue ID solo admite
+# letras, números y guiones, así que `procesar_ingesta` despliega la función
+# y después falla el deploy entero:
+#
+#   Queue ID "procesar_ingesta" can contain only letters ([A-Za-z]),
+#   numbers ([0-9]), or hyphens (-).
+#
+# El nombre de la función es, de hecho, el nombre de la cola.
 @tasks_fn.on_task_dispatched(
     region=REGION,
     secrets=SECRETOS,
@@ -251,7 +262,7 @@ def api(req: https_fn.Request) -> https_fn.Response:
     memory=options.MemoryOption.GB_1,
     timeout_sec=1800,
 )
-def procesar_ingesta(req: https_fn.CallableRequest) -> dict:
+def procesaringesta(req: https_fn.CallableRequest) -> dict:
     from panel_api import diferida
 
     datos = req.data or {}
