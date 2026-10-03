@@ -93,9 +93,13 @@ class Encolador:
 class EncoladorCloudTasks(Encolador):
     """La cola de verdad.
 
-    La tarea es un `POST` HTTP a la función `procesar_ingesta`, autenticado
+    La tarea es un `POST` HTTP a la función `procesaringesta`, autenticado
     con un token OIDC de la cuenta de servicio: la función es privada y no la
     puede invocar cualquiera que conozca la URL.
+
+    El default de `TAREAS_COLA` es ese mismo nombre porque **la cola la crea
+    el CLI con el id de la función**, y un Queue ID no admite guiones bajos.
+    Si alguna vez se renombra la función, esta constante va atrás.
     """
 
     def __init__(self, proyecto=None, region=None, cola=None, url=None,
