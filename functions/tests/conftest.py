@@ -38,6 +38,9 @@ TABLAS_BOVEDA = [
     # `verificacion_contacto` no tiene FK a nadie: sin truncarla, el límite
     # de códigos por destino se agota entre pruebas.
     "verificacion_contacto", "preferencia_canal",
+    # Ingesta diferida. `ingesta_lote` cascadea desde el trabajo, pero sin
+    # truncar el trabajo cada prueba vería las cargas de las anteriores.
+    "ingesta_trabajo",
 ]
 
 # R3.14 — el catálogo de atributos **no** se trunca: `sexo`, `localidad`,
@@ -188,7 +191,7 @@ class ContextoDePrueba:
 
     def __init__(self, conn_boveda, conn_semantica, embeddings,
                  reranker=None, verificador=None, padron=None,
-                 credenciales=None, origen=None):
+                 credenciales=None, origen=None, encolador=None):
         self.boveda = conn_boveda
         self.cfg = None
         self.origen = origen
@@ -199,6 +202,7 @@ class ContextoDePrueba:
         self._verificador = verificador
         self._padron = padron
         self._credenciales = credenciales
+        self._encolador = encolador
 
     @property
     def semantica(self):
@@ -237,6 +241,14 @@ class ContextoDePrueba:
             self._credenciales = mod.CredencialesEnMemoria()
         return self._credenciales
 
+    @property
+    def encolador(self):
+        from panel_api import diferida
+
+        if self._encolador is None:
+            self._encolador = diferida.EncoladorEnMemoria()
+        return self._encolador
+
 
 @pytest.fixture
 def ctx(conn_boveda, conn_semantica, proveedor):
@@ -273,6 +285,19 @@ def padron():
     from panel_api import usuarios
 
     return usuarios.PadronEnMemoria()
+
+
+@pytest.fixture
+def encolador():
+    """Cloud Tasks de mentira: anota qué lotes se encolaron.
+
+    Las pruebas encolan y después llaman a `procesar_lote` a mano, que es lo
+    que hace la tarea de verdad. Así el reparto, el cierre y el reintento se
+    prueban contra Postgres sin desplegar una cola.
+    """
+    from panel_api import diferida
+
+    return diferida.EncoladorEnMemoria()
 
 
 @pytest.fixture

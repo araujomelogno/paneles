@@ -15,6 +15,8 @@ Todo se abre en forma perezosa, y no por prolijidad:
 * **Las credenciales del portal** (R6.1.a). Levantan el Admin SDK de Auth y
   leen la *web API key*. Solo las usan las rutas de `/portal/` que tocan una
   contraseña; una consulta semántica no tiene por qué instanciarlas.
+* **El encolador de ingestas.** Levanta el cliente de Cloud Tasks. Lo usan
+  las tres rutas que confirman una carga y la de reintentar un lote.
 """
 
 import contextlib
@@ -43,6 +45,7 @@ class Contexto:
         self._verificador = None
         self._padron = None
         self._credenciales = None
+        self._encolador = None
         self._pila = contextlib.ExitStack()
 
     @property
@@ -94,6 +97,14 @@ class Contexto:
 
             self._credenciales = mod.crear(self.cfg)
         return self._credenciales
+
+    @property
+    def encolador(self):
+        if self._encolador is None:
+            from . import diferida
+
+            self._encolador = diferida.crear_encolador(self.cfg)
+        return self._encolador
 
     def cerrar(self):
         self._pila.close()

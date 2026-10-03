@@ -73,6 +73,29 @@ agrega tres reglas más:
   viviera en un solo camino los otros dejarían la credencial viva. Misma
   razón por la que el gate de consentimiento es una vista y no Python.
 
+## La ingesta no corre adentro de una request
+
+Desde la ingesta diferida, confirmar una carga **la encola**: el trabajo se
+persiste, se parte en lotes y Cloud Tasks procesa uno por tarea
+(`panel_api/diferida.py`, `boveda/0019`). Tres cosas que no hay que deshacer:
+
+- **La tarea llama a `encuestas.ingestar()` / `cargas.ingestar()`, las de
+  siempre.** No hay una segunda implementación de la ingesta, y por eso el
+  gate de consentimiento se re-evalúa en cada lote, el guardia de PII sigue
+  corriendo y los upserts idempotentes cubren el reintento. Una ingesta
+  paralela escrita aparte tendría que volver a demostrar las tres, y
+  divergiría con el primer arreglo que se haga de un solo lado.
+- **El plan se congela al confirmar.** Las filas van despivotadas y con el
+  mapeo resuelto; las tareas no reinterpretan el archivo. Si lo hicieran, dos
+  lotes de la misma carga podrían usar mapeos distintos.
+- **El avance se deriva de los lotes (`v_ingesta_progreso`), no de un
+  contador.** Con tareas en paralelo un acumulador se desincroniza y el
+  síntoma es una barra que miente. No agreguen `lotes_terminados` a
+  `ingesta_trabajo`.
+
+Y lo de siempre con las funciones nuevas: Postgres le da `execute` a `public`,
+así que cada una necesita su `revoke` o `scripts/verificar_coloquio.py` rompe.
+
 ## Reglas de negocio que el código debe respetar
 
 - No se puede convocar ni incluir en muestreo a una persona sin `consentimiento` **vigente** para la finalidad correspondiente.

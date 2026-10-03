@@ -12,7 +12,7 @@ import os
 import traceback
 
 import firebase_admin
-from firebase_functions import https_fn, options
+from firebase_functions import https_fn, options, tasks_fn
 
 from panel_api import auth, config, contexto, esquema, ruteo
 from panel_api.errores import ErrorApi
@@ -70,9 +70,30 @@ SECRETOS = [
     # Identity Toolkit, que es la única operación de Auth que el Admin SDK
     # no hace. Sin ella no entra nadie al portal.
     "FIREBASE_WEB_API_KEY",
+    # ── Ingesta diferida ──
+    # A qué URL le pega Cloud Tasks para procesar un lote, y con qué cuenta
+    # de servicio firma el token. No son confidenciales, pero cambian entre
+    # ambientes y no pueden vivir en el código: la función de tareas es
+    # privada, así que una URL o una cuenta equivocadas no fallan al
+    # desplegar —fallan cuando el primer lote no lo toma nadie—.
+    "TAREAS_URL",
+    "TAREAS_CUENTA",
 ]
 
 PREFIJO = "/api"
+
+# ── Ingesta diferida ────────────────────────────────────────────────
+#
+# Cuántos lotes se procesan a la vez. Tres es conservador a propósito: el
+# techo real no es la función sino los límites de tasa del proveedor de
+# embeddings y la instancia de la base. Con `paneles-semantica` en un tier
+# chico, subir esto degrada o fuerza a agrandarla.
+TAREAS_EN_PARALELO = int(os.environ.get("TAREAS_EN_PARALELO", "3"))
+
+# Cuántas veces se reintenta un lote antes de darlo por fallido. Aplica solo
+# a lo transitorio: un error de datos no propaga excepción y por lo tanto no
+# se reintenta nunca (ver `diferida.procesar_lote`).
+TAREAS_REINTENTOS = int(os.environ.get("TAREAS_REINTENTOS", "5"))
 
 
 def _json(status, cuerpo):
@@ -188,3 +209,63 @@ def api(req: https_fn.Request) -> https_fn.Response:
             })
         # Para el resto no se filtra el detalle: puede traer fragmentos de PII.
         return _json(500, {"error": "interno", "mensaje": "Error interno del servidor."})
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Ingesta diferida — la función que procesa un lote
+# ════════════════════════════════════════════════════════════════════
+#
+# La contraparte de `diferida.encolar()`. Cloud Tasks le pega una vez por
+# lote, con el mismo acceso a bases y secretos que la función HTTP: **mismo
+# conector VPC y misma región**, porque sin eso no llega a las IP privadas de
+# las dos instancias de Cloud SQL y el síntoma es un timeout opaco.
+#
+# El contrato con `diferida.procesar_lote()` es lo que hace que los
+# reintentos sirvan:
+#
+#   · un error **transitorio** se propaga → esta función devuelve 5xx →
+#     Cloud Tasks reintenta con espera creciente;
+#   · un error **de datos** no se propaga → devuelve 200 con el lote marcado
+#     fallido → Cloud Tasks no insiste, porque insistir no lo arregla.
+#
+# Reintentar cinco veces un lote que falla por una fila mal formada gasta
+# tiempo y embeddings en algo que va a fallar igual.
+@tasks_fn.on_task_dispatched(
+    region=REGION,
+    secrets=SECRETOS,
+    vpc_connector=VPC_CONNECTOR,
+    vpc_connector_egress_settings=(
+        options.VpcEgressSetting.PRIVATE_RANGES_ONLY if VPC_CONNECTOR else None
+    ),
+    retry_config=options.RetryConfig(
+        max_attempts=TAREAS_REINTENTOS,
+        min_backoff_seconds=10,
+        max_backoff_seconds=300,
+    ),
+    rate_limits=options.RateLimits(
+        max_concurrent_dispatches=TAREAS_EN_PARALELO,
+    ),
+    # Lo mismo que la función HTTP y por la misma razón: un lote de un `.sav`
+    # pasa por pandas. El techo de tiempo de una tarea es el de la función,
+    # pero ahora ninguna tarea tiene que acercarse: cada una hace un lote.
+    memory=options.MemoryOption.GB_1,
+    timeout_sec=1800,
+)
+def procesar_ingesta(req: https_fn.CallableRequest) -> dict:
+    from panel_api import diferida
+
+    datos = req.data or {}
+    trabajo_id = datos.get("trabajo_id")
+    indice = datos.get("indice")
+    if trabajo_id is None or indice is None:
+        # Sin esto no hay nada que hacer, y reintentarlo no va a cambiar.
+        # Se devuelve en vez de levantar: una tarea mal armada reintentada
+        # cinco veces es ruido en los logs y nada más.
+        print(f"[tareas] tarea sin trabajo_id/indice: {datos!r}")
+        return {"estado": "descartada"}
+
+    cfg = config.cargar()
+    with contexto.abrir(cfg) as ctx:
+        return diferida.procesar_lote(
+            ctx.boveda, ctx.semantica, int(trabajo_id), int(indice),
+            proveedor=ctx.embeddings)

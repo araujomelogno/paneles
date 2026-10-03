@@ -2596,6 +2596,170 @@ sacadas.
 
 ---
 
+## D55 · La ingesta deja de vivir en una request, y el estado vive en la base
+
+**La decisión.** Confirmar una carga ya no la procesa: la **persiste, la parte
+en lotes y encola una tarea por lote**. La pantalla pasa a mirar el avance.
+
+### El techo que había
+
+La ingesta corría entera dentro de una sola request HTTP. Con unos cientos de
+respuestas andaba; con una base real no llega. 200.000 respuestas son ~1.560
+llamadas al proveedor de embeddings en serie —media hora larga solo de eso,
+más los inserts— y Cloud Run corta a los 300 segundos. La carga fallaba con un
+error genérico **después** de haber procesado una parte, y no había forma de
+retomar.
+
+Subir el timeout corre la pared de lugar: el máximo de una función de 2ª
+generación son 60 minutos. Son tres problemas distintos en uno —hay un techo
+duro, el analista queda a ciegas, y un fallo tardío obliga a rehacer todo— y
+los tres se arreglan sacando el trabajo de la request.
+
+### Lo que no cambió, a propósito
+
+**La tarea llama a `encuestas.ingestar()` y `cargas.ingestar()`, las de
+siempre.** No hay una segunda implementación de la ingesta, y eso es el motivo
+de la decisión y no un atajo:
+
+* El **gate de consentimiento se re-evalúa en cada lote**, porque está adentro
+  de la función que cada lote llama. Quien retira `uso_semantico` a mitad de
+  una carga no entra en los lotes que faltan (R-ASYNC.6) sin que haya que
+  escribir nada nuevo. Es la misma razón por la que el gate es una vista y no
+  Python ([D43](#d43)): la regla se cumple donde pasa el dato, no donde alguien
+  se acordó de chequearla.
+* El **guardrail de PII sigue corriendo** en la vía nueva, por el mismo motivo.
+* La **idempotencia de los upserts** vale igual para un reintento de Cloud
+  Tasks: reprocesar un lote no duplica respuestas, ni membresías, ni
+  participaciones.
+
+Una ingesta «asincrónica» escrita aparte habría tenido que volver a demostrar
+esas tres cosas, y habría empezado a divergir con el primer arreglo que se
+hiciera de un solo lado.
+
+### El plan se congela al confirmar
+
+Las filas ya despivotadas y con el mapeo resuelto se guardan junto con el
+trabajo. Las tareas **no vuelven a interpretar el archivo**.
+
+No es una optimización. Si cada tarea re-resolviera qué variables son
+demográficas y cómo se mapea cada código, dos tareas de la misma carga podrían
+usar criterios distintos —alcanza con que alguien edite el catálogo de
+atributos mientras la carga avanza— y el estudio quedaría con la mitad de las
+respuestas teniendo una pregunta que la otra mitad no tiene. Resolver el mapeo
+una sola vez hace que las tareas sean puramente mecánicas.
+
+### El progreso se cuenta sobre los lotes, no sobre un contador
+
+La spec (§6) pedía guardar `lotes_terminados` y `filas_procesadas` en la fila
+del trabajo. No se hizo: el avance se **deriva** en `v_ingesta_progreso`,
+contando los lotes por estado.
+
+El motivo es la concurrencia, que es justamente lo que esta entrega introduce.
+Con tres tareas escribiendo a la vez, un contador incrementado a mano se
+desincroniza —dos `update` que se pisan, un reintento que suma dos veces, una
+tarea que muere después de incrementar y antes de marcar su lote— y **el
+síntoma es una barra de progreso que miente**, que es peor que no tenerla. El
+lote tiene un estado y es el único lugar donde está escrito; contar es gratis
+y no puede desincronizarse de sí mismo.
+
+El tiempo restante se estima de lo mismo: `segundos_transcurridos` dividido
+los lotes hechos, por los que faltan. Es grosero y alcanza, porque los lotes
+son del mismo tamaño.
+
+### Reintentar lo transitorio, no lo roto
+
+Cloud Tasks reintenta con espera creciente, cinco veces. Pero reintentar cinco
+veces un lote que falla por una fila mal formada gasta tiempo y **embeddings
+que se pagan** en algo que va a fallar igual. Por eso el procesador distingue:
+
+| Qué pasó | Qué hace la tarea |
+|---|---|
+| Timeout de red, 429 del proveedor, caída momentánea de la base | Propaga el error: Cloud Tasks reintenta |
+| `ErrorDeDatos` —una fila que ningún reintento arregla— | Marca el lote fallido y **devuelve bien**: la cola no insiste |
+
+Un lote fallido no tira abajo los que entraron. La carga queda
+`terminada_con_errores`, la pantalla dice cuál falló y por qué, y el botón
+reintenta **ese lote**: lo que ya se procesó está pago y no se rehace.
+
+**El número de intento va en el nombre de la tarea.** Cloud Tasks deduplica por
+nombre durante aproximadamente una hora después de completada una tarea; sin el
+intento adentro, el segundo encolado del mismo lote se descartaría en silencio
+y el botón de reintentar no haría nada visible.
+
+### Encolar después de confirmar, y tolerar que el encolado falle
+
+El trabajo se **commitea antes** de encolar las tareas. El orden importa: si se
+encolara primero, una tarea podría empezar a procesar un lote que todavía no
+está en la base.
+
+Y si el encolado falla —la API de Cloud Tasks caída, un permiso que falta— la
+respuesta igual devuelve el trabajo, marcando los lotes `sin_encolar`. Quedó
+guardado y se puede reencolar con el mismo botón de reintentar. La alternativa
+—abortar y perder el archivo ya despivotado— castiga al analista por un
+problema de infraestructura.
+
+### El patrón de memoria, que era un bug aparte
+
+`embeddings.embeber_en_lotes()` hacía `vectores = []` y acumulaba con
+`extend()` cada lote de 128, y la ingesta lo llamaba con **la lista completa de
+textos**. Con 200.000 respuestas eso son ~100 millones de números como objetos
+de Python: varios GB, contra 1 GiB configurado en la función.
+
+Con lotes de 2.000 el problema no aparece. Pero no aparece **por el tamaño
+elegido**, no porque el patrón esté bien: el día que alguien suba el lote
+buscando velocidad, la función se queda sin memoria y el síntoma es un error
+genérico difícil de atribuir.
+
+Por eso se **reemplazó la función en vez de arreglarla por dentro**.
+`embeber_por_lotes()` es un generador que entrega `(inicio, vectores)` y la
+ingesta guarda cada sub-lote antes de pedir el siguiente. Dejar la firma vieja
+andando habría dejado disponible la forma que acumula; sacarla hace que el
+llamador no pueda acumular sin darse cuenta. El tamaño de lote vuelve a ser lo
+que debería haber sido siempre: **cuánto trabajo se rehace cuando un lote
+falla**, no una condición de supervivencia.
+
+Que no se confunda con [D54](#d54): bajar a 512 dimensiones reduce la memoria
+de **la base** —que el índice HNSW entre en RAM— y el costo de la instancia. La
+memoria de la función es otra cosa; 512 solo divide por dos lo que se acumula y
+deja el orden de magnitud igual.
+
+### Un solo camino, también para las cargas chicas
+
+Una carga de diez filas pasa por la misma vía: un lote, una tarea, el resumen
+apenas termina. Se evaluó mantener la vía sincrónica para cargas chicas y se
+descartó: son dos caminos que mantener y dos lugares donde arreglar el próximo
+bug de ingesta, a cambio de uno o dos segundos.
+
+### La pantalla no guarda el progreso
+
+El estado vive en la base y la pantalla solo pregunta. Cerrar la pestaña no
+pierde nada: al volver, la pantalla busca el trabajo **por su destino** —esta
+encuesta, esta carga— y retoma el seguimiento. Guardar el progreso en
+`localStorage` habría sido más simple y habría perdido exactamente lo que el
+requisito pide, porque el progreso que importa es el del servidor.
+
+### Lo que la migración agrega además de las tablas
+
+Dos cosas que no son obvias y que el repo ya había aprendido antes:
+
+* **`v_ingesta_progreso` también existe para ser detectable.** Es la lección de
+  la `0015` ([D45](#d45)) y de la `0006` del store semántico ([D54](#d54)): lo
+  que `verificar_esquema.py` no puede ver, no puede avisar que falta.
+* **`revoke execute … from public` sobre `purgar_ingestas_terminadas()`.**
+  Postgres le da `execute` a `public` en toda función nueva, así que sin ese
+  `revoke` **COLOQUIO podría purgar las filas de nuestras cargas**. No lo
+  encontró una revisión: lo encontró `verificar_coloquio.py`, cuya lista blanca
+  de privilegios efectivos falló en cuanto apareció la función. Es la tercera
+  vez que esa prueba atrapa algo que leer el diff no atrapaba.
+
+**Dónde vive.** `db/boveda/0019_ingesta_diferida.sql`,
+`functions/panel_api/diferida.py`, `functions/panel_api/embeddings.py`,
+`functions/panel_api/ingesta.py`, `functions/panel_api/ruteo.py`,
+`functions/main.py`, `web/public/js/paginas/encuestas.js`,
+`functions/tests/test_ingesta_diferida.py`.
+
+---
+
 ## Anexo · Decisiones que no se tomaron
 
 Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
@@ -2642,4 +2806,9 @@ Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 | Si 512 dimensiones alcanzan para este corpus | **Abierta, y es la pregunta de fondo.** Los benchmarks de Voyage dicen que se pierde poco, pero no son sobre respuestas de encuesta en español rioplatense. Se decide con la validación del paso 7, sobre 5.000–10.000 respuestas y antes de cargar 200.000 | [D54](#d54) |
 | Cuantización int8 o binaria de los vectores | **No se evaluó.** `voyage-3.5` la soporta y bajaría otro tanto la memoria, pero son dos variables a la vez: primero hay que saber qué cuesta bajar la dimensión | [D54](#d54) |
 | Línea de base de tiempos por etapa de una consulta | **Pendiente, y conviene antes de la carga masiva.** Sin ella no se va a poder decir dentro de seis meses si el sistema se puso lento ni por qué | `DESPLIEGUE - 512 dimensiones` §7 |
+| Quién llama a `purgar_ingestas_terminadas()` y cada cuánto | **Pendiente, y es el mismo pendiente que el de las convocatorias externas.** La función existe, es idempotente y borra solo las filas despivotadas de trabajos terminados hace más de N días —conservando las de los lotes fallidos, que son las que harían falta para reintentarlos—; todavía no está enganchada a ninguna rutina. Mientras tanto, el archivo de cada carga queda en la bóveda | [D55](#d55) |
+| Avisar cuando una carga termina con errores | **No se hizo.** Con el proceso en diferido el analista puede irse y no enterarse. Hoy se entera al volver a la pantalla; un correo o un aviso en la app queda anotado | [D55](#d55) |
+| Limitar a una carga grande por vez | **No se limita.** Dos cargas simultáneas compiten por el proveedor de embeddings y por la base. El default conservador de 3 tareas en paralelo acota el daño, pero nada impide que sean seis | [D55](#d55) |
+| Paralelizar las llamadas al proveedor dentro de un lote | **Postergado a propósito.** Es complementario, no alternativo: reduce el tiempo de cada tarea además de repartirlas. Conviene medir con Cloud Tasks andando antes de decidir si hace falta | [D55](#d55) |
+| Un trabajo de ingesta que queda a medias para siempre | **Sin política.** Si una tarea nunca llega a correr, el trabajo queda `procesando` indefinidamente: nadie lo marca fallido ni lo limpia. La purga solo toca los terminados | [D55](#d55) |
 | Alinear el voseo de la interfaz con el registro formal del manual | Sin decidir; requeriría recapturar las 44 pantallas | PR de la Fase 2 |
