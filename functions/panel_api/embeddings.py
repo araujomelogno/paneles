@@ -68,11 +68,27 @@ class ProveedorEmbeddings:
                 f"`EMBEDDINGS_DIMS` y que el modelo soporte esa dimensión.")
         return vectores
 
-    def embeber_en_lotes(self, textos, tamano_lote=LOTE_MAXIMO):
-        vectores = []
+    def embeber_por_lotes(self, textos, tamano_lote=LOTE_MAXIMO):
+        """Generador: `(inicio, vectores)` por cada sub-lote.
+
+        **Reemplaza a `embeber_en_lotes()`, que acumulaba y devolvía todo.**
+        No es un refactor: la forma vieja era el patrón de memoria que hacía
+        caer la función con una base real. Acumulaba con `extend()` los
+        vectores de cada sub-lote hasta tener la lista entera, y con 200.000
+        respuestas eso son ~100 millones de números como objetos de Python
+        —del orden de varios GB— contra 1 GiB configurado en `main.py`.
+
+        Un generador no arregla por sí solo el consumo: lo arregla que quien
+        llama **escriba y suelte** cada sub-lote antes de pedir el siguiente.
+        Lo que hace esta forma es que no se pueda acumular sin querer. Con la
+        anterior, acumular era lo que pasaba si no hacías nada.
+
+        Se devuelve `inicio` además de los vectores para que el llamador
+        pueda emparejarlos con sus filas sin llevar la cuenta aparte, que es
+        justo donde se cuela un error de a uno.
+        """
         for inicio in range(0, len(textos), tamano_lote):
-            vectores.extend(self.embeber(textos[inicio : inicio + tamano_lote]))
-        return vectores
+            yield inicio, self.embeber(textos[inicio : inicio + tamano_lote])
 
 
 class Voyage(ProveedorEmbeddings):

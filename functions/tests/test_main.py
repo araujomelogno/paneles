@@ -36,6 +36,18 @@ NO_SON_SECRETOS = frozenset({
     # `PADRON_USUARIOS`: dice qué implementación usar, no qué clave. La
     # clave de verdad es `FIREBASE_WEB_API_KEY`, que sí va declarada.
     "CREDENCIALES_PORTAL",
+    # ── Ingesta diferida ──
+    # El interruptor del doble de la cola, mismo caso que los dos de arriba.
+    "ENCOLADOR_TAREAS",
+    # Perillas de rendimiento, no credenciales: cuántas filas entran en un
+    # lote, en qué región y en qué cola. Lo que sí cambia entre ambientes y
+    # va declarado es `TAREAS_URL` y `TAREAS_CUENTA`, sin las cuales nadie
+    # toma los lotes.
+    "INGESTA_FILAS_POR_LOTE", "TAREAS_COLA", "TAREAS_REGION",
+    # Las pone el runtime de Cloud Functions solo. Declararlas como secreto
+    # no solo sobra: `firebase deploy` fallaría pidiendo que existan en
+    # Secret Manager.
+    "GCLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT",
     # R4.3 — el nombre del proveedor no es secreto; su clave sí, y esa es
     # `DESAFIO_SECRETO`, que va declarada.
     "DESAFIO_PROVEEDOR",

@@ -18,3 +18,8 @@ pyreadstat~=1.3
 # un pin estrecho que no encuentre rueda para el runtime de la función
 # rompería el deploy por nada. Las pruebas corren contra la 3.x.
 pandas>=2.2,<4
+
+# Encolar un lote de ingesta. El SDK de Python de `firebase-functions` trae
+# `tasks_fn.on_task_dispatched` para **recibir** la tarea, pero —a diferencia
+# del de Node— no trae con qué encolarla: eso es el cliente de Cloud Tasks.
+google-cloud-tasks~=2.16

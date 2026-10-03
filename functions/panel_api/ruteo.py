@@ -13,6 +13,7 @@ from . import (
     auditoria,
     bajas,
     desafio,
+    diferida,
     calidad,
     cargas,
     composicion,
@@ -136,6 +137,27 @@ def _entero(valor, por_defecto=None):
         return int(valor)
     except (TypeError, ValueError):
         return por_defecto
+
+
+def _plan_de(cuerpo, **extra):
+    """El mapeo que la pantalla confirmó, listo para congelar (R-ASYNC.1).
+
+    Se arma una sola vez, al confirmar, y las tareas lo usan sin volver a
+    interpretarlo. Si cada tarea re-resolviera qué variables son
+    demográficas, dos tareas de la misma carga podrían usar mapeos distintos
+    y el estudio quedaría con la mitad de las respuestas teniendo una
+    pregunta que la otra mitad no.
+    """
+    cuerpo = cuerpo or {}
+    plan = {
+        "preguntas": cuerpo.get("preguntas") or [],
+        "columna_id": (cuerpo.get("columna_id") or "id_en_origen"),
+        "origen": cuerpo.get("origen"),
+        "demograficas": cuerpo.get("demograficas"),
+        "tipo_identificador": cuerpo.get("tipo_identificador"),
+    }
+    plan.update(extra)
+    return plan
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -399,23 +421,23 @@ def ver_participacion(ctx, actor, params, cuerpo, consulta):
     }
 
 
-@ruta("POST", "/encuestas/<encuesta_id>/ingesta", "ingestar", requisito="R1.5")
+@ruta("POST", "/encuestas/<encuesta_id>/ingesta", "ingestar",
+      requisito="R1.5, R-ASYNC.1")
 def ingestar_encuesta(ctx, actor, params, cuerpo, consulta):
-    resultado = encuestas.ingestar(
-        ctx.boveda,
-        ctx.semantica,
-        _entero(params["encuesta_id"]),
-        cuerpo.get("preguntas") or [],
-        cuerpo.get("filas") or [],
-        columna_id=cuerpo.get("columna_id", "id_en_origen"),
-        origen=cuerpo.get("origen"),
-        proveedor=ctx.embeddings,
-        demograficas=cuerpo.get("demograficas"),
-        tipo_identificador=cuerpo.get("tipo_identificador"),
-    )
-    ctx.semantica.commit()
-    ctx.boveda.commit()
-    return 200, resultado
+    """Confirma la carga: la guarda, la parte en lotes y los encola.
+
+    **No procesa nada acá.** Responde `202` con el trabajo recién creado y la
+    pantalla pasa a mostrar progreso. Antes esto corría la ingesta entera
+    adentro de la request y con una base real cortaba por timeout, a mitad de
+    camino y sin forma de retomar.
+    """
+    encuesta_id = _entero(params["encuesta_id"])
+    encuestas.obtener(ctx.boveda, encuesta_id)   # que exista, antes de guardar nada
+    salida = diferida.encolar(
+        ctx.boveda, "encuesta", encuesta_id,
+        _plan_de(cuerpo), cuerpo.get("filas") or [],
+        actor=actor, encolador=ctx.encolador)
+    return 202, salida
 
 
 @ruta("GET", "/encuestas/<encuesta_id>/muestra", "leer", requisito="R3.12")
@@ -719,6 +741,51 @@ def auditoria_usuarios(ctx, actor, params, cuerpo, consulta):
         # navegador.
         "acciones": usuarios.acciones_auditables(ctx.boveda),
     }
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Ingesta diferida — ver el avance y recuperar lo que falló
+# ════════════════════════════════════════════════════════════════════
+
+@ruta("GET", "/ingestas", "leer", requisito="R-ASYNC.3")
+def listar_ingestas(ctx, actor, params, cuerpo, consulta):
+    """Las cargas recientes, opcionalmente las de un destino.
+
+    Es lo que deja volver a la pantalla y encontrar la carga de ayer: el
+    estado vive en la base, no en la pestaña que la lanzó.
+    """
+    return 200, {"items": diferida.listar(
+        ctx.boveda,
+        destino_tipo=consulta.get("destino_tipo"),
+        destino_id=_entero(consulta.get("destino_id")),
+        limite=_entero(consulta.get("limite"), 20))}
+
+
+@ruta("GET", "/ingestas/<trabajo_id>", "leer", requisito="R-ASYNC.3")
+def ver_ingesta(ctx, actor, params, cuerpo, consulta):
+    """El avance de una carga, con sus lotes si se piden.
+
+    Sale de la base, así que sobrevive a un refresco del navegador y a que
+    la pestaña se haya cerrado hace una hora.
+    """
+    return 200, diferida.estado(
+        ctx.boveda, _entero(params["trabajo_id"]),
+        con_lotes=_bandera(consulta.get("lotes")))
+
+
+@ruta("POST", "/ingestas/<trabajo_id>/reintentar", "ingestar",
+      requisito="R-ASYNC.4")
+def reintentar_ingesta(ctx, actor, params, cuerpo, consulta):
+    """Vuelve a encolar los lotes fallidos. Sin rehacer la carga completa.
+
+    Reprocesar un lote es seguro porque la ingesta es idempotente: el upsert
+    por `(individuo, pregunta)`, la membresía por `(panel, persona)` y la
+    participación por `(encuesta, persona)`. Lo que entró no se duplica.
+    """
+    return 200, diferida.reintentar(
+        ctx.boveda, _entero(params["trabajo_id"]),
+        indice=_entero((cuerpo or {}).get("indice")),
+        encolador=ctx.encolador)
 
 
 @ruta("GET", "/diagnostico/esquema", "leer")
@@ -1044,26 +1111,34 @@ def ingestar_sav(ctx, actor, params, cuerpo, consulta):
             actor=actor, panel_id=cuerpo.get("panel_id"),
             opciones_por_variable=opciones_por_variable,
         )
+        # Antes de encolar: las personas tienen que existir cuando la primera
+        # tarea busque a quién corresponde cada fila, y las tareas corren en
+        # otro proceso que no ve esta transacción.
+        ctx.boveda.commit()
 
-    # Por nombre y no por posición: `ingestar` toma `columna_id` antes que
-    # `origen`, y pasarlos al revés no falla —los dos son strings— sino que
-    # deja la ingesta sin poder mapear a nadie, en silencio.
-    resultado = encuestas.ingestar(
-        ctx.boveda, ctx.semantica, encuesta_id, preguntas, filas,
-        columna_id=columna_id,
-        origen=(cuerpo.get("origen") or "sav"),
-        proveedor=ctx.embeddings,
-        demograficas=demograficas,
-        tipo_identificador=cuerpo.get("tipo_identificador"),
-    )
-    ctx.semantica.commit()
-    ctx.boveda.commit()
-    resultado["duplicados_en_el_archivo"] = calidad.detectar_duplicados_en_filas(
+    # R-ASYNC.1 — se encola, no se procesa. El `.sav` ya se leyó y se
+    # despivotó acá: lo que viaja a los lotes son las filas, no el archivo,
+    # así que ninguna tarea vuelve a parsearlo.
+    #
+    # El plan lleva las demográficas **ya normalizadas** y no las crudas del
+    # cuerpo: normalizarlas consulta el catálogo de atributos, y hacerlo una
+    # vez por lote sería re-resolver el mapeo, que es justo lo que R-ASYNC.1
+    # prohíbe.
+    salida = diferida.encolar(
+        ctx.boveda, "encuesta", encuesta_id,
+        _plan_de(cuerpo, columna_id=columna_id,
+                 origen=(cuerpo.get("origen") or "sav"),
+                 preguntas=preguntas, demograficas=demograficas),
+        filas, actor=actor, encolador=ctx.encolador)
+
+    # Lo que se puede decir sin procesar nada se dice ya: son chequeos sobre
+    # el archivo, no sobre lo ingestado, y esperarlos al final no aportaría.
+    salida["duplicados_en_el_archivo"] = calidad.detectar_duplicados_en_filas(
         filas, columna_id
     )
     if creacion is not None:
-        resultado["creacion_de_individuos"] = creacion
-    return 200, resultado
+        salida["creacion_de_individuos"] = creacion
+    return 202, salida
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1132,23 +1207,24 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
             evidencia_consentimiento=cuerpo.get("evidencia_consentimiento"),
             actor=actor, opciones_por_variable=opciones_por_variable,
         )
+        # Igual que en R3.9: las personas tienen que estar commiteadas antes
+        # de que arranque la primera tarea.
+        ctx.boveda.commit()
 
-    resultado = cargas.ingestar(
-        ctx.boveda, ctx.semantica, carga_id, preguntas, filas,
-        columna_id=columna_id,
-        origen=(cuerpo.get("origen") or "carga"),
-        proveedor=ctx.embeddings,
-        demograficas=demograficas,
-        tipo_identificador=cuerpo.get("tipo_identificador"),
-    )
-    ctx.semantica.commit()
-    ctx.boveda.commit()
-    resultado["duplicados_en_el_archivo"] = calidad.detectar_duplicados_en_filas(
+    cargas.obtener(ctx.boveda, carga_id)   # que exista, antes de guardar nada
+    salida = diferida.encolar(
+        ctx.boveda, "carga", carga_id,
+        _plan_de(cuerpo, columna_id=columna_id,
+                 origen=(cuerpo.get("origen") or "carga"),
+                 preguntas=preguntas, demograficas=demograficas),
+        filas, actor=actor, encolador=ctx.encolador)
+
+    salida["duplicados_en_el_archivo"] = calidad.detectar_duplicados_en_filas(
         filas, columna_id
     )
     if creacion is not None:
-        resultado["creacion_de_individuos"] = creacion
-    return 200, resultado
+        salida["creacion_de_individuos"] = creacion
+    return 202, salida
 
 
 # Tope del archivo subido. El `.sav` viaja en base64 adentro del JSON, así

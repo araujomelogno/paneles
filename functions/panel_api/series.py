@@ -444,12 +444,16 @@ def _asegurar_embeddings(conn, preguntas, proveedor=None):
     from .semantica import _vector
 
     proveedor = proveedor or embeddings.crear()
-    vectores = proveedor.embeber_en_lotes([p["texto"] for p in faltan])
-    for pregunta, vector in zip(faltan, vectores):
-        db.ejecutar(
-            conn,
-            "update pregunta set embedding_texto = %s::vector where id = %s",
-            (_vector(vector), pregunta["id"]))
+    # Sub-lote a sub-lote, igual que la ingesta (R-ASYNC.2.b): se escribe y
+    # se suelta. Acá el volumen es chico —las preguntas de una ola, no sus
+    # respuestas—, pero dejar el patrón bueno en los dos lugares evita que el
+    # malo vuelva por copiar de éste.
+    for inicio, vectores in proveedor.embeber_por_lotes([p["texto"] for p in faltan]):
+        for pregunta, vector in zip(faltan[inicio:inicio + len(vectores)], vectores):
+            db.ejecutar(
+                conn,
+                "update pregunta set embedding_texto = %s::vector where id = %s",
+                (_vector(vector), pregunta["id"]))
     return len(faltan)
 
 

@@ -164,7 +164,12 @@ async function renderDetalle(main, encuestaId) {
       <div class="card-body"><div id="cruce" class="muted small">
         Verificá que lo que quedó del lado semántico se corresponde con lo convocado acá.
       </div></div>
-    </div>`;
+    </div>
+    <!-- R-ASYNC.3 — dónde se pinta el avance de una carga en diferido. Vive
+         en la ficha y no en el modal porque el modal se cierra al confirmar:
+         la carga sigue sin él, y al volver mañana hay que poder encontrarla
+         en algún lado. -->
+    <div id="resultado"></div>`;
 
   $('#ph-acciones').innerHTML = `
     <button class="btn btn-outline" id="volver">‹ Encuestas</button>
@@ -193,6 +198,35 @@ async function renderDetalle(main, encuestaId) {
   $('#verificar').onclick = () => verificarCruce(encuestaId);
 
   await cargarParticipacion(encuestaId);
+  // R-ASYNC.3 — si hay una carga en curso de esta encuesta, se retoma. El
+  // trabajo se busca **por su destino**, no por algo que esta pantalla
+  // hubiera guardado: por eso cerrar la pestaña no pierde nada y volver
+  // desde otra computadora tampoco.
+  await retomarCargaEnCurso('encuesta', encuestaId,
+                            { alTerminar: () => cargarParticipacion(encuestaId) });
+}
+
+
+export async function retomarCargaEnCurso(destinoTipo, destinoId, opciones = {}) {
+  try {
+    // `destino_id` puede ir vacío: la pantalla de panelistas no sabe de qué
+    // carga sin panel se trata —se crea una por vez y no hay listado—, pero
+    // sí quiere retomar la que haya quedado a medias.
+    const { items } = await api.ingestas.listar({
+      destino_tipo: destinoTipo,
+      ...(destinoId ? { destino_id: destinoId } : {}),
+      limite: 1,
+    });
+    const ultima = (items || [])[0];
+    if (!ultima || ultima.terminal) return null;
+    await reanudarIngesta(ultima.trabajo_id,
+                          { esCarga: destinoTipo === 'carga', ...opciones });
+    return ultima;
+  } catch {
+    // Que no haya cargas, o que la ruta no esté todavía, no es motivo para
+    // romper la ficha entera.
+    return null;
+  }
 }
 
 async function cargarParticipacion(encuestaId) {
@@ -1352,10 +1386,46 @@ function abrirIngesta(destino, alTerminar) {
               tipoIdentificador: tipoId$.value,
             });
           })();
-      avance.cerrar();
+      avance.medido('Encolada', 0);
       enCurso.soltar();
       cerrarModal();
-      mostrarResultado('Ingesta terminada', [
+      // R-ASYNC.1 — confirmar ya no espera el resultado: la carga quedó
+      // guardada y partida en lotes, y lo que sigue es mirar cómo avanza.
+      // Con una base real esto es la diferencia entre terminar y cortar por
+      // timeout a mitad de camino.
+      await seguirIngesta(resultado.trabajo_id, {
+        avance: panelDeAvance(cajaDeAvance(),
+                              { name: `${resultado.filas_total} fila(s) en `
+                                      + `${resultado.lotes_total} lote(s)`,
+                                size: 0 }),
+        esCarga, alTerminar,
+      });
+      if (esCarga) {
+        // La pantalla que abrió la carga es la de panelistas, y la gente
+        // recién incorporada tiene que aparecer ahí sin recargar a mano.
+        await alTerminar?.();
+      } else {
+        await cargarParticipacion(encuesta.id);
+        await verificarCruce(encuesta.id);
+      }
+    } catch (error) {
+      avance.cerrar();
+      enCurso.soltar();
+      avisarEnIngesta(alerta(error.message));
+    }
+  }
+}
+
+
+/* ── R-ASYNC.3 · El resumen consolidado ──────────────────────────────
+
+   Es el mismo que mostraba la ingesta sincrónica, y a propósito: lo que
+   cambió es cuándo llega, no qué dice. Se extrajo a una función porque ahora
+   lo llaman dos lugares —el final del seguimiento y la reanudación de una
+   carga que terminó mientras la pestaña estaba cerrada—. */
+function mostrarResumenDeIngesta(resultado, esCarga, titulo = 'Ingesta terminada') {
+  resultado = resultado || {};
+  mostrarResultado('Ingesta terminada', [
         ['Respuestas escritas', resultado.respuestas_escritas],
         ['Personas', resultado.personas],
         ['Sin mapear', (resultado.sin_mapear || []).length, true],
@@ -1411,21 +1481,111 @@ function abrirIngesta(destino, alTerminar) {
         // avisó antes de ingestar, confirmado con lo que realmente pasó.
         resumirMapeo(resultado.mapeo_de_categorias),
       ].filter(Boolean).join(' '));
-      if (esCarga) {
-        // La pantalla que abrió la carga es la de panelistas, y la gente
-        // recién incorporada tiene que aparecer ahí sin recargar a mano.
-        await alTerminar?.();
-      } else {
-        await cargarParticipacion(encuesta.id);
-        await verificarCruce(encuesta.id);
-      }
-    } catch (error) {
-      avance.cerrar();
-      enCurso.soltar();
-      avisarEnIngesta(alerta(error.message));
-    }
+}
+
+
+/* ── R-ASYNC.3 · Seguir una carga en diferido ────────────────────────
+
+   La ingesta ya no termina dentro de la request: confirmar devuelve un
+   trabajo y el avance se consulta. Esta función es la que mira.
+
+   **El estado vive en la base y no acá.** Esta pantalla solo pregunta: si se
+   cierra la pestaña, la carga sigue, y al volver se la encuentra con
+   `reanudarIngesta()`. Guardar el progreso en el cliente habría sido más
+   simple y habría perdido exactamente lo que el requisito pide. */
+const MS_ENTRE_CONSULTAS = 2000;
+
+/* Dónde se pinta el avance. La ficha de la encuesta tiene su `#resultado`;
+   la pantalla de panelistas, desde donde se abre una carga sin panel, no
+   tiene ninguno, y el modal donde estaba el formulario ya se cerró. Pintar
+   en un nodo suelto dejaría al analista mirando una pantalla quieta
+   mientras la carga avanza, que es exactamente lo que esta entrega vino a
+   arreglar. */
+function cajaDeAvance() {
+  let caja = $('#resultado');
+  if (!caja) {
+    caja = document.createElement('div');
+    caja.id = 'resultado';
+    const main = document.querySelector('main') || document.body;
+    main.prepend(caja);
+  }
+  return caja;
+}
+
+function duracion(segundos) {
+  if (segundos === null || segundos === undefined) return '';
+  if (segundos < 60) return `${Math.round(segundos)} s`;
+  const minutos = Math.round(segundos / 60);
+  return minutos < 60 ? `${minutos} min`
+    : `${Math.floor(minutos / 60)} h ${minutos % 60} min`;
+}
+
+async function seguirIngesta(trabajoId, { avance, esCarga, alTerminar }) {
+  let estado = null;
+  for (;;) {
+    estado = await api.ingestas.ver(trabajoId);
+    const restante = estado.segundos_restantes;
+    avance.medido(
+      `${estado.estado_etiqueta} · ${estado.filas_procesadas} de ${estado.filas_total} fila(s)`
+      + (restante ? ` · faltan ~${duracion(restante)}` : ''),
+      (estado.porcentaje || 0) / 100);
+    if (estado.terminal) break;
+    await new Promise((listo) => setTimeout(listo, MS_ENTRE_CONSULTAS));
+  }
+  avance.cerrar();
+
+  const titulo = estado.estado === 'terminada'
+    ? 'Ingesta terminada'
+    : (estado.estado === 'fallida' ? 'La ingesta falló'
+                                   : 'Ingesta terminada con errores');
+  mostrarResumenDeIngesta(estado.resumen, esCarga, titulo);
+  if ((estado.fallidos || []).length) avisarDeLotesFallidos(estado, esCarga, alTerminar);
+  return estado;
+}
+
+/* R-ASYNC.4 — qué lote falló, por qué, y el botón para reintentar ése y no
+   la carga entera. Los lotes que entraron ya se pagaron en embeddings. */
+function avisarDeLotesFallidos(estado, esCarga, alTerminar) {
+  const caja = document.createElement('div');
+  caja.className = 'alert alert-warn';
+  caja.innerHTML = `
+    <p><strong>${estado.fallidos.length} lote(s) no entraron.</strong>
+       Lo que sí entró quedó guardado: reintentar no lo duplica.</p>
+    <ul class="small">
+      ${estado.fallidos.map((l) => `
+        <li>Lote ${l.indice + 1} · ${l.filas_total} fila(s) ·
+            ${esc(l.error || 'sin detalle')}
+            ${l.reintentable === false
+              ? ' <em>(es un error de datos: reintentarlo no lo arregla)</em>'
+              : ''}</li>`).join('')}
+    </ul>
+    <button class="btn btn-outline btn-sm" id="reintentar-lotes">
+      Reintentar los lotes fallidos</button>`;
+  cajaDeAvance().appendChild(caja);
+  $('#reintentar-lotes', caja).onclick = async () => {
+    try {
+      const vuelta = await api.ingestas.reintentar(estado.trabajo_id);
+      caja.remove();
+      toast(`Reencolados ${vuelta.reencolados.length} lote(s).`, 'ok');
+      await reanudarIngesta(vuelta.trabajo_id, { esCarga, alTerminar });
+    } catch (error) { toast(error.message, 'error'); }
+  };
+}
+
+/* Retomar una carga que ya estaba en curso. Es lo que hace que cerrar la
+   pestaña no pierda nada: el trabajo se busca por su destino, no por algo
+   que esta pantalla hubiera guardado. */
+async function reanudarIngesta(trabajoId, { esCarga, alTerminar } = {}) {
+  const avance = panelDeAvance(cajaDeAvance(), { name: 'carga en curso', size: 0 });
+  try {
+    await seguirIngesta(trabajoId, { avance, esCarga, alTerminar });
+    await alTerminar?.();
+  } catch (error) {
+    avance.cerrar();
+    toast(error.message, 'error');
   }
 }
+
 
 /* ── R4.5 · WhatsApp Flow ───────────────────────────────────────── */
 

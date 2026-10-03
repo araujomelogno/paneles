@@ -17,6 +17,22 @@ from panel_api.errores import DatosInvalidos
 
 from conftest import consentimientos
 
+
+def _procesar_lotes(ctx, trabajo_id):
+    """Corre las tareas de una carga encolada, como lo haría Cloud Tasks.
+
+    Desde R-ASYNC.1 las rutas de ingesta **encolan y responden**: lo que
+    antes pasaba adentro de la request ahora lo hacen las tareas. Esta
+    función es lo que una prueba de ruta tiene que hacer para llegar al
+    mismo punto que antes.
+    """
+    from panel_api import diferida
+
+    for indice in range(len(ctx.encolador.encoladas)):
+        diferida.procesar_lote(ctx.boveda, ctx.semantica, trabajo_id, indice,
+                               proveedor=ctx.embeddings)
+    ctx.encolador.encoladas.clear()
+
 AMBAS = ("contacto_participacion", "uso_semantico")
 
 PREGUNTAS = [
@@ -401,8 +417,11 @@ def test_por_la_ruta_el_marcado_reemplaza_al_mapeo_patronimico(ctx, actor, conn_
         {}, actor("operaciones"), ctx,
     )
 
-    assert status == 200
+    # R-ASYNC.1 — la ruta encola y responde 202; el trabajo lo hacen las
+    # tareas. Acá se las corre a mano, que es lo que hace Cloud Tasks.
+    assert status == 202
     assert respuesta["creacion_de_individuos"]["resumen"]["creados"] == 1
+    _procesar_lotes(ctx, respuesta["trabajo_id"])
 
     # La persona quedó con sus demográficos, ya traducidos.
     fila = db.una(
@@ -421,5 +440,8 @@ def test_por_la_ruta_el_marcado_reemplaza_al_mapeo_patronimico(ctx, actor, conn_
             " where c.ref_estudio = %s", (encuesta["ref_estudio"],))
     ]
     assert codigos == ["P1"]
-    assert set(respuesta["excluidas_por_demografica"]) == {
+    from panel_api import diferida
+
+    resumen = diferida.estado(ctx.boveda, respuesta["trabajo_id"])["resumen"]
+    assert set(resumen["excluidas_por_demografica"]) == {
         "NOM", "DOC", "SEXO", "LOCALIDAD", "EDAD"}

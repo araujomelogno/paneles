@@ -130,6 +130,20 @@ export const panelistas = {
   accesosAlPortal: (idPersona) => GET(`/panelistas/${idPersona}/acceso-portal`),
 };
 
+/* R-ASYNC.3 — el avance de una carga en diferido.
+
+   Confirmar una ingesta ya no devuelve el resultado: devuelve un trabajo, y
+   el resultado se consulta acá. El estado vive en la base, así que sobrevive
+   a cerrar la pestaña. */
+export const ingestas = {
+  listar: (consulta) => GET('/ingestas', consulta),
+  ver: (trabajoId, { lotes = false } = {}) =>
+    GET(`/ingestas/${trabajoId}`, lotes ? { lotes: '1' } : {}),
+  reintentar: (trabajoId, indice) =>
+    POST(`/ingestas/${trabajoId}/reintentar`,
+         indice === undefined || indice === null ? {} : { indice }),
+};
+
 export const revisiones = {
   listar: (estadoRevision = 'pendiente') => GET('/revisiones', { estado: estadoRevision }),
   resolver: (id, decision, idPersona) =>

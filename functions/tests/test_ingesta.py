@@ -349,9 +349,9 @@ class ProveedorQueCuenta:
         self.textos.extend(textos)
         return self.envuelto.embeber(textos)
 
-    def embeber_en_lotes(self, textos, tamano_lote=128):
+    def embeber_por_lotes(self, textos, tamano_lote=128):
         self.textos.extend(textos)
-        return self.envuelto.embeber_en_lotes(textos, tamano_lote)
+        return self.envuelto.embeber_por_lotes(textos, tamano_lote)
 
 
 def test_reingestar_el_mismo_texto_no_vuelve_a_embeber(

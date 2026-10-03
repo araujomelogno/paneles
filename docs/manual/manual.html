@@ -440,6 +440,11 @@
   y modo de resolución de individuos. El procedimiento es idéntico, de modo que
   no hay un flujo nuevo que aprender.</p>
 
+  <p>También es idéntico lo que pasa al confirmar: la carga <strong>queda en
+  proceso</strong> y la barra de avance se muestra en la propia pantalla de
+  Panelistas. Al terminar, el listado se actualiza solo con la gente recién
+  incorporada.</p>
+
   <p>Las dos diferencias son las siguientes.</p>
 
   <p><strong>No se crea ninguna membresía ni ninguna participación.</strong> Es
@@ -802,6 +807,47 @@
     <li>Confirmar con <strong>Ingestar</strong>.</li>
   </ol>
 
+  <h4>Al confirmar, la carga queda en proceso: la pantalla no se cuelga</h4>
+
+  <p>Confirmar <strong>no espera a que termine la ingesta</strong>. El archivo
+  queda guardado y dividido en lotes, el formulario se cierra y en su lugar
+  aparece una <strong>barra de avance</strong> que indica el estado, cuántas
+  filas van procesadas de cuántas y una estimación de lo que falta.</p>
+
+  <p>Mientras tanto se puede seguir trabajando. Y, sobre todo, se puede
+  <strong>cerrar la pestaña</strong>: la carga sigue corriendo en el servidor.
+  Al volver a la encuesta —o a Panelistas, si era una carga de individuos sin
+  panel— la barra de avance reaparece sola y retoma el seguimiento donde
+  estaba, o muestra directamente el resultado si la carga ya había
+  terminado.</p>
+
+  <div class="aviso info">
+    <div class="t">Por qué el cambio</div>
+    <p>Una carga grande no entra en el tiempo que un servidor web mantiene
+    abierta una pantalla. Con decenas de miles de respuestas, el procedimiento
+    anterior procesaba una parte, llegaba al límite y fallaba con un error
+    genérico: había que volver a empezar desde cero, repitiendo el
+    procesamiento ya hecho. Ahora el trabajo se divide y cada parte se procesa
+    por separado, de modo que <strong>no hay un tope de tamaño</strong> y lo
+    que entró queda guardado.</p>
+    <p>En una carga chica el cambio casi no se nota: la barra aparece y
+    desaparece en un par de segundos, y el resultado es el de siempre.</p>
+  </div>
+
+  <h4>Si algún lote no entra</h4>
+
+  <p>Cuando una parte de la carga falla —el servicio que calcula los
+  embeddings no responde, la red se corta—, el sistema la <strong>reintenta
+  solo</strong>, espaciando los intentos. Si aun así no entra, la carga termina
+  igual y el resultado informa <strong>qué lote falló y por qué</strong>, con
+  un botón para <strong>reintentar únicamente esos lotes</strong>.</p>
+
+  <p>Lo que sí entró queda guardado: reintentar no lo duplica ni lo vuelve a
+  procesar. Si el motivo del fallo es un <strong>error de datos</strong> —una
+  fila que el sistema no puede interpretar—, el aviso lo aclara, porque en ese
+  caso reintentar no lo corrige: hay que arreglar el archivo y volver a
+  cargarlo.</p>
+
   <h4>Qué identificador trae la columna</h4>
 
   <table class="parte">
@@ -1074,6 +1120,12 @@
 
   <p>Declarada la evidencia, el sistema evalúa fila por fila y clasifica cada
   una. El resultado de la ingesta informa cuántas cayeron en cada caso.</p>
+
+  <p>Un <code>.sav</code> de campo suele ser el caso grande, así que vale
+  recordar lo de la sección 5.4: al confirmar, la carga <strong>queda en
+  proceso</strong> y la pantalla muestra una barra de avance. Se puede cerrar
+  la pestaña y volver después; el resultado con esta clasificación aparece
+  cuando la carga termina.</p>
 
   <table class="parte">
     <thead><tr><th>Situación de la fila</th><th>Qué hace el sistema</th></tr></thead>
@@ -2544,6 +2596,20 @@
   <p>Están convocadas y respondieron, pero no otorgaron el uso semántico. Sus
   respuestas no se conservan. Es el comportamiento correcto y no hay nada que
   corregir.</p>
+
+  <h4>Cerré la pestaña con una carga a medio procesar</h4>
+  <p>No se pierde nada: la carga corre en el servidor, no en el navegador. Al
+  volver a la encuesta —o a Panelistas, si era una carga de individuos sin
+  panel— la barra de avance reaparece sola, o directamente el resultado si ya
+  había terminado.</p>
+
+  <h4>La carga terminó «con errores»</h4>
+  <p>Significa que uno o más lotes no entraron después de reintentarse solos.
+  Lo que sí entró quedó guardado. El aviso indica qué lote falló y por qué, y
+  el botón <strong>Reintentar los lotes fallidos</strong> procesa únicamente
+  esos: no duplica ni rehace lo que ya estaba. Si el aviso aclara que se trata
+  de un error de datos, reintentar no va a cambiar nada; hay que corregir el
+  archivo y volver a cargarlo.</p>
 
   <h4>Me equivoqué en el texto de una pregunta al ingestar</h4>
   <p>Alcanza con corregirlo y volver a ingestar el mismo archivo. El sistema no

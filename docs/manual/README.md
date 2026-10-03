@@ -14,6 +14,13 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Revisión 2026-10-03.** La sección 5.4 suma «Al confirmar, la carga queda
+> en proceso» y «Si algún lote no entra»: la ingesta pasó a diferido, así que
+> confirmar ya no cuelga la pantalla, se puede cerrar la pestaña y un lote
+> fallido se reintenta solo. La 3.6 y la 5.5 remiten a eso, y hay dos
+> preguntas frecuentes nuevas. Es texto: no hizo falta recapturar ninguna
+> pantalla.
+
 > **Revisión 2026-10-02.** La sección 13 (el portal del panelista) pasa del
 > ingreso por enlace al **ingreso con contraseña** (R6.1.a): cómo se crea la
 > primera vez, cómo se reenvía el enlace desde la ficha de un panelista, y

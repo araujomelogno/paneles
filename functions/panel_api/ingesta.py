@@ -302,21 +302,58 @@ def ingestar(
         if ya_ingestado.get(clave) != huella:
             a_embeber.append(fila)
 
+    # ── Escribir ──
+    #
+    # R-ASYNC.2.b — **embeber un sub-lote, guardarlo y soltarlo**, antes de
+    # pedir el siguiente. En ningún momento hay más de un sub-lote de
+    # vectores vivo.
+    #
+    # Antes esto era: embeber todo, después escribir todo. Con 200.000
+    # respuestas eso son varios GB de números contra el 1 GiB de la función,
+    # y el síntoma es un error genérico difícil de atribuir. Partir la
+    # ingesta en tareas (R-ASYNC.1) **no alcanza** para arreglarlo: con lotes
+    # de 2.000 el problema no aparece, pero por el tamaño elegido y no porque
+    # el patrón esté bien. El día que alguien suba el lote buscando
+    # velocidad, vuelve.
+    escritas = 0
+
     if a_embeber:
-        # Antes de mandar nada al proveedor: que la dimensión que va a
-        # devolver sea la que la columna acepta. Es una consulta, y lo que
-        # evita es pagar el embedding de todo el lote para que después el
-        # insert lo rechace. Con 200.000 respuestas esa factura no es
-        # teórica.
+        # Antes de mandar nada al proveedor, y antes de escribir nada: que la
+        # dimensión que va a devolver sea la que la columna acepta. Es una
+        # consulta, y lo que evita es pagar el embedding de todo el lote para
+        # que después el insert lo rechace. Con 200.000 respuestas esa
+        # factura no es teórica.
         desajuste = esquema.desajuste_de_dimension(
             conn_semantica, getattr(proveedor, "dims", None))
         if desajuste:
             raise DatosInvalidos(desajuste, {"motivo": "dimension_de_embeddings"})
-        vectores = proveedor.embeber_en_lotes([f["texto_embebido"] for f in a_embeber])
-        for fila, vector in zip(a_embeber, vectores):
-            fila["embedding"] = vector
 
-    escritas = semantica.upsert_respuestas(conn_semantica, respuestas)
+    # Primero lo que no hay que embeber: filas cuyo texto no cambió desde la
+    # última ingesta. Son un `update` sin vector y no cuestan nada.
+    #
+    # La comparación es por **identidad** y no por valor: `a_embeber` guarda
+    # los mismos objetos que `respuestas`, y un `f not in a_embeber` sería
+    # cuadrático —con 200.000 filas, cuarenta mil millones de comparaciones
+    # de diccionarios— además de comparar por contenido algo que ya se sabe
+    # por referencia.
+    hay_que_embeber = {id(f) for f in a_embeber}
+    sin_vector = [f for f in respuestas if id(f) not in hay_que_embeber]
+    if sin_vector:
+        escritas += semantica.upsert_respuestas(conn_semantica, sin_vector)
+
+    if a_embeber:
+        textos = [f["texto_embebido"] for f in a_embeber]
+        for inicio, vectores in proveedor.embeber_por_lotes(textos):
+            sublote = a_embeber[inicio : inicio + len(vectores)]
+            for fila, vector in zip(sublote, vectores):
+                fila["embedding"] = vector
+            escritas += semantica.upsert_respuestas(conn_semantica, sublote)
+            # Y se sueltan. El upsert ya los escribió; conservarlos solo
+            # haría que el pico de memoria creciera con el tamaño del lote,
+            # que es exactamente lo que este requisito evita.
+            for fila in sublote:
+                fila["embedding"] = None
+            del vectores
 
     return {
         "ref_estudio": ref_estudio,

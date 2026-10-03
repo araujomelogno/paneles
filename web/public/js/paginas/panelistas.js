@@ -118,6 +118,13 @@ export async function render(main, ctx) {
   };
 
   await cargarTabla();
+  // R-ASYNC.3 — si quedó una carga sin panel a medias, se retoma. Acá no se
+  // sabe de qué carga se trata —se crea una por vez y no hay listado—, así
+  // que se pregunta por la última del tipo. El estado vive en la base, no
+  // en esta pestaña: por eso volver mañana, o desde otra computadora, la
+  // encuentra igual.
+  const { retomarCargaEnCurso } = await import('./encuestas.js');
+  await retomarCargaEnCurso('carga', null, { alTerminar: cargarTabla });
 }
 
 async function cargarTabla() {
