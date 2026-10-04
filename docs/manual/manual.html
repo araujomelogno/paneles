@@ -59,8 +59,9 @@
     <li><a href="#s13b"><span><span class="num">13</span> El portal del panelista</span></a>
       <ul><li>Cómo entra · Qué ve · Canjes con aprobación · Canales y
       permisos · La baja</li></ul></li>
-    <li><a href="#s13"><span><span class="num">14</span> Preguntas frecuentes</span></a></li>
-    <li><a href="#s14"><span><span class="num">15</span> Glosario</span></a></li>
+    <li><a href="#s-estadisticas"><span><span class="num">14</span> Estadísticas de la base</span></a></li>
+    <li><a href="#s13"><span><span class="num">15</span> Preguntas frecuentes</span></a></li>
+    <li><a href="#s14"><span><span class="num">16</span> Glosario</span></a></li>
   </ol>
 
 </div>
@@ -807,6 +808,46 @@
     <li>Confirmar con <strong>Ingestar</strong>.</li>
   </ol>
 
+  <h4>Antes de importar, el sistema muestra un resumen para revisar</h4>
+
+  <p>Confirmar <strong>no importa nada todavía</strong>. Primero aparece un
+  resumen completo de lo que se definió, y recién al aceptarlo se ejecuta.
+  Desde ahí se puede <strong>volver a corregir</strong> sin perder nada de
+  lo cargado.</p>
+
+  <p>El resumen agrupa las variables <strong>según adónde van</strong> —al
+  store semántico, a la ficha del panelista, excluidas— y, en las que van a
+  la ficha, muestra <strong>el texto de la pregunta junto al código</strong>.
+  Esa es la parte que conviene leer con atención: <code>var138O1320 →
+  documento</code> no dice nada, pero <em>«Cigarrillos: ¿has consumido en el
+  último mes?» → documento</em> salta a la vista.</p>
+
+  <div class="aviso">
+    <div class="t">El recuadro de claves de deduplicación es el que hay que mirar</div>
+    <p>El sistema reconoce a las personas primero por el documento, después
+    por el correo, y si no tiene ninguno de los dos, por nombre y fecha de
+    nacimiento. Para cada una de esas claves, el resumen informa cuántas
+    filas la traen, <strong>cuántos valores distintos hay</strong> y cuántas
+    filas comparten su valor con otra.</p>
+    <p>Si una clave tiene muchas filas y pocos valores distintos, aparece en
+    rojo con el número de personas que quedarían. Un archivo de 1.131 filas
+    cuya columna de documento trae 2 valores distintos crearía
+    <strong>2 personas</strong>: ese aviso es la última oportunidad de ver el
+    error antes de que ocurra.</p>
+  </div>
+
+  <p>El resumen también adelanta las advertencias que antes aparecían recién
+  al final —valores sin mapear a una categoría, preguntas sin texto— y tiene
+  un botón para <strong>copiarlo</strong>: sirve como registro de qué se
+  definió en esa carga.</p>
+
+  <div class="aviso info">
+    <div class="t">Por qué esta carga tiene un paso que otras operaciones no tienen</div>
+    <p>Importar es lo menos reversible que hace el sistema: crea personas,
+    escribe respuestas y da de alta membresías. Deshacerlo es borrar gente.
+    Diez segundos de revisión cuestan poco al lado de eso.</p>
+  </div>
+
   <h4>Al confirmar, la carga queda en proceso: la pantalla no se cuelga</h4>
 
   <p>Confirmar <strong>no espera a que termine la ingesta</strong>. El archivo
@@ -1106,6 +1147,17 @@
     segunda.</li>
     <li>Confirmar con <strong>Ingestar</strong>.</li>
   </ol>
+
+  <div class="aviso ok">
+    <div class="t">La versión del texto se elige de una lista</div>
+    <p>Antes había que escribirla exacta y, si no coincidía con una versión
+    publicada, el alta fallaba. Ahora es un desplegable con los textos
+    publicados y activos de esa finalidad, y un botón <strong>Ver
+    texto</strong> para leer lo que la persona aceptó antes de confirmar.</p>
+    <p>Si una finalidad no tiene ningún texto activo, en lugar del
+    desplegable aparece un aviso: hay que publicarlo primero en
+    <strong>Inscripciones → Textos de consentimiento</strong>.</p>
+  </div>
 
   <div class="aviso">
     <div class="t">Esto se decide antes del campo, no al importar</div>
@@ -1442,6 +1494,73 @@
     se contradice entraría al ranking apoyado en la respuesta que le resulta
     favorable y la contradicción quedaría oculta. Ese es exactamente el error que
     esta etapa está para evitar.</p>
+  </div>
+
+  <h4>Elegir qué columnas mostrar</h4>
+
+  <p>El botón <strong>Columnas</strong> permite agregar atributos
+  demográficos a la lista —sexo, localidad, nivel educativo, los que haya en
+  el catálogo—. Es útil cuando se busca por concepto pero hace falta ver un
+  dato para juzgar si el resultado sirve.</p>
+
+  <ul>
+    <li><strong>No vuelve a correr la consulta.</strong> Los atributos se
+    resuelven sobre el resultado que ya está en pantalla; el ranking no
+    cambia.</li>
+    <li>Quien no tenga ese atributo muestra <strong>«sin dato»</strong>, que
+    es distinto de tener un valor vacío.</li>
+    <li>La selección <strong>se recuerda</strong>: la próxima consulta
+    aparece con las mismas columnas.</li>
+    <li>Los atributos marcados como <strong>categoría especial</strong> no
+    se ofrecen. Verlos de a uno en una ficha no es lo mismo que verlos en
+    una planilla de doscientas filas.</li>
+  </ul>
+
+  <h4>Abrir la ficha de un resultado</h4>
+
+  <p>El botón <strong>Ficha</strong> de cada fila abre, encima de la lista y
+  sin perderla, lo que se sabe de esa persona: sus atributos demográficos
+  —con la procedencia de cada uno— y los paneles que integra.</p>
+
+  <div class="aviso">
+    <div class="t">La ficha no muestra nombre, documento, correo ni celular</div>
+    <p>No es un olvido. El resultado de una consulta es un conjunto
+    seudonimizado a propósito, y saber quién es cada uno es una
+    <strong>reidentificación</strong>: se pide aparte, con motivo, y queda
+    registrada. Si la ficha mostrara el nombre con un clic, ese registro
+    dejaría de reflejar quién vio los datos de quién, que es lo único que
+    existe para demostrar.</p>
+    <p>Para ver los nombres sigue estando <strong>Ver quiénes son</strong>,
+    descrito más abajo.</p>
+  </div>
+
+  <h4>Las respuestas procesadas de esa persona</h4>
+
+  <p>En la misma ficha, abajo, está lo que esa persona respondió: el código
+  de la variable, el texto de la pregunta, la respuesta y de qué estudio
+  viene. Se puede filtrar por estudio y buscar por texto, y la tabla está
+  paginada.</p>
+
+  <p>Es lo que hace falta para entender <strong>por qué alguien aparece —o
+  no aparece— en una consulta</strong>.</p>
+
+  <div class="aviso info">
+    <div class="t">«Ver el texto embebido» vale la pena mirarlo una vez</div>
+    <p>Esa casilla muestra lo que realmente se vectorizó, en la forma
+    <em>«pregunta → respuesta»</em>. Si dice <em>«¿Qué marca fumás? →
+    11427»</em> en vez de <em>«→ Nevada»</em>, los códigos de esa pregunta
+    no se tradujeron a etiquetas al ingestar: la respuesta está guardada
+    pero es inútil para la búsqueda por significado, y sin ver este texto no
+    hay manera de notarlo.</p>
+  </div>
+
+  <div class="aviso">
+    <div class="t">Ver las respuestas queda registrado</div>
+    <p>La separación entre las dos bases existe para que nadie vea identidad
+    y opiniones juntas por accidente. Esta pantalla las une a propósito,
+    porque operar lo necesita, y por eso cada vez que se abre queda anotado
+    con fecha y autor —con un motivo propio, distinto del de reidentificar
+    un contacto—.</p>
   </div>
 
   <h3><span class="n">6.5</span> Resolver a quiénes corresponden los identificadores</h3>
@@ -2579,10 +2698,77 @@
 </section>
 
 <!-- ════════════════ 11 ════════════════ -->
-<section id="s13">
+<!-- ════════════════ Estadísticas ════════════════ -->
+<section id="s-estadisticas">
   <div class="cab">
     <div class="barra"></div>
     <div class="kicker">Sección 14</div>
+    <h2>Estadísticas de la base</h2>
+    <p>Cuánto hay en cada una de las dos bases, y —sobre todo— sobre cuánta
+    gente se puede realmente consultar.</p>
+  </div>
+
+  <p>La solapa <strong>Estadísticas</strong> se abre y muestra: no pide
+  parámetros ni filtros. Reúne en una pantalla lo que antes estaba repartido
+  entre las dos bases y había que consultar a mano.</p>
+
+  <h3><span class="n">14.1</span> Lo que una búsqueda puede alcanzar</h3>
+
+  <p>Es el primer bloque y el que justifica la pantalla. Los totales sueltos
+  —«1.008 panelistas», «24.935 respuestas»— se miran una vez. El número que
+  se usa todas las semanas es otro: <strong>de todos los panelistas, sobre
+  cuántos se puede consultar por significado</strong>.</p>
+
+  <table class="parte">
+    <thead><tr><th>Indicador</th><th>Qué dice</th></tr></thead>
+    <tr><td class="destacado">Consultables</td>
+      <td>Tienen respuestas procesadas <em>y</em> consentimiento de uso
+      semántico vigente. Son los únicos que pueden aparecer en un
+      resultado.</td></tr>
+    <tr><td class="destacado">Sin ninguna respuesta procesada</td>
+      <td>Están en el padrón y son invisibles para una consulta por concepto.
+      Es la explicación habitual de «la búsqueda devolvió menos gente de la
+      que esperaba». Se pueden listar con <strong>Ver quiénes</strong>.</td></tr>
+    <tr><td class="destacado">Sin uso semántico vigente</td>
+      <td>Aunque tengan respuestas, no pueden aparecer en resultados. Es
+      correcto: es el consentimiento funcionando.</td></tr>
+    <tr><td class="destacado">Individuos sin panelista</td>
+      <td><strong>Tiene que ser cero.</strong> Si no lo es, hay respuestas de
+      personas que ya no existen en el padrón y aparece marcado como problema
+      de integridad, no como una cifra más.</td></tr>
+  </table>
+
+  <h3><span class="n">14.2</span> El resto de los bloques</h3>
+
+  <p>Panelistas con sus cortes —activos, sin panel, con correo, con celular,
+  altas del mes—, el consentimiento vigente por finalidad, el corpus
+  semántico con sus estudios, y el tamaño de la tabla de respuestas y del
+  índice vectorial.</p>
+
+  <div class="aviso info">
+    <div class="t">Cuándo conviene agrandar la base</div>
+    <p>El índice vectorial tiene que entrar en la memoria de la instancia.
+    Cuando el tamaño que muestra esta pantalla se acerque a esa memoria, las
+    consultas empiezan a ponerse lentas y conviene subir de tier. Es el
+    número que nadie mira hasta que el sistema ya está lento.</p>
+  </div>
+
+  <p>El último bloque son las <strong>últimas cargas</strong> con su estado.
+  Una carga con lotes fallidos aparece destacada: hasta ahora eso solo se
+  veía consultando la base.</p>
+
+  <div class="aviso">
+    <div class="t">Esta pantalla no muestra a nadie en particular</div>
+    <p>Son totales. La única lista que ofrece es de identificadores, no de
+    personas, y ver quién es cada uno sigue siendo una reidentificación: se
+    pide aparte, con motivo, y queda registrada.</p>
+  </div>
+</section>
+
+<section id="s13">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 15</div>
     <h2>Preguntas frecuentes</h2>
     <p>Situaciones habituales y su explicación.</p>
   </div>
@@ -2707,7 +2893,7 @@
 <section id="s14">
   <div class="cab">
     <div class="barra"></div>
-    <div class="kicker">Sección 15</div>
+    <div class="kicker">Sección 16</div>
     <h2>Glosario</h2>
     <p>Los términos que aparecen en pantalla.</p>
   </div>

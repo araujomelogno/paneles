@@ -96,6 +96,33 @@ persiste, se parte en lotes y Cloud Tasks procesa uno por tarea
 Y lo de siempre con las funciones nuevas: Postgres le da `execute` a `public`,
 así que cada una necesita su `revoke` o `scripts/verificar_coloquio.py` rompe.
 
+## La ficha desde un resultado, y lo que cuesta cruzar los stores
+
+La Fase 7 pone en una pantalla cosas que el diseño mantiene separadas. Tres
+reglas que no son estéticas:
+
+- **La ficha seudónima no devuelve nombre, documento, correo ni celular.**
+  Hay una prueba que recorre su salida y falla si aparece cualquiera de los
+  cuatro. No es pudor: si la ficha mostrara el nombre con un clic, la
+  auditoría de reidentificación dejaría de reflejar quién vio los datos de
+  quién, que es lo único que esa auditoría existe para demostrar.
+- **Ver las respuestas de un panelista se registra siempre.** Une identidad
+  y contenido —lo que los dos stores mantienen separado— y por eso la ruta
+  llama a `ficha.respuestas_con_registro()`, nunca a `ficha.respuestas()`
+  directo. La versión sin registro existe solo para poder probar la consulta
+  sola. El motivo es `respuestas_panelista` y se distingue de reidentificar
+  un contacto.
+- **El resumen de revisión de una importación sale de la misma ruta que
+  ejecuta**, con la bandera `solo_revisar`. Un endpoint aparte empieza igual
+  y diverge, y lo que divergiría es la pantalla que dice «esto es lo que va
+  a pasar». La pantalla, por lo mismo, arma el cuerpo una sola vez.
+
+Y una que parece un descuido y no lo es: **`motivo_reidentificacion` no
+tiene clave foránea**. `registrar_reidentificacion` documenta que nunca
+pierde el rastro por una etiqueta desconocida, y una FK invertiría ese
+intercambio. El catálogo se mantiene sincronizado con una prueba espejo,
+igual que `pii.CAMPOS_PII`.
+
 ## Reglas de negocio que el código debe respetar
 
 - No se puede convocar ni incluir en muestreo a una persona sin `consentimiento` **vigente** para la finalidad correspondiente.

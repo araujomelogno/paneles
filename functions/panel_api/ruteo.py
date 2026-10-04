@@ -22,6 +22,7 @@ from . import (
     db,
     encuestas,
     esquema,
+    estadisticas,
     inscripciones,
     longitudinal,
     muestreo,
@@ -31,8 +32,10 @@ from . import (
     personas,
     portal,
     preferencias,
+    ficha,
     premios,
     puntos,
+    resumen_ingesta,
     revision,
     sav,
     semantica,
@@ -137,6 +140,37 @@ def _entero(valor, por_defecto=None):
         return int(valor)
     except (TypeError, ValueError):
         return por_defecto
+
+
+def _revision_pedida(cuerpo):
+    """¿Esta llamada es la revisión previa (R7.2) y no la ejecución?
+
+    La bandera viaja en el mismo cuerpo y la atiende la misma ruta a
+    propósito: el resumen se arma del plan que se va a ejecutar, no de una
+    reconstrucción paralela que pueda divergir. Es la única forma de que lo
+    que la pantalla muestra sea lo que después pasa.
+    """
+    return bool((cuerpo or {}).get("solo_revisar"))
+
+
+def _evidencia_normalizada(cuerpo):
+    """La evidencia tal como la va a ver el alta, o `None` si no aplica.
+
+    Se normaliza con la misma función que usa `crear_individuos`, así que el
+    resumen muestra los valores afirmativos ya canónicos —los mismos contra
+    los que se va a comparar— y no los que se tipearon.
+    """
+    if (cuerpo or {}).get("modo") != "crear_individuos":
+        return None
+    declarada = cuerpo.get("evidencia_consentimiento")
+    if not declarada:
+        return None
+    try:
+        return sav.normalizar_evidencia(declarada)
+    except DatosInvalidos:
+        # En la revisión, una evidencia incompleta no es motivo para no
+        # mostrar el resto: el resumen existe para ver qué falta.
+        return None
 
 
 def _plan_de(cuerpo, **extra):
@@ -446,10 +480,16 @@ def ingestar_encuesta(ctx, actor, params, cuerpo, consulta):
     camino y sin forma de retomar.
     """
     encuesta_id = _entero(params["encuesta_id"])
-    encuestas.obtener(ctx.boveda, encuesta_id)   # que exista, antes de guardar nada
+    encuesta = encuestas.obtener(ctx.boveda, encuesta_id)   # que exista, antes de guardar nada
+    plan = _plan_de(cuerpo)
+    filas = cuerpo.get("filas") or []
+    if _revision_pedida(cuerpo):
+        return 200, resumen_ingesta.resumir(
+            plan, filas, panel=encuesta.get("panel_id"),
+            evidencia=_evidencia_normalizada(cuerpo),
+            destino_tipo="encuesta", nombre_destino=encuesta.get("nombre"))
     salida = diferida.encolar(
-        ctx.boveda, "encuesta", encuesta_id,
-        _plan_de(cuerpo), cuerpo.get("filas") or [],
+        ctx.boveda, "encuesta", encuesta_id, plan, filas,
         actor=actor, encolador=ctx.encolador)
     return 202, salida
 
@@ -760,6 +800,121 @@ def auditoria_usuarios(ctx, actor, params, cuerpo, consulta):
 # ════════════════════════════════════════════════════════════════════
 #  Ingesta diferida — ver el avance y recuperar lo que falló
 # ════════════════════════════════════════════════════════════════════
+
+# ════════════════════════════════════════════════════════════════════
+#  Fase 7 — estadísticas, columnas y la ficha desde un resultado
+# ════════════════════════════════════════════════════════════════════
+
+@ruta("GET", "/estadisticas", "leer", requisito="R7.5")
+def ver_estadisticas(ctx, actor, params, cuerpo, consulta):
+    """Los números de los dos stores, sin pedir parámetros.
+
+    Son agregados: esta pantalla no muestra datos de ninguna persona en
+    particular. Ver el detalle de alguien sigue siendo la ficha, que es lo
+    que queda registrado.
+    """
+    return 200, estadisticas.todo(ctx.boveda, ctx.semantica)
+
+
+@ruta("GET", "/estadisticas/sin-respuestas", "leer", requisito="R7.5")
+def panelistas_sin_respuestas(ctx, actor, params, cuerpo, consulta):
+    """El desglose del número que más se mira: quiénes son.
+
+    Devuelve `id_persona`, no personas: es la misma lista seudónima que
+    devuelve una consulta, y reidentificarla sigue siendo otra acción.
+    """
+    detalle = estadisticas.brecha(
+        ctx.boveda, ctx.semantica,
+        ejemplos=_entero(consulta.get("limite"), 500))
+    return 200, detalle["panelistas_sin_respuestas"]
+
+
+@ruta("GET", "/atributos/columnas", "leer", requisito="R7.4")
+def columnas_disponibles(ctx, actor, params, cuerpo, consulta):
+    """Qué atributos se pueden poner como columna de la lista de resultados.
+
+    Los de categoría especial no están, y es a propósito: ver uno en una
+    ficha no es lo mismo que verlos todos en una planilla.
+    """
+    return 200, {"items": atributos.columnas_ofrecibles(ctx.boveda)}
+
+
+@ruta("POST", "/resultados/atributos", "leer", requisito="R7.4")
+def atributos_de_resultados(ctx, actor, params, cuerpo, consulta):
+    """Los atributos de un conjunto de resultados, **en una sola consulta**.
+
+    Agregar una columna no re-ejecuta la consulta semántica: se resuelve
+    sobre los `id_persona` que ya están en pantalla. Y se resuelve de a
+    todos: de a uno, una lista de 200 dispara 200 consultas.
+    """
+    ids = (cuerpo or {}).get("ids_persona") or []
+    return 200, {"items": atributos.valores_de_varias(ctx.boveda, ids)}
+
+
+@ruta("GET", "/mi/preferencias", "leer", requisito="R7.4")
+def mis_preferencias(ctx, actor, params, cuerpo, consulta):
+    ficha_usuario = ctx.padron.leer_ficha(actor.uid) or {}
+    return 200, {"columnas_resultado": ficha_usuario.get("columnas_resultado") or []}
+
+
+@ruta("PUT", "/mi/preferencias", "leer", requisito="R7.4")
+def guardar_mis_preferencias(ctx, actor, params, cuerpo, consulta):
+    """La selección de columnas, que se recuerda de una consulta a la otra.
+
+    Va en la ficha del usuario y se escribe con `merge`: la preferencia de
+    una pantalla no puede pisar el rol de nadie.
+    """
+    columnas = [str(c) for c in ((cuerpo or {}).get("columnas_resultado") or [])]
+    ctx.padron.escribir_ficha(actor.uid, {"columnas_resultado": columnas})
+    return 200, {"columnas_resultado": columnas}
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Fase 7 — la ficha del panelista desde un resultado
+# ════════════════════════════════════════════════════════════════════
+
+@ruta("GET", "/panelistas/<id_persona>/ficha", "leer", requisito="R7.3")
+def ficha_seudonima(ctx, actor, params, cuerpo, consulta):
+    """Los atributos de la persona, **sin un solo dato identificatorio**.
+
+    Permiso `leer` y no uno nuevo: es la misma información demográfica que
+    ya devuelve una consulta con filtros, vista de a una persona. Lo que
+    sigue necesitando una acción deliberada —y queda registrado— es ver
+    quién es: eso es reidentificar, y no pasa por acá.
+    """
+    return 200, ficha.seudonima(
+        ctx.boveda, params["id_persona"], momento=consulta.get("momento"))
+
+
+@ruta("GET", "/panelistas/<id_persona>/respuestas", "leer", requisito="R7.6")
+def respuestas_del_panelista(ctx, actor, params, cuerpo, consulta):
+    """Qué respondió esta persona, de qué estudio y cuándo.
+
+    **Esto cruza los dos stores a propósito** y por eso deja rastro: la
+    arquitectura los mantiene separados para que nadie vea identidad y
+    contenido juntos por accidente, y esta pantalla los junta porque operar
+    lo necesita. El registro usa su motivo propio
+    (`respuestas_panelista`), que lo distingue de reidentificar un contacto.
+    """
+    return 200, ficha.respuestas_con_registro(
+        ctx.boveda, ctx.semantica, params["id_persona"], actor=actor,
+        ref_estudio=(consulta.get("ref_estudio") or None),
+        busqueda=consulta.get("q"),
+        pagina=_entero(consulta.get("pagina"), 1),
+        tamano=_entero(consulta.get("tamano"), ficha.PAGINA_POR_DEFECTO))
+
+
+@ruta("GET", "/panelistas/<id_persona>/respuestas/estudios", "leer",
+      requisito="R7.6")
+def estudios_del_panelista(ctx, actor, params, cuerpo, consulta):
+    """Los estudios donde esta persona tiene respuestas, para el filtro.
+
+    Sin registro: es un conteo por estudio, no el contenido. Lo que se
+    audita es ver qué respondió, no saber que respondió algo.
+    """
+    return 200, {"items": ficha.estudios_con_respuestas(
+        ctx.semantica, params["id_persona"])}
+
 
 @ruta("GET", "/ingestas", "leer", requisito="R-ASYNC.3")
 def listar_ingestas(ctx, actor, params, cuerpo, consulta):
@@ -1111,6 +1266,21 @@ def ingestar_sav(ctx, actor, params, cuerpo, consulta):
         p.get("codigo"): (p.get("opciones") or {}) for p in preguntas
     }
 
+    # R7.2 — la revisión va **antes** de `crear_individuos`: en el modo que
+    # crea personas, confirmar es lo irreversible, y el resumen existe para
+    # verlo antes. Si esto estuviera más abajo, revisar ya habría dado de
+    # alta a la gente.
+    if _revision_pedida(cuerpo):
+        return 200, resumen_ingesta.resumir(
+            _plan_de(cuerpo, columna_id=columna_id,
+                     origen=(cuerpo.get("origen") or "sav"),
+                     preguntas=preguntas, demograficas=demograficas),
+            filas, panel=cuerpo.get("panel_id"),
+            evidencia=_evidencia_normalizada(cuerpo),
+            destino_tipo="encuesta",
+            nombre_destino=encuestas.obtener(
+                ctx.boveda, encuesta_id).get("nombre"))
+
     creacion = None
     if cuerpo.get("modo") == "crear_individuos":
         # La evidencia de consentimiento es obligatoria en este modo y se
@@ -1209,6 +1379,15 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
     opciones_por_variable = {
         p.get("codigo"): (p.get("opciones") or {}) for p in preguntas
     }
+
+    if _revision_pedida(cuerpo):
+        return 200, resumen_ingesta.resumir(
+            _plan_de(cuerpo, columna_id=columna_id,
+                     origen=(cuerpo.get("origen") or "carga"),
+                     preguntas=preguntas, demograficas=demograficas),
+            filas, panel=None, evidencia=_evidencia_normalizada(cuerpo),
+            destino_tipo="carga",
+            nombre_destino=cargas.obtener(ctx.boveda, carga_id).get("nombre"))
 
     creacion = None
     if cuerpo.get("modo") == "crear_individuos":

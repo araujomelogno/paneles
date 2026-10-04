@@ -14,6 +14,20 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Fase 7 · 2026-10-04.** Cuatro cambios de pantalla y una sección nueva.
+> La **14, Estadísticas de la base**, es nueva —y corre la numeración de
+> Preguntas frecuentes a 15 y del Glosario a 16—. La 5.4 suma el **paso de
+> revisión antes de importar**, con el recuadro de claves de deduplicación
+> que es lo que detecta un marcado equivocado. La 5.5 explica que la
+> **versión del consentimiento se elige de una lista** y ya no se escribe. Y
+> la 6.3 suma las **columnas elegibles del ranking** y la **ficha del
+> panelista** con sus respuestas procesadas.
+>
+> Es texto: no hizo falta recapturar ninguna pantalla. Las capturas de las
+> pantallas nuevas quedan **pendientes** —la sección 14 y el paso de
+> revisión se describen sin imagen—, y conviene tomarlas la próxima vez que
+> se recorra la copia en modo demo.
+
 > **Revisión 2026-10-04.** La sección 5.5 suma «Revisá qué variable
 > marcaste como documento»: el sistema ahora rechaza la carga si la variable
 > marcada como documento trae muy pocos valores distintos, porque el dedup

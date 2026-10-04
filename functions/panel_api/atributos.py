@@ -537,6 +537,62 @@ def valores_de(conn, id_persona, incluir_especiales=True, momento=None):
     ]
 
 
+def valores_de_varias(conn, ids_persona, incluir_especiales=False,
+                      momento=None):
+    """Los atributos de **un conjunto** de personas, en una sola consulta.
+
+    R7.4 — es la diferencia entre agregar una columna a una lista de 200
+    resultados y disparar 200 consultas. Con `paneles-boveda` en un tier
+    chico eso se nota, así que la forma de a una (`valores_de`) no se usa
+    desde la lista ni aunque sea más cómoda de escribir.
+
+    Por omisión **no** incluye los atributos de categoría especial: en una
+    lista masiva son otra cosa que en una ficha, y ofrecerlos ahí es una
+    decisión que no se toma por descuido.
+    """
+    ids = [str(i) for i in dict.fromkeys(i for i in (ids_persona or []) if i)]
+    if not ids:
+        return {}
+    filas = db.todas(
+        conn,
+        """
+        select v.id_persona, v.atributo, v.valor, v.etiqueta_valor,
+               v.valor_num, v.origen, v.procedencia,
+               a.etiqueta as atributo_etiqueta, a.tipo, a.es_especial, a.orden
+          from f_atributo_persona(coalesce(%s::timestamptz, now())) v
+          join atributo_demografico a on a.id = v.atributo_id
+         where v.id_persona = any(%s::uuid[])
+           and (%s::bool is not false or not a.es_especial)
+         order by v.id_persona, a.orden, a.clave
+        """,
+        (momento, ids, incluir_especiales),
+    )
+    salida = {i: {} for i in ids}
+    for f in filas:
+        salida[str(f["id_persona"])][f["atributo"]] = {
+            "valor": f["valor"],
+            "etiqueta_valor": f["etiqueta_valor"],
+            "valor_num": float(f["valor_num"]) if f["valor_num"] is not None else None,
+            "origen": f["origen"],
+            "procedencia": f["procedencia"],
+        }
+    return salida
+
+
+def columnas_ofrecibles(conn):
+    """Qué atributos se pueden poner como columna de la lista (R7.4).
+
+    Los de **categoría especial quedan fuera**: verlos de a uno en una ficha
+    no es lo mismo que verlos en una planilla de 200 filas, y esa segunda
+    cosa necesita una decisión explícita que todavía no se tomó.
+    """
+    return [
+        {"clave": a["clave"], "etiqueta": a["etiqueta"], "tipo": a["tipo"]}
+        for a in listar(conn, solo_activos=True, con_categorias=False,
+                        incluir_especiales=False)
+    ]
+
+
 def _antes(a, b):
     """¿`a` es anterior a `b`? Compara aunque uno venga como texto ISO."""
     import datetime
