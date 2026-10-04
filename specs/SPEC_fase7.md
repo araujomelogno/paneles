@@ -215,6 +215,45 @@ esas claves presentes en el archivo, el resumen muestra:
 > columnas afecta solo la vista.** Si se decide lo contrario, conviene que el
 > archivo lo advierta como hace el de exportación con datos.
 
+### R7.6 — Ver las respuestas procesadas de un panelista (P0)
+
+Hoy, para saber qué respondió una persona, hay que consultar el store semántico
+a mano. La ficha del panelista muestra sus datos pero no su contenido, y es
+justo lo que hace falta para entender por qué aparece (o no) en una consulta.
+
+- Dada la ficha de un panelista, entonces hay una sección con **sus respuestas
+  procesadas**, en una tabla con: **código de la variable**, **texto de la
+  pregunta** y **respuesta**.
+- Dada esa tabla, entonces muestra también la **procedencia**: de qué estudio o
+  carga viene cada respuesta, y de cuándo.
+- Dada la cantidad de filas, entonces la tabla está **paginada** y ordenada por
+  estudio y orden de pregunta, no en un orden arbitrario.
+- Dada la tabla, entonces se puede **filtrar por estudio** y buscar por texto de
+  pregunta o de respuesta.
+- Dado un panelista sin respuestas, entonces lo dice con claridad —«todavía no
+  tiene respuestas procesadas»— y no muestra una tabla vacía sin explicación.
+- Dada una respuesta, entonces se puede ver opcionalmente el **texto embebido**
+  (`"pregunta → respuesta"`), que es lo que realmente se vectorizó.
+- [ ] La consulta se resuelve con paginación en la base, no trayendo todo y
+      recortando en el cliente.
+
+> **Por qué mostrar el texto embebido.** Es la forma de detectar un problema que
+> de otro modo pasa desapercibido: si los códigos de una pregunta cerrada no se
+> tradujeron a etiquetas, el texto embebido dice *«¿Qué marca fumás? → 11427»*
+> en vez de *«→ Nevada»*. Esa respuesta está en la base pero es inútil para la
+> búsqueda semántica, y sin ver el texto embebido no hay manera de notarlo.
+
+> **Esto cruza los dos stores, y conviene saberlo.** La arquitectura mantiene
+> separadas la identidad (bóveda) y el contenido (semántico) justamente para que
+> nadie vea las dos cosas juntas por accidente. Esta pantalla las une a
+> propósito: muestra **qué opinó una persona identificada**. Es legítimo y
+> necesario para operar, pero **debería registrarse igual que una
+> reidentificación** (R3.10), con actor y fecha. Es el mismo acto: vincular una
+> identidad con sus datos.
+>
+> - [ ] Ver las respuestas de un panelista queda registrado, con un motivo
+>       propio que lo distinga de una reidentificación de contacto.
+
 ### R7.5 — Sección de estadísticas de base (P0)
 
 Hoy, para saber cuántos panelistas o cuántas respuestas hay, se consulta la base
@@ -314,6 +353,16 @@ Criterios:
 - [ ] Una clave donde la mayoría de las filas colisiona aparece como
       advertencia destacada (test con un archivo preparado).
 
+**R7.6**
+- [ ] La ficha muestra las respuestas del panelista con código, pregunta,
+      respuesta y procedencia (test).
+- [ ] La tabla pagina en la base y no trae todo el conjunto (test).
+- [ ] Se puede filtrar por estudio y buscar por texto (test).
+- [ ] Un panelista sin respuestas muestra el mensaje correspondiente (test).
+- [ ] Se puede ver el texto embebido de una respuesta (test).
+- [ ] Ver las respuestas queda registrado con actor, fecha y motivo propio
+      (test).
+
 **R7.5**
 - [ ] La sección muestra los conteos de ambos stores en una sola pantalla.
 - [ ] Los panelistas sin respuestas semánticas se pueden listar, no solo contar.
@@ -344,6 +393,10 @@ Criterios:
 
 ## 8. Riesgos y preguntas abiertas
 
+- **[privacidad]** R7.6 es el punto donde la separación entre los dos stores se
+  cruza a propósito: identidad y opiniones en una misma pantalla. Es necesario
+  para operar, pero conviene que quede auditado y que el acceso esté acotado por
+  rol, no disponible para cualquiera que pueda abrir una ficha.
 - **[privacidad]** R7.3 y R7.4 juntas hacen la demografía mucho más visible: una
   lista con sexo, localidad y tramo etario de 200 personas es bastante más
   identificable que una lista de tokens, aunque ningún dato sea un identificador
