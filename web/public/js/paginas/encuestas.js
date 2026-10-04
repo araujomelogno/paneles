@@ -1393,12 +1393,20 @@ function abrirIngesta(destino, alTerminar) {
       // guardada y partida en lotes, y lo que sigue es mirar cómo avanza.
       // Con una base real esto es la diferencia entre terminar y cortar por
       // timeout a mitad de camino.
+      // El alta de personas pasa en la ruta, **antes** de encolar, así que
+      // su resultado viene en esta respuesta y no en el resumen que
+      // consolidan los lotes. Si se descarta acá, una carga que creó 1131
+      // personas termina mostrando «Personas: 0» y parece que no hizo nada.
+      const creacion = resultado.creacion_de_individuos;
+      if (creacion) {
+        toast(`Se dieron de alta ${creacion.resumen.creados} persona(s).`, 'ok');
+      }
       await seguirIngesta(resultado.trabajo_id, {
         avance: panelDeAvance(cajaDeAvance(),
                               { name: `${resultado.filas_total} fila(s) en `
                                       + `${resultado.lotes_total} lote(s)`,
                                 size: 0 }),
-        esCarga, alTerminar,
+        esCarga, alTerminar, creacion,
       });
       if (esCarga) {
         // La pantalla que abrió la carga es la de panelistas, y la gente
@@ -1520,7 +1528,8 @@ function duracion(segundos) {
     : `${Math.floor(minutos / 60)} h ${minutos % 60} min`;
 }
 
-async function seguirIngesta(trabajoId, { avance, esCarga, alTerminar }) {
+async function seguirIngesta(trabajoId, { avance, esCarga, alTerminar,
+                                          creacion }) {
   let estado = null;
   for (;;) {
     estado = await api.ingestas.ver(trabajoId);
@@ -1538,7 +1547,14 @@ async function seguirIngesta(trabajoId, { avance, esCarga, alTerminar }) {
     ? 'Ingesta terminada'
     : (estado.estado === 'fallida' ? 'La ingesta falló'
                                    : 'Ingesta terminada con errores');
-  mostrarResumenDeIngesta(estado.resumen, esCarga, titulo);
+  // El alta no la hacen los lotes, así que no está en lo que consolidan:
+  // se la agrega acá para que el resumen diga la carga entera. Al retomar
+  // una carga desde cero —otra pestaña, otro día— no se tiene, y entonces
+  // no se muestra: ya pasó y las personas están en Panelistas.
+  mostrarResumenDeIngesta(
+    creacion ? { ...(estado.resumen || {}), creacion_de_individuos: creacion }
+             : estado.resumen,
+    esCarga, titulo);
   if ((estado.fallidos || []).length) avisarDeLotesFallidos(estado, esCarga, alTerminar);
   return estado;
 }

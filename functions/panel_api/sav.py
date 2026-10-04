@@ -1019,6 +1019,59 @@ def _otorgar_si_falta(conn, id_persona, finalidad, version):
     return True
 
 
+# Con menos valores distintos que esto —sobre un archivo que no sea
+# diminuto— una columna no es un documento: es una respuesta cerrada
+# marcada por error. Dos es deliberadamente bajo: atrapa el caso que
+# destruye datos (`0`/`1`, sí/no, una constante) y no se mete con nada que
+# pueda ser un padrón chico y legítimo.
+DOCUMENTOS_DISTINTOS_MINIMOS = 3
+FILAS_PARA_SOSPECHAR_DEL_DOCUMENTO = 10
+
+
+def _controlar_documento_plausible(filas, mapeo, opciones_por_variable=None):
+    """Frena un archivo donde `documento` no puede ser un documento.
+
+    Esto existe por un caso real que no llegó a pasar de casualidad: en una
+    carga de 1131 filas se marcó como `documento` la variable de
+    «¿consumiste alguno de estos productos?», con valores `0` y `1`. El
+    dedup de R1.2 resuelve **primero por documento**, así que las 1131
+    personas se habrían fusionado en dos. Lo evitó un bug distinto, que ya
+    está arreglado; sin esta guarda, arreglarlo habría armado el desastre.
+
+    Es un error de quien configura la carga y no del software, pero el daño
+    es irreversible y el software lo puede ver venir: va antes de escribir
+    nada, como el control de la variable de consentimiento.
+    """
+    variable = (mapeo or {}).get("documento")
+    if not variable:
+        return
+    valores = {
+        str(fila[variable]).strip()
+        for fila in filas
+        if fila.get(variable) not in (None, "")
+    }
+    valores.discard("")
+    if len(filas) < FILAS_PARA_SOSPECHAR_DEL_DOCUMENTO or not valores:
+        return
+    if len(valores) >= DOCUMENTOS_DISTINTOS_MINIMOS:
+        return
+
+    # Las etiquetas de la variable son lo que vuelve obvio el error: ver
+    # «Unchecked / Checked» al lado de «documento» no deja lugar a dudas.
+    etiquetas = sorted((opciones_por_variable or {}).get(variable, {}).values())
+    pista = f" Sus etiquetas son {etiquetas}." if etiquetas else ""
+    raise DatosInvalidos(
+        f"La variable «{variable}» está marcada como documento, pero en "
+        f"{len(filas)} filas trae solo {len(valores)} valor(es) distinto(s): "
+        f"{sorted(valores)[:5]}.{pista} No parece un documento, y como el "
+        f"dedup resuelve primero por documento, crear estas personas las "
+        f"fusionaría a todas en {len(valores)}. Revisá el marcado de esa "
+        f"variable antes de volver a intentar.",
+        {"variable": variable, "valores_distintos": sorted(valores)[:10],
+         "filas": len(filas)},
+    )
+
+
 def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
                      evidencia_consentimiento, actor=None, panel_id=None,
                      opciones_por_variable=None,
@@ -1110,6 +1163,8 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
             f"archivo. Revisá el código exacto en el análisis del `.sav`.",
             {"variables_del_archivo": sorted(columnas)[:50]},
         )
+
+    _controlar_documento_plausible(filas, mapeo, opciones_por_variable)
 
     creados, reutilizados, en_revision = [], [], []
     sin_datos, sin_consentimiento = [], []

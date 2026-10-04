@@ -155,6 +155,20 @@ def _plan_de(cuerpo, **extra):
         "origen": cuerpo.get("origen"),
         "demograficas": cuerpo.get("demograficas"),
         "tipo_identificador": cuerpo.get("tipo_identificador"),
+        # El modo y si se declaró la evidencia **no los usa ninguna tarea**:
+        # las personas se crean en la ruta, antes de encolar. Se guardan para
+        # que después se pueda contestar «¿con qué modo se corrió esta
+        # carga?» mirando la carga, y no la memoria de quien la lanzó.
+        #
+        # Que no estuvieran costó caro: con 1131 filas sin mapear no había
+        # forma de distinguir «se eligió el modo equivocado» de «el modo no
+        # llegó», y se investigó lo segundo durante un día.
+        #
+        # De la evidencia va el hecho, no el contenido: qué variable del
+        # archivo la lleva es parte del plan de otra cosa, y el plan se
+        # devuelve por API.
+        "modo": cuerpo.get("modo") or "existen",
+        "evidencia_declarada": bool(cuerpo.get("evidencia_consentimiento")),
     }
     plan.update(extra)
     return plan
