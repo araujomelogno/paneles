@@ -106,6 +106,52 @@ la carga de panelistas sin panel).
 - Dado el resumen, entonces se destacan las **advertencias** que hoy aparecen
   recién al final: valores sin mapear a una categoría, variables marcadas como
   pregunta sin texto, variables del archivo que no matchean ninguna declaración.
+
+**Cada variable, agrupada por destino.** El resumen no es una lista plana: las
+variables se muestran separadas visualmente según adónde van, de modo que se
+vea de un golpe si algo está en el grupo equivocado.
+
+| Grupo | Qué incluye | Qué se muestra de cada una |
+|---|---|---|
+| **Al store semántico** | Las que se ingestan como preguntas | código, texto de la pregunta, tipo |
+| **A la bóveda · demográficas** | Las mapeadas a un atributo del catálogo | código, **texto de la pregunta**, atributo destino, y el mapeo de valores a categorías |
+| **A la bóveda · identidad y contacto** | Nombre, documento, email, celular, contacto | código, **texto de la pregunta**, campo destino |
+| **Claves de deduplicación** | Las que participan del dedup (R1.2) | ver abajo |
+| **Excluidas** | Las que no se ingestan | código y motivo |
+
+- Dada una variable mapeada a un campo de bóveda, entonces el resumen muestra
+  **el texto de la pregunta junto al código**, no solo el código.
+
+> **Por qué el texto y no solo el código.** `var138O1320 → documento` no dice
+> nada. *«Cigarrillos: ¿has consumido en el último mes?» → documento* salta a la
+> vista. Es un error real que ocurrió en producción y que el código solo no
+> deja ver.
+
+**Las claves de dedup, con su conteo de repetidos.** El dedup (R1.2) resuelve
+por documento, por email y por nombre + fecha de nacimiento. Para cada una de
+esas claves presentes en el archivo, el resumen muestra:
+
+| | |
+|---|---|
+| **Valores no vacíos** | cuántas filas traen esa clave |
+| **Valores distintos** | cuántos valores únicos hay |
+| **Filas que colisionan** | cuántas comparten su valor con otra |
+| **Grupos repetidos** | cuántos valores aparecen más de una vez, y los primeros ejemplos |
+
+- Dada una clave de dedup, entonces se informa cuántas filas se van a **fusionar
+  en una misma persona** por esa clave.
+- Dado el total, entonces el resumen dice **cuántas personas se van a crear**
+  frente a cuántas filas trae el archivo, y la diferencia explicada por el
+  dedup.
+- Dada una clave donde **la mayoría de las filas colisiona** —pocos valores
+  distintos sobre muchas filas—, entonces se muestra como **advertencia
+  destacada**, no como un número más.
+
+> **Este conteo es el mejor detector de un mapeo equivocado.** Si alguien mapea
+> por error una variable de sí/no a `documento`, el resumen lo grita:
+> «documento: 1131 filas, **2 valores distintos**, 1129 colisionan → se crearían
+> **2 personas**». Sin ese número, el error pasa y el dedup fusiona la base
+> entera en dos registros. Con él, es imposible no verlo.
 - Dado el resumen, entonces se puede **volver atrás a corregir** sin perder lo
   ya definido.
 - Dada la confirmación en el resumen, entonces recién ahí se ejecuta.
@@ -169,6 +215,61 @@ la carga de panelistas sin panel).
 > columnas afecta solo la vista.** Si se decide lo contrario, conviene que el
 > archivo lo advierta como hace el de exportación con datos.
 
+### R7.5 — Sección de estadísticas de base (P0)
+
+Hoy, para saber cuántos panelistas o cuántas respuestas hay, se consulta la base
+a mano. La información está repartida entre los dos stores y nadie la ve junta.
+
+**Panelistas (bóveda)**
+- Total de panelistas, y cuántos están **sin panel**.
+- Panelistas por panel.
+- Con consentimiento vigente, **por finalidad** (`contacto_participacion`,
+  `uso_semantico`): cuántos lo tienen y cuántos no.
+- Con celular válido y con correo, y por canal de contacto aceptado.
+- Altas por mes, para ver cómo crece el panel.
+
+**Corpus semántico**
+- Respuestas totales, individuos con respuestas, preguntas distintas.
+- Estudios y cargas ingestadas, con su fecha.
+- Promedio de respuestas por individuo.
+
+**La brecha entre los dos stores** — lo más útil de toda la sección:
+- **Panelistas sin ninguna respuesta semántica**: existen en la bóveda pero son
+  invisibles para una consulta por concepto. Es el número que explica por qué
+  una búsqueda devuelve menos gente de la esperada.
+- **Panelistas sin `uso_semantico` vigente**: aunque tengan respuestas, no
+  pueden aparecer en resultados.
+- **Individuos en el store semántico sin panelista en la bóveda**: debería ser
+  **cero**; si no lo es, hay datos huérfanos y es un problema de integridad.
+
+**Tamaño y salud del corpus**
+- Tamaño de la tabla de respuestas y del **índice vectorial**.
+- Dimensión de los embeddings en uso.
+- Una señal de **cuándo conviene subir de tier**: comparar el tamaño del índice
+  con la memoria de la instancia, con el umbral documentado en `COSTOS.md` §4.
+
+**Cargas e ingestas**
+- Últimas cargas con su estado, filas procesadas y descartes por motivo.
+- Trabajos **fallidos o colgados**, que hoy solo se ven consultando la base.
+
+Criterios:
+- Dada la sección, entonces se muestra en una sola pantalla, sin pedir
+  parámetros.
+- Dado un número, entonces se puede ver **de qué está compuesto** (por ejemplo,
+  los panelistas sin respuestas, listados).
+- Dada la carga de la pantalla, entonces no re-ejecuta consultas pesadas por
+  cada tarjeta: los conteos se resuelven en pocas consultas.
+- [ ] Los indicadores que ya existen en composición (R2.3) **no se duplican**:
+      esta sección enlaza a esa, no la repite.
+- [ ] La sección no muestra datos de ninguna persona en particular: son
+      agregados. Ver el detalle de un panelista sigue siendo la ficha.
+
+> **Por qué la brecha entre stores es lo que más importa.** Los conteos sueltos
+> —«1.008 panelistas», «24.935 respuestas»— se miran una vez. El número que se
+> usa todas las semanas es *«de mis 1.131 panelistas, ¿sobre cuántos puedo
+> realmente consultar?»*: eso es lo que define si una búsqueda sirve, y hoy no
+> se puede saber sin cruzar las dos bases a mano.
+
 ---
 
 ## 5. Cambios de esquema
@@ -205,6 +306,22 @@ la carga de panelistas sin panel).
 - [ ] Reidentificar sigue siendo una acción aparte y queda registrada (test de
       no regresión).
 
+**R7.2 (ampliación)**
+- [ ] El resumen agrupa las variables por destino y muestra el texto de la
+      pregunta junto al código en los grupos de bóveda (test).
+- [ ] Para cada clave de dedup se muestran valores distintos, filas que
+      colisionan y personas a crear (test).
+- [ ] Una clave donde la mayoría de las filas colisiona aparece como
+      advertencia destacada (test con un archivo preparado).
+
+**R7.5**
+- [ ] La sección muestra los conteos de ambos stores en una sola pantalla.
+- [ ] Los panelistas sin respuestas semánticas se pueden listar, no solo contar.
+- [ ] Individuos semánticos sin panelista se informan como problema de
+      integridad si son más de cero (test).
+- [ ] La pantalla se resuelve en pocas consultas, sin una por tarjeta
+      (medición).
+
 **R7.4**
 - [ ] Se pueden agregar y quitar columnas demográficas de la lista (test).
 - [ ] La selección se recuerda entre consultas (test).
@@ -218,6 +335,7 @@ la carga de panelistas sin panel).
 |---|---|
 | Las cuatro mejoras | **US$ 0**: son cambios de interfaz y de backend, sin infraestructura nueva. |
 | Carga adicional sobre la bóveda (R7.3 y R7.4) | Marginal: resolver atributos de hasta unas decenas de resultados es una consulta relacional chica. |
+| R7.5 — estadísticas | Marginal si se resuelve en pocas consultas agregadas. **Con cuidado**: un `count(*)` sobre la tabla de respuestas crece con el corpus; conviene medirlo y, si pesa, cachear los conteos con un refresco periódico. |
 
 > **Lo único a vigilar:** si R7.4 se implementa resolviendo atributos fila por
 > fila en vez de en una sola consulta, una lista de 200 resultados dispara 200
