@@ -987,6 +987,27 @@ def normalizar_evidencia_canales(evidencia):
     return normalizada
 
 
+def _valores_de(filas, variable, tope=5):
+    """Una muestra de lo que esa variable trae de verdad en el archivo.
+
+    El aviso decía qué valor se esperaba y nunca qué había. Con eso, declarar
+    la columna identificadora como variable de consentimiento —pasó— produce
+    «ninguna fila evidencia el consentimiento» y nada más, y no hay cómo
+    darse cuenta sin abrir el `.sav`. Ver los ids del respondente al lado del
+    `1` esperado lo resuelve de un vistazo.
+    """
+    valores = sorted({
+        _texto_comparable(fila.get(variable))
+        for fila in filas
+        if fila.get(variable) not in (None, "")
+    } - {""})
+    if not valores:
+        return "ningún valor (¿esa variable existe en el archivo?)"
+    muestra = ", ".join(f"«{v}»" for v in valores[:tope])
+    return (f"{len(valores)} valores distintos: {muestra}…"
+            if len(valores) > tope else muestra)
+
+
 def _consintio(fila, regla):
     return _texto_comparable(fila.get(regla["variable"])) in set(
         regla["valores_afirmativos"]
@@ -1376,13 +1397,19 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
                 "variable": evidencia[finalidad_obligatoria]["variable"],
                 "valores_afirmativos":
                     evidencia[finalidad_obligatoria]["valores_afirmativos"],
+                "valores_encontrados": _valores_de(
+                    filas, evidencia[finalidad_obligatoria]["variable"]),
                 "mensaje": (
                     f"{len(sin_consentimiento)} fila(s) no evidencian el "
                     f"consentimiento de «{finalidad_obligatoria}» en la "
                     f"variable «{evidencia[finalidad_obligatoria]['variable']}»: "
-                    f"no se creó ninguna persona con ellas. Si eso es un error "
-                    f"de codificación del archivo, corregí el valor "
-                    f"afirmativo declarado y volvé a importar."
+                    f"no se creó ninguna persona con ellas. Se esperaba "
+                    f"{evidencia[finalidad_obligatoria]['valores_afirmativos']} "
+                    f"y esa variable trae "
+                    f"{_valores_de(filas, evidencia[finalidad_obligatoria]['variable'])}. "
+                    f"Si no se parecen, la variable declarada no es la de "
+                    f"consentimiento; si se parecen, corregí el valor "
+                    f"afirmativo declarado."
                 ),
             } if sin_consentimiento else None
         ),

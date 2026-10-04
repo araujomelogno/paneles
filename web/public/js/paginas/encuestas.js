@@ -1146,28 +1146,41 @@ function abrirIngesta(destino, alTerminar) {
       ? alerta(analisis.avisos.map((a) => a.mensaje).join(' '), 'warn')
       : '';
 
-    prepararAltaSav(analisis.variables.map((v) => v.codigo));
+    prepararAltaSav(analisis.variables);
   }
 
   /* R3.9 — el modo «crear los individuos en esta carga». Solo aparece con un
      .sav, y solo deja confirmar si se declaró de dónde sale la evidencia de
      consentimiento: es la base legal del alta, no un campo más. */
-  function prepararAltaSav(codigos) {
+  function prepararAltaSav(variables) {
     $('#bloque-sav', caja).classList.remove('hidden');
 
-    const opciones = (vacia) =>
-      (vacia ? '<option value="">— ninguna —</option>' : '')
-      + codigos.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+    /* El texto de la pregunta va en la opción, no solo el código.
+       Un desplegable de `var7O10`, `var7O11`, `var9` obliga a adivinar cuál
+       es la pregunta de consentimiento, y elegir mal no falla al confirmar:
+       falla después, con las 1131 filas rechazadas por no evidenciar nada.
+       Pasó, y más de una vez. El código va igual, porque es lo que después
+       aparece en los avisos del servidor. */
+    const etiqueta = (v) => {
+      const texto = (v.texto || '').trim();
+      if (!texto || texto === v.codigo) return v.codigo;
+      return `${v.codigo} — ${texto.length > 70 ? `${texto.slice(0, 70)}…` : texto}`;
+    };
+    const opciones = () => '<option value="">— ninguna —</option>'
+      + variables.map((v) => `<option value="${esc(v.codigo)}">${esc(etiqueta(v))}</option>`).join('');
 
-    $('#cons-contacto-var', caja).innerHTML = opciones(true);
-    $('#cons-semantico-var', caja).innerHTML = opciones(true);
+    $('#cons-contacto-var', caja).innerHTML = opciones();
+    $('#cons-semantico-var', caja).innerHTML = opciones();
 
     // Precarga: las variables que parecen de consentimiento suelen llamarse
-    // así. Es una sugerencia y se cambia con el desplegable.
-    const probable = codigos.find((c) => /^(cons|consent|autoriz|acepta)/i.test(c));
+    // así, o preguntarlo en su texto. Es una sugerencia y se cambia con el
+    // desplegable.
+    const parece = /(^|_)(cons|consent|autoriz|acepta)|consentimiento|autoriza/i;
+    const probable = variables.find((v) => parece.test(v.codigo))
+      || variables.find((v) => parece.test(v.texto || ''));
     if (probable) {
-      $('#cons-contacto-var', caja).value = probable;
-      $('#cons-semantico-var', caja).value = probable;
+      $('#cons-contacto-var', caja).value = probable.codigo;
+      $('#cons-semantico-var', caja).value = probable.codigo;
     }
   }
 

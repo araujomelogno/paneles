@@ -275,3 +275,51 @@ def test_un_archivo_de_dos_filas_no_dispara_la_guarda(ctx, actor, conn_boveda):
         origen="sav", columna_id="ID",
         evidencia_consentimiento=_evidencia())
     assert resultado["resumen"]["creados"] == 2
+
+
+# ── El aviso de consentimiento dice qué encontró, no solo qué esperaba ──
+#
+# Pasó dos veces seguidas en producción: se declaró como variable de
+# consentimiento la **columna identificadora** del archivo, y el aviso decía
+# «1131 filas no evidencian el consentimiento en la variable var7O11» sin
+# mostrar que esa variable trae identificadores de respondente. Sin abrir el
+# `.sav` no había forma de verlo.
+
+def test_el_aviso_de_consentimiento_muestra_los_valores_del_archivo(conn_boveda):
+    from panel_api import sav
+    from panel_api.errores import DatosInvalidos
+
+    # `var7O11` es la columna identificadora, no la de consentimiento.
+    filas = [{"ID": f"2026_CORPO_{i}", "NOM": f"Persona {i}",
+              "DOC": f"4{i:06d}-1", "var7O11": f"2026_CORPO_{i}"}
+             for i in range(12)]
+    resultado = sav.crear_individuos(
+        conn_boveda, filas, {"nombre": "NOM", "documento": "DOC"},
+        origen="sav", columna_id="ID",
+        evidencia_consentimiento={
+            "contacto_participacion": {"variable": "var7O11",
+                                       "valor_afirmativo": "1",
+                                       "version_texto": VERSION},
+            "uso_semantico": {"variable": "var7O11",
+                              "valor_afirmativo": "1",
+                              "version_texto": VERSION},
+        })
+
+    assert resultado["resumen"]["creados"] == 0
+    mensaje = resultado["aviso_sin_consentimiento"]["mensaje"]
+    # Lo que se esperaba…
+    assert "'1'" in mensaje
+    # …y lo que la variable trae de verdad, que es lo que delata el error.
+    assert "2026_corpo_0" in mensaje
+    assert "12 valores distintos" in mensaje
+
+
+def test_una_variable_que_no_esta_en_el_archivo_lo_dice_asi(conn_boveda):
+    """Distinto de «los valores no coinciden»: acá no hay ningún valor.
+
+    El control previo la atrapa antes, pero el ayudante tiene que saber
+    decirlo igual: es el mismo síntoma con otra causa.
+    """
+    from panel_api import sav
+
+    assert "ningún valor" in sav._valores_de([{"A": "1"}], "NO_EXISTE")
