@@ -23,12 +23,20 @@ app.
 
 from . import db
 
+# Espejo de `motivo_reidentificacion` (boveda/0020). El catálogo vive en la
+# base para poder consultarlo desde ahí, pero **sin clave foránea**: ver el
+# encabezado de esa migración. Que no diverjan lo cuida
+# `test_fase7_auditoria.py`.
 MOTIVOS_REIDENTIFICACION = (
     "ficha",           # se abrió la ficha de un panelista
     "consulta",        # se resolvió un resultado de consulta a datos de contacto
     "convocatoria",    # se armó una convocatoria con nombres
     "exportacion",     # se bajó un archivo con PII
     "cumplimiento",    # atención de un pedido de baja o de acceso
+    # R7.6 — ver qué respondió una persona identificada. No revela contacto,
+    # pero une identidad y contenido, que es lo que los dos stores mantienen
+    # separado. Se registra por eso, con etiqueta propia.
+    "respuestas_panelista",
 )
 
 ACCIONES_USUARIO = (

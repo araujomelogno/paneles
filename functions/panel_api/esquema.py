@@ -132,6 +132,10 @@ MIGRACIONES_BOVEDA = (
         "ingesta_trabajo", "ingesta_lote", "v_ingesta_progreso",
         "purgar_ingestas_terminadas()",
     )),
+    # ── Fase 7 ──
+    ("0020_motivos_reidentificacion.sql", (
+        "motivo_reidentificacion", "v_reidentificacion",
+    )),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -238,6 +242,9 @@ PARA_QUE = {
     "ingesta_trabajo": "la carga que se procesa en diferido, con el mapeo congelado; sin ella la ingesta vuelve a correr adentro de una request y corta por timeout",
     "ingesta_lote": "cada pedazo de una carga con su rebanada de filas; es lo que permite reintentar uno solo en vez de rehacer todo",
     "v_ingesta_progreso": "el avance de cada carga contado sobre sus lotes; es lo que lee la pantalla para mostrar progreso",
+    # ── Fase 7 ──
+    "motivo_reidentificacion": "qué significa cada motivo del registro de reidentificación, consultable desde la base y no solo desde el código",
+    "v_reidentificacion": "el registro de reidentificación con la etiqueta de su motivo, marcando los que no están catalogados en vez de esconderlos",
     "purgar_ingestas_terminadas()": "libera las filas guardadas de las cargas viejas; sin ella el espacio temporal de las cargas grandes no se recupera nunca",
     "estado_ingesta": "los estados de un trabajo de ingesta, con su etiqueta, para que la pantalla no repita el diccionario",
     "estado_lote_ingesta": "los estados de un lote de ingesta, con su etiqueta",

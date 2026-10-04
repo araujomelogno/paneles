@@ -128,6 +128,34 @@ export const panelistas = {
   // ve ni define nada, solo hace que salga el correo.
   emitirAccesoAlPortal: (idPersona) => POST(`/panelistas/${idPersona}/acceso-portal`, {}),
   accesosAlPortal: (idPersona) => GET(`/panelistas/${idPersona}/acceso-portal`),
+
+  /* Fase 7 — la ficha **seudónima**, la que se abre desde un resultado.
+
+     Es otra cosa que `ficha()`: esa trae nombre y contacto y es, por
+     definición, una reidentificación. Esta trae atributos y nada
+     identificatorio, y por eso se puede abrir con un clic. */
+  fichaSeudonima: (idPersona, consulta) =>
+    GET(`/panelistas/${idPersona}/ficha`, consulta),
+  /* R7.6 — qué respondió, de qué estudio. Queda registrado del lado del
+     servidor: no hay forma de pedirlo «sin que cuente». */
+  respuestas: (idPersona, consulta) =>
+    GET(`/panelistas/${idPersona}/respuestas`, consulta),
+  estudiosConRespuestas: (idPersona) =>
+    GET(`/panelistas/${idPersona}/respuestas/estudios`),
+};
+
+/* R7.5 — los números de los dos stores. */
+export const estadisticas = {
+  todo: () => GET('/estadisticas'),
+  sinRespuestas: (limite) => GET('/estadisticas/sin-respuestas',
+                                 limite ? { limite } : {}),
+};
+
+/* R7.4 — las columnas de la lista de resultados y su memoria. */
+export const preferenciasDeUsuario = {
+  ver: () => GET('/mi/preferencias'),
+  guardar: (columnas) => PUT('/mi/preferencias',
+                             { columnas_resultado: columnas }),
 };
 
 /* R-ASYNC.3 — el avance de una carga en diferido.
@@ -196,12 +224,14 @@ export const encuestas = {
       ids_persona: idsPersona, todo_el_panel: !!todoElPanel,
     }),
   participacion: (id) => GET(`/encuestas/${id}/participacion`),
-  ingestar: (id, { preguntas, filas, columnaId, origen, demograficas,
-                  tipoIdentificador }) =>
-    POST(`/encuestas/${id}/ingesta`, {
-      preguntas, filas, columna_id: columnaId || 'id_en_origen', origen,
-      demograficas, tipo_identificador: tipoIdentificador,
-    }),
+  /* El cuerpo viaja **tal cual** y con los nombres del servidor.
+
+     Antes esta función desarmaba un objeto con nombres propios y rearmaba
+     el del servidor. Esa lista blanca descartaba en silencio cualquier
+     campo que no estuviera enumerado, y ya costó un bug: `modo` se mandaba
+     desde la pantalla y nunca llegaba. Un traductor que pierde lo que no
+     conoce es peor que no tener traductor. */
+  ingestar: (id, cuerpo) => POST(`/encuestas/${id}/ingesta`, cuerpo),
   cruce: (id) => GET(`/encuestas/${id}/cruce`),
   // R3.12.a — la muestra para precargar en la plataforma de campo.
   muestra: (id, conContacto = false) =>
@@ -373,6 +403,12 @@ export const atributos = {
   // recalcula desde los crudos, sin volver a subir el archivo.
   recalcular: (id, mapeo) => POST(`/atributos/${id}/recalcular`,
     mapeo ? { mapeo } : {}),
+  // R7.4 — qué atributos se pueden poner como columna. No es `listar`: los
+  // de categoría especial quedan fuera, y esa decisión la toma el servidor.
+  columnas: () => GET('/atributos/columnas'),
+  // Los atributos de un conjunto de resultados, en una sola llamada.
+  deResultados: (idsPersona) =>
+    POST('/resultados/atributos', { ids_persona: idsPersona }),
   // R-MAP.2 — qué categoría parece corresponderle a cada valor. Es una
   // propuesta: la pantalla la precarga y quien carga confirma.
   sugerirMapeo: (clave, valores, etiquetas) =>
@@ -402,14 +438,10 @@ export const cargas = {
   ingestar: (cargaId, cuerpo, opciones) =>
     subir(`/cargas/${cargaId}/ingesta`, cuerpo, opciones),
   /* El camino sin `.sav` (csv/xlsx, que se parsean en el navegador) manda
-     las filas ya leídas. Mismo endpoint; lo que cambia es que acá el cuerpo
-     se arma con los nombres del servidor, igual que `encuestas.ingestar`. */
-  ingestarFilas: (cargaId, { preguntas, filas, columnaId, origen, demograficas,
-                            tipoIdentificador }, opciones) =>
-    subir(`/cargas/${cargaId}/ingesta`, {
-      preguntas, filas, columna_id: columnaId || 'id_en_origen', origen,
-      demograficas, tipo_identificador: tipoIdentificador,
-    }, opciones),
+     las filas ya leídas. Mismo endpoint y, como en `encuestas.ingestar`, el
+     cuerpo viaja tal cual: ver el comentario de allá. */
+  ingestarFilas: (cargaId, cuerpo, opciones) =>
+    subir(`/cargas/${cargaId}/ingesta`, cuerpo, opciones),
 };
 
 export const exportacion = {

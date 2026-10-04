@@ -45,6 +45,19 @@ let nombresResueltos = {};   // id_persona → datos de contacto, si se pidieron
    segmentador nuevo aparece en este desplegable sin tocar una línea. */
 let catalogoDeAtributos = [];
 
+/* R7.4 — qué columnas demográficas se muestran en el ranking.
+
+   `columnasElegidas` se recuerda por usuario en su ficha, así que
+   sobrevive a recargar y a cambiar de consulta. `valoresDeColumnas` es el
+   caché de esta tanda de resultados: agregar una columna **no re-ejecuta
+   la consulta**, resuelve los atributos sobre los `id_persona` que ya
+   están en pantalla, y de a todos en una sola llamada. De a uno, una lista
+   de 200 dispara 200 consultas, y con la bóveda en un tier chico eso se
+   nota. */
+let columnasOfrecidas = [];
+let columnasElegidas = [];
+let valoresDeColumnas = {};
+
 const OPERADORES = {
   eq: 'es', ne: 'no es', in: 'es alguno de', not_in: 'no es ninguno de',
   contiene: 'contiene', lt: 'menor que', lte: 'menor o igual que',
@@ -81,6 +94,10 @@ export async function render(main, ctx) {
     catalogo.cargar(),
   ]);
   catalogoDeAtributos = atributosDelCatalogo;
+  // R7.4 — qué columnas se pueden elegir y cuáles tenía elegidas este
+  // usuario la última vez. No bloquea la pantalla: si falla, la lista se
+  // muestra como siempre.
+  await cargarColumnas();
 
   main.innerHTML = encabezado('Consulta', 'semántica',
     'Quiénes se aproximan a un criterio, con la respuesta que lo justifica.') + `
@@ -357,6 +374,9 @@ async function correr() {
   nombresResueltos = {};
   try {
     ultimoResultado = await api.consultas.correr(definicion);
+    // R7.4 — los atributos de las columnas elegidas se resuelven sobre el
+    // conjunto recién obtenido, en una sola llamada y antes de pintar.
+    await resolverColumnas(ultimoResultado);
     pintarResultado(ultimoResultado);
   } catch (error) {
     $('#resultado').innerHTML = alerta(error.message);
@@ -393,13 +413,16 @@ function pintarResultado(resultado) {
               ? 'CSV con nombre, documento y contacto. Queda registrado.'
               : 'Primero hay que reidentificar: exportar con datos no puede ser un segundo camino para sacar PII.'}"
             >CSV con datos</button>
+          <button class="btn btn-outline btn-sm" id="elegir-columnas">Columnas</button>
           <button class="btn btn-outline btn-sm" id="crear-panel">Crear panel</button>
         </div>
       </div>
       <div class="card-body tight">
         ${resultado.items.length ? `<div class="table-wrap"><table>
           <thead><tr>
-            <th>#</th><th>Persona</th><th>Puntaje</th><th>Confianza</th>
+            <th>#</th><th>Persona</th>
+            ${columnasElegidas.map((c) => `<th>${esc(etiquetaDeColumna(c))}</th>`).join('')}
+            <th>Puntaje</th><th>Confianza</th>
             <th>Criterios</th><th>Evidencia</th>
           </tr></thead>
           <tbody>${resultado.items.map((item, i) => filaItem(item, i)).join('')}</tbody>
@@ -416,8 +439,14 @@ function pintarResultado(resultado) {
   $('#bajar-csv').onclick = bajarCsv;
   $('#bajar-csv-pii').onclick = bajarCsvIdentificado;
   $('#crear-panel').onclick = crearPanelDesdeConsulta;
+  $('#elegir-columnas').onclick = abrirElegirColumnas;
   $$('[data-detalle]', caja).forEach((b) => {
     b.onclick = () => abrirDetalle(resultado.items[Number(b.dataset.detalle)]);
+  });
+  // R7.3 — la ficha se abre sin perder el resultado: es un modal encima de
+  // la lista, y cerrarlo no vuelve a consultar nada.
+  $$('[data-ficha]', caja).forEach((b) => {
+    b.onclick = () => abrirFicha(b.dataset.ficha);
   });
 }
 
@@ -427,7 +456,10 @@ function filaItem(item, indice) {
   return `<tr>
     <td class="mono">${indice + 1}</td>
     <td>${nombre ? `<div class="td-strong">${esc(nombre)}</div>` : ''}
-        ${token(item.id_persona)}</td>
+        ${token(item.id_persona)}
+        <button class="btn btn-outline btn-sm" data-ficha="${esc(item.id_persona)}"
+                style="margin-top:.35rem">Ficha</button></td>
+    ${columnasElegidas.map((c) => `<td>${celdaDeColumna(item.id_persona, c)}</td>`).join('')}
     <td><div class="barra ${item.puntaje >= 0.7 ? 'ok' : ''}">
           <span style="width:${Math.round(item.puntaje * 100)}%"></span></div>
         <div class="small mono">${item.puntaje.toFixed(3)}</div></td>
@@ -445,6 +477,217 @@ function filaItem(item, indice) {
         <button class="btn btn-outline btn-sm" data-detalle="${indice}"
                 style="margin-top:.35rem">Ver</button></td>
   </tr>`;
+}
+
+/* ── R7.4 · Las columnas de la lista ───────────────────────────── */
+
+const etiquetaDeColumna = (clave) =>
+  (columnasOfrecidas.find((c) => c.clave === clave) || {}).etiqueta || clave;
+
+/* «Sin dato» y no una celda vacía ni una categoría: que a alguien le falte
+   el atributo es información, y confundirlo con un valor es peor que no
+   mostrarlo. El backend devuelve el atributo **ausente** del objeto —no una
+   cadena vacía— justamente para que acá no se pueda confundir. */
+function celdaDeColumna(idPersona, clave) {
+  const valor = (valoresDeColumnas[idPersona] || {})[clave];
+  if (!valor) return '<span class="muted small">sin dato</span>';
+  return esc(valor.etiqueta_valor || valor.valor);
+}
+
+async function cargarColumnas() {
+  try {
+    const [{ items }, preferencias] = await Promise.all([
+      api.atributos.columnas(),
+      api.preferenciasDeUsuario.ver().catch(() => ({ columnas_resultado: [] })),
+    ]);
+    columnasOfrecidas = items;
+    // Solo las que siguen existiendo: un atributo que se dio de baja no
+    // puede dejar una columna fantasma para siempre.
+    const validas = new Set(items.map((c) => c.clave));
+    columnasElegidas = (preferencias.columnas_resultado || [])
+      .filter((c) => validas.has(c));
+  } catch {
+    columnasOfrecidas = [];
+    columnasElegidas = [];
+  }
+}
+
+/* Resuelve los atributos del conjunto que ya está en pantalla. No vuelve a
+   consultar: los `id_persona` son los del resultado que se está mirando. */
+async function resolverColumnas(resultado) {
+  if (!columnasElegidas.length || !resultado?.items?.length) {
+    valoresDeColumnas = {};
+    return;
+  }
+  try {
+    const { items } = await api.atributos.deResultados(
+      resultado.items.map((i) => i.id_persona));
+    valoresDeColumnas = items;
+  } catch {
+    valoresDeColumnas = {};
+  }
+}
+
+function abrirElegirColumnas() {
+  if (!columnasOfrecidas.length) {
+    toast('No hay atributos del catálogo para mostrar como columna.', 'warn');
+    return;
+  }
+  const caja = modal({
+    titulo: 'Columnas de la lista',
+    cuerpo: `
+      <p class="small">Se agregan sobre el resultado que ya está en pantalla:
+      elegir columnas <strong>no vuelve a correr la consulta</strong>.</p>
+      <div class="finalidades">
+        ${columnasOfrecidas.map((c) => `
+          <label class="finalidad">
+            <input type="checkbox" value="${esc(c.clave)}"
+                   ${columnasElegidas.includes(c.clave) ? 'checked' : ''} />
+            <span><span class="f-titulo">${esc(c.etiqueta)}</span>
+                  <span class="f-desc">${esc(c.clave)}</span></span>
+          </label>`).join('')}
+      </div>
+      <div class="field-hint">Los atributos marcados como categoría especial
+      no se ofrecen: verlos de a uno en una ficha no es lo mismo que verlos
+      en una planilla de doscientas filas.</div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Aplicar', clase: 'btn-orange', onClick: async (c) => {
+        columnasElegidas = $$('input[type=checkbox]', c)
+          .filter((i) => i.checked).map((i) => i.value);
+        cerrarModal();
+        try { await api.preferenciasDeUsuario.guardar(columnasElegidas); }
+        catch { toast('No se pudo recordar la selección.', 'warn'); }
+        await resolverColumnas(ultimoResultado);
+        pintarResultado(ultimoResultado);
+      } },
+    ],
+  });
+  return caja;
+}
+
+/* ── R7.3 y R7.6 · La ficha desde un resultado ─────────────────── */
+
+/* Sin salir de la pantalla y sin perder el resultado: es un modal encima.
+   Y **sin nombre, documento, correo ni celular**: la consulta devuelve un
+   conjunto seudonimizado a propósito, y reidentificar es un acto
+   deliberado que queda registrado. Si la ficha mostrara el nombre con un
+   clic, esa auditoría dejaría de reflejar quién vio los datos de quién. */
+async function abrirFicha(idPersona) {
+  const caja = modal({
+    titulo: 'Ficha del panelista',
+    ancho: '760px',
+    cuerpo: cargando('20vh'),
+    acciones: [{ texto: 'Cerrar', clase: 'btn-outline', onClick: cerrarModal }],
+  });
+  try {
+    const [ficha, estudios] = await Promise.all([
+      api.panelistas.fichaSeudonima(idPersona),
+      api.panelistas.estudiosConRespuestas(idPersona).catch(() => ({ items: [] })),
+    ]);
+    $('.modal-body', caja).innerHTML = fichaHtml(ficha, estudios.items);
+    activarTokens(caja);
+    engancharRespuestas(caja, idPersona, estudios.items);
+  } catch (error) {
+    $('.modal-body', caja).innerHTML = alerta(error.message);
+  }
+}
+
+function fichaHtml(ficha, estudios) {
+  return `
+    <p>${token(ficha.id_persona)}
+       <span class="small muted">enrolada el ${esc(fechaCorta(ficha.enrolado_en))}</span></p>
+    <div class="aviso info">
+      <p>Esta ficha <strong>no muestra nombre, documento, correo ni
+      celular</strong>. Ver quién es sigue siendo una reidentificación: se
+      pide con «Ver quiénes son», con motivo, y queda registrada.</p>
+    </div>
+
+    <h4>Atributos demográficos</h4>
+    ${ficha.atributos.length ? `<table class="tabla">
+      <thead><tr><th>Atributo</th><th>Valor</th><th>Procedencia</th></tr></thead>
+      <tbody>${ficha.atributos.map((a) => `
+        <tr><td>${esc(a.etiqueta)}</td>
+            <td>${esc(a.etiqueta_valor || a.valor || '—')}</td>
+            <td class="small muted">${esc(a.procedencia || a.origen || '')}</td>
+        </tr>`).join('')}</tbody>
+    </table>` : '<p class="small muted">Sin atributos cargados.</p>'}
+
+    <h4>Paneles</h4>
+    <p>${ficha.paneles.length
+      ? ficha.paneles.map((p) => esc(p.nombre)).join(' · ')
+      : '<span class="small muted">No integra ningún panel.</span>'}</p>
+
+    <h4>Respuestas procesadas</h4>
+    ${estudios.length ? `
+      <div class="toolbar" style="margin-bottom:.5rem">
+        <select class="fselect" id="ficha-estudio">
+          <option value="">Todos los estudios</option>
+          ${estudios.map((e) => `<option value="${esc(e.ref_estudio)}">
+            ${esc(e.nombre || e.estudio)} (${e.respuestas})</option>`).join('')}
+        </select>
+        <input class="finput" id="ficha-buscar" placeholder="Buscar en pregunta o respuesta" />
+        <label class="check"><input type="checkbox" id="ficha-embebido" />
+          Ver el texto embebido</label>
+      </div>
+      <div id="ficha-respuestas">${cargando('12vh')}</div>`
+      : `<p class="small muted">Todavía no tiene respuestas procesadas: no
+         va a aparecer en ninguna consulta por concepto.</p>`}`;
+}
+
+function engancharRespuestas(caja, idPersona, estudios) {
+  if (!estudios.length) return;
+  let pagina = 1;
+
+  const pintar = async () => {
+    const destino = $('#ficha-respuestas', caja);
+    if (!destino) return;
+    destino.innerHTML = cargando('12vh');
+    try {
+      const d = await api.panelistas.respuestas(idPersona, {
+        ref_estudio: $('#ficha-estudio', caja).value || undefined,
+        q: $('#ficha-buscar', caja).value.trim() || undefined,
+        pagina,
+      });
+      const conEmbebido = $('#ficha-embebido', caja).checked;
+      destino.innerHTML = d.items.length ? `
+        <table class="tabla">
+          <thead><tr><th>Código</th><th>Pregunta</th><th>Respuesta</th>
+                     <th>Estudio</th></tr></thead>
+          <tbody>${d.items.map((f) => `
+            <tr><td><code>${esc(f.codigo)}</code></td>
+                <td>${esc(f.pregunta)}</td>
+                <td>${esc(f.respuesta || '—')}
+                    ${conEmbebido ? `<div class="small muted mono">${esc(f.texto_embebido)}</div>` : ''}</td>
+                <td class="small">${esc(f.estudio)}<br>
+                    <span class="muted">${f.fecha_campo ? esc(fechaCorta(f.fecha_campo)) : ''}</span></td>
+            </tr>`).join('')}</tbody>
+        </table>
+        <div class="toolbar" style="margin-top:.5rem">
+          <button class="btn btn-outline btn-sm" id="ficha-antes"
+                  ${pagina <= 1 ? 'disabled' : ''}>Anterior</button>
+          <span class="small">Página ${d.pagina} de ${d.paginas} · ${d.total} respuesta(s)</span>
+          <button class="btn btn-outline btn-sm" id="ficha-despues"
+                  ${pagina >= d.paginas ? 'disabled' : ''}>Siguiente</button>
+        </div>`
+        : '<p class="small muted">Ninguna respuesta coincide con ese filtro.</p>';
+      const antes = $('#ficha-antes', caja);
+      const despues = $('#ficha-despues', caja);
+      if (antes) antes.onclick = () => { pagina -= 1; pintar(); };
+      if (despues) despues.onclick = () => { pagina += 1; pintar(); };
+    } catch (error) {
+      destino.innerHTML = alerta(error.message);
+    }
+  };
+
+  $('#ficha-estudio', caja).onchange = () => { pagina = 1; pintar(); };
+  $('#ficha-embebido', caja).onchange = () => pintar();
+  let reloj = null;
+  $('#ficha-buscar', caja).oninput = () => {
+    clearTimeout(reloj);
+    reloj = setTimeout(() => { pagina = 1; pintar(); }, 300);
+  };
+  pintar();
 }
 
 function abrirDetalle(item) {

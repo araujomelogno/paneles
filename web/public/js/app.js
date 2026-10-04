@@ -20,6 +20,7 @@ import * as pagMuestreo from './paginas/muestreo.js';
 import * as pagGamificacion from './paginas/gamificacion.js';
 import * as pagInscripciones from './paginas/inscripciones.js';
 import * as pagLongitudinal from './paginas/longitudinal.js';
+import * as pagEstadisticas from './paginas/estadisticas.js';
 
 const CDN = 'https://www.gstatic.com/firebasejs/10.7.0';
 const cfg = window.firebaseConfig || {};
@@ -59,6 +60,7 @@ const PAGINAS = [
   { id: 'gamificacion',  icono: '🎁', etiqueta: 'Puntos y premios', modulo: pagGamificacion, permiso: 'gamificacion' },
   { id: 'inscripciones', icono: '📥', etiqueta: 'Inscripciones', modulo: pagInscripciones, permiso: 'aprobar_inscripciones' },
   { id: 'revisiones',    icono: '🔀', etiqueta: 'Revisión de altas', modulo: pagRevisiones, permiso: 'leer' },
+  { id: 'estadisticas',  icono: '🧮', etiqueta: 'Estadísticas', modulo: pagEstadisticas, permiso: 'leer' },
   { id: 'cumplimiento',  icono: '🛡️', etiqueta: 'Cumplimiento', modulo: pagCumplimiento, permiso: 'leer' },
   { id: 'configuracion', icono: '⚙️', etiqueta: 'Configuración', modulo: pagConfiguracion, permiso: 'gestionar_usuarios' },
 ];

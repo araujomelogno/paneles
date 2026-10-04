@@ -7,6 +7,7 @@
    `id_persona`: la PII se queda en la bóveda. */
 
 import * as api from '../api.js';
+import * as consentimiento from '../consentimiento.js';
 import * as catalogo from '../catalogo.js';
 import {
   $, $$, esc, encabezado, token, vacio, cargando, toast, modal, cerrarModal,
@@ -628,6 +629,8 @@ function abrirIngesta(destino, alTerminar) {
     ancho: '720px',
     cuerpo: `
       <div id="ing-alerta"></div>
+      <div id="ing-revision" class="hidden"></div>
+      <div id="ing-formulario">
       ${esCarga ? `
       <div class="aviso destacado">
         <h4>Esta gente no queda en ningún panel</h4>
@@ -733,7 +736,7 @@ function abrirIngesta(destino, alTerminar) {
             <div class="grid-3">
               <select class="fselect" id="cons-contacto-var"></select>
               <input class="finput" id="cons-contacto-valor" placeholder="Valor afirmativo (1, Sí…)" />
-              <input class="finput" id="cons-contacto-version" placeholder="Versión del texto consentido" />
+              <div id="caja-version-contacto"></div>
             </div>
           </div>
 
@@ -747,10 +750,11 @@ function abrirIngesta(destino, alTerminar) {
             <div class="grid-3">
               <select class="fselect" id="cons-semantico-var"></select>
               <input class="finput" id="cons-semantico-valor" placeholder="Valor afirmativo" />
-              <input class="finput" id="cons-semantico-version" placeholder="Versión del texto consentido" />
+              <div id="caja-version-semantico"></div>
             </div>
           </div>
         </div>
+      </div>
       </div>`,
     acciones: [
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
@@ -1146,14 +1150,27 @@ function abrirIngesta(destino, alTerminar) {
       ? alerta(analisis.avisos.map((a) => a.mensaje).join(' '), 'warn')
       : '';
 
-    prepararAltaSav(analisis.variables);
+    await prepararAltaSav(analisis.variables);
   }
 
   /* R3.9 — el modo «crear los individuos en esta carga». Solo aparece con un
      .sav, y solo deja confirmar si se declaró de dónde sale la evidencia de
      consentimiento: es la base legal del alta, no un campo más. */
-  function prepararAltaSav(variables) {
+  async function prepararAltaSav(variables) {
     $('#bloque-sav', caja).classList.remove('hidden');
+
+    /* R7.1 — la versión del consentimiento se elige de lo publicado. Antes
+       era un campo de texto que tenía que coincidir exacto con una versión
+       activa; tipearla mal no fallaba al escribir sino al crear la primera
+       persona, con el archivo ya subido. */
+    await consentimiento.cargar();
+    $('#caja-version-contacto', caja).innerHTML = consentimiento.selector(
+      'contacto_participacion',
+      { id: 'cons-contacto-version', etiqueta: 'Versión del texto' });
+    $('#caja-version-semantico', caja).innerHTML = consentimiento.selector(
+      'uso_semantico',
+      { id: 'cons-semantico-version', etiqueta: 'Versión del texto' });
+    consentimiento.activarVerTexto(caja);
 
     /* El texto de la pregunta va en la opción, no solo el código.
        Un desplegable de `var7O10`, `var7O11`, `var9` obliga a adivinar cuál
@@ -1274,19 +1291,26 @@ function abrirIngesta(destino, alTerminar) {
     const contacto = {
       variable: $('#cons-contacto-var', caja).value,
       valor_afirmativo: $('#cons-contacto-valor', caja).value.trim(),
-      version_texto: $('#cons-contacto-version', caja).value.trim(),
+      version_texto: ($('#cons-contacto-version', caja)?.value || '').trim(),
     };
     const misma = $('#cons-misma', caja).checked;
     const semantico = misma ? { ...contacto } : {
       variable: $('#cons-semantico-var', caja).value,
       valor_afirmativo: $('#cons-semantico-valor', caja).value.trim(),
-      version_texto: $('#cons-semantico-version', caja).value.trim(),
+      version_texto: ($('#cons-semantico-version', caja)?.value || '').trim(),
     };
 
     for (const [etiqueta, regla] of [['contacto', contacto], ['uso semántico', semantico]]) {
-      if (!regla.variable || !regla.valor_afirmativo || !regla.version_texto) {
+      if (!regla.version_texto) {
+        throw new Error(
+          `No hay texto de consentimiento publicado y activo para `
+          + `${etiqueta}. Se publica en Inscripciones → Textos de `
+          + `consentimiento; sin él, la base rechaza el alta.`);
+      }
+      if (!regla.variable || !regla.valor_afirmativo) {
         throw new Error(`Falta declarar la evidencia de consentimiento de `
-          + `${etiqueta}: variable, valor afirmativo y versión del texto.`);
+          + `${etiqueta}: qué variable la contiene y qué valor cuenta como `
+          + `afirmativo.`);
       }
     }
 
@@ -1315,6 +1339,245 @@ function abrirIngesta(destino, alTerminar) {
     // que el cartel esté a la vista en el momento, no que el viaje sea lindo.
     caja.scrollTop = 0;
     return alerta$;
+  }
+
+  /* R7.2 · El paso de revisión ─────────────────────────────────────
+
+     Devuelve `true` si se confirmó, `false` si se volvió a corregir. Volver
+     atrás no pierde nada: el modal de definición sigue abierto debajo, con
+     todo lo que se había puesto. */
+  async function revisarAntesDeImportar(cuerpo) {
+    let resumen;
+    try {
+      resumen = await enviarIngesta({ ...cuerpo, solo_revisar: true });
+    } catch (error) {
+      avisarEnIngesta(alerta(error.message));
+      return false;
+    }
+    /* Dentro del mismo modal y no en uno nuevo: `modal()` cierra el
+       anterior, así que un modal encima destruiría el formulario y «volver
+       a corregir» no tendría a qué volver. Acá el formulario sigue intacto
+       debajo, solo oculto. */
+    const revision$ = $('#ing-revision', caja);
+    const formulario$ = $('#ing-formulario', caja);
+    revision$.innerHTML = resumenHtml(resumen) + `
+      <div class="modal-foot" style="padding-left:0;padding-right:0">
+        <button class="btn btn-outline" id="volver-a-corregir">Volver a corregir</button>
+        <button class="btn btn-orange" id="confirmar-importar">Confirmar e importar</button>
+      </div>`;
+    revision$.classList.remove('hidden');
+    formulario$.classList.add('hidden');
+    caja.scrollTop = 0;
+
+    return new Promise((resolver) => {
+      const cerrar = (confirmado) => {
+        revision$.classList.add('hidden');
+        revision$.innerHTML = '';
+        formulario$.classList.remove('hidden');
+        resolver(confirmado);
+      };
+      $('#volver-a-corregir', revision$).onclick = () => cerrar(false);
+      $('#confirmar-importar', revision$).onclick = () => cerrar(true);
+      // El resumen es el registro de qué se definió en esta carga: se copia
+      // y se pega en el correo donde alguien pregunta «¿qué cargaste?».
+      $('#copiar-resumen', revision$).onclick = () => {
+        navigator.clipboard?.writeText(resumenTexto(resumen));
+        toast('Resumen copiado.', 'ok');
+      };
+    });
+  }
+
+  const filaVar = (v, extra = '') => `
+    <tr><td><code>${esc(v.codigo)}</code></td>
+        <td>${esc(v.texto || '—')}</td>
+        <td>${extra}</td></tr>`;
+
+  function resumenHtml(r) {
+    const graves = r.advertencias.filter((a) => a.grave);
+    const leves = r.advertencias.filter((a) => !a.grave);
+    return `
+    ${graves.map((a) => alerta(a.mensaje, 'error')).join('')}
+    ${leves.map((a) => alerta(a.mensaje, 'warn')).join('')}
+
+    <div class="grid-datos">
+      <div class="tarjeta-dato"><div class="valor">${r.volumen.filas_del_archivo}</div>
+        <div class="etiqueta">filas en el archivo</div></div>
+      <div class="tarjeta-dato"><div class="valor">${r.volumen.personas_estimadas}</div>
+        <div class="etiqueta">personas que quedarían</div></div>
+      <div class="tarjeta-dato"><div class="valor">${r.volumen.respuestas_a_escribir}</div>
+        <div class="etiqueta">respuestas a escribir</div></div>
+    </div>
+
+    <h4>Identidad</h4>
+    <table class="tabla"><tbody>
+      <tr><td>Modo</td><td>${r.identidad.crea_personas
+        ? '<strong>Crear los individuos en esta carga</strong>'
+        : 'Los panelistas ya existen'}</td></tr>
+      <tr><td>Columna que identifica</td>
+          <td><code>${esc(r.identidad.columna_id || '—')}</code>
+              ${r.identidad.columna_id_texto
+                ? `— ${esc(r.identidad.columna_id_texto)}` : ''}</td></tr>
+      <tr><td>Tipo de identificador</td>
+          <td>${esc(r.identidad.tipo_identificador)}</td></tr>
+      <tr><td>Panel</td><td>${r.panel.sin_panel
+        ? 'No quedan asociados a ningún panel'
+        : esc(r.panel.nombre || `#${r.panel.panel_id}`)}</td></tr>
+    </tbody></table>
+
+    <h4>Consentimiento</h4>
+    ${r.consentimiento.aplica ? `
+      <table class="tabla">
+        <thead><tr><th>Finalidad</th><th>Variable</th><th>Vale como sí</th><th>Versión</th></tr></thead>
+        <tbody>${r.consentimiento.finalidades.map((f) => `
+          <tr><td>${esc(f.finalidad)}</td>
+              <td><code>${esc(f.variable)}</code>
+                  ${f.variable_texto ? `<div class="small">${esc(f.variable_texto)}</div>` : ''}</td>
+              <td>${f.valores_afirmativos.map((v) => `<code>${esc(v)}</code>`).join(' ')}</td>
+              <td>${esc(f.version_texto)}</td></tr>`).join('')}
+        </tbody>
+      </table>` : `<p class="small">${esc(r.consentimiento.nota)}</p>`}
+
+    ${dedupHtml(r.dedup, r.volumen)}
+
+    <h4>Al store semántico · ${r.al_store_semantico.cuantas} variable(s)</h4>
+    <table class="tabla">
+      <thead><tr><th>Código</th><th>Texto de la pregunta</th><th>Tipo</th></tr></thead>
+      <tbody>${r.al_store_semantico.variables.map(
+        (v) => filaVar(v, esc(v.tipo || ''))).join('') || '<tr><td colspan="3">Ninguna</td></tr>'}
+      </tbody>
+    </table>
+
+    <h4>A la bóveda · identidad y contacto</h4>
+    <table class="tabla">
+      <thead><tr><th>Código</th><th>Texto de la pregunta</th><th>Campo</th></tr></thead>
+      <tbody>${r.a_la_boveda.identidad_y_contacto.map(
+        (v) => filaVar(v, `<strong>${esc(v.campo)}</strong>`)).join('')
+        || '<tr><td colspan="3">Ninguna</td></tr>'}
+      </tbody>
+    </table>
+
+    <h4>A la bóveda · atributos demográficos</h4>
+    <table class="tabla">
+      <thead><tr><th>Código</th><th>Texto de la pregunta</th><th>Atributo y mapeo</th></tr></thead>
+      <tbody>${r.a_la_boveda.demograficas.map((v) => filaVar(v,
+        `<strong>${esc(v.campo)}</strong>`
+        + (Object.keys(v.mapeo || {}).length
+            ? `<div class="small">${Object.entries(v.mapeo).map(
+                ([k, val]) => `${esc(k)} → ${esc(val)}`).join(' · ')}</div>`
+            : ''))).join('') || '<tr><td colspan="3">Ninguna</td></tr>'}
+      </tbody>
+    </table>
+
+    <h4>Excluidas · ${r.excluidas.length}</h4>
+    <table class="tabla">
+      <thead><tr><th>Código</th><th>Motivo</th></tr></thead>
+      <tbody>${r.excluidas.map((v) => `
+        <tr><td><code>${esc(v.codigo)}</code></td>
+            <td>${esc(v.motivo)}</td></tr>`).join('')
+        || '<tr><td colspan="2">Ninguna</td></tr>'}
+      </tbody>
+    </table>
+
+    <button class="btn btn-outline btn-sm" id="copiar-resumen"
+            style="margin-top:0.8rem">Copiar el resumen</button>`;
+  }
+
+  /* El conteo que detecta el error que destruye datos. Va en su propia
+     sección y no mezclado entre los números de volumen. */
+  function dedupHtml(dedup, volumen) {
+    if (!dedup.length) return '';
+    return `
+    <h4>Claves de deduplicación</h4>
+    <table class="tabla">
+      <thead><tr><th>Clave</th><th class="num">Filas con valor</th>
+                 <th class="num">Valores distintos</th>
+                 <th class="num">Filas que colisionan</th>
+                 <th>Ejemplos repetidos</th></tr></thead>
+      <tbody>${dedup.map((c) => `
+        <tr class="${c.sospechosa ? 'fila-problema' : ''}">
+          <td>${esc(c.clave)}
+              <div class="small">${c.variables.map(
+                (v) => `<code>${esc(v)}</code>`).join(' + ')}</div></td>
+          <td class="num">${c.filas_con_valor}</td>
+          <td class="num"><strong>${c.valores_distintos}</strong></td>
+          <td class="num">${c.filas_que_colisionan}</td>
+          <td class="small">${c.ejemplos.map(
+            (e) => `${esc(e.valor)} (${e.filas})`).join(', ') || '—'}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    <p class="small">${volumen.filas_del_archivo} filas del archivo quedarían
+      en <strong>${volumen.personas_estimadas}</strong> persona(s).
+      ${volumen.filas_sin_clave_de_dedup
+        ? `${volumen.filas_sin_clave_de_dedup} no traen ninguna clave y no se
+           pueden agrupar con nadie.` : ''}</p>`;
+  }
+
+  /* La versión copiable, para pegar donde alguien pregunte qué se cargó. */
+  function resumenTexto(r) {
+    const lineas = [
+      `Modo: ${r.identidad.modo}`,
+      `Columna identificadora: ${r.identidad.columna_id} (${r.identidad.tipo_identificador})`,
+      `Panel: ${r.panel.sin_panel ? 'sin panel' : r.panel.nombre}`,
+      `Filas: ${r.volumen.filas_del_archivo} · Personas estimadas: ${r.volumen.personas_estimadas}`
+        + ` · Respuestas: ${r.volumen.respuestas_a_escribir}`,
+      '',
+      `Al store semántico (${r.al_store_semantico.cuantas}): `
+        + r.al_store_semantico.variables.map((v) => v.codigo).join(', '),
+      `A la bóveda: ` + [...r.a_la_boveda.identidad_y_contacto,
+                         ...r.a_la_boveda.demograficas]
+        .map((v) => `${v.codigo} → ${v.campo}`).join(', '),
+      `Excluidas: ` + r.excluidas.map((v) => v.codigo).join(', '),
+    ];
+    if (r.consentimiento.aplica) {
+      lineas.push('', ...r.consentimiento.finalidades.map(
+        (f) => `${f.finalidad}: ${f.variable} = ${f.valores_afirmativos.join('/')}`
+               + ` · ${f.version_texto}`));
+    }
+    r.dedup.forEach((c) => lineas.push(
+      `${c.clave}: ${c.filas_con_valor} filas, ${c.valores_distintos} distintos,`
+      + ` ${c.filas_que_colisionan} colisionan`));
+    r.advertencias.forEach((a) => lineas.push(
+      `${a.grave ? '[!]' : '[.]'} ${a.mensaje}`));
+    return lineas.join('\n');
+  }
+
+  /* El cuerpo que se manda, armado **una sola vez**.
+
+     R7.2 pide que el resumen de revisión refleje lo que de verdad se va a
+     ejecutar. La única forma de garantizarlo es que revisar y ejecutar
+     manden el mismo objeto: lo único que cambia entre los dos es la
+     bandera `solo_revisar`. Armarlo dos veces empieza igual y diverge con
+     el primer cambio que alguien haga de un solo lado. */
+  function cuerpoDeIngesta(preguntas, columnaId, extraSav) {
+    const comun = {
+      preguntas,
+      columna_id: columnaId,
+      demograficas: marcadoDemografico(),
+      tipo_identificador: tipoId$.value,
+    };
+    return datosArchivo.savBase64
+      ? { ...comun, archivo_base64: datosArchivo.savBase64, origen: 'sav',
+          ...extraSav }
+      : { ...comun, filas: datosArchivo.filas,
+          origen: datosArchivo.origen || undefined };
+  }
+
+  function enviarIngesta(cuerpo, avance) {
+    if (datosArchivo.savBase64) {
+      return (esCarga ? api.cargas : api.sav).ingestar(encuesta.id, cuerpo, {
+        alSubir: (f) => (f < 1
+          ? avance?.medido('Subiendo al servidor', f)
+          : avance?.abierto('Ingestando en el servidor…',
+              'Se leen las respuestas, se resuelve cada individuo y se '
+              + 'calculan los embeddings. Con archivos grandes tarda.')),
+      });
+    }
+    avance?.abierto('Ingestando en el servidor…',
+      'Se resuelve cada individuo y se calculan los embeddings. '
+      + 'Con archivos grandes tarda.');
+    return (esCarga ? api.cargas.ingestarFilas : api.encuestas.ingestar)(
+      encuesta.id, cuerpo);
   }
 
   async function correr() {
@@ -1360,6 +1623,14 @@ function abrirIngesta(destino, alTerminar) {
       }
     }
 
+    const cuerpo = cuerpoDeIngesta(preguntas, columnaId, extraSav);
+
+    // R7.2 — el paso de revisión. Importar es lo menos reversible que hace
+    // el sistema; diez segundos de mirar el resumen es la última
+    // oportunidad de ver que la columna de identidad está mal elegida
+    // antes de crear miles de duplicados.
+    if (!(await revisarAntesDeImportar(cuerpo))) return;
+
     // Avance para los dos caminos, no solo para el `.sav`. La espera larga
     // es la del servidor —resolver cada individuo y calcular embeddings— y
     // esa la tiene igual un `.csv`: sin panel, el modal se quedaba quieto y
@@ -1372,33 +1643,7 @@ function abrirIngesta(destino, alTerminar) {
     caja.scrollTop = 0;
     const enCurso = bloquearModal(caja);
     try {
-      const resultado = datosArchivo.savBase64
-        ? await (esCarga ? api.cargas : api.sav).ingestar(encuesta.id, {
-            archivo_base64: datosArchivo.savBase64,
-            preguntas, columna_id: columnaId, origen: 'sav',
-            // El marcado y el tipo de identificador valen para los dos modos
-            // y para cualquier formato: van siempre, no solo al crear gente.
-            demograficas: marcadoDemografico(),
-            tipo_identificador: tipoId$.value,
-            ...extraSav,
-          }, {
-            alSubir: (f) => (f < 1
-              ? avance.medido('Subiendo al servidor', f)
-              : avance.abierto('Ingestando en el servidor…',
-                  'Se leen las respuestas, se resuelve cada individuo y se '
-                  + 'calculan los embeddings. Con archivos grandes tarda.')),
-          })
-        : await (() => {
-            avance.abierto('Ingestando en el servidor…',
-              'Se resuelve cada individuo y se calculan los embeddings. '
-              + 'Con archivos grandes tarda.');
-            return (esCarga ? api.cargas.ingestarFilas : api.encuestas.ingestar)(encuesta.id, {
-              preguntas, filas: datosArchivo.filas, columnaId,
-              origen: datosArchivo.origen || undefined,
-              demograficas: marcadoDemografico(),
-              tipoIdentificador: tipoId$.value,
-            });
-          })();
+      const resultado = await enviarIngesta(cuerpo, avance);
       avance.medido('Encolada', 0);
       enCurso.soltar();
       cerrarModal();

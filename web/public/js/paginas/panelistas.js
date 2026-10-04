@@ -2,6 +2,7 @@
    Cubre R1.1, R1.2 y R1.3 desde la interfaz. */
 
 import * as api from '../api.js';
+import * as consentimiento from '../consentimiento.js';
 import * as catalogo from '../catalogo.js';
 import {
   $, $$, esc, encabezado, consentimientos, token, vacio, cargando, toast,
@@ -18,22 +19,23 @@ import {
    que no esté publicada y activa, así que la pantalla las lee del catálogo,
    igual que hace la landing desde R3.7.
 
-   `textosActivos` queda con `{finalidad: version}` de lo que haya publicado. */
-let textosActivos = {};
+   R7.1 — y desde la Fase 7 no se toma la más reciente en silencio: se
+   muestra cuál se va a usar, se puede elegir otra si hay varias activas, y
+   se puede leer el texto antes de confirmar. Lo que viaja al backend es la
+   misma cadena de versión de siempre. */
 
 async function cargarTextosActivos() {
-  try {
-    const { items } = await api.inscripciones.textos();
-    textosActivos = {};
-    items.filter((t) => t.activo).forEach((t) => {
-      // El listado viene por finalidad y fecha descendente: la primera de
-      // cada finalidad es la vigente.
-      if (!(t.finalidad in textosActivos)) textosActivos[t.finalidad] = t.version;
-    });
-  } catch { textosActivos = {}; }
+  await consentimiento.cargar();
 }
 
-const VERSION = (finalidad) => textosActivos[finalidad] || null;
+/* La versión elegida en el formulario, o la más reciente si no hay
+   desplegable —porque hay una sola, o porque la finalidad no se marcó—. */
+function VERSION(finalidad = 'contacto_participacion', contenedor = document) {
+  const select = contenedor.querySelector(
+    `select[data-finalidad="${finalidad}"]`);
+  return (select && select.value)
+    || consentimiento.versionPorDefecto(finalidad);
+}
 
 /* R4.4 — los cuatro canales, con qué significa aceptar cada uno. El de
    WhatsApp dice explícitamente que va a recibir mensajes de Equipos: es lo
@@ -423,7 +425,7 @@ function abrirAlta(paneles) {
       </div>
 
       <div class="form-group">
-        <label>Consentimiento — versión ${esc(VERSION())}</label>
+        <label>Consentimiento</label>
         <div class="finalidades">
           <label class="finalidad">
             <input type="checkbox" name="finalidades" data-lista="1" value="contacto_participacion" checked />
@@ -442,12 +444,23 @@ function abrirAlta(paneles) {
           </label>
         </div>
         <div class="field-hint">Sin al menos una finalidad, el alta se rechaza.</div>
+        ${['contacto_participacion', 'uso_semantico'].map((f) =>
+          consentimiento.hayVersiones(f)
+            ? consentimiento.selector(f, {
+                id: `version-${f}`,
+                etiqueta: `Texto consentido · ${f === 'uso_semantico'
+                  ? 'uso semántico' : 'contacto y participación'}`,
+              })
+            : '').join('')}
       </div>`,
     acciones: [
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
       { texto: 'Enrolar', clase: 'btn-orange', onClick: (c) => guardarAlta(c, paneles) },
     ],
   });
+  // R7.1 — «ver texto» al lado de cada versión: lo que la persona aceptó es
+  // el texto, no el código.
+  consentimiento.activarVerTexto(caja);
   return caja;
 }
 
@@ -469,7 +482,7 @@ async function guardarAlta(caja, paneles) {
   // Sin texto publicado la base rechaza el otorgamiento, y con razón. Se
   // dice acá, con el nombre de la finalidad, en vez de dejar que vuelva un
   // error de base que no explica qué hacer.
-  const sinTexto = finalidades.filter((f) => !VERSION(f));
+  const sinTexto = finalidades.filter((f) => !VERSION(f, caja));
   if (sinTexto.length) {
     toast(`No hay texto de consentimiento publicado para ${sinTexto.join(', ')}. `
           + 'Se publica en Inscripciones → Textos de consentimiento.', 'error');
@@ -483,13 +496,13 @@ async function guardarAlta(caja, paneles) {
       email: datos.email, celular: datos.celular, observaciones: datos.observaciones,
     },
     consentimientos: finalidades.map((finalidad) => ({
-      finalidad, version_texto: VERSION(finalidad),
+      finalidad, version_texto: VERSION(finalidad, caja),
     })),
     origen: datos.origen, id_en_origen: datos.id_en_origen,
     panel_id: datos.panel_id ? Number(datos.panel_id) : null,
     // R4.4 — los canales aceptados, con el texto con que se aceptaron.
     canales: datos.canales || [],
-    version_texto_canales: VERSION('contacto_participacion'),
+    version_texto_canales: VERSION('contacto_participacion', caja),
   };
 
   try {

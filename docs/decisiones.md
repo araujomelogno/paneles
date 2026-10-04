@@ -2840,6 +2840,130 @@ sí/no, una constante— y no se mete con un padrón chico legítimo.
 
 ---
 
+<a id="d57"></a>
+## D57 · Lo que se revisa es lo que se ejecuta, y lo que se cruza se registra
+
+La Fase 7 no agrega capacidades: saca trabajo manual y hace visible lo que
+el sistema ya sabía. Tres decisiones de las seis la definen.
+
+### La revisión se pide por la misma ruta que ejecuta
+
+El resumen previo a importar (R7.2) **no** se arma en la pantalla ni en un
+endpoint aparte. Va por la misma ruta de ingesta, con el mismo cuerpo, y lo
+único que cambia es una bandera: `solo_revisar`.
+
+La alternativa obvia —un `POST /…/revision` que recibiera lo mismo y
+devolviera el resumen— empieza igual y diverge con el primer cambio que
+alguien haga de un solo lado. Y lo que divergiría es exactamente la pantalla
+que dice «esto es lo que va a pasar». Un resumen que no refleja la
+ejecución es peor que no tener resumen: da confianza sin fundamento.
+
+Del lado de la pantalla, la misma idea: el cuerpo se arma **una vez**
+(`cuerpoDeIngesta`) y se manda dos veces. Revisar y confirmar no pueden
+construir objetos distintos porque hay un solo objeto.
+
+> Esto obligó a un arreglo colateral que valía la pena igual.
+> `api.encuestas.ingestar` desarmaba un objeto con nombres propios y
+> rearmaba el del servidor; esa lista blanca descartaba en silencio
+> cualquier campo que no enumerara, y ya había costado un bug —`modo` se
+> mandaba y nunca llegaba ([D56](#d56))—. Ahora el cuerpo viaja tal cual.
+> Un traductor que pierde lo que no conoce es peor que no tener traductor.
+
+### El conteo de claves de dedup es el requisito, no el adorno
+
+De las siete secciones del resumen, seis ayudan a leer. Una detecta el error
+que destruye datos.
+
+Si alguien marca como `documento` una variable de sí/no, el resumen lo
+grita: «documento: 1131 filas, **2 valores distintos**, 1129 colisionan →
+se crearían **2 personas**». Sin ese número el error pasa, y como el dedup
+resuelve primero por documento, la base entera se fusiona en dos registros.
+
+No es hipotético: pasó el 3 de octubre y lo evitó un bug distinto. Por eso
+el umbral de «sospechosa» es generoso —la mitad de las filas colisionando ya
+es advertencia grave— y por eso las personas estimadas se calculan
+siguiendo **el orden real del dedup** (documento, si no correo, si no nombre
++ fecha de nacimiento) y no un criterio propio que sería más prolijo y menos
+cierto.
+
+### Ver las respuestas de alguien es cruzar los dos stores, y se registra
+
+R7.6 es el punto donde la separación entre bóveda y semántico **se cruza a
+propósito**: la pantalla muestra qué opinó una persona identificada. Es
+necesario para operar —es la única forma de entender por qué alguien aparece
+o no en una consulta— y es, exactamente, lo que la arquitectura evita que
+pase por accidente.
+
+Entonces se registra igual que una reidentificación, con un motivo propio:
+`respuestas_panelista`. Y el registro **no es opcional ni depende de que lo
+recuerde quien escriba la próxima ruta**: la consulta sin registro
+(`ficha.respuestas`) existe solo para poder probarla sola, y la ruta llama
+siempre a `respuestas_con_registro`.
+
+**La ficha no muestra nombre, documento, correo ni celular**, y eso no es
+pudor. Si la ficha mostrara el nombre con un clic, la auditoría de
+reidentificación dejaría de reflejar quién vio los datos de quién — que es
+lo único que esa auditoría existe para demostrar. Hay una prueba que recorre
+la salida y falla si aparece cualquiera de los cuatro, por si alguien
+agrega uno «porque es cómodo».
+
+Lo que sí hay que tener presente, y no lo resuelve ningún código: **los
+demográficos combinados son cuasi-identificadores**. Sexo, localidad y tramo
+etario juntos pueden señalar a una persona en un panel chico, y R7.4 los
+pone en una lista de doscientas filas. No lo bloquea, pero por eso los
+atributos de categoría especial no se ofrecen como columna: verlos de a uno
+en una ficha no es lo mismo que verlos todos juntos.
+
+### El catálogo de motivos no tiene clave foránea, y es deliberado
+
+La `0020` cataloga los motivos de reidentificación en una tabla, como la
+`0015` con `accion_usuario` y la `0018` con `motivo_acceso_portal`. Pero a
+diferencia de esas dos, **no agrega la FK**.
+
+`auditoria.registrar_reidentificacion` dice, desde la Fase 2:
+
+> «No falla nunca por el contenido: si el motivo no está en la lista se
+> guarda igual, porque perder el rastro es peor que guardarlo con una
+> etiqueta rara.»
+
+Una FK invierte ese intercambio: un motivo nuevo que alguien olvidó
+catalogar deja de escribir la fila, y se pierde el registro de que alguien
+reidentificó a alguien. Para el registro que sostiene el diseño de dos
+stores, eso está al revés.
+
+La vista lleva la misma lógica un nivel más abajo: `left join` y no `join`,
+con `coalesce` que marca el motivo como «sin catalogar» en vez de
+esconderlo. Si la vista filtrara, catalogar mal volvería **invisible** una
+reidentificación.
+
+Lo que la FK habría dado gratis —que el código y el catálogo no diverjan—
+lo da una prueba espejo, igual que `pii.CAMPOS_PII` con `campo_pii`.
+
+### La brecha entre stores es la razón de la pantalla de estadísticas
+
+Los conteos sueltos —«1.008 panelistas», «24.935 respuestas»— se miran una
+vez. El número que se usa todas las semanas es *«de mis 1.131 panelistas,
+¿sobre cuántos puedo realmente consultar?»*: eso define si una búsqueda
+sirve, y hoy no se puede saber sin cruzar las dos bases a mano.
+
+Por eso la brecha va primero y no al final, y por eso uno de sus tres
+números —individuos del store semántico sin panelista en la bóveda— no es
+una estadística sino **un chequeo de integridad que tiene que dar cero**. Si
+no da cero, hay respuestas de gente que ya no existe y la cascada de baja no
+las alcanzó.
+
+El cruce se resuelve por conjuntos de `id_persona` y en Python, porque son
+dos instancias distintas y no hay FK entre ellas. Es la misma forma en que
+se cruza todo en esta plataforma.
+
+**Dónde vive.** `db/boveda/0020_motivos_reidentificacion.sql`,
+`functions/panel_api/resumen_ingesta.py`, `functions/panel_api/ficha.py`,
+`functions/panel_api/estadisticas.py`, `functions/panel_api/atributos.py`,
+`web/public/js/consentimiento.js`, `web/public/js/paginas/estadisticas.js`,
+`web/public/js/paginas/consultas.js`, `web/public/js/paginas/encuestas.js`.
+
+---
+
 ## Anexo · Decisiones que no se tomaron
 
 Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
@@ -2894,4 +3018,9 @@ Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 | Que el resumen consolidado incluya el alta de personas | **No se hizo así.** El alta pasa en la ruta, antes de encolar, y su resultado viaja en la respuesta inmediata; la pantalla lo arrastra hasta el resumen final. Al retomar una carga desde otra pestaña no se tiene, y entonces no se muestra: ya pasó, y las personas están en Panelistas | [D56](#d56) |
 | Marcar los valores sin mapear a ninguna categoría antes de ejecutar | **Pendiente.** Es el otro hallazgo del mismo plan: mapeos escritos con la etiqueta completa en vez de la clave, que no van a corresponder a ninguna categoría. Se ve recién en el informe posterior | [D56](#d56), `BUG_modo_crear_individuos_no_se_envia.md` §6.2 |
 | Mostrar el texto de la pregunta junto al código en la revisión previa | **Pendiente, y es lo que habría evitado el marcado de «documento».** `var138O1320 → documento` no dice nada; «¿has consumido…» → documento salta a la vista | [D56](#d56) |
+| Si las columnas elegidas entran en el CSV seudonimizado | **No entran, y es la propuesta de la spec.** Un CSV con sexo, localidad y tramo etario de 200 personas es bastante más identificable que uno con tokens. La selección afecta solo la vista | [D57](#d57), `SPEC_fase7` §R7.4 |
+| Qué atributos se ofrecen por defecto como columna | **Sin decidir.** Hoy se ofrecen todos los no especiales y ninguno viene elegido. Conviene mirarlo cuando el panel crezca: la combinación de tres demográficos ya señala a una persona en un panel chico | [D57](#d57) |
+| Saltear el paso de revisión en cargas chicas | **No se hace.** Agrega un clic a una operación que ya tiene varios, y si molesta se puede evaluar un umbral de filas — pero **nunca** en el modo «crear los individuos», que es el irreversible | [D57](#d57) |
+| Cachear los conteos de la pantalla de estadísticas | **No hizo falta todavía.** Se resuelven en pocas consultas agregadas, pero un `count(*)` sobre `respuesta` crece con el corpus. Conviene medirlo cuando haya 200.000 respuestas | [D57](#d57), `SPEC_fase7` §7 |
+| Acotar por rol quién puede ver las respuestas de un panelista | **Abierto.** Hoy alcanza el permiso `leer`, el mismo de la lista de resultados, y queda registrado. Si se decide acotarlo, el registro ya permite ver quién lo usaba | [D57](#d57) |
 | Alinear el voseo de la interfaz con el registro formal del manual | Sin decidir; requeriría recapturar las 44 pantallas | PR de la Fase 2 |
