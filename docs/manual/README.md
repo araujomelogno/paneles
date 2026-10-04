@@ -14,6 +14,13 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Revisión 2026-10-04.** La sección 5.5 suma «Revisá qué variable
+> marcaste como documento»: el sistema ahora rechaza la carga si la variable
+> marcada como documento trae muy pocos valores distintos, porque el dedup
+> resuelve primero por documento y un marcado equivocado fusionaría el
+> archivo entero en dos fichas. Es texto: no hizo falta recapturar ninguna
+> pantalla.
+
 > **Revisión 2026-10-03.** La sección 5.4 suma «Al confirmar, la carga queda
 > en proceso» y «Si algún lote no entra»: la ingesta pasó a diferido, así que
 > confirmar ya no cuelga la pantalla, se puede cerrar la pestaña y un lote

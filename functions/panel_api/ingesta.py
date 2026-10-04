@@ -188,6 +188,45 @@ def mapear_a_id_persona(conn_boveda, origen, ids_en_origen):
     return mapa, [i for i in ids if i not in mapa]
 
 
+def _por_que_no_entro_nada(ids_origen, sin_mapear, motivos, bloqueadas):
+    """El aviso cuando el lote no escribió nada.
+
+    «Ninguna respuesta quedó habilitada para ingestar» era verdad y no
+    servía: no distingue *no matcheó nadie* de *nadie consintió*, que se
+    arreglan de forma opuesta. Peor todavía en el caso que lo hizo evidente
+    —1131 filas, el 100% sin mapear por falta de alias—, donde el sistema
+    tenía toda la información para decir que el modo elegido no era el que
+    hacía falta, y en vez de eso mandó a buscar el problema a otro lado.
+    """
+    total = len(ids_origen)
+    todos_sin_mapear = total and len(sin_mapear) == total
+    solo_falta_alias = todos_sin_mapear and all(
+        motivos.get(i) == SIN_ALIAS for i in sin_mapear)
+
+    if solo_falta_alias:
+        return (
+            f"Ninguno de los {total} identificadores del archivo corresponde "
+            f"a un panelista que ya exista en el sistema. Si querés dar de "
+            f"alta a estas personas, elegí el modo «crear los individuos en "
+            f"esta carga». Si tenían que existir, revisá que la columna "
+            f"identificadora y el origen sean los correctos.")
+    if todos_sin_mapear:
+        porque = ", ".join(sorted({motivos.get(i, NO_ENCONTRADO)
+                                   for i in sin_mapear}))
+        return (
+            f"Ninguno de los {total} identificadores del archivo se pudo "
+            f"vincular a una persona del sistema ({porque}).")
+    if bloqueadas and not sin_mapear:
+        return (
+            f"Las {len(bloqueadas)} personas del archivo existen, pero "
+            f"ninguna tiene vigente el consentimiento de uso semántico, así "
+            f"que sus respuestas no se conservan.")
+    return (
+        f"No entró ninguna respuesta: {len(sin_mapear)} identificador(es) sin "
+        f"vincular y {len(bloqueadas)} persona(s) sin consentimiento de uso "
+        f"semántico.")
+
+
 def ingestar(
     conn_boveda,
     conn_semantica,
@@ -264,7 +303,8 @@ def ingestar(
             "sin_mapear_detalle": detalle_sin_mapear,
             "sin_consentimiento": bloqueadas,
             "ids_persona_ingestados": [],
-            "aviso": "Ninguna respuesta quedó habilitada para ingestar.",
+            "aviso": _por_que_no_entro_nada(
+                ids_origen, sin_mapear, motivos_sin_mapear, bloqueadas),
         }
 
     # ── A partir de acá se escribe del lado semántico: solo id_persona ──

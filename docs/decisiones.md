@@ -2761,6 +2761,85 @@ Dos cosas que no son obvias y que el repo ya había aprendido antes:
 
 ---
 
+<a id="d56"></a>
+## D56 · Lo que decidió una carga se guarda con la carga
+
+**La decisión.** El plan persistido registra **con qué modo** se corrió la
+carga y **si se declaró la evidencia** de consentimiento, aunque ninguna
+tarea los use.
+
+### De dónde salió
+
+Una carga de 1131 filas en modo «crear los individuos» terminó en `ok`, con
+cero personas creadas y las 1131 filas en `sin_mapear` por falta de alias. La
+pregunta obvia —¿llegó el modo al backend?— **no se podía contestar**: el
+plan guardaba las preguntas, las demográficas, la columna identificadora y el
+tipo de identificador, y nada sobre el modo. Se investigó durante un día la
+hipótesis de que el front no lo mandaba.
+
+Y no lo mandaba o sí: eso sigue sin saberse para *esa* carga, porque el dato
+no se guardó. Es exactamente el costo de no guardarlo.
+
+**Lo que sí quedó probado** es que el backend lo honra, también con
+`tipo_identificador: "alias"`, que era la única diferencia entre el caso real
+y la prueba de ruta que ya existía. Esa prueba estaba, pasaba, y no cubría la
+combinación que fallaba.
+
+### Por qué en el plan, si ninguna tarea lo lee
+
+Las personas se crean **en la ruta**, antes de encolar: cuando la primera
+tarea corre, ya existen. El modo no cumple ninguna función en el
+procesamiento de un lote.
+
+Se guarda igual, y la distinción importa: el plan dejó de ser solo *lo que
+las tareas necesitan* para ser *lo que decidió esta carga*. Una carga que
+salió mal se diagnostica mirándola, no reconstruyendo de memoria qué eligió
+quien la lanzó tres semanas antes.
+
+De la evidencia va **el hecho y no el contenido** —`evidencia_declarada:
+true`—, porque el plan se devuelve por API y qué variable del archivo lleva
+el consentimiento no tiene por qué viajar con él.
+
+### El aviso era verdad y no servía
+
+«Ninguna respuesta quedó habilitada para ingestar» no distingue **no matcheó
+nadie** de **nadie consintió**, que se arreglan de forma opuesta: el primero
+cambiando el modo o la columna, el segundo no se arregla —esas respuestas no
+se conservan, y está bien—.
+
+Cuando el 100% de las filas cae con motivo `sin_alias_para_ese_origen`, el
+sistema tiene toda la información para decir qué hacer, y ahora la dice. Un
+aviso que obliga a abrir la base para entenderlo es medio aviso.
+
+### La guarda del documento, que es parte de este arreglo y no un extra
+
+En la misma carga, la variable marcada como `documento` era *«¿has consumido
+alguno de estos productos?»*, con valores `0` y `1`. El dedup de R1.2
+resuelve **primero por documento**: crear esas 1131 personas las habría
+fusionado en dos.
+
+No pasó porque el bug del modo lo impidió. **Arreglar el modo quita la
+casualidad**, así que la guarda va en el mismo cambio: `crear_individuos`
+rechaza un archivo de diez filas o más cuya columna de documento traiga menos
+de tres valores distintos, y nombra las etiquetas de esa variable —ver
+«Unchecked / Checked» al lado de «documento» no deja lugar a dudas—.
+
+Es un error de configuración y no del software, pero el daño es irreversible
+y el software lo puede ver venir. Va **antes de escribir nada**, en el mismo
+lugar donde ya se controla que la variable de consentimiento exista en el
+archivo, y por la misma razón.
+
+El umbral es deliberadamente bajo: atrapa lo que destruye datos —`0`/`1`,
+sí/no, una constante— y no se mete con un padrón chico legítimo.
+
+**Dónde vive.** `functions/panel_api/ruteo.py` (`_plan_de`),
+`functions/panel_api/ingesta.py` (`_por_que_no_entro_nada`),
+`functions/panel_api/sav.py` (`_controlar_documento_plausible`),
+`web/public/js/paginas/encuestas.js`,
+`functions/tests/test_modo_crear_individuos.py`.
+
+---
+
 ## Anexo · Decisiones que no se tomaron
 
 Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
@@ -2812,4 +2891,7 @@ Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 | Limitar a una carga grande por vez | **No se limita.** Dos cargas simultáneas compiten por el proveedor de embeddings y por la base. El default conservador de 3 tareas en paralelo acota el daño, pero nada impide que sean seis | [D55](#d55) |
 | Paralelizar las llamadas al proveedor dentro de un lote | **Postergado a propósito.** Es complementario, no alternativo: reduce el tiempo de cada tarea además de repartirlas. Conviene medir con Cloud Tasks andando antes de decidir si hace falta | [D55](#d55) |
 | Un trabajo de ingesta que queda a medias para siempre | **Sin política.** Si una tarea nunca llega a correr, el trabajo queda `procesando` indefinidamente: nadie lo marca fallido ni lo limpia. La purga solo toca los terminados | [D55](#d55) |
+| Que el resumen consolidado incluya el alta de personas | **No se hizo así.** El alta pasa en la ruta, antes de encolar, y su resultado viaja en la respuesta inmediata; la pantalla lo arrastra hasta el resumen final. Al retomar una carga desde otra pestaña no se tiene, y entonces no se muestra: ya pasó, y las personas están en Panelistas | [D56](#d56) |
+| Marcar los valores sin mapear a ninguna categoría antes de ejecutar | **Pendiente.** Es el otro hallazgo del mismo plan: mapeos escritos con la etiqueta completa en vez de la clave, que no van a corresponder a ninguna categoría. Se ve recién en el informe posterior | [D56](#d56), `BUG_modo_crear_individuos_no_se_envia.md` §6.2 |
+| Mostrar el texto de la pregunta junto al código en la revisión previa | **Pendiente, y es lo que habría evitado el marcado de «documento».** `var138O1320 → documento` no dice nada; «¿has consumido…» → documento salta a la vista | [D56](#d56) |
 | Alinear el voseo de la interfaz con el registro formal del manual | Sin decidir; requeriría recapturar las 44 pantallas | PR de la Fase 2 |
