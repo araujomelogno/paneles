@@ -1,7 +1,7 @@
 # Decisiones de diseño
 
 **Sistema:** Gestión de paneles y consulta semántica · Equipos Consultores
-**Alcance:** Fases 1 a 8, y la superficie externa de COLOQUIO
+**Alcance:** Fases 1 a 8, y la superficie externa de COLOQUIO (incluida su batería de verificación)
 **Última actualización:** 2026-10-05
 
 ---
@@ -95,6 +95,7 @@ restricción real del sistema.
 | [D59](#d59) | La ficha explica el resultado que se está mirando, y una ruta sin pantalla no existe | 7 |
 | [D60](#d60) | El texto que se embebe: el sistema propone, el analista confirma | 8 |
 | [D61](#d61) | Un estudio se corrige desde lo que quedó cargado, no desde el archivo | 8 |
+| [D62](#d62) | Un chequeo que no puede probar se omite, no falla; y la auditoría se prueba con el actor del contrato | 5 |
 
 ---
 
@@ -3278,12 +3279,78 @@ que solo se re-embeba lo desactualizado.
 
 ---
 
+<a id="d62"></a>
+## D62 · Un chequeo que no puede probar se omite, no falla; y la auditoría se prueba con el actor del contrato
+
+**El problema.** Contra Cloud SQL, `verificar_coloquio.py` daba **siempre**
+dos fallos que no eran de la bóveda, y cerraba con «la bóveda no está lista
+para COLOQUIO». En un despliegue se ignoraron por rutina. Una batería que
+falla siempre deja de leerse, y la vez que un fallo sea real nadie lo va a
+ver: el costo no era técnico, era de confianza. Los dos eran:
+
+* **«el contacto legítimo queda auditado»** llamaba sin `p_actor` y esperaba
+  `coloquio_app` como actor. Pasaba en el cluster local porque ése es el
+  `session_user`; contra Cloud SQL el rol es la cuenta IAM y fallaba. Probaba
+  el nombre del rol, no la auditoría.
+* **«un rol sin registrar no consigue nada»** se conectaba sin credenciales.
+  En Cloud SQL eso muere en la autenticación y nunca llega a la superficie.
+
+**Lo que se decidió.** Tres cosas, y ninguna toca la base:
+
+1. **El chequeo de auditoría prueba el contrato.** Manda como `p_actor` un
+   email de usuario —lo que COLOQUIO tiene que mandar según
+   `HANDOFF_coloquio_fase1.md`— y verifica que **ese** quede escrito. Y uno
+   nuevo prueba el caso sin actor: la entrega queda registrada con el rol de
+   la conexión y `actor_email` nulo, que es lo que permite encontrar después
+   las llamadas que incumplieron.
+2. **Un tercer estado: omitido.** Un chequeo que en este entorno no puede
+   probar lo que quiere probar levanta `Omitido` con el motivo, y el resumen
+   lo informa aparte. **No cuenta como fallo**, y «no está lista» aparece
+   solo con fallos reales. Se omiten el del intruso contra Cloud SQL (se le
+   pregunta al servidor, no al DSN: el Auth Proxy y el cluster local se ven
+   iguales), los que necesitan escenario en `--solo-lectura` y la
+   cardinalidad cuando todas las vistas están vacías.
+3. **La cardinalidad corre sobre el escenario.** Sobre una bóveda vacía
+   «ninguna clave repetida» es cierto sin probar nada; el escenario tiene la
+   persona con dos finalidades que hacía aparecer el bug de la `0021`.
+
+**Por qué omitido y no «pasado con aviso».** Porque pasado es una
+afirmación: «verifiqué esto». Un chequeo que no corrió no puede afirmarlo, y
+mezclarlo con los que sí sumaría verificaciones que no ocurrieron. Y por qué
+no fallido: porque es lo que había, y ya se vio que termina ignorado.
+
+**Lo que se descartó.**
+
+- *Cambiar la función para que use `session_user` siempre.* Habría perdido
+  quién fue la persona, que es lo que una reidentificación necesita
+  demostrar. La función estaba bien; el test, no.
+- *Detectar Cloud SQL por el DSN* (`.iam` en el usuario, `127.0.0.1`).
+  Contra el Auth Proxy el host es el mismo que el del cluster local, y el
+  usuario del dueño no tiene por qué ser IAM. El rol `cloudsqlsuperuser` lo
+  tiene toda instancia de Cloud SQL y ningún Postgres común.
+- *Omitir el intruso en todo entorno que no sea local.* Si alguien pasa
+  `DSN_BOVEDA_INTRUSO` con credenciales de un rol sin registrar, el chequeo
+  tiene sentido también contra Cloud SQL, y corre.
+
+**Consecuencias.** La batería pasa de 17 a 18 chequeos. Contra Cloud SQL,
+sana, da `18 · 17 pasados · 0 fallidos · 1 omitido` y sale con 0. Sigue
+abierto lo de fondo: `p_actor` es nullable, y el chequeo nuevo hace visible
+la obligación del cliente sin obligarlo. Rechazar la llamada sin actor sería
+un cambio de contrato y de migración.
+
+**Dónde vive.** `scripts/verificar_coloquio.py` (`Omitido`, `es_cloud_sql`,
+`veredicto`), `functions/tests/test_bateria_coloquio_estados.py`,
+`docs/DESPLIEGUE - COLOQUIO Fase 0.md` §7.1.1.
+
+---
+
 ## Anexo · Decisiones que no se tomaron
 
 Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 
 | Tema | Estado | Dónde está anotado |
 |---|---|---|
+| Rechazar `contacto_para_convocatoria` sin `p_actor` | **Abierta (P2).** Hoy el actor es opcional y la fila sin él se distingue por `actor_email` nulo; el chequeo «el contacto sin actor queda marcado» lo hace visible. Rechazarla es un cambio de contrato con COLOQUIO y de migración | [D62](#d62) |
 | `id_persona` directo al campo, o código por ola | Sin decidir: se implementó el directo, que es lo que pide la spec. El código por ola es defensa en profundidad y el cambio sería acotado | [D34](#d34) |
 | Que Dooblo y Alchemer permitan precargar una variable oculta | **A verificar fuera del código.** Si no se puede, el peso cae en los respaldos por documento o correo | [D34](#d34) |
 | Si el consentimiento de uso semántico alcanza para conservar patronímicos de un no-panelista | **Abierta, y es legal.** El sistema permite cargar con o sin patronímicos; hay que definirlo antes de usar R3.13 con bases reales | [D35](#d35) |

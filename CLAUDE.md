@@ -35,6 +35,8 @@ La consecuencia para quien escribe código acá: **una invariante de cumplimient
 
 `scripts/verificar_coloquio.py` se conecta **como `coloquio_app`** y comprueba todo eso, incluida una lista blanca de privilegios efectivos que vive en el repo. Si una migración abre un acceso de más, esa prueba rompe. Correrlo después de tocar cualquier `grant`, vista o función de la superficie externa.
 
+Cada chequeo termina en **pasado, fallido u omitido** (D62). Un chequeo que en ese entorno no puede probar lo que quiere —el intruso contra Cloud SQL, la cardinalidad sobre vistas vacías— levanta `Omitido` con su motivo: no lo conviertan en pasado ni lo dejen fallando. Una batería que falla siempre deja de leerse. Y el chequeo de auditoría manda como `p_actor` un email de usuario, que es el contrato: probar con el rol de la conexión verifica el nombre del rol, no la auditoría.
+
 ## El portal del panelista es otra superficie
 
 Desde la Fase 6 la bóveda autentica también a **miles de externos**: cada

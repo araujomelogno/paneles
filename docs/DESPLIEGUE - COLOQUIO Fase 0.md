@@ -495,45 +495,77 @@ Para apuntarlo a producción sin que escriba absolutamente nada:
 python3 scripts/verificar_coloquio.py --solo-lectura
 ```
 
-### 7.1.1 · Los dos chequeos que fallan hoy, y por qué no bloquean
+### 7.1.1 · Los dos chequeos que fallaban, y cómo quedaron
 
-La batería corrida contra Cloud SQL da **12 de 14**. Los dos que fallan no son
-fallas de la bóveda:
-
-**«el contacto legítimo queda auditado».** El test pasa como `p_actor` el rol de
-base (`coloquio-app@gestion-paneles.iam`) y espera ver otra cosa. La función
-está bien: `contacto_para_convocatoria` registra
-`coalesce(p_actor, session_user)`, o sea el actor que informa el llamador, y el
-sistema solo si no viene ninguno.
-
-> **Contrato definido:** `p_actor` es el **email del usuario humano de COLOQUIO**
-> que pidió el contacto, no la cuenta de servicio. De ahí que el test, que pasa
-> la cuenta técnica, verifique algo que no corresponde.
+> **Corregido.** Hasta este arreglo la batería contra Cloud SQL daba siempre
+> dos fallos que no eran de la bóveda, y en un despliegue se ignoraron por
+> rutina: si uno hubiera sido real, nadie lo habría visto. Ahora cada
+> chequeo termina en **pasado, fallido u omitido**, y contra Cloud SQL, con
+> la bóveda sana, la batería termina **sin fallos**:
 >
-> **Obligación del cliente:** COLOQUIO **debe** pasar `p_actor` en cada llamada.
-> Si lo omite, la auditoría registra «coloquio» y se pierde quién fue la
-> persona — que es justamente el dato que una reidentificación necesita.
+> ```
+> 18 chequeos · 17 pasados · 0 fallidos · 1 omitido
+>   ○ un rol sin registrar no consigue nada
+>       omitido: no verificable contra Cloud SQL (toda conexión exige credenciales, …)
 >
-> **A decidir (P2):** hoy `p_actor` es nullable y el `coalesce` permite que el
-> cliente se olvide sin que nadie se entere hasta mirar la auditoría. Si el
-> dato tiene valor legal, la función podría **rechazar** la llamada sin actor.
-> Queda anotado, no resuelto.
+> La bóveda está lista para COLOQUIO.
+> ```
 >
-> **Pendiente:** corregir el test (que pase un email de usuario y verifique que
-> ese email quede registrado). **La migración no se toca.**
+> «No está lista» aparece **solo** si hay un fallido. La salida de arriba es
+> la del script con la detección de Cloud SQL forzada sobre el cluster de
+> ensayo; contra la instancia real tiene que dar lo mismo.
 
-> **Desde la `0016` son 16 chequeos, no 14.** Los dos nuevos —«la
-> convocatoria se verifica por sistema» y «la declaración tiene tope y
-> gate»— prueban R5.2.a, y pasan. Los dos de acá abajo siguen fallando por
-> los mismos motivos: 14 de 16.
+**«el contacto legítimo queda auditado».** El test llamaba sin `p_actor` y
+esperaba ver `coloquio_app` como actor: en el cluster local pasaba porque ése
+es el `session_user`, y contra Cloud SQL fallaba siempre, porque ahí el rol es
+la cuenta IAM (`coloquio-app@gestion-paneles.iam`). La función estaba bien:
+`contacto_para_convocatoria` registra `coalesce(p_actor, session_user)`, el
+actor que informa el llamador y el rol solo si no viene ninguno.
 
-**«un rol sin registrar no consigue nada».** Falla con `fe_sendauth: no password
-supplied`: el chequeo intenta conectarse con un rol no registrado y sin
-credenciales. Contra un cluster local funciona; contra Cloud SQL **toda**
-conexión necesita credenciales, así que el chequeo no llega a ejecutarse. **No
-es verificable en este entorno** — ver §7.2.
+> **Contrato:** `p_actor` es el **email del usuario humano de COLOQUIO** que
+> pidió el contacto, no la cuenta de servicio (`HANDOFF_coloquio_fase1.md`).
 
----
+Ahora el chequeo manda un email de usuario (`analista-verificacion@ejemplo.invalid`)
+y verifica que **ese** quede en `actor_uid` y `actor_email`. **La migración no
+se tocó.**
+
+Y hay un chequeo nuevo para el caso que nadie probaba —**«el contacto sin
+actor queda marcado»**—: si COLOQUIO omite `p_actor`, la entrega igual queda
+registrada, con el rol de la conexión como `actor_uid` y **`actor_email`
+nulo**. Eso es lo que distingue una fila sin persona detrás, y permite
+encontrar después las llamadas que incumplieron el contrato:
+
+```sql
+select count(*), min(creado_en), max(creado_en)
+  from reidentificacion
+ where sistema = 'coloquio' and actor_email is null;
+```
+
+> **Obligación del cliente:** COLOQUIO **debe** pasar `p_actor` en cada
+> llamada. Si lo omite, la auditoría registra la cuenta técnica y se pierde
+> quién fue la persona — que es justamente el dato que una reidentificación
+> necesita.
+>
+> **A decidir (P2), sigue abierto:** hoy `p_actor` es nullable y el
+> `coalesce` permite que el cliente se olvide. Si el dato tiene valor legal,
+> la función podría **rechazar** la llamada sin actor. Es un cambio de
+> contrato y de migración, y no se hizo: el chequeo nuevo lo hace visible,
+> no lo resuelve.
+
+**«un rol sin registrar no consigue nada».** Fallaba con `fe_sendauth: no
+password supplied`: intentaba conectarse con un rol no registrado y **sin
+credenciales**. Contra Cloud SQL toda conexión necesita credenciales, así que
+moría en la autenticación y nunca probaba lo que quería probar. Ahora el
+script le pregunta al servidor si es Cloud SQL (existe `cloudsqlsuperuser`)
+y en ese caso lo **omite**, con el motivo; contra el cluster local corre igual
+que antes, que es el único lugar donde se puede probar. Si alguien pasa
+`DSN_BOVEDA_INTRUSO` con las credenciales de un rol sin registrar, corre
+también contra Cloud SQL. Ver §7.2.
+
+**Y la cardinalidad.** «una fila por persona en cada vista» pasaba de forma
+trivial con las vistas vacías. Ahora corre sobre el escenario —donde hay una
+persona con las dos finalidades, el caso del bug de la `0021`—, dice qué vista
+quedó sin verificar por estar vacía, y se **omite** si lo están todas.
 
 ### 7.2 · Las dos cosas que no se pueden probar en el cluster local
 
@@ -619,7 +651,7 @@ hoy las escribió `paneles`.
 - [ ] `python3 scripts/verificar_coloquio.py` contra el cluster de pruebas: 14/14
       (16/16 una vez aplicada la `0016`, ver más abajo)
 - [ ] `python3 scripts/verificar_coloquio.py` contra la instancia real: 14/14
-      — hoy da 12/14 por los dos de §7.1.1, que no son de la bóveda
+      — sin fallos; contra Cloud SQL queda 1 omitido (§7.1.1)
 - [ ] `boveda/0016` aplicada: sin ella COLOQUIO no puede convocar. Ver
       [`DESPLIEGUE - R5.2.a convocatoria externa.md`](DESPLIEGUE%20-%20R5.2.a%20convocatoria%20externa.md)
 - [ ] `pytest` en verde
