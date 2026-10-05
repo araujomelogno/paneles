@@ -229,7 +229,7 @@ class Claude(Verificador):
                         entrada = {}
                 crudos = entrada.get("veredictos") or []
                 break
-        if not crudos:if not crudos:
+        if not crudos:
             datos = respuesta.json()
             tipos = [
                 b.get("type")
