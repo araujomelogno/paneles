@@ -229,10 +229,19 @@ class Claude(Verificador):
                         entrada = {}
                 crudos = entrada.get("veredictos") or []
                 break
-        if not crudos:
+        if not crudos:if not crudos:
+            datos = respuesta.json()
+            tipos = [
+                b.get("type")
+                for b in datos.get("content", [])
+            ]
             raise ErrorVerificacion(
-                "La API de Claude respondió sin usar la herramienta de veredictos."
-            )
+                "Claude no devolvió veredictos utilizables. "
+                f"stop_reason={datos.get('stop_reason')}; "
+                f"output_tokens={datos.get('usage', {}).get('output_tokens')}; "
+                f"bloques={tipos}; "
+                f"evidencias={len(candidatos)}."
+            ) 
         return _completar(crudos, candidatos, criterio)
 
 
