@@ -51,7 +51,7 @@ def _pedir(conn, email, motivo=portal.RECUPERACION, origen=None, actor=None):
     lo que contestó, incluido el enlace cuando se emitió."""
     return portal.pedir_enlace_de_clave(
         conn, email, motivo=motivo, origen=origen, actor=actor,
-        enviar=lambda canal, destino, cuerpo: {"sin_proveedor": True},
+        enviar=lambda canal, destino, cuerpo, **_: {"sin_proveedor": True},
         armar_enlace=lambda token: f"https://portal/clave?t={token}")
 
 
@@ -140,7 +140,7 @@ def test_un_responsable_reenvia_el_enlace_sin_ver_ni_definir_la_contrasena(
 
     salida = portal.emitir_para_panelista(
         conn_boveda, id_persona, actor=quien_lo_pide,
-        enviar=lambda canal, destino, cuerpo: {"enviado": True})
+        enviar=lambda canal, destino, cuerpo, **_: {"enviado": True})
 
     # Lo único que le vuelve al responsable es que salió el correo. Ni la
     # contraseña —no existe todavía— ni el enlace, que se fue al correo de
@@ -155,7 +155,7 @@ def test_la_emision_de_un_responsable_queda_auditada(conn_boveda, actor):
 
     portal.emitir_para_panelista(
         conn_boveda, id_persona, actor=quien_lo_pide,
-        enviar=lambda canal, destino, cuerpo: {"enviado": True})
+        enviar=lambda canal, destino, cuerpo, **_: {"enviado": True})
 
     emisiones = portal.emisiones_de(conn_boveda, id_persona)
     assert len(emisiones) == 1
@@ -215,7 +215,7 @@ def test_una_inscripcion_aprobada_sale_con_su_enlace(conn_boveda, actor):
                            "R61A-NUEVA", "v-r61a")
 
     salida = ins.aprobar(conn_boveda, pendiente["id"], actor("operaciones"),
-                         enviar_acceso=lambda c, d, cuerpo: {"enviado": True})
+                         enviar_acceso=lambda c, d, cuerpo, **_: {"enviado": True})
 
     assert salida["acceso_al_portal"]["estado"] == "emitido"
     emisiones = portal.emisiones_de(conn_boveda, salida["id_persona"])
@@ -230,7 +230,7 @@ def test_un_envio_que_falla_no_deshace_la_aprobacion(conn_boveda, actor):
     pendiente = _inscribir(conn_boveda, actor, "otra@ejemplo.invalid",
                            "R61A-OTRA", "v-r61a-2")
 
-    def explota(canal, destino, cuerpo):
+    def explota(canal, destino, cuerpo, **_):
         raise RuntimeError("el proveedor de correo está caído")
 
     salida = ins.aprobar(conn_boveda, pendiente["id"], actor("operaciones"),
@@ -527,7 +527,7 @@ def _sin_clave(conn, id_persona, credenciales, conn_semantica, accion):
                                         credenciales=credenciales)
     pedido = portal.pedir_verificacion_de_contacto(
         conn, id_persona, "email", "nuevo@ejemplo.invalid",
-        enviar=lambda c, d, codigo: {"sin_proveedor": True, "codigo": codigo})
+        enviar=lambda c, d, codigo, **_: {"sin_proveedor": True, "codigo": codigo})
     return portal.confirmar_contacto(conn, id_persona, "email",
                                      "nuevo@ejemplo.invalid",
                                      pedido["codigo_sin_enviar"],
@@ -581,7 +581,7 @@ def test_tras_reautenticar_la_accion_sigue_sin_volver_a_empezar(
     reautenticación se sentiría un castigo."""
     pedido = portal.pedir_verificacion_de_contacto(
         conn_boveda, con_cuenta, "email", "nuevo@ejemplo.invalid",
-        enviar=lambda c, d, codigo: {"sin_proveedor": True, "codigo": codigo})
+        enviar=lambda c, d, codigo, **_: {"sin_proveedor": True, "codigo": codigo})
 
     # Primero sin contraseña: es lo que hace la pantalla antes de abrir el
     # modal. Falla, y el código tiene que seguir sirviendo.
@@ -645,7 +645,7 @@ def test_el_correo_nuevo_pasa_a_ser_el_usuario_con_la_misma_contrasena(
         conn_boveda, con_cuenta, credenciales):
     pedido = portal.pedir_verificacion_de_contacto(
         conn_boveda, con_cuenta, "email", "nuevo@ejemplo.invalid",
-        enviar=lambda c, d, codigo: {"sin_proveedor": True, "codigo": codigo})
+        enviar=lambda c, d, codigo, **_: {"sin_proveedor": True, "codigo": codigo})
     portal.confirmar_contacto(conn_boveda, con_cuenta, "email",
                               "nuevo@ejemplo.invalid",
                               pedido["codigo_sin_enviar"], clave=CLAVE,
@@ -665,7 +665,7 @@ def test_hasta_que_el_correo_nuevo_no_se_verifica_entra_con_el_anterior(
     nuevo mal tipeado guardado sin verificar deja a la persona sin puerta."""
     portal.pedir_verificacion_de_contacto(
         conn_boveda, con_cuenta, "email", "con-error-de-tipeo@ejemplo.invalid",
-        enviar=lambda c, d, codigo: {"sin_proveedor": True, "codigo": codigo})
+        enviar=lambda c, d, codigo, **_: {"sin_proveedor": True, "codigo": codigo})
 
     assert portal.iniciar_sesion(conn_boveda, EMAIL, CLAVE,
                                  credenciales)["id_persona"] == str(con_cuenta)

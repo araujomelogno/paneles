@@ -47,9 +47,18 @@ fija:
   fernet, lo detesto» a por qué, tiene una respuesta que lo pone arriba y
   otra que lo desmiente. Si se verificara solo la primera, entraría al
   ranking con la evidencia que le conviene y la contradicción quedaría
-  tapada. Se verifican hasta `MAX_EVIDENCIAS_POR_INDIVIDUO` por persona, en
-  una sola llamada al verificador, y un `no_cumple` en cualquiera de ellas
-  manda.
+  tapada. Se verifican hasta `MAX_EVIDENCIAS_POR_INDIVIDUO` por persona, y
+  un `no_cumple` en cualquiera de ellas manda. El verificador las parte en
+  lotes (ver `verificacion.py`); que dos evidencias de la misma persona
+  caigan en lotes distintos no cambia nada, porque la salida vuelve en el
+  orden de la entrada.
+* **`sin_verificar` no es `dudoso`.** Una evidencia que el verificador no
+  llegó a juzgar —un lote truncado, la API caída, el tiempo agotado— no
+  excluye a nadie ni cuenta como cumplimiento, en ningún modo. Pero la
+  persona tampoco queda «validada»: el resultado la marca con
+  `verificacion_incompleta` y confianza baja, y la consulta lo dice en
+  `degradaciones` y en `verificacion`. Los veredictos que sí se emitieron
+  se aplican igual: una falla parcial no desactiva ninguna regla.
 
 Nada de lo que sale de acá es PII: los resultados se identifican por
 `id_persona`. Traducir eso a un nombre es una operación aparte, con permiso
@@ -60,6 +69,7 @@ import csv
 import io
 import json
 import time
+import uuid
 
 from . import (
     consentimiento,
@@ -370,21 +380,22 @@ def _elegir_evidencia(evidencias, juicios):
     El orden de preferencia no es el del score: primero se busca una
     contradicción. Si la hay, esa es la evidencia que importa —es la que
     explica por qué la persona no entra— aunque su score sea peor que el de
-    otra respuesta suya.
+    otra respuesta suya. Después un `cumple`, después un `dudoso`, y recién
+    si ninguna se juzgó, una `sin_verificar`: un juicio emitido siempre le
+    gana a la falta de juicio.
     """
     pares = list(zip(evidencias, juicios))
-    for candidato, juicio in pares:
-        if juicio["veredicto"] == mod_verificacion.NO_CUMPLE:
-            return candidato, juicio
-    for candidato, juicio in pares:
-        if juicio["veredicto"] == mod_verificacion.CUMPLE:
-            return candidato, juicio
+    for veredicto in (mod_verificacion.NO_CUMPLE, mod_verificacion.CUMPLE,
+                      mod_verificacion.DUDOSO):
+        for candidato, juicio in pares:
+            if juicio["veredicto"] == veredicto:
+                return candidato, juicio
     return pares[0]
 
 
 def _resolver_criterio_semantico(ctx, criterio, definicion, ids_permitidos,
                                  filtro_posterior, reloj, degradaciones,
-                                 reranker, verificador):
+                                 reranker, verificador, verificacion=None):
     """Corre el oleoducto completo para UN criterio semántico.
 
     Devuelve `{id_persona: hallazgo}`, donde el hallazgo trae el puntaje, la
@@ -460,14 +471,23 @@ def _resolver_criterio_semantico(ctx, criterio, definicion, ids_permitidos,
         evidencias_a_verificar=sum(len(g["evidencias"]) for g in top_k),
     )
 
-    # 7. Verificación. Todas las evidencias del top-k van en una sola llamada:
-    #    la contradicción puede estar en cualquiera de ellas.
+    # 7. Verificación. Todas las evidencias del top-k, de todas las personas:
+    #    la contradicción puede estar en cualquiera. El verificador las parte
+    #    en lotes y las devuelve en el mismo orden (ver verificacion.py).
+    verificacion = verificacion if verificacion is not None else {}
     desde = time.perf_counter()
     planas = [evidencia for grupo in top_k for evidencia in grupo["evidencias"]]
+    # El presupuesto de tiempo es **de la consulta**, no de cada criterio:
+    # arranca con la primera verificación y lo comparten las siguientes. Si
+    # fuera por criterio, tres criterios triplicarían la espera de COLOQUIO.
+    if verificacion.get("limite") is None and getattr(verificador, "presupuesto_s", None):
+        verificacion["limite"] = time.monotonic() + verificador.presupuesto_s
     try:
-        juicios = verificador.verificar(criterio["texto"], planas)
+        juicios, informe = verificador.verificar_con_informe(
+            criterio["texto"], planas, limite=verificacion.get("limite"),
+            captura=verificacion.get("captura"), etiqueta=etiqueta)
     except Exception as error:  # noqa: BLE001 — degradar, no romper
-        juicios = mod_verificacion.NoDisponible(str(error)).verificar(
+        juicios, informe = mod_verificacion.NoDisponible(str(error)).verificar_con_informe(
             criterio["texto"], planas
         )
         degradaciones.append({
@@ -479,10 +499,37 @@ def _resolver_criterio_semantico(ctx, criterio, definicion, ids_permitidos,
                 "por un juicio que no se emitió."
             ),
         })
+    else:
+        if verificador.disponible and informe["sin_verificar"]:
+            # R-VER.6 — falla parcial: los lotes buenos se conservan y la
+            # consulta lo dice, en vez de presentar un ranking que parece
+            # normal y está a medio verificar.
+            detalle = ", ".join(
+                f"{fallo}: {n}" for fallo, n in sorted(informe["por_fallo"].items()))
+            degradaciones.append({
+                "etapa": "verificacion",
+                "proveedor": verificador.nombre,
+                "parcial": True,
+                "criterio": etiqueta,
+                "motivo": (
+                    f"{informe['sin_verificar']} de {informe['evidencias']} "
+                    f"evidencia(s) quedaron sin verificar ({detalle})."
+                ),
+                "consecuencia": (
+                    "Esas evidencias no excluyen ni cuentan como cumplimiento; "
+                    "las personas afectadas quedan marcadas «verificación "
+                    "incompleta». Los veredictos emitidos se aplican igual."
+                ),
+            })
+    verificacion.setdefault("informes", []).append({"criterio": etiqueta, **informe})
     reloj.marca(
         "verificacion", desde, criterio=etiqueta,
         aplicada=verificador.disponible, proveedor=verificador.nombre,
-        evidencias_verificadas=len(planas), individuos=len(top_k),
+        evidencias_verificadas=informe["verificadas"],
+        sin_verificar=informe["sin_verificar"],
+        individuos=len(top_k),
+        lotes=informe["lotes_iniciales"], llamadas=informe["llamadas"],
+        subdivisiones=informe["subdivisiones"],
         cumple=sum(1 for j in juicios if j["veredicto"] == mod_verificacion.CUMPLE),
         no_cumple=sum(1 for j in juicios if j["veredicto"] == mod_verificacion.NO_CUMPLE),
         dudoso=sum(1 for j in juicios if j["veredicto"] == mod_verificacion.DUDOSO),
@@ -495,6 +542,8 @@ def _resolver_criterio_semantico(ctx, criterio, definicion, ids_permitidos,
         cursor += cuantas
         candidato, juicio = _elegir_evidencia(grupo["evidencias"], del_grupo)
         relevancia = candidato.get("relevancia")
+        pendientes = sum(
+            1 for j in del_grupo if j["veredicto"] == mod_verificacion.SIN_VERIFICAR)
         hallazgos[grupo["id_persona"]] = {
             "criterio": etiqueta,
             "orden": criterio["orden"],
@@ -507,13 +556,18 @@ def _resolver_criterio_semantico(ctx, criterio, definicion, ids_permitidos,
             "relevancia": None if relevancia is None else round(relevancia, 4),
             "veredicto": juicio["veredicto"],
             "razon": juicio["razon"],
+            "fallo": juicio.get("fallo"),
             "aviso_polaridad": juicio["aviso_polaridad"],
+            # Cuántas de sus evidencias quedaron sin juzgar. Con una sola,
+            # la persona no está «validada» aunque otra diga `cumple`: la
+            # contradicción podía estar justo en la que faltó.
+            "pendientes_de_verificar": pendientes,
             "evidencia": _evidencia(candidato),
             # Todas las respuestas suyas que se miraron, con su veredicto:
             # es lo que deja auditar por qué quedó adentro o afuera.
             "evidencias_evaluadas": [
                 {**_evidencia(otro), "veredicto": otro_juicio["veredicto"],
-                 "razon": otro_juicio["razon"]}
+                 "razon": otro_juicio["razon"], "fallo": otro_juicio.get("fallo")}
                 for otro, otro_juicio in zip(grupo["evidencias"], del_grupo)
             ],
         }
@@ -524,7 +578,7 @@ def _resolver_criterio_semantico(ctx, criterio, definicion, ids_permitidos,
 #  R2.10 — combinación de criterios
 # ════════════════════════════════════════════════════════════════════
 
-def _combinar(definicion, por_criterio, umbral, verificacion_aplicada=True):
+def _combinar(definicion, por_criterio, umbral):
     """Un puntaje por criterio y uno combinado, con la regla del modo.
 
     Reglas, en el orden en que se aplican a cada persona:
@@ -532,17 +586,19 @@ def _combinar(definicion, por_criterio, umbral, verificacion_aplicada=True):
       no_cumple en cualquier criterio  → afuera, en los dos modos.
       criterio duro sin cumplir        → afuera, en los dos modos.
       dudoso o sin evidencia, estricto → afuera.
-      dudoso o sin evidencia, laxo     → adentro, con 0 en ese criterio y
-                                         marcada como penalizada.
+      dudoso o sin evidencia, laxo     → adentro, marcada como penalizada.
+      sin_verificar                    → adentro en los dos modos, con su
+                                         puntaje de recall/reranking, y
+                                         marcada «verificación incompleta».
 
-    Con `verificacion_aplicada=False` —no hay proveedor, o falló— el
-    `dudoso` deja de excluir. Es el único caso en que el modo estricto se
-    ablanda, y por un motivo simple: cuando la verificación no corrió, TODOS
-    los candidatos quedan en `dudoso`, así que aplicar la regla vaciaría el
-    ranking. Excluir a todo el mundo por un juicio que nunca se emitió no es
-    ser estricto: es devolver una lista vacía y llamarla resultado. La
-    ausencia de evidencia sí sigue excluyendo, porque eso lo dice el recall y
-    no el verificador.
+    `sin_verificar` tiene su propia rama a propósito (R-VER.7). Antes, una
+    verificación caída dejaba todo en `dudoso` y había que apagar la regla
+    del modo estricto para no vaciar el ranking —«excluir a todo el mundo
+    por un juicio que nunca se emitió no es ser estricto»—. Ahora el fallo
+    técnico no se disfraza de juicio, así que la regla de `dudoso` se aplica
+    siempre que haya un `dudoso`, y la ausencia de juicio ni excluye ni
+    aprueba. La ausencia de **evidencia** sí sigue excluyendo en estricto,
+    porque eso lo dice el recall y no el verificador.
     """
     semanticos = [c for c in definicion["criterios"] if c["tipo"] == "semantico"]
     demograficos = [c for c in definicion["criterios"] if c["tipo"] == "demografico"]
@@ -597,11 +653,15 @@ def _combinar(definicion, por_criterio, umbral, verificacion_aplicada=True):
                     "evidencia": hallazgo["evidencia"]["valor_texto"],
                 }
             elif veredicto == mod_verificacion.DUDOSO:
-                if verificacion_aplicada and (criterio["duro"] or estricto):
+                if criterio["duro"] or estricto:
                     excluir = excluir or {
                         "criterio": criterio["etiqueta"],
                         "motivo": mod_verificacion.DUDOSO,
                     }
+            elif veredicto == mod_verificacion.SIN_VERIFICAR:
+                # Ni excluye ni aprueba: nadie juzgó la evidencia. El puntaje
+                # queda el del recall/reranking y la persona se marca abajo.
+                pass
             detalle.append({
                 "criterio": criterio["etiqueta"],
                 "tipo": "semantico",
@@ -612,6 +672,8 @@ def _combinar(definicion, por_criterio, umbral, verificacion_aplicada=True):
                 "distancia": hallazgo["distancia"],
                 "relevancia": hallazgo["relevancia"],
                 "aviso_polaridad": hallazgo["aviso_polaridad"],
+                "fallo": hallazgo.get("fallo"),
+                "pendientes_de_verificar": hallazgo.get("pendientes_de_verificar", 0),
                 "evidencia": hallazgo["evidencia"],
             })
 
@@ -628,7 +690,11 @@ def _combinar(definicion, por_criterio, umbral, verificacion_aplicada=True):
             and d["veredicto"] in (SIN_EVIDENCIA, mod_verificacion.DUDOSO)
             for d in detalle
         )
-        confianza_baja = penalizado or (
+        incompleta = any(
+            d["tipo"] == "semantico" and d.get("pendientes_de_verificar")
+            for d in detalle
+        )
+        confianza_baja = penalizado or incompleta or (
             mejor_distancia is not None and mejor_distancia > umbral
         )
 
@@ -638,6 +704,9 @@ def _combinar(definicion, por_criterio, umbral, verificacion_aplicada=True):
             "confianza": "baja" if confianza_baja else "alta",
             "mejor_distancia": mejor_distancia,
             "penalizado": penalizado,
+            # R-VER.7 — alguna de sus evidencias quedó sin verificar. No es un
+            # resultado completo, y el ranking lo dice persona por persona.
+            "verificacion_incompleta": incompleta,
             "criterios": sorted(detalle, key=lambda d: (d["tipo"], d["criterio"])),
             "evidencias": [d["evidencia"] for d in detalle if d.get("evidencia")],
         })
@@ -707,10 +776,16 @@ def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None):
             "proveedor": verificador.nombre,
             "motivo": getattr(verificador, "motivo", "No hay verificador."),
             "consecuencia": (
-                "Todos los candidatos quedan «dudoso» y ninguno se excluye por "
-                "veredicto: no se puede excluir por un juicio que no se emitió."
+                "Todos los candidatos quedan «sin verificar» y ninguno se excluye "
+                "por veredicto: no se puede excluir por un juicio que no se emitió."
             ),
         })
+
+    # R-VER.10 — el identificador de esta ejecución. Va al diagnóstico, y con
+    # el modo de depuración encendido agrupa las capturas del intercambio
+    # con Claude. Sin el modo, `captura` es None y no se guarda nada.
+    ejecucion_id = str(uuid.uuid4())
+    verificacion = {"limite": None, "captura": mod_verificacion.nueva_captura(ejecucion_id)}
 
     desde = time.perf_counter()
     personas_en_segmento = demografia.contar_segmento(
@@ -747,18 +822,20 @@ def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None):
             )
 
     por_criterio = {}
-    for criterio in semanticos:
-        por_criterio[criterio["orden"]] = _resolver_criterio_semantico(
-            ctx, criterio, definicion, ids_permitidos, filtro_posterior,
-            reloj, degradaciones, reranker, verificador,
-        )
+    try:
+        for criterio in semanticos:
+            por_criterio[criterio["orden"]] = _resolver_criterio_semantico(
+                ctx, criterio, definicion, ids_permitidos, filtro_posterior,
+                reloj, degradaciones, reranker, verificador, verificacion,
+            )
+    finally:
+        # Lo capturado se escribe aunque la consulta falle después: la
+        # respuesta rara es justo la que hay que poder mirar.
+        _persistir_captura(ctx, verificacion.get("captura"))
 
     desde = time.perf_counter()
     items, excluidos = _combinar(
         definicion, por_criterio, definicion["umbral_distancia"],
-        verificacion_aplicada=verificador.disponible and not any(
-            d["etapa"] == "verificacion" for d in degradaciones
-        ),
     )
     reloj.marca(
         "combinacion", desde, modo=definicion["modo"],
@@ -785,13 +862,62 @@ def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None):
         "items": items[: definicion["limite"]],
         "excluidos": excluidos,
         "degradaciones": degradaciones,
+        "verificacion": _resumen_verificacion(verificacion.get("informes", []), items, excluidos),
         "diagnostico": {
             "ms_total": reloj.ms_total,
             "etapas": reloj.etapas,
             "abrio_semantica": True,
             "reranker": reranker.nombre,
             "verificador": verificador.nombre,
+            "ejecucion_id": ejecucion_id,
+            # Si el modo de depuración estaba encendido en ESTA ejecución.
+            # La pantalla lo usa para decir «estaba apagado» en vez de
+            # mostrar un intercambio vacío.
+            "captura_depuracion": verificacion.get("captura") is not None,
+            "verificacion": [
+                {k: v for k, v in informe.items() if k != "lotes"} | {
+                    "lotes_detalle": informe.get("lotes", [])}
+                for informe in verificacion.get("informes", [])
+            ],
         },
+    }
+
+
+def _persistir_captura(ctx, captura):
+    """Escribe la captura de depuración en el store semántico. Si falla —la
+    migración semantica/0008 sin aplicar, por ejemplo— la consulta sigue: la
+    depuración no puede tumbar lo que está depurando."""
+    if captura is None or not captura.filas:
+        return
+    try:
+        captura.persistir(ctx.semantica)
+    except Exception as error:  # noqa: BLE001
+        ctx.semantica.rollback()
+        print(f"[verificacion] no se pudo guardar la captura de depuración: "
+              f"{type(error).__name__}")
+
+
+def _resumen_verificacion(informes, items, excluidos):
+    """R-VER.6/7 — ¿la verificación de esta consulta está completa?
+
+    Va en la respuesta, no solo en el diagnóstico: un ranking que parece
+    normal y está parcialmente sin verificar es peor que uno que avisa.
+    """
+    evidencias = sum(i["evidencias"] for i in informes)
+    sin_verificar = sum(i["sin_verificar"] for i in informes)
+    por_fallo = {}
+    for informe in informes:
+        for fallo, n in informe["por_fallo"].items():
+            por_fallo[fallo] = por_fallo.get(fallo, 0) + n
+    return {
+        "completa": sin_verificar == 0,
+        "evidencias": evidencias,
+        "verificadas": evidencias - sin_verificar,
+        "sin_verificar": sin_verificar,
+        "por_fallo": por_fallo,
+        "personas_con_pendientes": sum(
+            1 for i in items if i.get("verificacion_incompleta")),
+        "presupuesto_agotado": any(i["presupuesto_agotado"] for i in informes),
     }
 
 

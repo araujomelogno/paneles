@@ -217,11 +217,10 @@ function engancharVerificacion(campo, canal) {
           <button type="button" class="btn"
                   id="comprobar-${campo}">Confirmar</button>
         </div>`);
-      estado.textContent = pedido.codigo_sin_enviar
-        // Sin proveedor de envío configurado. Se dice con todas las letras:
-        // así no se anuncia una landing creyendo que verifica algo.
-        ? `Modo prueba, sin envío real: el código es ${pedido.codigo_sin_enviar}.`
-        : `Te mandamos un código. Vence en ${pedido.minutos} minutos.`;
+      // R-MAIL.2 — el código no se muestra nunca en la página: tiene que
+      // llegar al contacto, o la verificación no prueba nada. Sin proveedor
+      // de envío el servidor contesta un error de configuración.
+      estado.textContent = `Te mandamos un código. Vence en ${pedido.minutos} minutos.`;
       $(`#pedir-${campo}`).disabled = true;
       $(`#comprobar-${campo}`).onclick = async () => {
         try {

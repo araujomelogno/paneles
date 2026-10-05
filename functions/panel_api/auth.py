@@ -87,6 +87,13 @@ PERMISOS = {
     # archivo con nombres y documentos no son el mismo riesgo, y la spec
     # pide registrarlos como eventos distintos.
     "exportar_identificado": {"admin", "operaciones"},
+
+    # R-VER.10 — leer las capturas del modo de depuración de la verificación:
+    # el cuerpo exacto que se mandó a Claude y lo que contestó. Son respuestas
+    # de encuesta en bruto, sin identificadores pero sin el filtro de una
+    # pantalla de resultados. Solo admin, y con permiso propio: no es parte de
+    # `consultar`.
+    "depurar_verificacion": {"admin"},
 }
 
 

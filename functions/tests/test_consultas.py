@@ -118,7 +118,8 @@ def test_el_verificador_no_puede_inventar_la_evidencia_que_cita(ctx):
 
     Se le da un verificador que devuelve un índice inexistente y una razón
     inventada. La cita del resultado sale igual del registro propio, y el
-    veredicto sin respaldo cae a «dudoso».
+    candidato sobre el que no se pronunció queda «sin verificar» —no
+    «dudoso»: nadie lo juzgó (SPEC_verificacion_por_lotes, R-VER.5/6)—.
     """
     candidatos = [
         {"pregunta_texto": "¿Qué toma?", "valor_texto": "Fernet con cola"},
@@ -135,7 +136,8 @@ def test_el_verificador_no_puede_inventar_la_evidencia_que_cita(ctx):
 
     salida = Mentiroso().verificar(CRITERIO_FERNET, candidatos)
     assert salida[0]["evidencia"] == "Fernet con cola"
-    assert salida[0]["veredicto"] == mod_verificacion.DUDOSO
+    assert salida[0]["veredicto"] == mod_verificacion.SIN_VERIFICAR
+    assert salida[0]["fallo"] == mod_verificacion.OMITIDO
     assert "no se pronunció" in salida[0]["razon"]
 
 

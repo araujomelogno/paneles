@@ -211,6 +211,10 @@ export const cumplimiento = {
   // listo. Va acá porque su ausencia es una condición para no anunciar la
   // landing, no un detalle técnico.
   contacto: () => GET('/diagnostico/contacto'),
+  // R-MAIL.4 — un correo de prueba a una dirección, sin crear un panelista,
+  // y el registro de envíos (por defecto, los fallidos).
+  correoPrueba: (destino) => POST('/diagnostico/contacto/correo-prueba', { destino }),
+  envios: (estado = 'fallido') => GET('/diagnostico/contacto/envios', { estado }),
 };
 
 export const encuestas = {
@@ -251,6 +255,10 @@ export const consultas = {
     POST('/consultas/guardadas', { nombre, definicion, descripcion }),
   verGuardada: (id) => GET(`/consultas/guardadas/${id}`),
   borrarGuardada: (id) => DELETE(`/consultas/guardadas/${id}`),
+  /* R-VER.10 — el intercambio con Claude de una ejecución: lo que se mandó
+     y lo que volvió, por lote. Solo admin, y solo si el modo de depuración
+     estaba encendido cuando corrió. */
+  capturas: (ejecucionId) => GET(`/consultas/capturas/${ejecucionId}`),
 };
 
 /* Traducir id_persona → datos de contacto. Es la única llamada de la Fase 2

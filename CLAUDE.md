@@ -186,6 +186,46 @@ Lo que no hay que deshacer:
   bóveda: por eso no llama a `encuestas.ingestar()`, que reincorporaría al
   panel y registraría participaciones.
 
+## El correo es el acceso, y no hay atajo
+
+Desde R-MAIL los correos salen por SMTP de Google Workspace
+(`correo.py`, proveedor `workspace`, contraseña de aplicación en
+`SMTP_PASSWORD`). Lo que no hay que deshacer:
+
+- **Ninguna página pública muestra el código ni el enlace.** Hubo un «modo
+  desarrollo» que los devolvía en la respuesta y el portal los mostraba: con
+  escribir el correo de otro se entraba a su cuenta. Hay una prueba que falla
+  si `sin_enviar` vuelve a aparecer en `portal.html`, `inscribirse.html` o
+  `portal.js`.
+- **Ausencia de proveedor y modo desarrollo son dos cosas.** Sin proveedor,
+  `proveedor_de_envio()` levanta `EnvioNoConfigurado` **antes** de mirar si
+  el correo existe. El modo desarrollo es `ENVIO_MODO_DESARROLLO`, explícito,
+  y `modo_desarrollo()` lo ignora en Cloud Run (`K_SERVICE`). No lo vuelvan a
+  derivar de «no hay proveedor».
+- **Un envío fallido no se reporta como éxito**: pasa por
+  `enviar_y_registrar()`, que deja la fila en `envio_correo` (sin contenido)
+  y levanta `EnvioFallido`. Un correo nuevo del sistema usa ese camino y una
+  plantilla de `correo.PLANTILLAS`.
+
+## La verificación: `sin_verificar` no es `dudoso`
+
+La verificación con Claude va por lotes (`verificar_por_lotes`): índices
+locales al lote, `stop_reason` mirado **antes** de aceptar nada, un lote
+truncado se descarta entero y se parte en dos, y todo dentro de un
+presupuesto de tiempo por consulta (60 s, para que COLOQUIO entre en sus
+90 s). Lo que no se pudo juzgar es `sin_verificar`, con su `fallo`:
+
+- **No excluye ni aprueba**, en ningún modo, y la persona queda con
+  `verificacion_incompleta`. `dudoso` es solo «Claude leyó y no pudo
+  decidir», y su regla de estricto no se apaga por una falla técnica.
+- **Nunca completen lo que falta con `dudoso`.** Era el bug: un truncamiento
+  silencioso se presentaba como un juicio.
+- **El modo de depuración no es un log** (`VERIFICACION_DEPURACION`): va al
+  store semántico (`verificacion_captura`), apagado por defecto, vence a los
+  7 días, solo admin. El payload a Claude no lleva identificadores; no se los
+  agreguen «para depurar mejor». El diagnóstico de rutina (`[verificacion]`
+  en el log) lleva números, nunca contenido.
+
 ## Reglas de negocio que el código debe respetar
 
 - No se puede convocar ni incluir en muestreo a una persona sin `consentimiento` **vigente** para la finalidad correspondiente.

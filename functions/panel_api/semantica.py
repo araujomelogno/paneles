@@ -336,17 +336,40 @@ def recuperar(conn, vector, top_n, ids_persona=None):
     return candidatos
 
 
+def _borrar_capturas(conn, consulta_ids, parametros):
+    """Las capturas de depuración que llevan esas respuestas. Si la 0008 no
+    está aplicada no hay capturas, y eso no puede frenar una baja."""
+    from . import verificacion
+
+    if not db.una(conn, "select to_regclass('verificacion_captura') as t")["t"]:
+        return 0
+    ids = [f["id"] for f in db.todas(conn, consulta_ids, parametros)]
+    return verificacion.borrar_capturas_de_respuestas(conn, ids)
+
+
 def borrar_persona(conn, id_persona):
     """Borra el individuo y, en cascada, todas sus respuestas y embeddings.
 
-    Es el lado semántico de la cascada de retiro de consentimiento.
+    Es el lado semántico de la cascada de retiro de consentimiento. Se lleva
+    también las capturas de depuración de la verificación que incluyeron
+    alguna de sus respuestas (R-VER.10): son copias de ese mismo contenido.
     """
+    _borrar_capturas(conn, """
+        select r.id from respuesta r join individuo i on i.id = r.individuo_id
+         where i.id_persona = %s""", (str(id_persona),))
     n = db.ejecutar(conn, "delete from individuo where id_persona = %s", (str(id_persona),))
     return {"id_persona": str(id_persona), "individuos_borrados": n}
 
 
 def borrar_respuestas_de_estudio(conn, id_persona, ref_estudio):
     """Borrado acotado a un estudio (retiro de `uso_semantico` para una ola)."""
+    _borrar_capturas(conn, """
+        select r.id from respuesta r
+          join individuo i on i.id = r.individuo_id
+          join pregunta p on p.id = r.pregunta_id
+          join cuestionario c on c.id = p.cuestionario_id
+         where i.id_persona = %s and c.ref_estudio = %s""",
+        (str(id_persona), str(ref_estudio)))
     n = db.ejecutar(
         conn,
         """

@@ -6,6 +6,7 @@ Firebase: recibe método, ruta, cuerpo y actor, y devuelve `(status, dict)`.
 Eso lo hace probable sin desplegar nada.
 """
 
+import os
 import re
 
 from . import (
@@ -20,6 +21,7 @@ from . import (
     composicion,
     consentimiento,
     consultas,
+    correo,
     db,
     encuestas,
     esquema,
@@ -43,10 +45,11 @@ from . import (
     semantica,
     series,
     usuarios,
+    verificacion as mod_verificacion,
     verificacion_contacto,
     whatsapp,
 )
-from .errores import DatosInvalidos, ErrorApi, NoEncontrado
+from .errores import DatosInvalidos, EnvioNoConfigurado, ErrorApi, NoEncontrado
 
 RUTAS = []
 
@@ -633,6 +636,35 @@ def guardar_consulta(ctx, actor, params, cuerpo, consulta):
 @ruta("GET", "/consultas/guardadas/<consulta_id>", "consultar", requisito="P1")
 def ver_consulta_guardada(ctx, actor, params, cuerpo, consulta):
     return 200, consultas.obtener_guardada(ctx.boveda, _entero(params["consulta_id"]))
+
+
+@ruta("GET", "/consultas/capturas/<ejecucion_id>", "depurar_verificacion",
+      requisito="R-VER.10")
+def capturas_de_verificacion(ctx, actor, params, cuerpo, consulta):
+    """El intercambio con Claude de una consulta ya ejecutada: lo que se
+    mandó y lo que volvió, por lote y por intento.
+
+    Solo admin (`depurar_verificacion`): son respuestas de encuesta en
+    bruto, y aunque no lleven identificadores no son para cualquiera que
+    pueda consultar. Si no hay nada, se dice por qué en vez de devolver una
+    lista vacía que parezca «no hubo intercambio»."""
+    ejecucion_id = (params.get("ejecucion_id") or "").strip()
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", ejecucion_id):
+        raise DatosInvalidos("`ejecucion_id` no es un identificador de ejecución.")
+    capturas = mod_verificacion.capturas_de(ctx.semantica, ejecucion_id)
+    salida = {
+        "ejecucion_id": ejecucion_id,
+        "modo_activo_ahora": mod_verificacion.depuracion_activa(),
+        "dias_de_retencion": mod_verificacion.DIAS_DE_CAPTURA,
+        "capturas": capturas,
+    }
+    if not capturas:
+        salida["explicacion"] = (
+            "No hay capturas para esta ejecución. O el modo de depuración "
+            "(VERIFICACION_DEPURACION) estaba apagado cuando corrió, o ya "
+            f"vencieron ({mod_verificacion.DIAS_DE_CAPTURA} días), o la consulta "
+            "no llegó a llamar a la API.")
+    return 200, salida
 
 
 @ruta("DELETE", "/consultas/guardadas/<consulta_id>", "consultar", requisito="P1")
@@ -1936,9 +1968,64 @@ def diagnostico_contacto(ctx, actor, params, cuerpo, consulta):
     nombres de proveedor y booleanos —**ningún valor de credencial**—, así que
     no hay nada que proteger más allá de la sesión."""
     return 200, {
-        "verificacion": verificacion_contacto.diagnostico(),
+        "verificacion": verificacion_contacto.diagnostico(conn=ctx.boveda),
         "desafio": desafio.diagnostico(),
         "whatsapp": whatsapp.diagnostico(),
+    }
+
+
+@ruta("POST", "/diagnostico/contacto/correo-prueba", "cumplimiento",
+      requisito="R-MAIL.4")
+def correo_de_prueba(ctx, actor, params, cuerpo, consulta):
+    """Manda un correo de prueba a la dirección indicada, sin crear un
+    panelista. Es la forma de comprobar la configuración entera —credencial,
+    remitente, salida de red desde Cloud Run, SPF/DKIM— antes de anunciar el
+    portal: un SMTP bloqueado por egress falla de forma poco clara, y es
+    mejor verlo acá que en el primer panelista sin acceso.
+
+    Pide `cumplimiento` y no `leer`: manda un correo a cualquier dirección
+    desde la cuenta de Equipos. A diferencia del portal, el motivo del fallo
+    **sí** se devuelve: quien prueba es quien tiene que arreglarlo.
+
+    No pasa por el modo desarrollo: sin proveedor real, la prueba falla."""
+    destino = ((cuerpo or {}).get("destino") or "").strip()
+    canal, destino = verificacion_contacto.normalizar_destino(
+        verificacion_contacto.EMAIL, destino)
+    if verificacion_contacto._nombre_proveedor(os.environ) != "workspace":
+        raise EnvioNoConfigurado(
+            "La prueba manda un correo de verdad, y el proveedor de envío no es "
+            "`workspace`: configurá VERIFICACION_ENVIO_PROVEEDOR=workspace.",
+            {"proveedor": verificacion_contacto._nombre_proveedor(os.environ)})
+    servidor = correo.Workspace.desde_entorno()
+    asunto, texto = correo.armar(correo.PRUEBA, None)
+    try:
+        envio = servidor.enviar(destino, asunto, texto)
+    except correo.ErrorEnvio as error:
+        correo.registrar(ctx.boveda, correo.PRUEBA, destino, servidor.nombre,
+                         "fallido", motivo=error.motivo, intentos=error.intentos)
+        ctx.boveda.commit()
+        return 200, {"enviado": False, "destino": destino, "motivo": error.motivo,
+                     "transitorio": error.transitorio, "intentos": error.intentos}
+    correo.registrar(ctx.boveda, correo.PRUEBA, destino, servidor.nombre,
+                     "enviado", intentos=envio["intentos"], duracion_ms=envio["ms"])
+    ctx.boveda.commit()
+    return 200, {"enviado": True, "destino": destino, "remitente": servidor.remitente,
+                 **envio}
+
+
+@ruta("GET", "/diagnostico/contacto/envios", "cumplimiento", requisito="R-MAIL.4")
+def envios_de_correo(ctx, actor, params, cuerpo, consulta):
+    """Los envíos recientes —por defecto los fallidos—, con destinatario,
+    momento y motivo, y cuántos salieron por día contra el tope de
+    Workspace. Pide `cumplimiento`: lista direcciones de correo."""
+    estado = (consulta.get("estado") or "fallido").strip().lower()
+    if estado not in ("fallido", "enviado", "todos"):
+        raise DatosInvalidos("`estado` es fallido, enviado o todos.")
+    return 200, {
+        "items": correo.listar(ctx.boveda, None if estado == "todos" else estado,
+                               limite=_entero(consulta.get("limite") or 100)),
+        "por_dia": correo.por_dia(ctx.boveda),
+        "tope_diario": correo.TOPE_DIARIO,
     }
 
 

@@ -41,8 +41,9 @@
       <ul><li>Crear una ola · Convocar · Exportar la muestra · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Enviar por WhatsApp · Verificar el cruce · Calidad del dato y vista previa · Corregir y reprocesar un estudio</li></ul></li>
     <li><a href="#s6"><span><span class="num">6</span> Consultas</span></a>
       <ul><li>Buscar por significado · El ranking y la evidencia · Columnas ·
-      La ficha desde un resultado · Exclusiones · Reidentificación · Modos ·
-      Consultas guardadas</li></ul></li>
+      La ficha desde un resultado · Exclusiones · Verificación incompleta ·
+      Reidentificación · Modos · Consultas guardadas · Diagnóstico e
+      intercambio con el verificador</li></ul></li>
     <li><a href="#s7"><span><span class="num">7</span> Composición</span></a>
       <ul><li>Universo de referencia · Brecha · Cruce de dos dimensiones</li></ul></li>
     <li><a href="#s8"><span><span class="num">8</span> Participación</span></a>
@@ -54,7 +55,8 @@
       <ul><li>Reglas y optimizador · Por qué entró cada persona ·
       Cuando la cuota no se puede cerrar · Los pesos</li></ul></li>
     <li><a href="#s11"><span><span class="num">11</span> Cumplimiento</span></a>
-      <ul><li>Retiro de consentimiento · Baja total · Auditoría de privacidad</li></ul></li>
+      <ul><li>Retiro de consentimiento · Baja total · Auditoría de privacidad ·
+      Envío de correos y correo de prueba</li></ul></li>
     <li><a href="#s12"><span><span class="num">12</span> Configuración</span></a>
       <ul><li>Alta de usuarios · Roles · Desactivación · Auditoría ·
       Atributos demográficos</li></ul></li>
@@ -624,16 +626,16 @@
     <img src="capturas/61-enlace-landing.jpg" alt="Enlace del formulario público con su estado" />
     <figcaption><b>El enlace, con su estado.</b> Debajo de la dirección, si el
     formulario está en condiciones de recibir gente. Acá falta el proveedor de
-    envío de códigos, así que todavía no conviene repartirlo.</figcaption>
+    envío de correos, así que todavía no conviene repartirlo.</figcaption>
   </figure>
 
   <div class="aviso">
     <div class="t">Dos cosas tienen que estar antes de repartirlo</div>
     <p>Un <strong>texto de consentimiento publicado</strong>, porque sin él el
-    formulario rechaza a todo el mundo; y un <strong>proveedor de envío de
-    códigos</strong>, porque sin él el código se muestra en la propia pantalla
-    en lugar de enviarse, y entonces la verificación no comprueba nada: quien
-    lo pide lo recibe, tenga o no acceso a ese correo.</p>
+    formulario rechaza a todo el mundo; y el <strong>envío de correos</strong>
+    configurado (sección 11.4), porque sin él el formulario no puede mandar el
+    código de verificación y nadie llega a completar la inscripción: quien lo
+    intenta ve un aviso de que el envío no está configurado.</p>
     <p>Las dos fallan en silencio —el formulario carga igual— y por eso la
     tarjeta las informa. Mientras alguna falte, dice que el enlace no se puede
     repartir.</p>
@@ -643,7 +645,18 @@
 
   <p>Quien se inscribe debe <strong>verificar su correo electrónico</strong>
   con un código de un solo uso, y también su celular si lo declara. Sin esa
-  verificación la solicitud <strong>no llega a la bandeja</strong>.</p>
+  verificación la solicitud <strong>no llega a la bandeja</strong>. El código
+  llega por correo desde <code>notificaciones@equipos.com.uy</code>, con el
+  asunto «Tu código de verificación», y vence a los 10 minutos.</p>
+
+  <div class="aviso">
+    <div class="t">El celular todavía no se puede verificar</div>
+    <p>El envío está configurado solo para correo. Si la persona completa el
+    celular, al pedir el código ve un aviso de que por ahora no se pueden enviar
+    códigos por SMS: tiene que dejarlo vacío para inscribirse y puede agregarlo
+    después desde el portal. Se resuelve cuando se contrate un proveedor de
+    SMS.</p>
+  </div>
 
   <figure>
     <img src="capturas/51-landing-verificacion.jpg" alt="Formulario público con verificación" />
@@ -1710,10 +1723,14 @@
       <td>Indica si la evidencia que sostiene esa posición es sólida. La marca
       <span class="badge off">baja</span> señala que la mejor respuesta
       encontrada ya no se aproxima demasiado al criterio, o que falta evidencia
-      de alguno de los criterios. No excluye a la persona: la señala.</td></tr>
+      de alguno de los criterios. No excluye a la persona: la señala. Debajo
+      puede aparecer <strong>verificación incompleta</strong>: alguna de sus
+      respuestas no llegó a verificarse (ver «Si la verificación quedó
+      incompleta», más abajo).</td></tr>
     <tr><td class="destacado">Criterios</td>
       <td>El veredicto para cada criterio: <strong>Cumple</strong>,
-      <strong>Dudoso</strong> o <strong>Sin evidencia</strong>.</td></tr>
+      <strong>Dudoso</strong>, <strong>Sin evidencia</strong> o
+      <strong>Sin verificar</strong>.</td></tr>
     <tr><td class="destacado">Evidencia</td>
       <td>La respuesta concreta que sostiene esa posición, con el estudio y la
       pregunta de los que proviene.</td></tr>
@@ -1757,6 +1774,67 @@
       <td>No tiene ninguna respuesta próxima a ese criterio. Se comporta igual
       que el caso anterior.</td></tr>
   </table>
+
+  <p><strong>Sin verificar</strong> no figura entre los motivos de exclusión,
+  y no por olvido: no es un juicio. Significa que el verificador no llegó a
+  leer esa respuesta —por un problema técnico o porque se terminó el tiempo—,
+  y una respuesta que nadie leyó no puede dejar a nadie afuera ni contar como
+  que cumple. Se explica en el apartado siguiente.</p>
+
+  <h4>Si la verificación quedó incompleta</h4>
+
+  <p>El verificador revisa las respuestas de a tandas (lotes). Si una tanda
+  falla —la respuesta del servicio se cortó, el servicio no respondió, o se
+  agotó el tiempo que el sistema le da a la verificación—, el sistema intenta
+  recuperarla partiéndola en tandas más chicas. Lo que aun así no se pudo
+  verificar queda marcado <strong>Sin verificar</strong>, y la consulta lo dice
+  de tres maneras:</p>
+
+  <ul class="pasos">
+    <li>Un aviso en rojo arriba del ranking, <strong>«Verificación
+    incompleta»</strong>, con cuántas respuestas quedaron sin verificar, por qué
+    motivo y cuántas personas del ranking tienen respuestas pendientes.</li>
+    <li>En cada una de esas personas, la confianza <span class="badge off">baja</span>
+    y la leyenda <strong>verificación incompleta</strong>, aunque otra de sus
+    respuestas diga que cumple: la contradicción podía estar justo en la que
+    faltó.</li>
+    <li>En el detalle (<strong>Ver</strong>), el veredicto <strong>Sin
+    verificar</strong> con el motivo técnico.</li>
+  </ul>
+
+  <figure>
+    <img class="recorte" src="capturas/72-verificacion-incompleta.jpg" alt="Aviso de verificación incompleta" />
+    <figcaption><b>El aviso.</b> Dice cuántas respuestas quedaron sin verificar, por qué, y cuántas personas del ranking quedaron con respuestas pendientes.</figcaption>
+  </figure>
+
+  <figure>
+    <img class="recorte" src="capturas/73-ranking-sin-verificar.jpg" alt="Ranking con una persona sin verificar" />
+    <figcaption><b>En el ranking.</b> La segunda persona tiene su respuesta <i>Sin verificar</i>: sigue en la lista, con confianza baja y la leyenda «verificación incompleta». No es lo mismo que la tercera, <i>Dudoso</i>, que el verificador sí leyó.</figcaption>
+  </figure>
+
+  <table>
+    <thead><tr><th>Veredicto</th><th>Qué significa</th><th>Efecto</th></tr></thead>
+    <tr><td class="destacado">Dudoso</td>
+      <td>El verificador <strong>leyó</strong> la respuesta y no alcanza para
+      decidir.</td>
+      <td>Excluye en modo estricto; penaliza en laxo.</td></tr>
+    <tr><td class="destacado">Sin verificar</td>
+      <td>El verificador <strong>no la leyó</strong>: falló técnicamente.</td>
+      <td>Ni excluye ni aprueba. La persona queda en el ranking con su puntaje de
+      búsqueda y marcada.</td></tr>
+  </table>
+
+  <p>Los veredictos que sí se emitieron se aplican igual: si una persona tiene
+  una respuesta que <em>no cumple</em>, queda afuera aunque otra de sus
+  respuestas haya quedado sin verificar.</p>
+
+  <div class="aviso">
+    <div class="t">Qué hacer con un resultado incompleto</div>
+    <p>No dar por validadas a las personas marcadas. Si el aviso dice que se
+    agotó el tiempo, volver a correr la consulta con un <strong>A verificar</strong>
+    (top-k) más chico. Si el motivo es otro y se repite, avisar a quien administra
+    el sistema: queda registrado en el diagnóstico.</p>
+  </div>
 
   <div class="aviso info">
     <div class="t">Por qué se examina más de una respuesta por persona</div>
@@ -2002,6 +2080,42 @@
   <p>Al pie de cada resultado aparece el <strong>diagnóstico</strong>: cuánto
   demoró cada etapa y cuántos candidatos pasaron por ella. Es la herramienta
   para entender por qué una consulta devolvió lo que devolvió.</p>
+
+  <p>Debajo de las etapas, la tabla <strong>Verificación por lotes</strong>
+  muestra, para cada criterio, cuántas respuestas se verificaron, cuántas
+  quedaron sin verificar y por qué, en cuántas tandas se mandaron, cuántas
+  llamadas hizo falta (incluidas las tandas que se partieron y los
+  reintentos), los tokens consumidos y el tiempo.</p>
+
+
+  <figure>
+    <img class="recorte" src="capturas/74-diagnostico-lotes.jpg" alt="Diagnóstico con la verificación por lotes" />
+    <figcaption><b>Verificación por lotes.</b> Ocho respuestas en cuatro tandas: una se cortó y se partió en dos (una subdivisión), otra falló dos veces (un reintento) y sus dos respuestas quedaron sin verificar.</figcaption>
+  </figure>
+  <h4>Ver el intercambio con el verificador (solo administradores)</h4>
+
+  <p>Cuando un veredicto resulta raro y hace falta saber exactamente qué se le
+  mandó al verificador y qué contestó, un administrador puede abrir
+  <strong>Ver el intercambio con Claude</strong> desde el diagnóstico. Muestra,
+  tanda por tanda, la solicitud y la respuesta <strong>enfrentadas</strong>,
+  tal como viajaron —también las que llegaron cortadas o con error—.</p>
+
+  <ul class="pasos">
+    <li>Solo está disponible si el <strong>modo de depuración</strong> estaba
+    encendido cuando corrió la consulta. Lo enciende quien administra el
+    despliegue; está apagado por defecto. Si estaba apagado, la pantalla lo dice
+    en lugar de mostrarse vacía.</li>
+    <li>Lo que se ve son respuestas de encuesta numeradas, sin identificar a
+    nadie: así viajan al verificador. Los números <code>[n]</code> empiezan en 0
+    en cada tanda.</li>
+    <li>Las capturas se borran solas a los 7 días. El modo conviene
+    encenderlo para diagnosticar un problema puntual y apagarlo después.</li>
+  </ul>
+
+  <figure>
+    <img class="recorte" src="capturas/75-intercambio-claude.jpg" alt="Solicitud y respuesta enfrentadas" />
+    <figcaption><b>El intercambio.</b> A la izquierda lo que se mandó, a la derecha lo que volvió. La tanda L2 se ve tal cual llegó, cortada (<code>max_tokens</code>): es la que hay que poder mirar.</figcaption>
+  </figure>
 
   <figure>
     <img class="recorte" src="capturas/28-consulta-diagnostico.jpg" alt="Diagnóstico de la consulta" />
@@ -2536,6 +2650,62 @@
   modos —los datos personales se eliminan— y el caso queda listado en esta
   sección. La opción <strong>Reintentar</strong> vuelve a ejecutar el borrado
   pendiente. Una lista vacía indica que no quedó nada a medio hacer.</p>
+
+  <h3><span class="n">11.4</span> El envío de correos</h3>
+
+  <p>El sistema manda correos desde <code>notificaciones@equipos.com.uy</code>:
+  el código para verificar un correo en el formulario público y en el portal,
+  el enlace para crear o recuperar la contraseña del portal, y el enlace de
+  acceso de los usuarios internos. La tarjeta <strong>Contacto</strong> de
+  esta pantalla (botón <strong>Revisar</strong>) dice si eso funciona.</p>
+
+  <table>
+    <thead><tr><th>Dato</th><th>Qué mirar</th></tr></thead>
+    <tr><td class="destacado">Envío de correos</td>
+      <td>Debe decir <em>sí, por workspace</em>. Si dice que no sale nada, el
+      portal y el formulario público le informan a la gente que el envío no
+      está configurado, y nadie puede crear su contraseña ni inscribirse.</td></tr>
+    <tr><td class="destacado">Remitente</td>
+      <td>La cuenta desde la que sale, a qué casilla van las respuestas
+      (<em>Reply-To</em>) y si la contraseña de aplicación está cargada. La
+      contraseña nunca se muestra.</td></tr>
+    <tr><td class="destacado">Últimas 24 h</td>
+      <td>Cuántos correos salieron, contra el tope de Google Workspace de
+      <strong>2.000 por día</strong>, y cuántos fallaron. Si se acerca al tope,
+      aparece un aviso: conviene repartir los envíos masivos en varios días.</td></tr>
+    <tr><td class="destacado">Modo desarrollo</td>
+      <td>Debe decir <em>apagado</em>. Si dijera encendido, avisar de inmediato
+      a quien administra el sistema.</td></tr>
+  </table>
+
+
+  <figure>
+    <img class="recorte" src="capturas/76-cumplimiento-correo.jpg" alt="Estado del envío de correos en Cumplimiento" />
+    <figcaption><b>Contacto.</b> El envío sale por Workspace con la contraseña cargada, el modo desarrollo está apagado, y abajo, el correo de prueba y la lista de envíos con el motivo del que falló.</figcaption>
+  </figure>
+  <h4>Mandar un correo de prueba</h4>
+
+  <p>Para comprobar la configuración sin crear un panelista —por ejemplo,
+  después de un cambio de contraseña de aplicación— escribí una dirección en
+  <strong>Correo de prueba</strong> y elegí <strong>Enviar prueba</strong>.
+  Disponible para administradores y para el rol de cumplimiento.</p>
+
+  <ul class="pasos">
+    <li>Si sale, la pantalla lo confirma con el tiempo que tardó. Verificá que
+    haya llegado y que <strong>no esté en spam</strong>: un correo en spam es
+    tan inútil como uno que no sale, porque acá el correo es el acceso.</li>
+    <li>Si no sale, la pantalla muestra el motivo tal como lo reportó el
+    servidor de correo —por ejemplo, la contraseña rechazada o el servidor
+    inalcanzable—. Ese motivo es para quien administra el sistema.</li>
+  </ul>
+
+  <h4>Los envíos fallidos</h4>
+
+  <p>Debajo, la lista de <strong>envíos fallidos</strong> (o de todos, con el
+  selector) con el momento, el destinatario, el tipo de correo y el motivo, y
+  el conteo de envíos por día. Cuando un panelista dice que no le llegó el
+  enlace, es lo primero que hay que mirar. Los registros se borran solos a los
+  90 días, y una baja borra los de esa persona.</p>
 </section>
 
 <!-- ════════════════ 10 ════════════════ -->
@@ -2578,7 +2748,11 @@
   </figure>
 
   <p>Al crear una cuenta nueva, el sistema presenta un enlace para que la persona
-  defina su propia contraseña.</p>
+  defina su propia contraseña. Con el envío de correos configurado (sección
+  11.4), ese enlace <strong>además le llega por correo</strong> desde
+  <code>notificaciones@equipos.com.uy</code>, y el cuadro lo confirma con
+  «También se lo mandamos a…». Si el correo no sale, el cuadro lo dice y el
+  enlace sigue ahí para copiarlo: el alta no se ve afectada.</p>
 
   <figure>
     <img class="recorte" src="capturas/43-usuario-acceso.jpg" alt="Enlace de acceso, visible una sola vez" />
@@ -2841,6 +3015,26 @@
   <p>Después entra cuando quiere, sin depender de que le llegue ningún mail.
   Si se la olvida —va a pasar seguido, porque al portal se entra cada varios
   meses—, «Olvidé mi contraseña» le manda un enlace nuevo.</p>
+
+  <p>Los correos salen desde <code>notificaciones@equipos.com.uy</code>, con
+  asuntos que dicen para qué son: «Creá tu contraseña del portal del
+  panelista» y «Recuperá tu contraseña del portal del panelista». Si
+  alguien no lo encuentra, lo primero es que revise <strong>spam</strong> y
+  promociones; lo segundo, mirar en <strong>Cumplimiento → Contacto</strong>
+  si su envío figura como fallido.</p>
+
+  <div class="aviso">
+    <div class="t">Si el portal dice que no pudo enviar el correo</div>
+    <p>Hay dos avisos posibles, y ninguno es un problema de los datos de la
+    persona. <em>«El envío de correos no está configurado»</em> significa que
+    falta la configuración del servidor: nadie puede crear ni recuperar su
+    contraseña hasta que se resuelva. <em>«No pudimos enviar el correo en este
+    momento»</em> significa que el servidor de correo falló en ese intento: se
+    puede volver a probar en unos minutos, y el motivo queda en Cumplimiento →
+    Contacto. En ningún caso el portal muestra el enlace en pantalla: si lo
+    hiciera, cualquiera podría entrar a la cuenta de otra persona con solo
+    escribir su correo.</p>
+  </div>
 
   <div class="aviso">
     <div class="t">Nadie de Equipos ve ni define la contraseña de un panelista</div>
@@ -3190,6 +3384,21 @@
   vencimiento de la clave de un servicio externo, por lo que corresponde
   informarlo a quien administra el sistema.</p>
 
+  <h4>La consulta dice «Verificación incompleta»</h4>
+  <p>Algunas respuestas no llegaron a verificarse: el servicio de
+  verificación falló en una tanda o se terminó el tiempo. El ranking se puede
+  mirar, pero las personas marcadas con <strong>verificación
+  incompleta</strong> no están validadas. Si el motivo es el tiempo, volvé a
+  correr la consulta con un valor más chico en <strong>A verificar</strong>
+  (sección 6.3 y siguientes).</p>
+
+  <h4>Un panelista dice que no le llegó el correo para crear su contraseña</h4>
+  <p>Que revise spam y promociones: sale de
+  <code>notificaciones@equipos.com.uy</code>. Si no está, mirá en
+  <strong>Cumplimiento → Contacto</strong> si su envío figura como fallido y
+  con qué motivo. Si el correo registrado en su ficha está desactualizado,
+  corregilo y mandale el enlace desde la ficha (sección 13).</p>
+
   <h4>Aparece un cartel celeste que dice «Modo demo»</h4>
   <p>Significa que se está trabajando sobre una copia de prueba con datos
   ficticios, no sobre el sistema real. Nada de lo que se haga allí se conserva.
@@ -3308,6 +3517,19 @@
     <tr><td class="destacado">Fatiga</td>
       <td>El desgaste que produce convocar reiteradamente a las mismas personas.
       Se observa en la distribución de convocatorias.</td></tr>
+    <tr><td class="destacado">Sin verificar</td>
+      <td>Una respuesta que el verificador no llegó a leer por un problema
+      técnico. No es un juicio: no excluye ni cuenta como que cumple. Distinto
+      de <i>dudoso</i>, que es un juicio.</td></tr>
+    <tr><td class="destacado">Verificación incompleta</td>
+      <td>Marca de una persona del ranking con alguna respuesta sin verificar.
+      No está validada aunque otra de sus respuestas cumpla.</td></tr>
+    <tr><td class="destacado">Modo de depuración</td>
+      <td>Opción del despliegue que guarda, por 7 días, lo que se le mandó al
+      verificador y lo que contestó. Solo la ven los administradores.</td></tr>
+    <tr><td class="destacado">Correo de prueba</td>
+      <td>Un correo real que se manda desde Cumplimiento → Contacto para
+      comprobar que el envío funciona, sin crear un panelista.</td></tr>
   </table>
 
   <div class="pie-pagina">

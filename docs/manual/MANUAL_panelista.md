@@ -26,7 +26,14 @@ Listo: quedás adentro en el momento, sin tener que volver a escribirla.
 **Ese enlace vence a las 24 horas y sirve una sola vez.** Si se te venció o
 ya lo usaste, pedí otro desde la misma pantalla.
 
-> **Si no te llega el correo.** Fijate en correo no deseado. Si no está,
+Nuestros correos salen siempre de **`notificaciones@equipos.com.uy`**, con
+un asunto que dice para qué son («Creá tu contraseña del portal del
+panelista», «Recuperá tu contraseña…», «Tu código de verificación…»).
+**Nunca te vamos a pedir tu contraseña por correo**: si un mensaje te la
+pide, no es nuestro.
+
+> **Si no te llega el correo.** Fijate en correo no deseado y en
+> promociones. Si no está,
 > puede ser que la dirección que escribiste no sea la que tenemos registrada
 > —por seguridad, el portal no te dice si una dirección está en el panel o
 > no—. Escribinos y te lo reenviamos a la dirección correcta.
@@ -99,6 +106,10 @@ habilitados para que edites vos.
 código al contacto **nuevo** y recién cuando lo escribís reemplazamos el
 anterior. Es a propósito: si el correo nuevo tuviera un error de tipeo y lo
 guardáramos igual, perderías la forma de entrar.
+
+> **Por ahora el celular nuevo no se puede confirmar.** Todavía no
+> mandamos códigos por SMS: si querés cambiarlo, escribinos y lo hacemos
+> nosotros. El correo sí se confirma desde el portal.
 
 **Cambiar el correo te pide además tu contraseña**, porque el correo es con
 lo que entrás: cambiarlo es mover la puerta. Después entrás con la dirección

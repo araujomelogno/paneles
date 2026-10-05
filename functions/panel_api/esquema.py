@@ -147,6 +147,8 @@ MIGRACIONES_BOVEDA = (
     # migración: si no, nada permitiría ver si se aplicó (la lección de la
     # 0015).
     ("0022_celular_clave_de_dedup.sql", ("persona_celular_idx",)),
+    # ── R-MAIL ──
+    ("0023_envio_correo.sql", ("envio_correo", "v_envio_correo_por_dia")),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -175,6 +177,8 @@ MIGRACIONES_SEMANTICA = (
         "pregunta.texto_original", "pregunta.opciones_originales",
         "pregunta.normalizacion", "cuestionario.normalizacion", "reproceso",
     )),
+    # ── R-VER.10 ──
+    ("0008_captura_verificacion.sql", ("verificacion_captura",)),
 )
 
 STORES = {
@@ -188,6 +192,8 @@ PARA_QUE = {
     "v_respuesta_estudio": "la procedencia de las respuestas en las consultas semánticas",
     "respuesta.hash_texto": "saltear el re-embedding cuando una re-ingesta trae el mismo texto",
     "consulta_guardada": "guardar consultas para reutilizarlas",
+    "envio_correo": "registrar y contar los correos que envía el sistema (R-MAIL)",
+    "verificacion_captura": "el modo de depuración de la verificación (R-VER.10)",
     "usuario_auditoria": "la auditoría de la gestión de usuarios",
     "reidentificacion": "el registro de quién tradujo un id_persona a datos de contacto",
     "alta_en_revision": "las altas que quedan esperando decisión humana",

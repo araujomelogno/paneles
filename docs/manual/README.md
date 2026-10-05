@@ -14,6 +14,31 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Correo por Workspace y verificación por lotes · 2026-10-05.** La 6.3
+> suma el veredicto **Sin verificar** y la marca **verificación
+> incompleta**; la 6.4, el apartado «Si la verificación quedó incompleta»
+> (qué es, en qué se diferencia de *dudoso*, qué hacer); la 6.9, la tabla
+> **Verificación por lotes** del diagnóstico y «Ver el intercambio con el
+> verificador» (solo administradores, con el modo de depuración). La 11 suma
+> la **11.4, El envío de correos**: el estado del envío en Cumplimiento →
+> Contacto, el **correo de prueba** y los **envíos fallidos**. La 3.8 deja de
+> decir que sin proveedor el código se muestra en pantalla —ya no se muestra
+> nunca— y avisa que el celular todavía no se puede verificar; la 12.1 dice
+> que el enlace de un usuario nuevo además llega por correo; la 13 explica de
+> dónde salen los correos del portal y los dos avisos de envío. Dos preguntas
+> frecuentes y cuatro términos de glosario nuevos. `MANUAL_panelista.md`
+> dice el remitente y que el celular nuevo todavía no se confirma desde el
+> portal.
+>
+> **Capturas nuevas, de la 72 a la 76**: el aviso de verificación
+> incompleta, el ranking con una respuesta sin verificar, la tabla de lotes
+> del diagnóstico, el intercambio con Claude y la tarjeta de envío de
+> correos. Se tomaron con el método de la 62 a la 71 —servidor mínimo contra
+> `ruteo.despachar` y un Postgres de pruebas, con Firebase Auth simulado en
+> Playwright—, con un verificador `Claude` cuyo transporte simula una tanda
+> truncada y una con error 529, y un SMTP simulado con una dirección que
+> rebota. Las 22 y 28 siguen siendo las anteriores.
+
 > **Fase 7 completa y Fase 8 · 2026-10-05.** La sección 5 suma la **5.8,
 > La calidad del dato** (lo que el sistema detecta antes de ingestar y la
 > vista previa del texto embebido) y la **5.9, Corregir y reprocesar un
@@ -187,7 +212,7 @@ node docs/manual/generar_pdf.mjs
 | `portada.html` | Portada, a sangre |
 | `manual.html` | Índice y las catorce secciones |
 | `estilo.css` | Estilos, compartidos por los dos |
-| `capturas/` | Las 62 capturas |
+| `capturas/` | Las capturas, de la 01 a la 76 |
 | `tipografia/` | Montserrat local, para que el PDF salga igual sin red |
 | `preparar_demo.sh` | Arma y sirve la copia en modo demo |
 | `capturar.mjs` | Toma las capturas |

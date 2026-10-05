@@ -51,8 +51,24 @@ NO_SON_SECRETOS = frozenset({
     # R4.3 — el nombre del proveedor no es secreto; su clave sí, y esa es
     # `DESAFIO_SECRETO`, que va declarada.
     "DESAFIO_PROVEEDOR",
-    # R4.3 — idem: `log` o `ninguno`, no una credencial.
+    # R4.3 — idem: `log`, `ninguno` o `workspace`, no una credencial.
     "VERIFICACION_ENVIO_PROVEEDOR",
+    # ── R-MAIL ── a dónde y como quién se conecta el SMTP de Workspace. La
+    # credencial es `SMTP_PASSWORD`, que sí va declarada; el resto es
+    # configuración y va en `functions/.env`.
+    "SMTP_HOST", "SMTP_PORT", "SMTP_USUARIO", "SMTP_REMITENTE",
+    "SMTP_REPLY_TO", "SMTP_TIEMPO_S", "SMTP_PRESUPUESTO_S",
+    # R-MAIL.2 — la señal explícita del modo desarrollo. Va en el `.env` de
+    # una máquina de desarrollo y **nunca** en el desplegado (y aunque
+    # estuviera, `K_SERVICE` la anula).
+    "ENVIO_MODO_DESARROLLO",
+    # Las pone el runtime (Cloud Run) o el emulador, igual que GCLOUD_PROJECT.
+    "K_SERVICE", "FUNCTIONS_EMULATOR",
+    # ── R-VER ── perillas de la verificación por lotes y el interruptor del
+    # modo de depuración. Ninguna es una credencial.
+    "VERIFICACION_LOTE", "VERIFICACION_CONCURRENCIA",
+    "VERIFICACION_PRESUPUESTO_S", "VERIFICACION_PROFUNDIDAD_MAX",
+    "VERIFICACION_DEPURACION", "VERIFICACION_DEPURACION_DIAS",
 })
 
 

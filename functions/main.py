@@ -78,6 +78,11 @@ SECRETOS = [
     # desplegar —fallan cuando el primer lote no lo toma nadie—.
     "TAREAS_URL",
     "TAREAS_CUENTA",
+    # ── R-MAIL ──
+    # La contraseña de aplicación de `notificaciones@equipos.com.uy` para el
+    # SMTP de Google Workspace. Sin ella —o sin declararla acá— el portal y la
+    # landing informan que el envío falló, y Cumplimiento → Contacto lo dice.
+    "SMTP_PASSWORD",
 ]
 
 PREFIJO = "/api"

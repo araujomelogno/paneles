@@ -200,6 +200,19 @@ def retirar(conn_boveda, id_persona, finalidad=TODAS, actor=None,
 
     pii_borrada = 0
     if borra_pii:
+        # R-MAIL — el registro de envíos guarda la dirección: se va con la
+        # persona, igual que el resto de su PII.
+        from . import correo
+
+        fila = db.una(conn_boveda,
+                      "select email from persona where id_persona = %s",
+                      (id_persona,))
+        if fila and fila["email"]:
+            try:
+                with conn_boveda.transaction():
+                    correo.borrar_de(conn_boveda, fila["email"])
+            except Exception:  # noqa: BLE001 — sin la 0023 no hay nada que borrar
+                pass
         # Borra la PII. Las FK con `on delete cascade` se llevan alias,
         # membresías, consentimientos, participaciones y movimientos de puntos.
         pii_borrada = db.ejecutar(
