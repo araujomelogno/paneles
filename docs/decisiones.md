@@ -97,6 +97,7 @@ restricción real del sistema.
 | [D61](#d61) | Un estudio se corrige desde lo que quedó cargado, no desde el archivo | 8 |
 | [D62](#d62) | Un chequeo que no puede probar se omite, no falla; y la auditoría se prueba con el actor del contrato | 5 |
 | [D63](#d63) | El paso de revisión advierte; solo frena lo que una decisión no puede suplir | 8 (bug) |
+| [D64](#d64) | El celular es clave de dedup, pero más cauta que el correo | 1 (dedup) |
 
 ---
 
@@ -3429,6 +3430,72 @@ siempre dice la consecuencia y deja seguir.
 `web/public/js/calidad.js` (`soloSemanticas`),
 `web/public/js/paginas/encuestas.js`,
 `functions/tests/test_bug_dedup_no_bloquea.py`.
+
+---
+
+<a id="d64"></a>
+## D64 · El celular es clave de dedup, pero más cauta que el correo
+
+**El problema.** El dedup de R1.2 reconocía a una persona por documento,
+correo o —en revisión— nombre con fecha de nacimiento. Muchas bases de campo
+traen solo nombre y celular, y cada carga de esa gente volvía a crearla.
+
+**Lo que se decidió.** El celular entra como tercera clave, después del
+documento y del correo y antes de nombre + fecha de nacimiento. Pero **no**
+como el correo: el documento y el correo son de una persona, y la base lo
+garantiza con un índice único; un celular no siempre —el de un hogar, el que
+usa un padre mayor y es del hijo, el que la compañía reasignó—. Por eso el
+paso tiene tres cautelas, y ante la duda decide una persona:
+
+| Situación | Qué hace |
+|---|---|
+| Una sola persona tiene ese celular, nada la contradice y el nombre es compatible | **Reutiliza** (`motivo = celular`) |
+| La titular tiene otro documento u otro correo que el alta | Son dos personas que comparten el número: el celular **no decide** y el dedup sigue |
+| La única titular se llama de otra forma | **Revisión** (`celular_otro_nombre`) |
+| Varias personas lo tienen | **Revisión** (`celular_compartido`), con todas las compatibles como candidatas |
+
+- **Se compara en E.164**, con `preferencias.normalizar_celular`, que es como
+  se guarda desde R4.4. «099 123 456» y «+59899123456» son el mismo número;
+  lo que no se puede normalizar no se compara con nada.
+- **«Nombre compatible»** es que las palabras de uno —sin tildes ni
+  mayúsculas— estén en el otro: «Ana Pérez» y «Ana Pérez Silva» son la
+  misma persona escrita en dos archivos. Sin nombre de alguno de los dos no
+  hay con qué dudar.
+- **Un celular de relleno se frena**, como un documento implausible: si la
+  columna marcada trae menos de tres números distintos en diez filas o más,
+  crear esas personas las fusionaría (la primera fila crea, las demás la
+  encuentran). Es `celular_implausible` en `VALIDACIONES`: bloquea.
+- **La revisión de la importación lo cuenta igual que el dedup**:
+  `CLAVES_SIMPLES` suma el celular, y los valores se comparan normalizados.
+- **Índice no único** en `persona (celular)` (`boveda/0022`). El alta por
+  archivo resuelve el dedup fila por fila dentro de la request, y sin índice
+  cada fila recorrería `persona` entera. Único habría convertido un celular
+  compartido en un error de inserción.
+
+**Lo que se descartó.**
+
+- *Celular igual que el correo* (reutilizar ante cualquier coincidencia).
+  Fusionar a dos personas mezcla datos y consentimientos, y deshacerlo es
+  mucho más difícil que resolver una revisión.
+- *Celular solo como pista*, como en la aprobación de inscripciones. No
+  resolvía el problema: la gente que solo trae celular se seguiría
+  duplicando en cada carga.
+- *Normalizar en SQL los celulares viejos.* La normalización vive en Python
+  (país por defecto, prefijo `00`); duplicarla en una migración sería un
+  segundo criterio. Los celulares guardados antes de R4.4 en otro formato no
+  coinciden con nada —lo seguro— y el despliegue trae una consulta para
+  contarlos.
+
+**Lo que no cambia.** Para **crear** una persona sigue haciendo falta
+documento, correo o nombre: el celular reconoce a alguien que ya está, pero
+no alcanza solo para dar de alta a un desconocido. Y el correo sigue
+reutilizando sin mirar el nombre, como siempre.
+
+**Dónde vive.** `functions/panel_api/dedup.py` (`_por_celular`),
+`functions/panel_api/resumen_ingesta.py`, `functions/panel_api/sav.py`
+(`_controlar_celular_plausible`), `db/boveda/0022_celular_clave_de_dedup.sql`,
+`web/public/js/paginas/revisiones.js`,
+`functions/tests/test_celular_clave_de_dedup.py`.
 
 ---
 

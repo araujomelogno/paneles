@@ -142,6 +142,11 @@ MIGRACIONES_BOVEDA = (
     ("0021_persona_convocable_una_fila.sql", (
         "f_persona_finalidad_vigente()", "v_persona_finalidad_vigente",
     )),
+    # La 0022 crea solo un índice. Un índice no se declara en general —es un
+    # detalle de rendimiento—, pero sí cuando es lo único que crea la
+    # migración: si no, nada permitiría ver si se aplicó (la lección de la
+    # 0015).
+    ("0022_celular_clave_de_dedup.sql", ("persona_celular_idx",)),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -228,6 +233,7 @@ PARA_QUE = {
     "reidentificacion.sistema": "de qué sistema vino cada reidentificación, derivado de la conexión",
     "f_persona_convocable()": "el gate de consentimiento hecho valer en la base; es lo que hace que un segundo consumidor no pueda salteárselo",
     "v_persona_convocable": "la única superficie desde la que un consumidor externo ve personas",
+    "persona_celular_idx": "el dedup por celular busca en cada alta; sin el índice, un alta por archivo recorre `persona` entera por cada fila",
     # ── Fase 8 ──
     "pregunta.texto_original": "conservar el texto del archivo junto al editado, para volver y auditar",
     "pregunta.normalizacion": "las decisiones de normalización con las que se embebió cada pregunta",
@@ -270,7 +276,10 @@ PARA_QUE = {
 
 
 def _presentes(conn):
-    """Tablas, vistas y columnas que existen hoy en el esquema `public`."""
+    """Tablas, vistas, índices y columnas que existen hoy en `public`.
+
+    Los índices entran por la 0022, que no crea otra cosa: se declara uno
+    solo cuando es lo único visible de una migración."""
     # El import va acá adentro a propósito: la lista de migraciones de más
     # arriba es la fuente de verdad de qué tiene que existir, y se consulta
     # desde herramientas que no abren ninguna conexión (`verificar_esquema.py
@@ -295,7 +304,7 @@ def _presentes(conn):
           join pg_catalog.pg_namespace n on n.oid = c.relnamespace
           join pg_catalog.pg_attribute a on a.attrelid = c.oid
          where n.nspname = 'public'
-           and c.relkind in ('r', 'v', 'm', 'p', 'f')
+           and c.relkind in ('r', 'v', 'm', 'p', 'f', 'i')
            and a.attnum > 0
            and not a.attisdropped
         """,

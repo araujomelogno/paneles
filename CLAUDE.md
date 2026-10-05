@@ -141,6 +141,13 @@ dice su consecuencia y deja seguir; cada una figura en
 «Hay clave de dedup» se pregunta a `claves_de_dedup`, en los términos de
 `dedup.resolver`, y no se vuelve a calcular en otro lado.
 
+El dedup reconoce por documento → correo → **celular** → nombre + fecha de
+nacimiento (D64). El celular es más cauto que el correo porque puede ser
+compartido: reutiliza solo con **una** titular, sin un documento o correo que
+la contradiga y con nombre compatible; si no, revisión. Se compara en E.164
+(`preferencias.normalizar_celular`), y su índice (`boveda/0022`) **no es
+único** a propósito: no le agreguen `unique`.
+
 Y una que parece un descuido y no lo es: **`motivo_reidentificacion` no
 tiene clave foránea**. `registrar_reidentificacion` documenta que nunca
 pierde el rastro por una etiqueta desconocida, y una FK invertiría ese
