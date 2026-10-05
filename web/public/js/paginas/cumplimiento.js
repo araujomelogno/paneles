@@ -145,10 +145,30 @@ async function cargarContacto() {
         : `<div class="alert alert-success">La landing está endurecida y el
              canal de WhatsApp está configurado.</div>`}
       <dl class="kv">
-        <dt>Envío de códigos</dt>
+        <dt>Envío de correos</dt>
         <dd>${estado.verificacion.envia_de_verdad
           ? `sí, por <code>${esc(estado.verificacion.proveedor_envio)}</code>`
-          : '<span class="muted">sin proveedor: el código vuelve en la respuesta</span>'}</dd>
+          : `<span class="muted">no sale nada (proveedor
+             <code>${esc(estado.verificacion.proveedor_envio)}</code>): el portal y la
+             landing informan un problema de configuración</span>`}</dd>
+        ${estado.verificacion.smtp ? `
+        <dt>Remitente</dt>
+        <dd>${esc(estado.verificacion.smtp.remitente)}
+          <div class="small muted">${esc(estado.verificacion.smtp.host)}:${estado.verificacion.smtp.puerto}
+            como ${esc(estado.verificacion.smtp.usuario)} ·
+            contraseña de aplicación ${estado.verificacion.smtp.clave_configurada
+              ? 'cargada' : '<strong>falta</strong>'}
+            ${estado.verificacion.smtp.reply_to
+              ? ` · responde a ${esc(estado.verificacion.smtp.reply_to)}` : ' · sin Reply-To'}</div></dd>` : ''}
+        ${estado.verificacion.envios ? `
+        <dt>Últimas 24 h</dt>
+        <dd>${estado.verificacion.envios.ultimas_24h} enviado(s) de un tope de
+          ${estado.verificacion.envios.tope_diario} por día ·
+          ${estado.verificacion.envios.fallidos_24h} fallido(s)</dd>` : ''}
+        <dt>Modo desarrollo</dt>
+        <dd>${estado.verificacion.modo_desarrollo
+          ? '<strong>encendido</strong>: el código y el enlace vuelven en la respuesta'
+          : 'apagado'}</dd>
         <dt>Desafío anti-bot</dt>
         <dd>${estado.desafio.activo
           ? `<code>${esc(estado.desafio.proveedor)}</code>`
@@ -157,9 +177,86 @@ async function cargarContacto() {
         <dd>${estado.whatsapp.configurado
           ? 'credenciales presentes'
           : `<span class="muted">faltan ${estado.whatsapp.faltan.join(', ')}</span>`}</dd>
-      </dl>`;
+      </dl>
+      ${puedeCumplimiento() ? `
+      <div style="margin-top:1rem">
+        <div class="small td-strong">Correo de prueba</div>
+        <p class="small muted">Manda un correo de verdad, sin crear un panelista. Es la
+          forma de comprobar la contraseña de aplicación, el remitente y que la
+          función llegue a <code>smtp.gmail.com</code> desde Cloud Run.</p>
+        <div class="toolbar">
+          <input class="finput" id="correo-prueba" type="email"
+                 placeholder="dirección@equipos.com.uy" style="max-width:280px">
+          <button class="btn btn-dark btn-sm" id="mandar-prueba">Enviar prueba</button>
+          <span class="small" id="resultado-prueba"></span>
+        </div>
+      </div>
+      <div style="margin-top:1rem">
+        <div class="toolbar">
+          <span class="small td-strong">Envíos</span>
+          <span class="toolbar-spacer"></span>
+          <select class="fselect" id="estado-envios" style="max-width:160px">
+            <option value="fallido">Fallidos</option>
+            <option value="todos">Todos</option>
+          </select>
+        </div>
+        <div id="envios">${cargando('6vh')}</div>
+      </div>` : ''}`;
+    if (puedeCumplimiento()) {
+      $('#mandar-prueba').onclick = mandarPrueba;
+      $('#estado-envios').onchange = cargarEnvios;
+      cargarEnvios();
+    }
   } catch (error) {
     contenedor.innerHTML = alerta(error.message);
+  }
+}
+
+/* R-MAIL.4 — la prueba y el registro de envíos listan direcciones y mandan
+   correo desde la cuenta de Equipos: los ve quien tiene `cumplimiento`. */
+function puedeCumplimiento() {
+  return ['admin', 'dpo'].includes(contexto.actor?.rol);
+}
+
+async function mandarPrueba() {
+  const destino = $('#correo-prueba').value.trim();
+  const caja = $('#resultado-prueba');
+  if (!destino) { caja.textContent = 'Escribí una dirección.'; return; }
+  caja.textContent = 'Enviando…';
+  try {
+    const salida = await api.cumplimiento.correoPrueba(destino);
+    caja.innerHTML = salida.enviado
+      ? `✓ Enviado a ${esc(salida.destino)} en ${salida.ms} ms. Revisá que haya
+         llegado, y que no esté en spam.`
+      : `<span style="color:var(--err,#b91c1c)">No salió: ${esc(salida.motivo)}</span>`;
+  } catch (error) {
+    caja.innerHTML = `<span style="color:var(--err,#b91c1c)">${esc(error.message)}</span>`;
+  }
+  cargarEnvios();
+}
+
+async function cargarEnvios() {
+  const caja = $('#envios');
+  if (!caja) return;
+  try {
+    const salida = await api.cumplimiento.envios($('#estado-envios')?.value || 'fallido');
+    const dias = salida.por_dia.slice(0, 7);
+    caja.innerHTML = `
+      ${dias.length ? `<p class="small muted">Por día (tope ${salida.tope_diario}):
+        ${dias.map((d) => `${esc(d.dia)}: ${d.enviados} enviado(s)${d.fallidos
+          ? `, ${d.fallidos} fallido(s)` : ''}`).join(' · ')}</p>` : ''}
+      ${salida.items.length ? `<div class="table-wrap"><table>
+        <thead><tr><th>Cuándo</th><th>Destinatario</th><th>Tipo</th><th>Estado</th><th>Motivo</th></tr></thead>
+        <tbody>${salida.items.map((e) => `<tr>
+          <td class="small">${esc(fechaHora(e.creado_en))}</td>
+          <td class="small">${esc(e.destinatario)}</td>
+          <td class="small">${esc(e.tipo)}</td>
+          <td><span class="est ${e.estado === 'enviado' ? 'est-vigente' : 'est-retirado'}">${esc(e.estado)}</span></td>
+          <td class="small">${esc(e.motivo || '—')}${e.intentos > 1 ? ` <span class="muted">(${e.intentos} intentos)</span>` : ''}</td>
+        </tr>`).join('')}</tbody></table></div>`
+        : '<p class="small muted">No hay envíos para mostrar.</p>'}`;
+  } catch (error) {
+    caja.innerHTML = alerta(error.message);
   }
 }
 

@@ -23,10 +23,17 @@ sería juntar un dato personal más en una superficie pública.
 adivinan por fuerza bruta en minutos.
 
 **El envío va detrás de una interfaz.** Igual que los embeddings y el
-reranker: en producción un proveedor real de SMS o de correo; sin configurar,
-uno que registra el código en el log y lo dice. Así la landing se puede
-recorrer entera en desarrollo, y en producción la ausencia de proveedor es
-visible en el diagnóstico en vez de silenciosa.
+reranker: en producción un proveedor real (`workspace`, ver `correo.py`); en
+desarrollo, `log` o `ninguno`.
+
+**Sin proveedor no hay atajo** (R-MAIL.2). Hasta R-MAIL, la falta de
+proveedor devolvía el código —y el enlace del portal— en la respuesta, «modo
+desarrollo». En el sitio público eso era un acceso directo a la cuenta ajena:
+alcanzaba con escribir el correo de otra persona. Ahora son dos condiciones
+distintas que no se colapsan: la **ausencia de proveedor** es un error de
+configuración (`EnvioNoConfigurado`), y el **modo desarrollo** es una señal
+explícita (`ENVIO_MODO_DESARROLLO`) que además se ignora en el entorno
+desplegado.
 """
 
 import hashlib
@@ -35,7 +42,9 @@ import os
 import secrets
 
 from . import db
-from .errores import Conflicto, DatosInvalidos, NoEncontrado
+from .errores import (
+    Conflicto, DatosInvalidos, EnvioFallido, EnvioNoConfigurado, NoEncontrado,
+)
 
 CELULAR = "celular"
 EMAIL = "email"
@@ -119,12 +128,15 @@ def _contar(conn, columna, valor, horas=1):
 def pedir_codigo(conn, canal, destino, origen=None, enviar=None):
     """Emite un código y lo manda. Devuelve qué mostrar en la pantalla.
 
-    **Nunca devuelve el código** cuando hay un proveedor de envío real: si lo
-    devolviera, la verificación no verificaría nada —quien pide el código lo
-    recibe en la misma respuesta, sin necesidad de tener acceso al contacto—.
-    Sin proveedor configurado sí lo devuelve, y lo dice: es modo desarrollo.
+    **Nunca devuelve el código** fuera del modo desarrollo: si lo devolviera,
+    la verificación no verificaría nada —quien pide el código lo recibe en la
+    misma respuesta, sin necesidad de tener acceso al contacto—.
+
+    El proveedor se resuelve **antes** de emitir nada: sin proveedor (y sin
+    modo desarrollo) no se quema un código ni se cuenta un pedido.
     """
     canal, destino = normalizar_destino(canal, destino)
+    enviador = enviar or proveedor_de_envio(canal=canal)
     origen_hash = hash_origen(origen)
 
     if origen_hash and _contar(conn, "origen_hash", origen_hash) >= MAX_POR_ORIGEN_POR_HORA:
@@ -158,8 +170,9 @@ def pedir_codigo(conn, canal, destino, origen=None, enviar=None):
     )
     conn.commit()
 
-    enviador = enviar or proveedor_de_envio()
-    resultado = enviador(canal, destino, codigo)
+    resultado = enviar_y_registrar(
+        conn, enviador, canal, destino, codigo, tipo="codigo_verificacion",
+        minutos=MINUTOS_DE_VIDA)
     salida = {
         "verificacion_id": fila["id"],
         "canal": canal,
@@ -167,9 +180,11 @@ def pedir_codigo(conn, canal, destino, origen=None, enviar=None):
         "minutos": MINUTOS_DE_VIDA,
         "enviado_por": resultado.get("proveedor"),
     }
-    if resultado.get("sin_proveedor"):
-        # Modo desarrollo: no hay a dónde mandarlo, así que vuelve en la
-        # respuesta y se dice con todas las letras que eso no es verificar.
+    if resultado.get("sin_proveedor") and modo_desarrollo():
+        # Modo desarrollo, encendido a propósito y nunca en el entorno
+        # desplegado: no hay a dónde mandarlo, así que vuelve en la respuesta
+        # y se dice con todas las letras que eso no es verificar. Ninguna
+        # página pública lo muestra (R-MAIL.2).
         salida["codigo_sin_enviar"] = codigo
         salida["aviso"] = (
             "No hay proveedor de envío configurado: el código vuelve en esta "
@@ -277,48 +292,204 @@ def _ahora(conn):
 
 # ── El envío, detrás de una interfaz ─────────────────────────────────
 
-def proveedor_de_envio(entorno=None):
-    """Devuelve `enviar(canal, destino, codigo) -> {...}`.
+PROVEEDORES = ("workspace", "log", "ninguno")
+_VERDADERO = ("1", "si", "sí", "true", "on", "yes")
 
-    Mismo patrón que `embeddings` y `reranker`: el proveedor se elige por
-    variable de entorno y, si no hay ninguno configurado, se degrada de forma
-    **visible** en vez de fallar o de fingir que envió.
+
+def desplegado(entorno=None):
+    """¿Corre en Cloud Functions / Cloud Run de verdad?
+
+    `K_SERVICE` lo pone el runtime desplegado; el emulador de Firebase pone
+    además `FUNCTIONS_EMULATOR=true`, y ése cuenta como desarrollo.
     """
     entorno = os.environ if entorno is None else entorno
-    nombre = (entorno.get("VERIFICACION_ENVIO_PROVEEDOR") or "").strip().lower()
+    emulador = (entorno.get("FUNCTIONS_EMULATOR") or "").strip().lower() == "true"
+    return bool((entorno.get("K_SERVICE") or "").strip()) and not emulador
 
-    if nombre in ("", "ninguno"):
-        def sin_proveedor(canal, destino, codigo):
-            return {"proveedor": "ninguno", "sin_proveedor": True}
-        return sin_proveedor
+
+def modo_desarrollo(entorno=None):
+    """R-MAIL.2 — ¿se puede devolver el código o el enlace en la respuesta?
+
+    Solo con la señal **explícita** `ENVIO_MODO_DESARROLLO` encendida, y
+    nunca en el entorno desplegado aunque la señal esté: esa combinación es
+    exactamente el agujero que esta regla cierra, y un `.env` copiado de la
+    máquina de alguien no puede reabrirlo.
+    """
+    entorno = os.environ if entorno is None else entorno
+    pedido = (entorno.get("ENVIO_MODO_DESARROLLO") or "").strip().lower() in _VERDADERO
+    return pedido and not desplegado(entorno)
+
+
+def _nombre_proveedor(entorno):
+    return (entorno.get("VERIFICACION_ENVIO_PROVEEDOR") or "").strip().lower() or "ninguno"
+
+
+def proveedor_de_envio(entorno=None, canal=EMAIL):
+    """Devuelve `enviar(canal, destino, contenido, tipo=..., **datos) -> {...}`.
+
+    Mismo patrón que `embeddings` y `reranker`: el proveedor se elige por
+    variable de entorno. Lo que cambió con R-MAIL.2 es qué pasa sin
+    proveedor: en vez de devolver un enviador que «no envía», levanta
+    `EnvioNoConfigurado` —salvo en modo desarrollo—. Se llama **antes** de
+    mirar si el destinatario existe, así que la respuesta es la misma para
+    cualquier dirección.
+    """
+    entorno = os.environ if entorno is None else entorno
+    nombre = _nombre_proveedor(entorno)
+
+    if nombre not in PROVEEDORES:
+        raise EnvioNoConfigurado(
+            f"Proveedor de envío desconocido: {nombre!r}.",
+            {"proveedores": list(PROVEEDORES)})
 
     if nombre == "log":
         # Para desarrollo: queda en los logs del servidor, no en la respuesta.
-        def por_log(canal, destino, codigo):
-            print(f"[verificacion] código para {canal} {destino}: {codigo}")
-            return {"proveedor": "log"}
+        def por_log(canal, destino, contenido, tipo=None, **_):
+            print(f"[envio] {tipo or 'mensaje'} para {canal} {destino}: {contenido}")
+            return {"proveedor": "log", "enviado": True}
         return por_log
 
-    raise DatosInvalidos(
-        f"Proveedor de envío de códigos desconocido: {nombre!r}.",
-        {"proveedores": ["ninguno", "log"]})
+    if nombre == "workspace" and canal == EMAIL:
+        from . import correo
+
+        servidor = correo.Workspace.desde_entorno(entorno)
+
+        def por_workspace(canal, destino, contenido, tipo=None, **datos):
+            asunto, texto = correo.armar(tipo or correo.PRUEBA, contenido, **datos)
+            try:
+                envio = servidor.enviar(destino, asunto, texto)
+            except correo.ErrorEnvio as error:
+                return {"proveedor": "workspace", "enviado": False,
+                        "motivo": error.motivo, "intentos": error.intentos}
+            return {"proveedor": "workspace", "enviado": True, **envio}
+        return por_workspace
+
+    # `ninguno`, o `workspace` para un canal que Workspace no cubre (celular).
+    if modo_desarrollo(entorno):
+        def sin_proveedor(canal, destino, contenido, tipo=None, **_):
+            return {"proveedor": "ninguno", "sin_proveedor": True}
+        return sin_proveedor
+
+    if nombre == "workspace":
+        raise EnvioNoConfigurado(
+            "Por ahora no podemos enviar códigos por SMS: el envío está "
+            "configurado solo para correo. Dejá el celular vacío —lo podés "
+            "agregar después— o escribinos.",
+            {"canal": canal, "proveedor": nombre})
+    raise EnvioNoConfigurado(
+        "El envío de correos no está configurado, así que no podemos mandarte "
+        "el mensaje. Es un problema nuestro, no de tus datos: avisanos o "
+        "volvé a intentar más tarde.",
+        {"canal": canal, "proveedor": nombre})
 
 
-def diagnostico(entorno=None):
-    """Qué tan endurecida está la landing hoy. Va a la pantalla de
-    Cumplimiento, para que la falta de proveedor no sea una sorpresa."""
+def enviar_y_registrar(conn, enviador, canal, destino, contenido, tipo, **datos):
+    """Manda por `enviador` y deja el rastro en `envio_correo`.
+
+    **Un fallo no se reporta como éxito** (R-MAIL.1): se registra con el
+    motivo, se confirma el registro —para que sobreviva al rollback de la
+    request— y se levanta `EnvioFallido`. Al usuario no le llega el motivo
+    técnico: ése queda en Cumplimiento → Contacto.
+    """
+    resultado = enviador(canal, destino, contenido, tipo=tipo, **datos) or {}
+    if resultado.get("sin_proveedor"):
+        return resultado
+    enviado = resultado.get("enviado", True)
+    if canal == EMAIL:
+        from . import correo
+
+        correo.registrar(
+            conn, tipo, destino, resultado.get("proveedor"),
+            "enviado" if enviado else "fallido",
+            motivo=resultado.get("motivo"),
+            intentos=resultado.get("intentos") or 1,
+            duracion_ms=resultado.get("ms"))
+    if not enviado:
+        conn.commit()
+        print(f"[envio] falló un {tipo} por {resultado.get('proveedor')}: "
+              f"{resultado.get('motivo')}")
+        raise EnvioFallido(
+            "No pudimos enviar el correo en este momento. Probá de nuevo en "
+            "unos minutos.", {"motivo": "envio_fallido"})
+    return resultado
+
+
+def diagnostico(entorno=None, conn=None):
+    """Qué tan endurecida está la landing hoy, y si el correo sale. Va a la
+    pantalla de Cumplimiento, para que la falta de proveedor no sea una
+    sorpresa (R-MAIL.4)."""
     entorno = os.environ if entorno is None else entorno
-    nombre = (entorno.get("VERIFICACION_ENVIO_PROVEEDOR") or "ninguno").strip().lower()
+    nombre = _nombre_proveedor(entorno)
     hay_sal = bool(entorno.get("VERIFICACION_SAL"))
+    desarrollo = modo_desarrollo(entorno)
+    pedido_desarrollo = (entorno.get("ENVIO_MODO_DESARROLLO") or "").strip().lower() in _VERDADERO
+
+    from . import correo
+
+    smtp = None
+    if nombre == "workspace":
+        servidor = correo.Workspace.desde_entorno(entorno)
+        smtp = {
+            "host": servidor.host,
+            "puerto": servidor.puerto,
+            "usuario": servidor.usuario,
+            "remitente": servidor.remitente,
+            "reply_to": servidor.reply_to,
+            # Si está, no cuál es: la contraseña no sale nunca de la función.
+            "clave_configurada": bool(servidor.clave),
+        }
+
+    envios = None
+    if conn is not None:
+        try:
+            envios = {
+                "ultimas_24h": correo.enviados_ultimas_24h(conn),
+                "tope_diario": correo.TOPE_DIARIO,
+                "fallidos_24h": db.una(
+                    conn,
+                    "select count(*)::int as n from envio_correo "
+                    "where estado = 'fallido' "
+                    "and creado_en > now() - interval '24 hours'")["n"],
+            }
+        except Exception:  # noqa: BLE001 — la 0023 sin aplicar no tumba la pantalla
+            conn.rollback()
+            envios = None
+
+    avisos = [
+        ("Sin proveedor de envío: el portal y la landing no pueden mandar "
+         "códigos ni enlaces, y lo informan como un problema de configuración. "
+         "La landing no se puede anunciar así.")
+        if nombre == "ninguno" else None,
+        ("El proveedor es `log`: los códigos y enlaces quedan en los logs del "
+         "servidor y no le llegan a nadie. Sirve para desarrollo, no para "
+         "producción.") if nombre == "log" else None,
+        ("Workspace configurado sin `SMTP_PASSWORD`: ningún correo va a salir.")
+        if smtp and not smtp["clave_configurada"] else None,
+        ("Workspace solo envía correo: la verificación por celular no tiene "
+         "proveedor.") if nombre == "workspace" else None,
+        ("`ENVIO_MODO_DESARROLLO` está encendido: sin proveedor, el código y el "
+         "enlace vuelven en la respuesta. Nunca en un entorno con panelistas "
+         "reales.") if desarrollo else None,
+        ("`ENVIO_MODO_DESARROLLO` está encendido en el entorno desplegado. Se "
+         "ignora, pero apagalo: no tiene que estar ahí.")
+        if pedido_desarrollo and not desarrollo else None,
+        (f"Se enviaron {envios['ultimas_24h']} correos en las últimas 24 horas: "
+         f"cerca del tope de Workspace ({correo.TOPE_DIARIO} por día).")
+        if envios and envios["ultimas_24h"] >= 0.8 * correo.TOPE_DIARIO else None,
+        (f"Hubo {envios['fallidos_24h']} envío(s) fallido(s) en las últimas 24 "
+         "horas: revisá el detalle abajo.")
+        if envios and envios["fallidos_24h"] else None,
+        ("Falta aplicar la migración boveda/0023: los envíos no se pueden "
+         "registrar ni contar.") if conn is not None and envios is None else None,
+        ("Sin `VERIFICACION_SAL`: los códigos y los orígenes se hashean con "
+         "una sal de desarrollo, que es pública.") if not hay_sal else None,
+    ]
     return {
         "proveedor_envio": nombre,
-        "envia_de_verdad": nombre not in ("", "ninguno"),
+        "envia_de_verdad": nombre == "workspace" and bool(smtp and smtp["clave_configurada"]),
+        "modo_desarrollo": desarrollo,
+        "smtp": smtp,
+        "envios": envios,
         "sal_configurada": hay_sal,
-        "avisos": [a for a in [
-            ("Sin proveedor de envío: el código vuelve en la respuesta y la "
-             "verificación no prueba nada. La landing no se puede anunciar así.")
-            if nombre in ("", "ninguno") else None,
-            ("Sin `VERIFICACION_SAL`: los códigos y los orígenes se hashean con "
-             "una sal de desarrollo, que es pública.") if not hay_sal else None,
-        ] if a],
+        "avisos": [a for a in avisos if a],
     }

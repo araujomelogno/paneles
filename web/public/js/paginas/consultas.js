@@ -70,6 +70,21 @@ const VEREDICTOS = {
   no_cumple: { etiqueta: 'No cumple', clase: 'est-retirado' },
   dudoso: { etiqueta: 'Dudoso', clase: 'est-pendiente' },
   sin_evidencia: { etiqueta: 'Sin evidencia', clase: 'est-inactivo' },
+  /* No es un juicio: el verificador no llegó a leer la evidencia (un lote
+     truncado, la API caída, el tiempo agotado). No excluye ni aprueba. */
+  sin_verificar: { etiqueta: 'Sin verificar', clase: 'est-inactivo' },
+};
+
+/* Por qué una evidencia quedó sin verificar, en palabras. */
+const FALLOS = {
+  truncamiento: 'la respuesta del verificador se cortó',
+  herramienta_ausente: 'el verificador no devolvió veredictos',
+  respuesta_invalida: 'la respuesta del verificador no se pudo leer',
+  error_http: 'la API del verificador devolvió un error',
+  error_red: 'no se pudo llegar a la API del verificador',
+  omitido: 'el verificador no se pronunció',
+  presupuesto_agotado: 'se terminó el tiempo de verificación',
+  sin_proveedor: 'no hay verificador configurado',
 };
 
 const ETAPAS = {
@@ -400,6 +415,7 @@ function pintarResultado(resultado) {
   }
 
   caja.innerHTML = `
+    ${pintarVerificacionIncompleta(resultado)}
     ${pintarDegradaciones(resultado)}
     ${pintarPuente(resultado)}
     <div class="card">
@@ -449,6 +465,8 @@ function pintarResultado(resultado) {
   $$('[data-ficha]', caja).forEach((b) => {
     b.onclick = () => abrirFicha(resultado.items[Number(b.dataset.ficha)]);
   });
+  const intercambio = $('#ver-intercambio');
+  if (intercambio) intercambio.onclick = () => verIntercambio(intercambio.dataset.ejecucion);
 }
 
 function filaItem(item, indice) {
@@ -466,7 +484,10 @@ function filaItem(item, indice) {
         <div class="small mono">${item.puntaje.toFixed(3)}</div></td>
     <td><span class="est est-${item.confianza === 'alta' ? 'vigente' : 'pendiente'}">
           ${item.confianza === 'alta' ? 'alta' : 'baja'}</span>
-        ${item.penalizado ? '<div class="small muted">penalizado</div>' : ''}</td>
+        ${item.penalizado ? '<div class="small muted">penalizado</div>' : ''}
+        ${item.verificacion_incompleta
+          ? '<div class="small" style="color:var(--warn,#b45309)" title="Alguna de sus evidencias quedó sin verificar: no es un resultado completo.">verificación incompleta</div>'
+          : ''}</td>
     <td>${item.criterios.map((c) => {
           const v = VEREDICTOS[c.veredicto] || { etiqueta: c.veredicto, clase: '' };
           return `<div class="small"><span class="est ${v.clase}">${esc(v.etiqueta)}</span>
@@ -790,9 +811,28 @@ function pintarDegradaciones(resultado) {
   if (!resultado.degradaciones?.length) return '';
   return resultado.degradaciones.map((d) => `
     <div class="alert alert-warn">
-      <strong>${esc(d.etapa)} degradada</strong> (${esc(d.proveedor)}).
+      <strong>${esc(d.etapa)} ${d.parcial ? 'incompleta' : 'degradada'}</strong>
+      (${esc(d.proveedor)}${d.criterio ? ` · ${esc(d.criterio)}` : ''}).
       ${esc(d.motivo)} — ${esc(d.consecuencia)}
     </div>`).join('');
+}
+
+/* R-VER.6/7 — un ranking parcialmente sin verificar no es un resultado
+   completo, y tiene que verse arriba, no solo en el diagnóstico. */
+function pintarVerificacionIncompleta(resultado) {
+  const v = resultado.verificacion;
+  if (!v || v.completa || !v.evidencias) return '';
+  const motivos = Object.entries(v.por_fallo || {})
+    .map(([fallo, n]) => `${n} porque ${FALLOS[fallo] || fallo}`).join('; ');
+  return `<div class="alert alert-error">
+      <strong>Verificación incompleta.</strong>
+      ${v.sin_verificar} de ${v.evidencias} evidencia(s) quedaron sin verificar
+      (${esc(motivos)}). ${v.personas_con_pendientes} persona(s) del ranking
+      tienen evidencias pendientes y figuran con confianza baja: no las des por
+      validadas. Las evidencias sin verificar no excluyen a nadie ni cuentan
+      como cumplimiento.
+      ${v.presupuesto_agotado ? ' Se agotó el tiempo de verificación: probá con un top-k más chico.' : ''}
+    </div>`;
 }
 
 function pintarExcluidos(resultado) {
@@ -838,8 +878,101 @@ function pintarDiagnostico(resultado) {
               .filter(([k]) => !['etapa', 'ms'].includes(k))
               .map(([k, v]) => `${k}=${v}`).join(' · '))}</td>
         </tr>`).join('')}</tbody></table></div>
+      ${pintarDiagnosticoVerificacion(d)}
     </div>
   </div>`;
+}
+
+/* R-VER.9/10 — cómo corrió la verificación (lotes, subdivisiones, tokens)
+   y, para un admin, el acceso al intercambio con Claude. */
+function pintarDiagnosticoVerificacion(d) {
+  const informes = d.verificacion || [];
+  if (!informes.length) return '';
+  const esAdmin = contexto.actor?.rol === 'admin';
+  return `<div style="padding:.75rem 0 0">
+      <div class="small td-strong" style="margin-bottom:.35rem">Verificación por lotes</div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Criterio</th><th>Evidencias</th><th>Sin verificar</th>
+          <th>Lotes</th><th>Llamadas</th><th>Subdivisiones</th><th>Tokens</th><th>ms</th></tr></thead>
+        <tbody>${informes.map((i) => `<tr>
+          <td class="small">${esc(i.criterio || '—')}</td>
+          <td class="mono">${i.verificadas}/${i.evidencias}</td>
+          <td class="mono">${i.sin_verificar}${Object.keys(i.por_fallo || {}).length
+            ? ` <span class="small muted">(${esc(Object.entries(i.por_fallo)
+              .map(([f, n]) => `${f}: ${n}`).join(', '))})</span>` : ''}</td>
+          <td class="mono">${i.lotes_iniciales}${i.tam_lote ? ` × ${i.tam_lote}` : ''}</td>
+          <td class="mono">${i.llamadas}${i.reintentos ? ` (${i.reintentos} reintento/s)` : ''}</td>
+          <td class="mono">${i.subdivisiones}</td>
+          <td class="mono small">${i.tokens ? `${i.tokens.entrada} → ${i.tokens.salida}` : '—'}</td>
+          <td class="mono">${i.duracion_ms}</td>
+        </tr>`).join('')}</tbody></table></div>
+      ${esAdmin ? `<div class="toolbar" style="margin-top:.5rem">
+          <button class="btn btn-outline btn-sm" id="ver-intercambio"
+                  data-ejecucion="${esc(d.ejecucion_id || '')}">
+            Ver el intercambio con Claude</button>
+          <span class="small muted">${d.captura_depuracion
+            ? 'El modo de depuración estaba encendido en esta consulta.'
+            : 'El modo de depuración estaba apagado en esta consulta: no se guardó el intercambio.'}</span>
+        </div>` : ''}
+    </div>`;
+}
+
+/* R-VER.10 — solicitud y respuesta enfrentadas, por lote y por intento. */
+async function verIntercambio(ejecucionId) {
+  const d = ultimoResultado?.diagnostico || {};
+  if (!d.captura_depuracion) {
+    modal({
+      titulo: 'Intercambio con Claude',
+      cuerpo: `<div class="alert alert-info">El modo de depuración
+        (<code>VERIFICACION_DEPURACION</code>) estaba <strong>apagado</strong>
+        cuando corrió esta consulta, así que no se guardó lo que se mandó ni lo
+        que volvió. No es que no haya habido intercambio. Para capturarlo, hay
+        que encenderlo y volver a correr la consulta (y apagarlo después).</div>`,
+      acciones: [{ texto: 'Cerrar', clase: 'btn-outline', onClick: cerrarModal }],
+    });
+    return;
+  }
+  let salida;
+  try {
+    salida = await api.consultas.capturas(ejecucionId);
+  } catch (error) { toast(error.message, 'err'); return; }
+  const bonito = (texto, esJson) => {
+    if (texto == null) return '(sin contenido: superó el tope de la ejecución)';
+    if (!esJson) return texto;
+    try { return JSON.stringify(JSON.parse(texto), null, 2); } catch { return texto; }
+  };
+  const marca = (truncada) => (truncada
+    ? '<span class="est est-pendiente" title="Superó el tope de tamaño y se recortó">truncada</span>' : '');
+  modal({
+    titulo: 'Intercambio con Claude',
+    ancho: '1100px',
+    cuerpo: salida.capturas.length ? `
+      <p class="small muted">Ejecución <code>${esc(salida.ejecucion_id)}</code>.
+        Los <code>[n]</code> del mensaje son locales al lote: el índice global es
+        «primera evidencia + n». Las capturas vencen a los
+        ${salida.dias_de_retencion} días. Sin API key ni headers.</p>
+      ${salida.capturas.map((c) => `
+        <div class="card" style="margin-bottom:.75rem">
+          <div class="card-header">
+            <span class="card-header-title">${esc(c.criterio)} · lote ${esc(c.lote)}
+              ${c.lote_padre ? `<span class="small muted">(de ${esc(c.lote_padre)})</span>` : ''}
+              · intento ${c.intento}</span>
+            <span class="small muted">evidencias ${c.primera_evidencia}–${c.primera_evidencia + c.evidencias - 1}
+              · HTTP ${c.estado_http ?? '—'} · ${esc(c.resultado)} · ${c.duracion_ms ?? '—'} ms
+              ${c.omitida_por_tope ? ' · <strong>omitida por tope</strong>' : ''}</span>
+          </div>
+          <div class="card-body" style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
+            <div><div class="small td-strong">Solicitud ${marca(c.solicitud_truncada)}
+                <span class="muted">${c.solicitud_bytes} B</span></div>
+              <pre class="small" style="max-height:340px;overflow:auto;white-space:pre-wrap">${esc(bonito(c.solicitud, true))}</pre></div>
+            <div><div class="small td-strong">Respuesta ${marca(c.respuesta_truncada)}
+                <span class="muted">${c.respuesta_bytes} B${c.respuesta_es_json ? '' : ' · no es JSON'}</span></div>
+              <pre class="small" style="max-height:340px;overflow:auto;white-space:pre-wrap">${esc(bonito(c.respuesta_api, c.respuesta_es_json))}</pre></div>
+          </div>
+        </div>`).join('')}`
+      : `<div class="alert alert-info">${esc(salida.explicacion)}</div>`,
+    acciones: [{ texto: 'Cerrar', clase: 'btn-outline', onClick: cerrarModal }],
+  });
 }
 
 function pintarDemografica(resultado) {

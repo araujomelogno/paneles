@@ -105,10 +105,10 @@ async function pedirEnlace(motivo) {
     // página lo cambiara según la respuesta, volvería a filtrar quién
     // pertenece al panel.
     avisar(salida.mensaje, 'info');
-    if (salida.enlace_sin_enviar) {
-      $('#alerta').insertAdjacentHTML('beforeend',
-        `<div class="aviso warn">Modo desarrollo: <a href="${esc(salida.enlace_sin_enviar)}">crear la contraseña</a></div>`);
-    }
+    // R-MAIL.2 — esta página **nunca** muestra el enlace, aunque el servidor
+    // lo devolviera: en el sitio público sería entregarle a cualquiera el
+    // acceso a la cuenta de quien tenga ese correo. Sin proveedor de envío el
+    // servidor contesta un error de configuración, y eso es lo que se ve.
   } catch (error) { avisar(error.message); }
 }
 
@@ -344,9 +344,8 @@ async function pintarPerfil() {
         const salida = await POST('/portal/contacto/verificacion', { canal, destino });
         pendiente = { canal, destino };
         $('#confirmar-contacto').classList.remove('oculto');
-        avisar(salida.codigo_sin_enviar
-          ? `Modo desarrollo: tu código es ${salida.codigo_sin_enviar}`
-          : 'Te mandamos un código para confirmar.', 'info');
+        // R-MAIL.2 — el código no se muestra nunca acá: llega al contacto.
+        avisar('Te mandamos un código para confirmar.', 'info');
       } catch (error) { avisar(error.message); }
     };
   });

@@ -15,9 +15,10 @@
    silencio:
 
      sin texto de consentimiento publicado   el formulario rechaza a todos
-     sin proveedor de envío de códigos       el código se muestra en pantalla,
-                                             así que la verificación no verifica
-                                             nada y el enlace no se puede repartir
+     sin proveedor de envío de códigos       nadie puede verificar su correo
+                                             (R-MAIL.2: el código ya no se muestra
+                                             en pantalla), así que nadie llega
+                                             a la bandeja
 */
 
 import * as api from '../api.js';
@@ -107,9 +108,10 @@ async function pintarEnlace(textos) {
       + 'de consentimiento».');
   }
   if (verifica === false) {
-    problemas.push('No hay proveedor de envío de códigos: el formulario '
-      + 'muestra el código en pantalla en vez de mandarlo, así que la '
-      + 'verificación no comprueba nada. El enlace no se puede repartir así.');
+    problemas.push('No hay proveedor de envío de correos (o falta su '
+      + 'contraseña): el formulario no puede mandar el código de verificación, '
+      + 'así que nadie puede completar la inscripción. El enlace no se puede '
+      + 'repartir así. Se revisa en Cumplimiento → Contacto.');
   }
 
   caja.innerHTML = `

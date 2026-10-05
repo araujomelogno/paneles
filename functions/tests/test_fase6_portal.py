@@ -330,7 +330,7 @@ def test_el_correo_nuevo_se_verifica_antes_de_reemplazar(conn_boveda, con_clave,
     quien = con_clave
     pedido = portal.pedir_verificacion_de_contacto(
         conn_boveda, quien, "email", "nuevo@ejemplo.invalid",
-        enviar=lambda c, d, codigo: {"sin_proveedor": True, "codigo": codigo})
+        enviar=lambda c, d, codigo, **_: {"sin_proveedor": True, "codigo": codigo})
     # Hasta acá el correo viejo sigue siendo el de la ficha: si el nuevo
     # estuviera mal tipeado, la persona perdería la puerta de entrada.
     assert db.una(conn_boveda, "select email from persona where id_persona = %s",

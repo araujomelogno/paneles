@@ -276,6 +276,10 @@ function mostrarAcceso(resultado) {
         : `Enlace nuevo para <strong>${esc(quien)}</strong>. El anterior, si
            todavía no lo usó, sigue siendo válido hasta que venza.`}</p>
       <div class="alert alert-warn">${esc(acceso.advertencia)}</div>
+      ${acceso.correo?.enviado
+        ? `<div class="alert alert-success">${esc(acceso.correo.detalle)}</div>`
+        : (acceso.correo?.detalle && acceso.link
+          ? `<p class="small muted">${esc(acceso.correo.detalle)}</p>` : '')}
       ${acceso.link ? `<div class="form-group"><label>Enlace para fijar la contraseña</label>
         <input type="text" id="acceso-link" readonly value="${esc(acceso.link)}" /></div>`
         : `<div class="alert alert-info">

@@ -792,10 +792,11 @@ async function mandarAccesoAlPortal(idPersona, email) {
             cerrarModal();
             toast(salida.mensaje, 'ok');
             if (salida.enlace_sin_enviar) {
-              // Modo desarrollo: sin proveedor de envío el enlace vuelve en
-              // la respuesta, y se dice con todas las letras que así no
-              // prueba nada.
-              toast(`Sin proveedor de envío configurado. Enlace: ${salida.enlace_sin_enviar}`,
+              // Modo desarrollo **explícito** (ENVIO_MODO_DESARROLLO), que el
+              // servidor ignora en el entorno desplegado: sin proveedor el
+              // enlace vuelve en la respuesta. Es la app interna, no el sitio
+              // público, y aun así se dice que así no prueba nada (R-MAIL.2).
+              toast(`Modo desarrollo, sin proveedor de envío. Enlace: ${salida.enlace_sin_enviar}`,
                     'error');
             }
             pintarAccesosAlPortal(idPersona);

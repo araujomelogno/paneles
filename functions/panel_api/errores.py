@@ -56,3 +56,27 @@ class FugaDePII(ErrorApi):
 
     status = 500
     codigo = "fuga_de_pii"
+
+
+class EnvioNoConfigurado(ErrorApi):
+    """R-MAIL.2 — no hay proveedor de envío y el modo desarrollo está apagado.
+
+    Es un problema de configuración, no del usuario: se dice así, y **no** se
+    ofrece un atajo que reemplace al correo. Se levanta antes de mirar si el
+    destinatario existe, así que contesta igual para cualquier dirección.
+    """
+
+    status = 503
+    codigo = "envio_no_configurado"
+
+
+class EnvioFallido(ErrorApi):
+    """R-MAIL.1 — el proveedor intentó y no pudo entregar el mensaje.
+
+    Nunca se reporta éxito cuando el envío falló: la persona se quedaría
+    esperando un correo que no va a llegar. El motivo técnico queda en
+    `envio_correo`; al usuario se le dice que vuelva a intentar.
+    """
+
+    status = 503
+    codigo = "envio_fallido"

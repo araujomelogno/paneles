@@ -226,6 +226,10 @@ def pedir_enlace_de_clave(conn, email, motivo=RECUPERACION, origen=None,
     if motivo not in MOTIVOS_DE_ENLACE:
         raise DatosInvalidos(f"Motivo de enlace desconocido: {motivo!r}.",
                              {"motivos": list(MOTIVOS_DE_ENLACE)})
+    # R-MAIL.2 — el proveedor se resuelve **antes** de mirar si el correo
+    # existe. Sin proveedor la respuesta es un error de configuración, igual
+    # para cualquier dirección; nunca el enlace en la respuesta.
+    enviador = enviar or verif.proveedor_de_envio(canal=verif.EMAIL)
     origen_hash = verif.hash_origen(origen)
     _frenar_si_hay_demasiados(
         conn, email, origen_hash, MOTIVOS_DE_ENLACE,
@@ -255,11 +259,20 @@ def pedir_enlace_de_clave(conn, email, motivo=RECUPERACION, origen=None,
         return salida
 
     enlace = (armar_enlace or _enlace_del_portal)(token)
-    resultado = (enviar or verif.proveedor_de_envio())("email", email, enlace)
-    if resultado.get("sin_proveedor"):
-        # Modo desarrollo, dicho con todas las letras igual que en R4.3: sin
-        # proveedor el enlace vuelve en la respuesta y entonces no prueba que
-        # quien pide tenga acceso al correo.
+    # Un fallo de envío levanta `EnvioFallido` y no se contesta como si el
+    # correo hubiera salido (R-MAIL.1). Eso distingue, mientras dure la
+    # caída del servidor de correo, una dirección del panel de una que no lo
+    # es; es el precio de no mentirle a quien sí espera el correo, y está
+    # anotado en docs/decisiones.md (D65).
+    resultado = verif.enviar_y_registrar(
+        conn, enviador, verif.EMAIL, email, enlace,
+        tipo="alta_clave" if motivo == ALTA_CLAVE else "recuperacion_clave",
+        horas=HORAS_DEL_ENLACE)
+    if resultado.get("sin_proveedor") and verif.modo_desarrollo():
+        # Modo desarrollo explícito (R-MAIL.2): sin proveedor el enlace vuelve
+        # en la respuesta y entonces no prueba que quien pide tenga acceso al
+        # correo. Nunca en el entorno desplegado, y ninguna página pública lo
+        # muestra.
         salida["enlace_sin_enviar"] = enlace
         salida["aviso"] = (
             "No hay proveedor de envío configurado: el enlace vuelve en esta "

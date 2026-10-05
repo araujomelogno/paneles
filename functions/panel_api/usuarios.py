@@ -73,20 +73,52 @@ ADVERTENCIA_ACCESO = (
 )
 
 
-def _acceso(padron, email, motivo):
+def _acceso(padron, email, motivo, conn=None, enviar=None):
     """El bloque que la interfaz muestra con el enlace para fijar la clave.
 
     `link` puede venir en `None`: Firebase puede fallar al generarlo y eso no
     invalida el alta —la cuenta quedó creada—, así que se informa y se ofrece
     la salida de siempre, que es «¿Olvidaste tu contraseña?» en el login.
+
+    R-MAIL.3 — con un proveedor de correo configurado, el enlace además sale
+    por correo desde `notificaciones@`. El modal lo sigue mostrando una vez:
+    el correo es una comodidad y no puede hacer fallar el alta.
     """
+    link = padron.link_de_reseteo(email)
     return {
         "metodo": "restablecimiento",
         "motivo": motivo,
-        "link": padron.link_de_reseteo(email),
+        "link": link,
         "mostrar_una_vez": True,
         "advertencia": ADVERTENCIA_ACCESO,
+        "correo": _mandar_acceso(conn, email, link, enviar),
     }
+
+
+def _mandar_acceso(conn, email, link, enviar=None):
+    """Intenta mandar el enlace por correo. Nunca levanta: informa."""
+    from . import verificacion_contacto as verif
+    from .errores import EnvioFallido, EnvioNoConfigurado
+
+    if not link or conn is None:
+        return {"enviado": False, "detalle": "No hay enlace para enviar."}
+    try:
+        enviador = enviar or verif.proveedor_de_envio(canal=verif.EMAIL)
+        resultado = verif.enviar_y_registrar(
+            conn, enviador, verif.EMAIL, email, link, tipo="acceso_usuario")
+    except EnvioNoConfigurado:
+        return {"enviado": False,
+                "detalle": "No hay proveedor de correo configurado: pasale el "
+                           "enlace por un canal privado."}
+    except EnvioFallido:
+        return {"enviado": False,
+                "detalle": "El correo no salió (el motivo quedó en Cumplimiento "
+                           "→ Contacto): pasale el enlace por un canal privado."}
+    if resultado.get("sin_proveedor"):
+        return {"enviado": False,
+                "detalle": "Modo desarrollo, sin proveedor de correo."}
+    return {"enviado": True, "proveedor": resultado.get("proveedor"),
+            "detalle": f"También se lo mandamos a {email}."}
 
 
 def clave_al_azar(largo=16):
@@ -310,7 +342,7 @@ def alta(conn, padron, cuerpo, actor):
         # la persona entra por este enlace y fija la suya. No queda en ninguna
         # pantalla ni en ningún log; si se pierde, `generar_acceso()` emite
         # otro.
-        acceso = _acceso(padron, email, "alta")
+        acceso = _acceso(padron, email, "alta", conn=conn)
 
     padron.escribir_ficha(uid, {
         "nombre": nombre or ficha_previa.get("nombre") or email,
@@ -467,7 +499,7 @@ def generar_acceso(conn, padron, uid, actor):
         )
 
     email = _normalizar_email(ficha.get("email"))
-    acceso = _acceso(padron, email, "regeneracion")
+    acceso = _acceso(padron, email, "regeneracion", conn=conn)
 
     registro = auditoria.registrar_usuario(
         conn, "enlace_acceso", uid, actor=actor, email_objetivo=email,

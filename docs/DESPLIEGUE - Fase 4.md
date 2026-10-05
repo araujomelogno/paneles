@@ -253,6 +253,12 @@ alguna falla lo dice con su motivo en vez de fallar al enviar.
 
 ### 3.2 · Envío de códigos de verificación (R4.3)
 
+> **Actualizado por R-MAIL (2026-10-05).** Ya hay un proveedor real,
+> `workspace`, y `ninguno` **dejó de devolver el código en la respuesta**:
+> ahora es un error de configuración. Para configurar el envío, seguir
+> `DESPLIEGUE - correo Workspace y verificación por lotes.md`. Lo que sigue
+> se conserva como registro de la Fase 4.
+
 ```
 VERIFICACION_ENVIO_PROVEEDOR   'ninguno' (default) | 'log'
 VERIFICACION_SAL               la sal con que se hashean códigos y orígenes

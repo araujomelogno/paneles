@@ -25,6 +25,12 @@ sys.path.insert(0, str(RAIZ / "functions"))
 # función que de verdad arma el enlace.
 os.environ.setdefault("PORTAL_URL", "https://portal.ejemplo.invalid")
 
+# R-MAIL.2 — las pruebas corren como una máquina de desarrollo: sin proveedor
+# de envío, el código y el enlace vuelven en la respuesta. Es la señal
+# **explícita** que exige el modo desarrollo; las pruebas que verifican que
+# sin ella no hay atajo la apagan con `monkeypatch`.
+os.environ.setdefault("ENVIO_MODO_DESARROLLO", "1")
+
 TABLAS_BOVEDA = [
     "alta_en_revision", "persona_borrada", "canje", "puntos_movimiento",
     "objetivo_composicion", "participacion", "encuesta", "consentimiento",
@@ -41,6 +47,9 @@ TABLAS_BOVEDA = [
     # Ingesta diferida. `ingesta_lote` cascadea desde el trabajo, pero sin
     # truncar el trabajo cada prueba vería las cargas de las anteriores.
     "ingesta_trabajo",
+    # R-MAIL — el registro de envíos; sin truncarlo, una prueba vería los
+    # correos de las anteriores.
+    "envio_correo",
 ]
 
 # R3.14 — el catálogo de atributos **no** se trunca: `sexo`, `localidad`,
@@ -48,7 +57,9 @@ TABLAS_BOVEDA = [
 # existentes. Lo que sí se limpia entre pruebas son los atributos que una
 # prueba haya definido, para que no se filtren a la siguiente.
 CLAVES_DEL_NUCLEO = ("sexo", "localidad", "tramo_etario", "edad")
-TABLAS_SEMANTICA = ["respuesta", "pregunta", "individuo", "cuestionario"]
+TABLAS_SEMANTICA = ["respuesta", "pregunta", "individuo", "cuestionario",
+                    # R-VER.10 — las capturas del modo de depuración.
+                    "verificacion_captura"]
 
 VERSION_TEXTO = "consentimiento-2026-01"
 

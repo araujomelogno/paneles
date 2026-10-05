@@ -2,7 +2,7 @@
 
 **Sistema:** Gestión de paneles y consulta semántica · Equipos Consultores
 **Alcance:** Fases 1 a 8, y la superficie externa de COLOQUIO (incluida su batería de verificación)
-**Última actualización:** 2026-10-05
+**Última actualización:** 2026-10-05 (R-MAIL y verificación por lotes)
 
 ---
 
@@ -98,6 +98,8 @@ restricción real del sistema.
 | [D62](#d62) | Un chequeo que no puede probar se omite, no falla; y la auditoría se prueba con el actor del contrato | 5 |
 | [D63](#d63) | El paso de revisión advierte; solo frena lo que una decisión no puede suplir | 8 (bug) |
 | [D64](#d64) | El celular es clave de dedup, pero más cauta que el correo | 1 (dedup) |
+| [D65](#d65) | El correo sale por Workspace, y sin proveedor no hay atajo | 6 (portal), 4 (landing) |
+| [D66](#d66) | La verificación va por lotes, y lo que no se juzgó queda «sin verificar» | 2 (consultas) |
 
 ---
 
@@ -3499,6 +3501,156 @@ reutilizando sin mirar el nombre, como siempre.
 
 ---
 
+<a id="d65"></a>
+## D65 · El correo sale por Workspace, y sin proveedor no hay atajo
+
+**El problema.** `VERIFICACION_ENVIO_PROVEEDOR` admitía `ninguno` y `log`, y
+ninguno de los dos mandaba nada: el portal decía «vas a recibir un enlace» y
+no salía. Peor: sin proveedor, el código de la landing y el enlace para crear
+la contraseña **volvían en la respuesta** y el sitio público los mostraba
+como «Modo desarrollo». Cualquiera que escribiera el correo de un panelista
+obtenía el enlace para crear su contraseña y entraba a su cuenta.
+
+**La decisión.**
+
+- **Proveedor `workspace`**: SMTP de Google Workspace (`smtp.gmail.com`, 587
+  con STARTTLS o 465 con SSL) autenticando como
+  `notificaciones@equipos.com.uy` con una **contraseña de aplicación** en
+  Secret Manager (`SMTP_PASSWORD`). Remitente visible
+  `Equipos Consultores <notificaciones@…>`, `Reply-To` configurable. Una
+  plantilla por tipo de correo, en un solo lugar.
+- **Dos condiciones que no se colapsan.** La *ausencia de proveedor* es un
+  error de configuración (`EnvioNoConfigurado`, 503) que se decide **antes**
+  de mirar si el correo existe, así que contesta igual para cualquier
+  dirección. El *modo desarrollo* es una señal explícita
+  (`ENVIO_MODO_DESARROLLO`) que además **se ignora en el entorno desplegado**
+  (`K_SERVICE` presente, salvo el emulador). Y ninguna página pública lee
+  `enlace_sin_enviar` ni `codigo_sin_enviar`: aunque el servidor los
+  devolviera, no hay dónde mostrarlos.
+- **Un fallo no se reporta como éxito.** Reintento acotado por tiempo
+  (`SMTP_PRESUPUESTO_S`, 15 s) solo para lo transitorio; credencial o
+  destinatario rechazados no se reintentan. El fallo queda en `envio_correo`
+  con su motivo —confirmado aunque la request termine en error— y al usuario
+  se le dice que vuelva a intentar (`EnvioFallido`, 503), sin el motivo
+  técnico.
+- **Registro de envíos en la bóveda** (`envio_correo`, `boveda/0023`): tipo,
+  destinatario, estado, motivo, intentos. Nunca el contenido —un enlace
+  guardado es una credencial guardada—. Cuenta los envíos contra el tope de
+  2.000 diarios de Workspace. Se purga a los 90 días y una baja lo borra.
+- **Cumplimiento → Contacto** muestra el proveedor, el remitente, si la
+  contraseña está cargada (no cuál es), los envíos de 24 h contra el tope, un
+  **correo de prueba** (permiso `cumplimiento`) y los envíos fallidos.
+- **Los usuarios internos** (R2.12) siguen recibiendo su enlace en el modal
+  —es de Firebase, no de este mecanismo—, y con proveedor configurado además
+  les llega por correo. Ese envío no puede hacer fallar el alta.
+
+**El intercambio que se aceptó.** Si el SMTP falla al pedir el enlace del
+portal, la respuesta es un error para un correo del panel y el mensaje de
+siempre para uno que no lo es. Mientras dura la caída, eso distingue
+direcciones. Se aceptó porque la alternativa —contestar «revisá tu correo»
+cuando el correo no salió— le miente justo a quien sí lo espera, y el acceso
+del panelista depende de ese correo. La exposición la acotan los mismos
+límites de tasa por origen y por correo de R6.1.a, y una caída se ve en
+Cumplimiento.
+
+**Lo que se descartó.**
+
+- *OAuth2 contra Gmail API.* Más trabajo y una credencial que rota sola; la
+  contraseña de aplicación alcanza mientras la organización la permita.
+- *Un servicio transaccional* (SendGrid, Mailgun). ~US$ 15–20/mes; se evalúa
+  solo si el volumen pasa el tope de Workspace.
+- *Dejar el modo desarrollo gobernado por la ausencia de proveedor.* Es
+  justamente el agujero: un despliegue sin el secreto cargado lo reabría.
+- *SMS por el mismo proveedor.* Workspace solo manda correo: la verificación
+  de celular sigue sin proveedor y lo dice (`EnvioNoConfigurado`).
+
+**Dónde vive.** `functions/panel_api/correo.py`,
+`functions/panel_api/verificacion_contacto.py` (`proveedor_de_envio`,
+`modo_desarrollo`, `enviar_y_registrar`), `functions/panel_api/portal.py`,
+`functions/panel_api/usuarios.py` (`_mandar_acceso`),
+`db/boveda/0023_envio_correo.sql`, `web/public/js/paginas/cumplimiento.js`,
+`functions/tests/test_envio_correo.py`.
+
+**Cómo se verifica.** `test_envio_correo.py`: el modo desarrollo no aparece
+en las páginas públicas; sin proveedor el portal informa y no ofrece el
+atajo, para un correo que existe y para uno que no; en el entorno desplegado
+la señal se ignora; un fallo no reporta éxito y queda registrado; la
+contraseña no está en el repositorio.
+
+---
+
+<a id="d66"></a>
+## D66 · La verificación va por lotes, y lo que no se juzgó queda «sin verificar»
+
+**El problema.** La verificación mandaba todos los candidatos en **una**
+llamada. Con 100 evidencias Claude agotaba la salida
+(`stop_reason=max_tokens`) antes de cerrar la herramienta, y subir
+`max_tokens` solo corre la pared. El modo de falla peor era silencioso: una
+respuesta truncada con **algunos** veredictos se aceptaba, el resto se
+completaba como `dudoso`, y un candidato sin verificar era indistinguible de
+uno que Claude evaluó y no pudo decidir.
+
+**La decisión.**
+
+- **Lotes de tamaño configurable** (`VERIFICACION_LOTE`, 25), con índices
+  locales al lote en el prompt; `verificar_por_lotes` traduce a índices
+  globales al combinar y garantiza longitud y orden de la entrada.
+- **`stop_reason` se mira antes de aceptar nada.** Un lote truncado se
+  descarta entero y se parte en dos; lo mismo sin herramienta o con una
+  respuesta ilegible. Un error transitorio (429, 5xx, red) se reintenta una
+  vez. Profundidad máxima de subdivisión y un **presupuesto de tiempo por
+  consulta** (`VERIFICACION_PRESUPUESTO_S`, 60 s, compartido entre
+  criterios) acotan todo; lo que no entra queda sin verificar.
+- **`sin_verificar` es un estado propio**, con su modo de falla (`fallo`:
+  truncamiento, herramienta ausente, respuesta inválida, error HTTP, error de
+  red, omitido, presupuesto agotado, sin proveedor). `dudoso` vuelve a
+  significar solo «evaluó y no pudo decidir», y por eso su regla en modo
+  estricto **ya no se apaga** cuando la verificación degrada: la
+  `verificacion_aplicada` que lo hacía desapareció.
+- **En `consultas.py`**, `sin_verificar` no excluye ni aprueba; un
+  `no_cumple` válido sigue excluyendo aunque otras evidencias de la persona
+  hayan fallado; la persona con pendientes queda con
+  `verificacion_incompleta` y confianza baja; la respuesta trae
+  `verificacion.completa` y una degradación `parcial`. La pantalla lo pone
+  arriba del ranking.
+- **Concurrencia acotada** entre lotes (`VERIFICACION_CONCURRENCIA`, 4): con
+  `top_k` 100 de COLOQUIO pueden ser 300 evidencias y doce lotes, y en serie
+  no entran en sus 90 segundos.
+- **Diagnóstico sin contenido** (R-VER.9): una línea por verificación en el
+  log con lotes, verificadas, pendientes, subdivisiones, duración,
+  `stop_reason` y tokens.
+- **Modo de depuración** (R-VER.10, `VERIFICACION_DEPURACION`): la
+  solicitud exacta y la respuesta tal cual, por llamada, en
+  `verificacion_captura` del **store semántico** (`semantica/0008`). Apagado
+  por defecto, vence a los 7 días, topes por entrada y por ejecución con
+  constancia del recorte, lectura solo admin (`depurar_verificacion`). Al
+  costado del payload guarda `respuesta_ids` —no adentro— para que una baja
+  borre las capturas que llevan respuestas de esa persona.
+
+**La contradicción con R-VER.9, resuelta.** El diagnóstico de rutina no
+lleva contenido; la captura lleva exactamente las respuestas de encuesta. No
+se mezclan: la captura no es un log —no va a Cloud Logging, que sería una
+tercera copia con reglas que nadie definió— sino una tabla en el store donde
+esos datos ya viven, con su alcance de baja.
+
+**Lo que se descartó.**
+
+- *Subir `max_tokens` otra vez.* Posterga, no resuelve.
+- *Reducir `top_k` o las evidencias por persona para que entre.* Cambia el
+  resultado de la consulta en silencio.
+- *Aceptar los veredictos parciales de un lote truncado.* Es el bug.
+- *Reintentar solo los omitidos de un lote exitoso.* Se marcan `omitido` y
+  se informan; si fueran frecuentes, es un problema del prompt.
+
+**Dónde vive.** `functions/panel_api/verificacion.py`
+(`verificar_por_lotes`, `Claude._interpretar`, `Captura`),
+`functions/panel_api/consultas.py` (`_combinar`, `_resumen_verificacion`),
+`db/semantica/0008_captura_verificacion.sql`,
+`web/public/js/paginas/consultas.js`,
+`functions/tests/test_verificacion_por_lotes.py`.
+
+---
+
 ## Anexo · Decisiones que no se tomaron
 
 Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
@@ -3566,3 +3718,7 @@ Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 | Recuperar en un reproceso lo que la ingesta descartó | **Imposible sin el archivo, y deliberado.** Lo no marcado y lo excluido no se guardan; la revisión lo avisa | [D61](#d61) |
 | Que el modo demo cubra las pantallas de las fases 7 y 8 | **Pendiente.** `demo.js` no simula la ficha seudónima, las respuestas, las estadísticas, la calidad del dato ni el reproceso; por eso las capturas de esas secciones del manual siguen pendientes | `docs/manual/README.md` |
 | Alinear el voseo de la interfaz con el registro formal del manual | Sin decidir; requeriría recapturar las 44 pantallas | PR de la Fase 2 |
+| Verificación del celular cuando el proveedor es Workspace | **Pendiente.** Workspace solo envía correo; un celular en la landing o en el portal no se puede verificar y el sistema lo dice. Falta un proveedor de SMS (o una plantilla de autenticación de WhatsApp) | [D65](#d65) |
+| OAuth2 o un servicio transaccional para el correo | **Solo si hace falta.** Si la organización deja de permitir contraseñas de aplicación, o el volumen pasa los 2.000 destinatarios por día | [D65](#d65) |
+| Una rutina programada que purgue `verificacion_captura` | **No se hizo.** La purga corre en cada escritura y cada lectura; si el modo queda apagado meses, las filas vencidas esperan a la próxima consulta con el modo encendido o a la purga manual del manual de despliegue | [D66](#d66) |
+| Calibrar `VERIFICACION_LOTE` con datos reales | **Pendiente.** 25 es un punto de partida: más chico trunca menos y repite más prompt; más grande ahorra prompt y arriesga el doble pago de la subdivisión | [D66](#d66) |
