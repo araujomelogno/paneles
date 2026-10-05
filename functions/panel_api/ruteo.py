@@ -882,8 +882,16 @@ def ficha_seudonima(ctx, actor, params, cuerpo, consulta):
     sigue necesitando una acción deliberada —y queda registrado— es ver
     quién es: eso es reidentificar, y no pasa por acá.
     """
-    return 200, ficha.seudonima(
+    salida = ficha.seudonima(
         ctx.boveda, params["id_persona"], momento=consulta.get("momento"))
+    # R7.3 — la evidencia del resultado que se está mirando. Llega como los
+    # `respuesta_id` que ya trae el ranking (`?respuestas=12,34`); sin ellos
+    # la ficha es solo la de la persona y no abre el store semántico.
+    ids = ficha.ids_de_evidencia(consulta.get("respuestas"))
+    if ids:
+        salida["evidencia"] = ficha.evidencia(
+            ctx.semantica, params["id_persona"], ids)
+    return 200, salida
 
 
 @ruta("GET", "/panelistas/<id_persona>/respuestas", "leer", requisito="R7.6")

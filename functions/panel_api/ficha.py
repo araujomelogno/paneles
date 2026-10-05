@@ -75,6 +75,82 @@ def seudonima(conn_boveda, id_persona, momento=None):
     }
 
 
+# Cuántas evidencias se aceptan por pedido. Un individuo del ranking trae una
+# por criterio semántico; ninguna consulta razonable tiene más que esto, y el
+# tope impide usar la ficha para bajar el contenido entero de alguien sin
+# pasar por R7.6, que es la vía que deja registro.
+EVIDENCIAS_MAXIMAS = 20
+
+
+def ids_de_evidencia(crudo):
+    """`"12,34"` o `[12, 34]` → `[12, 34]`. Lo que no es un entero se ignora:
+    un id mal formado no es motivo para no mostrar la ficha."""
+    if crudo is None:
+        return []
+    partes = crudo if isinstance(crudo, (list, tuple)) else str(crudo).split(",")
+    ids = []
+    for parte in partes:
+        try:
+            ids.append(int(str(parte).strip()))
+        except (TypeError, ValueError):
+            continue
+    return list(dict.fromkeys(ids))[:EVIDENCIAS_MAXIMAS]
+
+
+def evidencia(conn_semantica, id_persona, respuesta_ids):
+    """R7.3 — la evidencia del resultado: qué respondió y de qué estudio.
+
+    La evidencia **depende de qué consulta se está mirando**, así que no se
+    recalcula acá: llega desde el resultado, que ya la trae (cada individuo
+    del ranking viene con los `respuesta_id` que lo justificaron). Recalcularla
+    con el criterio como parámetro podría dar otra respuesta que la que el
+    analista tiene en pantalla, y la ficha tiene que explicar *ese* resultado.
+
+    Lo que sí hace el servidor es **leerla de la base** y no confiar en lo que
+    manda la pantalla: devuelve el texto que está guardado, y solo las
+    respuestas que son **de esta persona**. Un id ajeno se descarta en
+    silencio —la ficha no es una vía para leer respuestas de otro— y se
+    informa cuántos se descartaron.
+
+    No registra reidentificación: es contenido atado a un `id_persona`, que es
+    exactamente lo que ya mostraba la lista de resultados. Lo que se audita es
+    unir identidad y contenido (R7.6), y acá no hay identidad.
+    """
+    ids = ids_de_evidencia(respuesta_ids)
+    if not ids:
+        return {"items": [], "descartadas": 0}
+    filas = db.todas(
+        conn_semantica,
+        """
+        select respuesta_id, ref_estudio, estudio, fecha_campo,
+               pregunta_codigo, pregunta_texto, pregunta_tipo,
+               valor_texto, texto_embebido
+          from v_respuesta_estudio
+         where respuesta_id = any(%s::bigint[])
+           and id_persona = %s
+        """,
+        (ids, str(id_persona)),
+    )
+    por_id = {f["respuesta_id"]: f for f in filas}
+    items = [
+        {
+            "respuesta_id": f["respuesta_id"],
+            "ref_estudio": str(f["ref_estudio"]) if f["ref_estudio"] else None,
+            "estudio": f["estudio"],
+            "fecha_campo": (f["fecha_campo"].isoformat()
+                            if f["fecha_campo"] else None),
+            "codigo": f["pregunta_codigo"],
+            "pregunta": f["pregunta_texto"],
+            "tipo": f["pregunta_tipo"],
+            "respuesta": f["valor_texto"],
+            "texto_embebido": f["texto_embebido"],
+        }
+        # En el orden en que llegaron, que es el del ranking.
+        for f in (por_id[i] for i in ids if i in por_id)
+    ]
+    return {"items": items, "descartadas": len(ids) - len(items)}
+
+
 def estudios_con_respuestas(conn_semantica, id_persona):
     """Para el filtro por estudio: solo los estudios donde esta persona habló."""
     filas = db.todas(

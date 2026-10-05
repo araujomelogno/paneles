@@ -15,7 +15,7 @@
 */
 
 import * as api from './api.js';
-import { esc, modal, cerrarModal, alerta } from './ui.js';
+import { esc, alerta } from './ui.js';
 
 /* `{finalidad: [{version, cuerpo, creado_en}, …]}`, solo las activas y
    ordenadas como las devuelve el servidor (la más reciente primero). */
@@ -80,29 +80,38 @@ export function selector(finalidad, { id, etiqueta } = {}) {
       <div class="field-hint">${unica
         ? 'Es la única versión activa de esta finalidad, así que viene elegida.'
         : `${versiones.length} versiones activas. Se manda la elegida, tal cual.`}</div>
+      <pre class="texto-consentido" id="${esc(id)}-texto" hidden></pre>
     </div>`;
 }
 
 /* Engancha los botones «Ver texto» de un contenedor. Es lo que convierte al
    desplegable en algo más que un código: lo que la persona aceptó es el
-   texto, no la etiqueta. */
+   texto, no la etiqueta.
+
+   El texto se despliega **en el lugar**, debajo del desplegable, y no en un
+   modal: los desplegables viven adentro del formulario de alta o de la
+   importación, que ya son un modal, y abrir otro encima cerraba el primero
+   y se llevaba todo lo cargado. Ver el texto antes de confirmar no puede
+   costar tener que llenar el formulario de nuevo. */
 export function activarVerTexto(contenedor) {
   contenedor.querySelectorAll('[data-ver-texto]').forEach((boton) => {
-    boton.onclick = () => {
-      const select = contenedor.querySelector(`#${boton.dataset.verTexto}`);
-      if (!select) return;
-      const finalidad = select.dataset.finalidad;
-      const texto = versionesDe(finalidad).find(
+    const select = contenedor.querySelector(`#${boton.dataset.verTexto}`);
+    const destino = contenedor.querySelector(`#${boton.dataset.verTexto}-texto`);
+    if (!select || !destino) return;
+    const pintar = () => {
+      const texto = versionesDe(select.dataset.finalidad).find(
         (t) => t.version === select.value);
-      modal({
-        titulo: `Texto consentido · ${select.value}`,
-        ancho: '640px',
-        cuerpo: `<p class="small">Finalidad: <code>${esc(finalidad)}</code></p>
-                 <pre class="texto-consentido">${esc(texto?.cuerpo || '')}</pre>`,
-        acciones: [{ texto: 'Cerrar', clase: 'btn-outline',
-                     onClick: cerrarModal }],
-      });
+      destino.textContent = texto?.cuerpo
+        || 'Esta versión no tiene texto cargado.';
     };
+    boton.onclick = () => {
+      destino.hidden = !destino.hidden;
+      boton.textContent = destino.hidden ? 'Ver texto' : 'Ocultar texto';
+      if (!destino.hidden) pintar();
+    };
+    // Si se cambia de versión con el texto abierto, se ve el de la nueva:
+    // mostrar el de la anterior al lado de la elegida sería peor que nada.
+    select.addEventListener('change', () => { if (!destino.hidden) pintar(); });
   });
 }
 

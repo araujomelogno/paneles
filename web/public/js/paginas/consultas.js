@@ -18,6 +18,7 @@
 
 import * as api from '../api.js';
 import * as catalogo from '../catalogo.js';
+import * as respuestas from '../respuestas.js';
 import {
   $, $$, esc, encabezado, token, vacio, cargando, toast, modal, cerrarModal,
   leerFormulario, alerta, activarTokens, fechaCorta, confirmar,
@@ -446,7 +447,7 @@ function pintarResultado(resultado) {
   // R7.3 — la ficha se abre sin perder el resultado: es un modal encima de
   // la lista, y cerrarlo no vuelve a consultar nada.
   $$('[data-ficha]', caja).forEach((b) => {
-    b.onclick = () => abrirFicha(b.dataset.ficha);
+    b.onclick = () => abrirFicha(resultado.items[Number(b.dataset.ficha)]);
   });
 }
 
@@ -457,7 +458,7 @@ function filaItem(item, indice) {
     <td class="mono">${indice + 1}</td>
     <td>${nombre ? `<div class="td-strong">${esc(nombre)}</div>` : ''}
         ${token(item.id_persona)}
-        <button class="btn btn-outline btn-sm" data-ficha="${esc(item.id_persona)}"
+        <button class="btn btn-outline btn-sm" data-ficha="${indice}"
                 style="margin-top:.35rem">Ficha</button></td>
     ${columnasElegidas.map((c) => `<td>${celdaDeColumna(item.id_persona, c)}</td>`).join('')}
     <td><div class="barra ${item.puntaje >= 0.7 ? 'ok' : ''}">
@@ -490,8 +491,10 @@ const etiquetaDeColumna = (clave) =>
    cadena vacía— justamente para que acá no se pueda confundir. */
 function celdaDeColumna(idPersona, clave) {
   const valor = (valoresDeColumnas[idPersona] || {})[clave];
-  if (!valor) return '<span class="muted small">sin dato</span>';
-  return esc(valor.etiqueta_valor || valor.valor);
+  const texto = valor && (valor.etiqueta_valor || valor.valor
+    || (valor.valor_num != null ? String(valor.valor_num) : null));
+  if (!texto) return '<span class="muted small">sin dato</span>';
+  return esc(texto);
 }
 
 async function cargarColumnas() {
@@ -568,126 +571,160 @@ function abrirElegirColumnas() {
 
 /* ── R7.3 y R7.6 · La ficha desde un resultado ─────────────────── */
 
-/* Sin salir de la pantalla y sin perder el resultado: es un modal encima.
-   Y **sin nombre, documento, correo ni celular**: la consulta devuelve un
-   conjunto seudonimizado a propósito, y reidentificar es un acto
-   deliberado que queda registrado. Si la ficha mostrara el nombre con un
-   clic, esa auditoría dejaría de reflejar quién vio los datos de quién. */
-async function abrirFicha(idPersona) {
+/* Sin salir de la pantalla y sin perder el resultado: es un modal encima de
+   la lista, y cerrarlo no vuelve a consultar nada —`ultimoResultado` no se
+   toca—. Y **sin nombre, documento, correo ni celular**: la consulta
+   devuelve un conjunto seudonimizado a propósito, y reidentificar es un
+   acto deliberado que queda registrado. Si la ficha mostrara el nombre con
+   un clic, esa auditoría dejaría de reflejar quién vio los datos de quién.
+
+   La evidencia viaja **desde el resultado**: cada individuo del ranking ya
+   trae los `respuesta_id` que lo justificaron, y la ficha los pasa al
+   servidor, que devuelve el texto guardado y solo si es de esta persona.
+   Recalcularla con el criterio daría otra cosa que lo que el analista tiene
+   en pantalla, y la ficha tiene que explicar *este* resultado. */
+async function abrirFicha(item) {
+  const idPersona = item.id_persona;
+  const idsEvidencia = (item.evidencias || [])
+    .map((e) => e.respuesta_id).filter((i) => i != null);
   const caja = modal({
     titulo: 'Ficha del panelista',
-    ancho: '760px',
+    ancho: '820px',
     cuerpo: cargando('20vh'),
     acciones: [{ texto: 'Cerrar', clase: 'btn-outline', onClick: cerrarModal }],
   });
   try {
     const [ficha, estudios] = await Promise.all([
-      api.panelistas.fichaSeudonima(idPersona),
-      api.panelistas.estudiosConRespuestas(idPersona).catch(() => ({ items: [] })),
+      api.panelistas.fichaSeudonima(idPersona, idsEvidencia.length
+        ? { respuestas: idsEvidencia.join(',') } : {}),
+      respuestas.estudiosDe(idPersona),
     ]);
-    $('.modal-body', caja).innerHTML = fichaHtml(ficha, estudios.items);
+    $('.modal-body', caja).innerHTML = fichaHtml(ficha, item, estudios);
     activarTokens(caja);
-    engancharRespuestas(caja, idPersona, estudios.items);
+    respuestas.activar(caja, idPersona, estudios, { prefijo: 'ficha-resp' });
+    const quien = $('#ficha-quien', caja);
+    if (quien) quien.onclick = () => verQuienEs(item, caja);
   } catch (error) {
     $('.modal-body', caja).innerHTML = alerta(error.message);
   }
 }
 
-function fichaHtml(ficha, estudios) {
+/* Para un derivado, de dónde sale el dato; para el resto, quién lo cargó.
+   Es lo que dice cuánto confiar en el valor: una edad derivada de la fecha
+   de nacimiento no es lo mismo que una envejecida desde lo que la persona
+   declaró hace tres años. */
+const PROCEDENCIAS = {
+  derivado: 'derivado de la fecha de nacimiento',
+  envejecido: 'envejecido desde la edad declarada',
+  cargado: 'cargado tal cual',
+};
+const ORIGENES = {
+  alta: 'del alta manual', edicion: 'editado a mano',
+  ingesta: 'de una importación', carga: 'de una carga sin panel',
+  inscripcion: 'de la inscripción', panelista: 'corregido por el panelista',
+};
+
+const valorDeAtributo = (a) =>
+  a.etiqueta_valor || a.valor || (a.valor_num != null ? String(a.valor_num) : null)
+  || (a.valor_fecha ? fechaCorta(a.valor_fecha) : null);
+
+function fichaHtml(ficha, item, estudios) {
+  const resuelto = nombresResueltos[ficha.id_persona];
   return `
     <p>${token(ficha.id_persona)}
        <span class="small muted">enrolada el ${esc(fechaCorta(ficha.enrolado_en))}</span></p>
-    <div class="aviso info">
+    ${resuelto ? `<div class="alert alert-info">Reidentificada en esta sesión:
+        <strong>${esc(resuelto.nombre || '—')}</strong>. Quedó registrado.</div>`
+      : `<div class="aviso">
       <p>Esta ficha <strong>no muestra nombre, documento, correo ni
-      celular</strong>. Ver quién es sigue siendo una reidentificación: se
-      pide con «Ver quiénes son», con motivo, y queda registrada.</p>
-    </div>
+      celular</strong>. Ver quién es es una reidentificación: pide
+      confirmación y queda registrada con tu usuario y el motivo.</p>
+      <div class="toolbar" style="margin-top:.5rem">
+        <button class="btn btn-outline btn-sm" id="ficha-quien">Ver quién es</button>
+      </div>
+    </div>`}
 
-    <h4>Atributos demográficos</h4>
-    ${ficha.atributos.length ? `<table class="tabla">
+    <h4 class="ficha-titulo">Por qué aparece en este resultado</h4>
+    ${evidenciaHtml(ficha.evidencia, item)}
+
+    <h4 class="ficha-titulo">Atributos demográficos</h4>
+    ${ficha.atributos.length ? `<div class="table-wrap"><table class="tabla">
       <thead><tr><th>Atributo</th><th>Valor</th><th>Procedencia</th></tr></thead>
       <tbody>${ficha.atributos.map((a) => `
-        <tr><td>${esc(a.etiqueta)}</td>
-            <td>${esc(a.etiqueta_valor || a.valor || '—')}</td>
-            <td class="small muted">${esc(a.procedencia || a.origen || '')}</td>
+        <tr><td>${esc(a.etiqueta)}${a.es_especial
+              ? ' <span class="badge">especial</span>' : ''}</td>
+            <td>${valorDeAtributo(a) ? esc(valorDeAtributo(a))
+              : '<span class="muted small">sin dato</span>'}</td>
+            <td class="small muted">${esc(PROCEDENCIAS[a.procedencia]
+              || ORIGENES[a.origen] || a.procedencia || a.origen || '')}</td>
         </tr>`).join('')}</tbody>
-    </table>` : '<p class="small muted">Sin atributos cargados.</p>'}
+    </table></div>` : '<p class="small muted">Sin atributos cargados.</p>'}
+    <p class="field-hint">Sexo, localidad y tramo etario juntos pueden señalar
+      a una persona en un panel chico: la ficha no es reidentificación, pero
+      tampoco es anónima.</p>
 
-    <h4>Paneles</h4>
+    <h4 class="ficha-titulo">Paneles</h4>
     <p>${ficha.paneles.length
       ? ficha.paneles.map((p) => esc(p.nombre)).join(' · ')
       : '<span class="small muted">No integra ningún panel.</span>'}</p>
 
-    <h4>Respuestas procesadas</h4>
-    ${estudios.length ? `
-      <div class="toolbar" style="margin-bottom:.5rem">
-        <select class="fselect" id="ficha-estudio">
-          <option value="">Todos los estudios</option>
-          ${estudios.map((e) => `<option value="${esc(e.ref_estudio)}">
-            ${esc(e.nombre || e.estudio)} (${e.respuestas})</option>`).join('')}
-        </select>
-        <input class="finput" id="ficha-buscar" placeholder="Buscar en pregunta o respuesta" />
-        <label class="check"><input type="checkbox" id="ficha-embebido" />
-          Ver el texto embebido</label>
-      </div>
-      <div id="ficha-respuestas">${cargando('12vh')}</div>`
-      : `<p class="small muted">Todavía no tiene respuestas procesadas: no
-         va a aparecer en ninguna consulta por concepto.</p>`}`;
+    <h4 class="ficha-titulo">Respuestas procesadas</h4>
+    ${respuestas.seccionHtml(estudios, { prefijo: 'ficha-resp' })}`;
 }
 
-function engancharRespuestas(caja, idPersona, estudios) {
-  if (!estudios.length) return;
-  let pagina = 1;
+/* La evidencia con el criterio que justificó y su veredicto. El texto sale
+   del servidor; el veredicto, del resultado que se está mirando. */
+function evidenciaHtml(evidencia, item) {
+  const items = evidencia?.items || [];
+  if (!items.length) {
+    return `<p class="small muted">${(item.evidencias || []).length
+      ? 'No se pudo leer la evidencia de este resultado.'
+      : 'El resultado no trae evidencia semántica para esta persona (por '
+        + 'ejemplo, en modo laxo sin respuesta que cumpla el criterio).'}</p>`;
+  }
+  const criterioDe = (respuestaId) => (item.criterios || []).find(
+    (c) => c.evidencia && c.evidencia.respuesta_id === respuestaId);
+  return items.map((e) => {
+    const c = criterioDe(e.respuesta_id);
+    const v = c ? (VEREDICTOS[c.veredicto] || { etiqueta: c.veredicto, clase: '' }) : null;
+    return `<div class="evidencia" style="margin-bottom:.6rem">
+      ${c ? `<div class="small" style="margin-bottom:.3rem">
+          <span class="est ${v.clase}">${esc(v.etiqueta)}</span>
+          criterio <strong>${esc(c.criterio)}</strong></div>` : ''}
+      <div class="procedencia">${esc(e.estudio || '')} · ${esc(e.codigo || '')}${
+        e.fecha_campo ? ` · ${esc(fechaCorta(e.fecha_campo))}` : ''}</div>
+      <div class="small muted" style="margin-bottom:.3rem">${esc(e.pregunta || '')}</div>
+      <div>«${esc(e.respuesta || '')}»</div>
+      <div class="small muted mono embebido">${esc(e.texto_embebido || '')}</div>
+    </div>`;
+  }).join('') + (evidencia.descartadas
+    ? `<p class="small muted">${evidencia.descartadas} evidencia(s) no
+       corresponden a esta persona y no se muestran.</p>` : '');
+}
 
-  const pintar = async () => {
-    const destino = $('#ficha-respuestas', caja);
-    if (!destino) return;
-    destino.innerHTML = cargando('12vh');
-    try {
-      const d = await api.panelistas.respuestas(idPersona, {
-        ref_estudio: $('#ficha-estudio', caja).value || undefined,
-        q: $('#ficha-buscar', caja).value.trim() || undefined,
-        pagina,
-      });
-      const conEmbebido = $('#ficha-embebido', caja).checked;
-      destino.innerHTML = d.items.length ? `
-        <table class="tabla">
-          <thead><tr><th>Código</th><th>Pregunta</th><th>Respuesta</th>
-                     <th>Estudio</th></tr></thead>
-          <tbody>${d.items.map((f) => `
-            <tr><td><code>${esc(f.codigo)}</code></td>
-                <td>${esc(f.pregunta)}</td>
-                <td>${esc(f.respuesta || '—')}
-                    ${conEmbebido ? `<div class="small muted mono">${esc(f.texto_embebido)}</div>` : ''}</td>
-                <td class="small">${esc(f.estudio)}<br>
-                    <span class="muted">${f.fecha_campo ? esc(fechaCorta(f.fecha_campo)) : ''}</span></td>
-            </tr>`).join('')}</tbody>
-        </table>
-        <div class="toolbar" style="margin-top:.5rem">
-          <button class="btn btn-outline btn-sm" id="ficha-antes"
-                  ${pagina <= 1 ? 'disabled' : ''}>Anterior</button>
-          <span class="small">Página ${d.pagina} de ${d.paginas} · ${d.total} respuesta(s)</span>
-          <button class="btn btn-outline btn-sm" id="ficha-despues"
-                  ${pagina >= d.paginas ? 'disabled' : ''}>Siguiente</button>
-        </div>`
-        : '<p class="small muted">Ninguna respuesta coincide con ese filtro.</p>';
-      const antes = $('#ficha-antes', caja);
-      const despues = $('#ficha-despues', caja);
-      if (antes) antes.onclick = () => { pagina -= 1; pintar(); };
-      if (despues) despues.onclick = () => { pagina += 1; pintar(); };
-    } catch (error) {
-      destino.innerHTML = alerta(error.message);
+/* La reidentificación de siempre, para una sola persona. No es un camino
+   nuevo: es el mismo `POST /reidentificacion`, con el mismo motivo que
+   «Ver quiénes son», y queda registrada igual. */
+async function verQuienEs(item, caja) {
+  const ok = window.confirm(
+    'Ver quién es deshace la seudonimización de esta persona. Queda '
+    + 'registrado con tu usuario, la fecha y el motivo. ¿Seguir?');
+  if (!ok) return;
+  try {
+    const resuelto = await api.reidentificacion.resolver([item.id_persona], 'consulta');
+    resuelto.items.forEach((p) => { nombresResueltos[p.id_persona] = p; });
+    const persona = nombresResueltos[item.id_persona];
+    const destino = $('#ficha-quien', caja)?.closest('.aviso');
+    if (destino && persona) {
+      destino.outerHTML = `<div class="alert alert-info">Reidentificada:
+        <strong>${esc(persona.nombre || '—')}</strong>. Quedó registrado.</div>`;
     }
-  };
-
-  $('#ficha-estudio', caja).onchange = () => { pagina = 1; pintar(); };
-  $('#ficha-embebido', caja).onchange = () => pintar();
-  let reloj = null;
-  $('#ficha-buscar', caja).oninput = () => {
-    clearTimeout(reloj);
-    reloj = setTimeout(() => { pagina = 1; pintar(); }, 300);
-  };
-  pintar();
+    // La lista de abajo también la muestra, como después de «Ver quiénes son».
+    pintarResultado(ultimoResultado);
+    toast('Reidentificada. Queda registrado.', 'ok');
+  } catch (error) {
+    toast(error.message, 'err');
+  }
 }
 
 function abrirDetalle(item) {
