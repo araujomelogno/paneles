@@ -205,7 +205,7 @@ def test_la_vista_y_el_gate_de_python_dicen_lo_mismo(conn_boveda, alta_basica):
         str(f["id_persona"]) for f in db.todas(
             conn_boveda,
             "select id_persona from v_persona_convocable "
-            " where finalidad = 'contacto_participacion'")}
+            " where 'contacto_participacion' = any(finalidades)")}
     assert set(habilitadas) <= de_la_vista
     assert str(sin) not in de_la_vista
 

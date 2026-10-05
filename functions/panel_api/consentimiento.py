@@ -21,6 +21,13 @@ la persona esté `activa` y que no tenga lápida en `persona_borrada`. Las dos
 condiciones son las que uno querría igual —convocar a alguien dado de baja es
 exactamente lo que el gate tiene que impedir— y el muestreo ya las aplicaba
 por su cuenta.
+
+Desde la `0021` la vista tiene **una fila por persona** y las finalidades
+vigentes viajan en el arreglo `finalidades`: la pregunta es
+`%s = any(finalidades)`. Antes devolvía una fila por consentimiento y una
+persona con dos finalidades aparecía dos veces (ver
+`specs/BUG_v_persona_convocable_duplica.md`). Las dos finalidades que trata
+esta aplicación son de ámbito persona, así que siempre están en el arreglo.
 """
 
 from . import db
@@ -94,8 +101,7 @@ def esta_vigente(conn, id_persona, finalidad):
         """
         select 1
           from v_persona_convocable
-         where id_persona = %s and finalidad = %s
-         limit 1
+         where id_persona = %s and %s = any(finalidades)
         """,
         (id_persona, finalidad),
     )
@@ -125,9 +131,9 @@ def filtrar_con_consentimiento(conn, ids_persona, finalidad):
     filas = db.todas(
         conn,
         """
-        select distinct id_persona
+        select id_persona
           from v_persona_convocable
-         where finalidad = %s
+         where %s = any(finalidades)
            and id_persona = any(%s::uuid[])
         """,
         (finalidad, ids),

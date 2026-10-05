@@ -60,6 +60,13 @@ def _tirados_y_recreados(sql):
         r"drop\s+(?:table|view)\s+(?:if\s+exists\s+)?([a-z_][a-z0-9_]*)", sql, re.I,
     ):
         objetos.add(nombre.lower())
+    # Una función que cambia su `returns table` tampoco se puede reemplazar
+    # en el lugar: `create or replace` no cambia el tipo de retorno. La
+    # `boveda/0021` tira `f_persona_convocable()` y la rehace con otra forma.
+    for nombre in re.findall(
+        r"drop\s+function\s+(?:if\s+exists\s+)?([a-z_][a-z0-9_]*)", sql, re.I,
+    ):
+        objetos.add(f"{nombre.lower()}()")
     for tabla, cuerpo in re.findall(
         r"alter\s+table\s+(?:only\s+)?([a-z_][a-z0-9_]*)(.*?);", sql, re.I | re.S,
     ):

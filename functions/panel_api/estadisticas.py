@@ -27,6 +27,7 @@ sin FK— así que se resuelve como todo lo demás acá: **por conjuntos de
 `id_persona`**, trayendo los dos lados y restando en Python.
 """
 
+from . import consentimiento as consent
 from . import db
 
 # Cuántos ejemplos acompañan a un número que se puede desglosar. Listar los
@@ -89,20 +90,30 @@ def consentimiento(conn_boveda):
     propio daría un número parecido y, el día que la regla cambie, uno
     equivocado. Es la misma razón por la que el gate no se recalcula en
     Python en ningún lado.
+
+    Y se cuenta **por persona**, no por fila de consentimiento. Antes se
+    contaba sobre `consentimiento` directo: un re-otorgamiento (versión nueva
+    del texto, que agrega fila sin pisar el historial) contaba dos veces a la
+    misma persona, y «sin el» podía dar negativo. Es la misma clase de error
+    que `specs/BUG_v_persona_convocable_duplica.md`, del lado de la pantalla.
     """
     filas = db.todas(
         conn_boveda,
-        """select finalidad,
-                  count(*) filter (where estado = 'vigente') as vigentes
-             from consentimiento
-            group by finalidad order by finalidad""")
+        """select f.finalidad, count(*)::int as vigentes
+             from v_persona_convocable v
+             cross join lateral unnest(v.finalidades) as f(finalidad)
+            group by f.finalidad order by f.finalidad""")
     total = db.una(conn_boveda, "select count(*) as n from persona")["n"]
+    vigentes = {f["finalidad"]: f["vigentes"] for f in filas}
+    # Las dos finalidades que trata esta aplicación se muestran siempre,
+    # aunque nadie las tenga: un cero es información, una fila ausente no.
+    for propia in (consent.CONTACTO, consent.SEMANTICO):
+        vigentes.setdefault(propia, 0)
     return {
         "total_personas": total,
         "por_finalidad": [
-            {"finalidad": f["finalidad"], "vigentes": f["vigentes"],
-             "sin_el": total - f["vigentes"]}
-            for f in filas],
+            {"finalidad": finalidad, "vigentes": n, "sin_el": total - n}
+            for finalidad, n in sorted(vigentes.items())],
     }
 
 
@@ -190,12 +201,15 @@ def brecha(conn_boveda, conn_semantica, ejemplos=EJEMPLOS):
     sin_uso_semantico = {
         str(f["id_persona"]) for f in db.todas(
             conn_boveda,
-            """select p.id_persona from persona p
-                where not exists (
-                      select 1 from consentimiento c
-                       where c.id_persona = p.id_persona
-                         and c.finalidad = 'uso_semantico'
-                         and c.estado = 'vigente')""")}
+            # Del gate y no de `consentimiento` a mano: quien no está activa
+            # tampoco puede aparecer en un resultado aunque tenga la fila.
+            # Es un `except` y no un `not exists` correlacionado porque la
+            # vista es una función `security definer`: correlacionada se
+            # evaluaría una vez por persona.
+            """select id_persona from persona
+               except
+               select id_persona from v_persona_convocable
+                where 'uso_semantico' = any(finalidades)""")}
 
     sin_respuestas = en_boveda - con_respuestas
     huerfanos = en_semantico - en_boveda
