@@ -166,7 +166,7 @@ class Claude(Verificador):
 
     nombre = "claude"
 
-    def __init__(self, api_key, modelo=MODELO_POR_DEFECTO, max_tokens=4096, tiempo=120):
+    def __init__(self, api_key, modelo=MODELO_POR_DEFECTO, max_tokens=16384, tiempo=120):
         if not api_key:
             raise ErrorVerificacion(
                 "Falta CLAUDE_API_KEY (por variable de entorno / Secret Manager; "
