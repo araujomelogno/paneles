@@ -123,6 +123,17 @@ function pintar(main, d) {
   ${cargasHtml(cargas)}`;
 
   $('#ver-sin-respuestas', main)?.addEventListener('click', verSinRespuestas);
+  // R8.9 — corregir lo ya cargado de una encuesta o de una carga sin panel.
+  // Es el único listado donde aparecen las cargas sin panel, así que el
+  // reproceso se ofrece desde acá además de desde la ficha de la encuesta.
+  main.querySelectorAll('[data-reprocesar]').forEach((boton) => {
+    boton.onclick = async () => {
+      const [tipo, id] = boton.dataset.reprocesar.split(':');
+      const { abrirReproceso } = await import('./reproceso.js');
+      abrirReproceso({ tipo, id: Number(id), nombre: `${tipo} ${id}` },
+                     () => render(main));
+    };
+  });
 }
 
 /* La sección que justifica la pantalla. Va arriba y con el número grande
@@ -179,7 +190,7 @@ function cargasHtml(cargas) {
     <table class="tabla">
       <thead><tr><th>#</th><th>Destino</th><th>Estado</th>
                  <th class="num">Filas</th><th class="num">Lotes ok</th>
-                 <th class="num">Fallidos</th><th>Creada</th></tr></thead>
+                 <th class="num">Fallidos</th><th>Creada</th><th></th></tr></thead>
       <tbody>${cargas.items.map((t) => `
         <tr>
           <td>${t.trabajo_id}</td>
@@ -189,6 +200,9 @@ function cargasHtml(cargas) {
           <td class="num">${numero(t.lotes_ok)}</td>
           <td class="num">${numero(t.lotes_fallidos)}</td>
           <td>${esc(fechaCorta(t.creado_en))}</td>
+          <td><button class="btn btn-outline btn-sm" data-reprocesar="${esc(t.destino_tipo)}:${t.destino_id}"
+                title="Corregir textos, etiquetas o normalización sin volver a subir el archivo (R8.9)">
+                Reprocesar</button></td>
         </tr>`).join('')}
       </tbody>
     </table>

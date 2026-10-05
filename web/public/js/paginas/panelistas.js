@@ -4,6 +4,7 @@
 import * as api from '../api.js';
 import * as consentimiento from '../consentimiento.js';
 import * as catalogo from '../catalogo.js';
+import * as respuestas from '../respuestas.js';
 import {
   $, $$, esc, encabezado, consentimientos, token, vacio, cargando, toast,
   modal, cerrarModal, leerFormulario, confirmar, activarTokens, fechaCorta,
@@ -663,6 +664,14 @@ async function renderFicha(main, idPersona) {
 
         <div class="card">
           <div class="card-header">
+            <span class="card-header-title">Respuestas procesadas</span>
+            <span class="small muted">lo que quedó en el store semántico</span>
+          </div>
+          <div class="card-body" id="respuestas-procesadas">${cargando('8vh')}</div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
             <span class="card-header-title">Acceso al portal</span>
             <span class="small muted">R6.1.a</span>
           </div>
@@ -718,6 +727,20 @@ async function renderFicha(main, idPersona) {
   });
   $('#mandar-acceso').onclick = () => mandarAccesoAlPortal(idPersona, p.email);
   pintarAccesosAlPortal(idPersona);
+  pintarRespuestas(idPersona);
+}
+
+/* R7.6 — qué respondió esta persona, de qué estudio y cuándo. La misma
+   sección que la ficha emergente de Consultas (`respuestas.js`): de entrada
+   solo el conteo por estudio, y la tabla a pedido, porque ver el contenido
+   queda registrado y abrir la ficha para editar un correo no tiene por qué
+   dejar dicho que alguien leyó sus opiniones. */
+async function pintarRespuestas(idPersona) {
+  const caja = $('#respuestas-procesadas');
+  if (!caja) return;
+  const estudios = await respuestas.estudiosDe(idPersona);
+  caja.innerHTML = respuestas.seccionHtml(estudios, { prefijo: 'pan-resp' });
+  respuestas.activar(caja, idPersona, estudios, { prefijo: 'pan-resp' });
 }
 
 
@@ -781,31 +804,40 @@ async function mandarAccesoAlPortal(idPersona, email) {
 
 async function abrirOtorgar(idPersona) {
   await cargarTextosActivos();
-  const disponibles = Object.entries(textosActivos);
+  // Solo las finalidades que esta aplicación sabe tratar y que tienen un
+  // texto publicado y activo: la base rechaza otorgar sin él.
+  const propias = ['contacto_participacion', 'uso_semantico'];
+  const disponibles = propias.filter((f) => consentimiento.hayVersiones(f));
   if (!disponibles.length) {
-    toast('No hay ningún texto de consentimiento publicado. Se publica en '
-          + 'Inscripciones → Textos de consentimiento.', 'error');
+    toast('No hay ningún texto de consentimiento publicado y activo. Se '
+          + 'publica en Inscripciones → Textos de consentimiento.', 'err');
     return;
   }
-  modal({
+  const caja = modal({
     titulo: 'Otorgar consentimiento',
+    ancho: '620px',
     cuerpo: `
       <div class="form-group"><label>Finalidad</label>
-        <select class="fselect" name="finalidad">
-          ${disponibles.map(([f, v]) =>
-            `<option value="${esc(f)}" data-version="${esc(v)}">${esc(f)}</option>`
-          ).join('')}
+        <select class="fselect" name="finalidad" id="otorgar-finalidad">
+          ${disponibles.map((f) =>
+            `<option value="${esc(f)}">${esc(f)}</option>`).join('')}
         </select>
         <div class="field-hint">Solo las que tienen un texto publicado: la
         base rechaza otorgar una finalidad sin texto activo, porque un
-        consentimiento sin texto recuperable no es demostrable.</div></div>`,
+        consentimiento sin texto recuperable no es demostrable.
+        ${propias.filter((f) => !disponibles.includes(f)).map((f) =>
+          `<br>«${esc(f)}» no aparece porque no tiene ninguna versión activa:
+           se publica en Inscripciones → Textos de consentimiento.`).join('')}
+        </div></div>
+      <div id="otorgar-version"></div>`,
     acciones: [
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
-      { texto: 'Otorgar', clase: 'btn-orange', onClick: async (caja) => {
-          const datos = leerFormulario(caja);
+      { texto: 'Otorgar', clase: 'btn-orange', onClick: async (c) => {
+          const finalidad = $('#otorgar-finalidad', c).value;
+          const version = VERSION(finalidad, c);
+          if (!version) { toast('Elegí la versión del texto.', 'err'); return; }
           try {
-            await api.consentimientos.otorgar(
-              idPersona, datos.finalidad, VERSION(datos.finalidad));
+            await api.consentimientos.otorgar(idPersona, finalidad, version);
             cerrarModal();
             toast('Consentimiento registrado.', 'ok');
             contexto.irA('panelistas', { idPersona });
@@ -813,6 +845,19 @@ async function abrirOtorgar(idPersona) {
         } },
     ],
   });
+  // R7.1 — la versión se elige del desplegable de esa finalidad, con el
+  // texto a la vista. Cambia con la finalidad: una versión de
+  // `contacto_participacion` no es elegible para `uso_semantico`.
+  const pintarVersion = () => {
+    const finalidad = $('#otorgar-finalidad', caja).value;
+    $('#otorgar-version', caja).innerHTML = consentimiento.selector(finalidad, {
+      id: `otorgar-version-${finalidad}`,
+      etiqueta: 'Versión del texto consentido',
+    });
+    consentimiento.activarVerTexto(caja);
+  };
+  $('#otorgar-finalidad', caja).onchange = pintarVersion;
+  pintarVersion();
 }
 
 /* ── Edición ─────────────────────────────────────────────────────── */

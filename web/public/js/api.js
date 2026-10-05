@@ -345,9 +345,11 @@ export const inscripciones = {
 };
 
 export const sav = {
+  // Fase 8 — `valores_no_respuesta` va en `opciones.extra` cuando el
+  // analista editó la lista; si no, el servidor usa la de por defecto.
   analizar: (encuestaId, archivoBase64, opciones) =>
     subir(`/encuestas/${encuestaId}/sav/analizar`,
-          { archivo_base64: archivoBase64 }, opciones),
+          { archivo_base64: archivoBase64, ...(opciones?.extra || {}) }, opciones),
   ingestar: (encuestaId, cuerpo, opciones) =>
     subir(`/encuestas/${encuestaId}/sav/ingesta`, cuerpo, opciones),
 };
@@ -434,7 +436,7 @@ export const cargas = {
   listar: () => GET('/cargas'),
   analizar: (cargaId, archivoBase64, opciones) =>
     subir(`/cargas/${cargaId}/analizar`,
-          { archivo_base64: archivoBase64 }, opciones),
+          { archivo_base64: archivoBase64, ...(opciones?.extra || {}) }, opciones),
   ingestar: (cargaId, cuerpo, opciones) =>
     subir(`/cargas/${cargaId}/ingesta`, cuerpo, opciones),
   /* El camino sin `.sav` (csv/xlsx, que se parsean en el navegador) manda
@@ -442,6 +444,28 @@ export const cargas = {
      cuerpo viaja tal cual: ver el comentario de allá. */
   ingestarFilas: (cargaId, cuerpo, opciones) =>
     subir(`/cargas/${cargaId}/ingesta`, cuerpo, opciones),
+};
+
+/* Fase 8 — calidad del dato semántico. Todo lo de acá **propone**: las
+   decisiones viajan después, en las preguntas de la ingesta o del
+   reproceso, y solo si el analista las eligió. */
+export const calidadDato = {
+  // El diagnóstico de un .csv/.xlsx, que se lee en el navegador. El de un
+  // .sav llega en la respuesta de `sav.analizar`.
+  diagnostico: (cuerpo) => POST('/calidad/diagnostico', cuerpo),
+  // R8.8 — cómo va a quedar el texto embebido. Lo calcula el servidor con
+  // la misma función que la ingesta: una copia en JavaScript divergiría.
+  vistaPrevia: (preguntas, muestras) =>
+    POST('/calidad/vista-previa', { preguntas, muestras }),
+};
+
+/* R8.9 — corregir un estudio ya ingestado sin volver a subir el archivo.
+   La misma ruta revisa (`solo_revisar`) y ejecuta, como la importación. */
+export const reproceso = {
+  preguntasDeEncuesta: (encuestaId) => GET(`/encuestas/${encuestaId}/preguntas`),
+  preguntasDeCarga: (cargaId) => GET(`/cargas/${cargaId}/preguntas`),
+  deEncuesta: (encuestaId, cuerpo) => POST(`/encuestas/${encuestaId}/reproceso`, cuerpo),
+  deCarga: (cargaId, cuerpo) => POST(`/cargas/${cargaId}/reproceso`, cuerpo),
 };
 
 export const exportacion = {

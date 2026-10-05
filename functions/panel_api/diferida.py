@@ -288,9 +288,15 @@ def estado(conn, trabajo_id, con_lotes=False):
         por_lote = fila["segundos_transcurridos"] / hechos
         salida["segundos_restantes"] = int(por_lote * (fila["lotes_total"] - hechos))
 
-    resumen = db.una(conn, "select resumen from ingesta_trabajo where id = %s",
-                     (trabajo_id,))
+    resumen = db.una(
+        conn,
+        "select resumen, plan->>'operacion' as operacion "
+        "  from ingesta_trabajo where id = %s",
+        (trabajo_id,))
     salida["resumen"] = (resumen or {}).get("resumen")
+    # Fase 8 — un reproceso (R8.9) es un trabajo diferido como una carga, y
+    # la pantalla los tiene que poder distinguir.
+    salida["operacion"] = (resumen or {}).get("operacion") or "ingesta"
     if con_lotes:
         salida["lotes"] = lotes_de(conn, trabajo_id)
     salida["fallidos"] = lotes_de(conn, trabajo_id, solo_fallidos=True)
@@ -337,6 +343,10 @@ SUMABLES = (
     "alias_registrados", "demograficos_completados",
     "membresias_nuevas", "membresias_existentes",
     "participaciones_nuevas", "participaciones_actualizadas",
+    # Fase 8 — lo que la normalización dejó afuera (R8.1, R8.5).
+    "descartadas_no_marcadas", "descartadas_no_respuesta",
+    # Fase 8 — el reproceso (R8.9).
+    "reembebidas", "sin_cambios", "borradas", "sin_consentimiento_reproceso",
 )
 CONCATENABLES = (
     "sin_mapear", "sin_mapear_detalle", "sin_consentimiento",
@@ -399,15 +409,28 @@ def _ingestar_el_lote(conn_boveda, conn_semantica, trabajo, filas, proveedor):
     de consentimiento, el guardrail de PII y la idempotencia valgan igual por
     esta vía sin haberlos vuelto a escribir.
     """
-    from . import cargas, encuestas
+    from . import cargas, encuestas, reproceso
 
     plan = trabajo["plan"] or {}
+    # Fase 8 · R8.9 — un reproceso no lee filas de un archivo: su lote son
+    # ids de respuestas ya ingestadas. Tampoco es una segunda ingesta: no
+    # resuelve identidades, no crea individuos ni toca la bóveda; recompone
+    # el texto con `ingesta.respuesta_de` —la misma de siempre— y escribe por
+    # `semantica.upsert_respuestas`, con el guardia de PII y el gate de
+    # consentimiento re-evaluado en cada lote.
+    if plan.get("operacion") == reproceso.OPERACION:
+        return reproceso.procesar_lote(conn_boveda, conn_semantica, plan,
+                                       filas, proveedor)
     comunes = {
         "columna_id": plan.get("columna_id") or "id_en_origen",
         "origen": plan.get("origen"),
         "proveedor": proveedor,
         "demograficas": plan.get("demograficas"),
         "tipo_identificador": plan.get("tipo_identificador"),
+        # Fase 8 — la configuración de normalización de la carga, para que
+        # quede guardada con el cuestionario. Las decisiones por pregunta ya
+        # viajan adentro de cada pregunta del plan.
+        "normalizacion": plan.get("normalizacion"),
     }
     preguntas = plan.get("preguntas") or []
     if trabajo["destino_tipo"] == "encuesta":

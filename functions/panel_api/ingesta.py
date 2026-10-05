@@ -40,11 +40,78 @@ def componer_texto(texto_pregunta, etiqueta_respuesta):
     return f"{texto_pregunta.strip()} → {etiqueta_respuesta.strip()}"
 
 
-def despivotar(filas, preguntas, columna_id):
+# ── Fase 8 · Qué se embebe de cada celda ────────────────────────────
+#
+# Por qué una celda no genera respuesta. `vacia` existía desde siempre; las
+# otras dos son decisiones de normalización que el analista confirmó (R8.1 y
+# R8.5) y se cuentan aparte, porque el resultado tiene que poder decir
+# cuántas respuestas se descartaron por cada motivo.
+VACIA = "vacia"
+NO_MARCADA = "no_marcada"
+NO_RESPUESTA = "no_respuesta"
+
+
+def _comparable(valor):
+    """Cómo se comparan los códigos y etiquetas de las decisiones: sin
+    mayúsculas ni espacios de más. «No sabe», «no sabe » y «NO SABE» son el
+    mismo valor de no respuesta."""
+    return " ".join(str(valor).split()).lower() if valor is not None else ""
+
+
+def respuesta_de(pregunta, valor):
+    """`(etiqueta, texto_embebido, motivo)` de una celda.
+
+    **Es la única implementación de «qué se embebe»**: la usan la ingesta
+    (`despivotar`), la vista previa (R8.8) y el reproceso (R8.9). Si cada uno
+    compusiera el texto por su cuenta, la vista previa mostraría una cosa y
+    la ingesta escribiría otra, que es exactamente lo que la vista previa
+    existe para impedir.
+
+    Si la celda no genera respuesta devuelve `(None, None, motivo)`.
+
+    Las decisiones de normalización viajan **en la pregunta** y son todas
+    opcionales: una pregunta sin ellas se embebe exactamente como antes de la
+    Fase 8. Ninguna se aplica sola —el sistema las propone, el analista las
+    confirma— y por eso acá solo se leen.
+
+    * `solo_marcadas` + `valores_marcados` — R8.1: de una batería de
+      dicotómicas solo entra lo marcado. Lo no marcado no es información, es
+      el reverso de una ausencia.
+    * `excluir_valores` — R8.5: los códigos (o etiquetas) de no respuesta que
+      se decidió no ingestar.
+    * `prefijo_respuesta` — R8.3: una «Otro: especificar» fusionada con su
+      cerrada se embebe como «¿Qué marca fumás? → Otra: Nevada Blue».
+    """
+    if valor is None or str(valor).strip() == "":
+        return None, None, VACIA
+    crudo = str(valor).strip()
+    opciones = pregunta.get("opciones")
+
+    if pregunta.get("solo_marcadas"):
+        marcados = {_comparable(v) for v in (pregunta.get("valores_marcados") or ["1"])}
+        if _comparable(crudo) not in marcados:
+            return None, None, NO_MARCADA
+
+    etiqueta = _etiqueta(crudo, opciones)
+    excluir = {_comparable(v) for v in (pregunta.get("excluir_valores") or [])}
+    if excluir and (_comparable(crudo) in excluir or _comparable(etiqueta) in excluir):
+        return None, None, NO_RESPUESTA
+    if not etiqueta:
+        return None, None, VACIA
+
+    prefijo = (pregunta.get("prefijo_respuesta") or "").strip()
+    mostrada = f"{prefijo} {etiqueta}" if prefijo else etiqueta
+    return etiqueta, componer_texto(pregunta["texto"], mostrada), None
+
+
+def despivotar(filas, preguntas, columna_id, descartes=None):
     """Ancho → largo. Devuelve `[(id_en_origen, codigo, etiqueta, texto)]`.
 
     Las celdas vacías se descartan: una no-respuesta no es una respuesta y
-    no debe generar un embedding.
+    no debe generar un embedding. Desde la Fase 8 tampoco entran las
+    opciones no marcadas de una batería ni los valores de no respuesta, si
+    el analista lo decidió así; `descartes`, si se pasa, cuenta cuántas
+    celdas quedaron afuera por cada uno de esos dos motivos.
     """
     por_codigo = {p["codigo"]: p for p in preguntas}
     largo = []
@@ -55,21 +122,21 @@ def despivotar(filas, preguntas, columna_id):
         for codigo, valor in fila.items():
             if codigo == columna_id or codigo not in por_codigo:
                 continue
-            if valor is None or str(valor).strip() == "":
+            etiqueta, texto, motivo = respuesta_de(por_codigo[codigo], valor)
+            if motivo:
+                if descartes is not None and motivo != VACIA:
+                    descartes[motivo] = descartes.get(motivo, 0) + 1
                 continue
-            pregunta = por_codigo[codigo]
-            etiqueta = _etiqueta(valor, pregunta.get("opciones"))
-            if not etiqueta:
-                continue
-            largo.append(
-                (
-                    id_origen,
-                    codigo,
-                    etiqueta,
-                    componer_texto(pregunta["texto"], etiqueta),
-                )
-            )
+            largo.append((id_origen, codigo, etiqueta, texto))
     return largo
+
+
+def _descartadas(descartes):
+    """Las dos claves sumables del resultado, siempre presentes."""
+    return {
+        "descartadas_no_marcadas": descartes.get(NO_MARCADA, 0),
+        "descartadas_no_respuesta": descartes.get(NO_RESPUESTA, 0),
+    }
 
 
 # ── R3.12 · Qué tipo de identificador trae la columna ────────────────
@@ -238,19 +305,27 @@ def ingestar(
     proveedor=None,
     mapa_personas=None,
     motivos_sin_mapear=None,
+    normalizacion=None,
 ):
     """Corre la ingesta de un estudio. `encuesta` es el dict del store de bóveda
     (necesita `ref_estudio`, `nombre`, `fecha_campo`).
 
     Aplica el gate de `uso_semantico`: quien no lo tenga vigente queda fuera
     de la ingesta, y se informa en el resultado. No es un error del lote.
+
+    `normalizacion` (Fase 8) es la configuración de la carga que no es de
+    ninguna pregunta en particular —hoy, la lista de valores de no respuesta
+    que se usó para detectar—. Se guarda con el cuestionario para que un
+    reproceso sepa qué se había decidido.
     """
     proveedor = proveedor or mod_embeddings.crear()
     ref_estudio = str(encuesta["ref_estudio"])
 
-    largo = despivotar(filas, preguntas, columna_id)
+    descartes = {}
+    largo = despivotar(filas, preguntas, columna_id, descartes)
     if not largo:
         return {
+            **_descartadas(descartes),
             "ref_estudio": ref_estudio,
             "respuestas_escritas": 0,
             "personas": 0,
@@ -296,6 +371,7 @@ def ingestar(
     ]
     if not largo:
         return {
+            **_descartadas(descartes),
             "ref_estudio": ref_estudio,
             "respuestas_escritas": 0,
             "personas": 0,
@@ -314,6 +390,7 @@ def ingestar(
         encuesta["nombre"],
         encuesta.get("fecha_campo"),
         {"panel_id": encuesta.get("panel_id")},
+        normalizacion=normalizacion,
     )
     id_por_codigo = semantica.upsert_preguntas(conn_semantica, cuestionario_id, preguntas)
     ids_persona = [mapa[r[0]] for r in largo]
@@ -396,6 +473,7 @@ def ingestar(
             del vectores
 
     return {
+        **_descartadas(descartes),
         "ref_estudio": ref_estudio,
         "respuestas_escritas": escritas,
         "personas": len(individuo_por_persona),

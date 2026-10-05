@@ -594,7 +594,7 @@ def _sembrar_alias(conn, tipo, mapa, origen):
 
 def ingestar(conn_boveda, conn_semantica, encuesta_id, preguntas, filas,
              columna_id="id_en_origen", origen=None, proveedor=None,
-             demograficas=None, tipo_identificador=None):
+             demograficas=None, tipo_identificador=None, normalizacion=None):
     """Gancho de fielding → ingesta semántica (R1.5).
 
     Construye el mapa id de campo → `id_persona` a partir de las
@@ -656,6 +656,7 @@ def ingestar(conn_boveda, conn_semantica, encuesta_id, preguntas, filas,
         proveedor=proveedor,
         mapa_personas=mapa or None,
         motivos_sin_mapear=motivos,
+        normalizacion=normalizacion,
     )
     resultado["tipo_identificador"] = tipo
 

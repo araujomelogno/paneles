@@ -115,7 +115,7 @@ def test_el_consentimiento_de_un_estudio_no_cruza_a_otro(conn_boveda,
     def vigente_para(estudio):
         return bool(db.una(
             conn_boveda,
-            """select 1 from v_persona_convocable
+            """select 1 from v_persona_finalidad_vigente
                 where id_persona = %s and finalidad = 'grabacion_av'
                   and ref_estudio = %s""", (id_persona, estudio)))
 

@@ -382,7 +382,8 @@ autenticación IAM.
 **Lectura**
 
 ```
-v_persona_convocable          (id_persona, finalidad, ref_estudio, sexo, localidad, tramo_etario, edad)
+v_persona_convocable          (id_persona, finalidades[], sexo, localidad, tramo_etario, edad)   -- una fila por persona (boveda/0021)
+v_persona_finalidad_vigente   (id_persona, finalidad, ref_estudio)                                -- una fila por consentimiento vigente (0021)
 v_fatiga_panelista            (id_persona, panel_id, recientes, totales, ultima_convocatoria, respondidas)
 v_finalidad                   (codigo, descripcion, requiere_texto, ambito, activa)
 v_texto_consentimiento_activo (finalidad, version, cuerpo, creado_en)

@@ -26,6 +26,7 @@ Desde la Fase 5, `paneles` **no es el único** programa que le habla a la bóved
 La consecuencia para quien escribe código acá: **una invariante de cumplimiento escrita en Python es una promesa repetida en dos bases de código**, y la primera que se rompa lo va a hacer en silencio. Por eso:
 
 - El gate de consentimiento es `v_persona_convocable`, **no** un `select` en Python. `consentimiento.esta_vigente()` y `filtrar_con_consentimiento()` leen esa vista; no vuelvan a calcular la regla.
+- Desde la `boveda/0021` esa vista tiene **una fila por persona**: las finalidades vigentes van en `finalidades text[]` y se pregunta `'x' = any(finalidades)`. Las de ámbito estudio están en `v_persona_finalidad_vigente`. El consentimiento se evalúa con `exists`, nunca con un `join` que multiplique filas, y `verificar_coloquio.py` comprueba la cardinalidad de cada vista de la superficie contra la clave declarada en `CLAVE_POR_RELACION`: una vista nueva con `id_persona` tiene que declarar la suya.
 - Leer un dato de contacto es `contacto_para_convocatoria()`: un canal, con el gate reaplicado y la auditoría en la misma transacción. No hay un segundo camino.
 - Y exige una convocatoria activa **en el sistema que llama**: `paneles` la tiene en sus tablas, un consumidor externo la declara con `declarar_convocatoria()` —su única escritura sobre la bóveda—. No agreguen excepciones por sistema al chequeo: confiar en el consumidor deja el gate en nada.
 - Una baja genera pendientes para **todos** los consumidores activos (`generar_borrados_pendientes()`), y la bóveda nunca espera a ninguno.
@@ -117,11 +118,51 @@ reglas que no son estéticas:
   y diverge, y lo que divergiría es la pantalla que dice «esto es lo que va
   a pasar». La pantalla, por lo mismo, arma el cuerpo una sola vez.
 
+Desde que se completó la fase, dos más:
+
+- **La evidencia de la ficha llega desde el resultado** (los `respuesta_id`
+  que ya trae el ranking) y el servidor la relee de la base, **solo si es de
+  esa persona**. No se recalcula con el criterio: la ficha explica el
+  resultado que se está mirando.
+- **Las respuestas procesadas se cargan a pedido** (`respuestas.js`). Si se
+  cargaran al abrir la ficha, cada apertura dejaría registrado que alguien
+  leyó las opiniones de esa persona y el registro dejaría de significar algo.
+  Y toda ruta de las fases 7 y 8 tiene que usarse desde una pantalla:
+  `test_rutas_con_pantalla.py` falla si una queda solo en `api.js`.
+
 Y una que parece un descuido y no lo es: **`motivo_reidentificacion` no
 tiene clave foránea**. `registrar_reidentificacion` documenta que nunca
 pierde el rastro por una etiqueta desconocida, y una FK invertiría ese
 intercambio. El catálogo se mantiene sincronizado con una prueba espejo,
 igual que `pii.CAMPOS_PII`.
+
+## El texto que se embebe: el sistema propone, el analista confirma
+
+La Fase 8 (`calidad_dato.py`, `reproceso.py`) detecta lo que degrada el texto
+que se embebe —baterías, textos con prefijos y consignas, `Checked`, códigos
+sin traducir, no respuesta, PII en texto libre— y **propone** la corrección.
+Lo que no hay que deshacer:
+
+- **`ingesta.respuesta_de` es la única implementación de «qué se embebe de
+  una celda».** La usan la ingesta, la vista previa y el reproceso. La vista
+  previa la calcula el servidor (`/calidad/vista-previa`) aunque se pida en
+  cada tecla: una copia en JavaScript divergiría, y lo que divergiría es la
+  pantalla que dice «esto es lo que se va a escribir».
+- **Nada se aplica solo.** Las decisiones viajan en cada pregunta
+  (`solo_marcadas`, `excluir_valores`, `prefijo_respuesta`…) solo si el
+  analista las eligió; sin ellas la ingesta hace exactamente lo de antes. El
+  texto y las etiquetas originales del archivo se guardan
+  (`pregunta.texto_original`, `opciones_originales`).
+- **La PII en texto libre es un indicio y no bloquea.** Son patrones, se
+  informan como tales y los ejemplos van enmascarados. El guardia duro sigue
+  siendo el de nombres de columna.
+- **El reproceso no es una segunda ingesta.** Recompone el texto desde el
+  store semántico (invirtiendo las etiquetas) con `respuesta_de`, re-embebe
+  solo lo que cambió por `hash_texto`, corre por la vía diferida con el plan
+  congelado (`plan.operacion = 'reproceso'`, antes y después) y reaplica el
+  gate de `uso_semantico` en cada lote. No resuelve identidades ni toca la
+  bóveda: por eso no llama a `encuestas.ingestar()`, que reincorporaría al
+  panel y registraría participaciones.
 
 ## Reglas de negocio que el código debe respetar
 

@@ -136,6 +136,12 @@ MIGRACIONES_BOVEDA = (
     ("0020_motivos_reidentificacion.sql", (
         "motivo_reidentificacion", "v_reidentificacion",
     )),
+    # La 0021 tira y rehace `v_persona_convocable` y su función (una fila por
+    # persona): eso no se puede ver desde afuera, porque existían antes. Lo
+    # detectable es la relación nueva por consentimiento.
+    ("0021_persona_convocable_una_fila.sql", (
+        "f_persona_finalidad_vigente()", "v_persona_finalidad_vigente",
+    )),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -158,6 +164,11 @@ MIGRACIONES_SEMANTICA = (
     # que exista (misma lección que la 0015 en la bóveda, D45).
     ("0006_embeddings_512.sql", (
         "v_dimension_embeddings",
+    )),
+    # ── Fase 8 ──
+    ("0007_fase8_calidad_del_dato.sql", (
+        "pregunta.texto_original", "pregunta.opciones_originales",
+        "pregunta.normalizacion", "cuestionario.normalizacion", "reproceso",
     )),
 )
 
@@ -217,6 +228,13 @@ PARA_QUE = {
     "reidentificacion.sistema": "de qué sistema vino cada reidentificación, derivado de la conexión",
     "f_persona_convocable()": "el gate de consentimiento hecho valer en la base; es lo que hace que un segundo consumidor no pueda salteárselo",
     "v_persona_convocable": "la única superficie desde la que un consumidor externo ve personas",
+    # ── Fase 8 ──
+    "pregunta.texto_original": "conservar el texto del archivo junto al editado, para volver y auditar",
+    "pregunta.normalizacion": "las decisiones de normalización con las que se embebió cada pregunta",
+    "cuestionario.normalizacion": "la configuración de normalización de la carga (valores de no respuesta)",
+    "reproceso": "el registro de qué se cambió de un estudio ya ingestado, y cuándo",
+    "v_persona_finalidad_vigente": "qué finalidad tiene vigente cada persona y para qué estudio; es el gate de las finalidades de ámbito estudio",
+    "f_persona_finalidad_vigente()": "el gate por consentimiento detrás de `v_persona_finalidad_vigente`",
     "v_fatiga_panelista": "los hechos de fatiga (cuántas convocatorias, cuándo la última); el umbral lo pone cada consumidor",
     "contacto_para_convocatoria()": "el único camino a un dato de contacto: un canal, con gate y auditado en la misma transacción",
     "sistema_de_la_conexion()": "de qué sistema es esta conexión; el llamador no lo declara",

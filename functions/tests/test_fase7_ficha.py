@@ -198,3 +198,98 @@ def test_por_la_ruta_las_respuestas_registran(ctx, actor, conn_boveda,
     filas = auditoria.listar_reidentificaciones(
         conn_boveda, id_persona=str(con_respuestas))
     assert filas[0]["motivo"] == ficha.MOTIVO_RESPUESTAS
+
+
+# ── R7.3 · la evidencia del resultado ────────────────────────────────
+#
+# El informe de la Fase 7 (`specs/INFORME_fase7_que_falta.md`) encontró que
+# la ruta estaba declarada con `requisito="R7.3"` y no devolvía la mitad del
+# requisito: «muestra también la evidencia del resultado: qué respondió y de
+# qué estudio». Estas pruebas son esa mitad.
+
+def _respuesta_ids(conn_semantica, id_persona):
+    return [f["respuesta_id"] for f in db.todas(
+        conn_semantica,
+        "select respuesta_id from v_respuesta_estudio where id_persona = %s "
+        " order by respuesta_id", (str(id_persona),))]
+
+
+def test_la_ficha_trae_la_evidencia_que_se_le_pasa(
+        ctx, actor, conn_semantica, con_respuestas):
+    ids = _respuesta_ids(conn_semantica, con_respuestas)[:2]
+    status, salida = ruteo.despachar(
+        "GET", f"/panelistas/{con_respuestas}/ficha", {},
+        {"respuestas": ",".join(str(i) for i in ids)}, actor("analista"), ctx)
+    assert status == 200
+    evidencia = salida["evidencia"]
+    assert [e["respuesta_id"] for e in evidencia["items"]] == ids
+    primera = evidencia["items"][0]
+    # Qué respondió y de qué estudio, que es lo que pide el requisito.
+    assert primera["respuesta"] and primera["pregunta"] and primera["estudio"]
+    assert "→" in primera["texto_embebido"]
+    assert evidencia["descartadas"] == 0
+    # Y sigue sin un solo dato identificatorio.
+    assert "Ana Pérez" not in repr(salida)
+    assert "ana@ej.uy" not in repr(salida)
+
+
+def test_la_evidencia_respeta_el_orden_del_ranking(conn_semantica,
+                                                   con_respuestas):
+    ids = list(reversed(_respuesta_ids(conn_semantica, con_respuestas)))
+    salida = ficha.evidencia(conn_semantica, con_respuestas, ids)
+    assert [e["respuesta_id"] for e in salida["items"]] == ids
+
+
+def test_la_ficha_no_sirve_para_leer_respuestas_de_otro(
+        conn_boveda, conn_semantica, con_respuestas, proveedor):
+    """Un `respuesta_id` de otra persona se descarta: la ficha no es una vía
+    lateral para leer contenido ajeno sin pasar por R7.6, que registra."""
+    otra = personas.alta(conn_boveda, {
+        "persona": {"nombre": "Otra", "documento": "5.555.555-5"},
+        "consentimientos": consentimientos(*AMBAS),
+        "origen": "dooblo", "id_en_origen": "R-002",
+    })["id_persona"]
+    panel = paneles.crear(conn_boveda, "Panel otra")
+    enc = encuestas.crear(conn_boveda, panel["id"], "Ola de otra")
+    ingesta.ingestar(
+        conn_boveda, conn_semantica, enc,
+        [{"codigo": "Z1", "texto": "¿Algo?", "tipo": "abierta", "orden": 1}],
+        [{"id_en_origen": "R-002", "Z1": "Secreto"}],
+        columna_id="id_en_origen", origen="dooblo", proveedor=proveedor)
+    ajena = _respuesta_ids(conn_semantica, otra)
+    propia = _respuesta_ids(conn_semantica, con_respuestas)[:1]
+
+    salida = ficha.evidencia(conn_semantica, con_respuestas, propia + ajena)
+    assert [e["respuesta_id"] for e in salida["items"]] == propia
+    assert salida["descartadas"] == len(ajena)
+    assert "Secreto" not in repr(salida)
+
+
+def test_sin_evidencia_la_ficha_no_abre_el_store_semantico(
+        ctx, actor, con_respuestas):
+    ctx.abrio_semantica = False
+    status, salida = ruteo.despachar(
+        "GET", f"/panelistas/{con_respuestas}/ficha", {}, {},
+        actor("analista"), ctx)
+    assert status == 200
+    assert "evidencia" not in salida
+    assert not ctx.abrio_semantica
+
+
+def test_la_evidencia_no_registra_reidentificacion(
+        ctx, actor, conn_boveda, conn_semantica, con_respuestas):
+    """Es contenido atado a un id opaco —lo mismo que ya mostraba la lista—,
+    no identidad más contenido. Lo que se audita es R7.6."""
+    ids = _respuesta_ids(conn_semantica, con_respuestas)
+    ruteo.despachar(
+        "GET", f"/panelistas/{con_respuestas}/ficha", {},
+        {"respuestas": ",".join(map(str, ids))}, actor("analista"), ctx)
+    assert auditoria.listar_reidentificaciones(
+        conn_boveda, id_persona=str(con_respuestas)) == []
+
+
+def test_ids_de_evidencia_ignora_basura_y_tiene_tope():
+    assert ficha.ids_de_evidencia("3, x, 3, 7") == [3, 7]
+    assert ficha.ids_de_evidencia(None) == []
+    muchos = ",".join(str(i) for i in range(100))
+    assert len(ficha.ids_de_evidencia(muchos)) == ficha.EVIDENCIAS_MAXIMAS

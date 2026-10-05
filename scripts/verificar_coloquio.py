@@ -58,6 +58,10 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 RELACIONES_PERMITIDAS = {
     # relación → privilegios que `coloquio_app` puede tener sobre ella
     "v_persona_convocable": {"SELECT"},
+    # 0021 — las finalidades de ámbito estudio, una fila por consentimiento
+    # vigente. Salieron de `v_persona_convocable` cuando pasó a tener una
+    # fila por persona.
+    "v_persona_finalidad_vigente": {"SELECT"},
     "v_fatiga_panelista": {"SELECT"},
     "v_finalidad": {"SELECT"},
     "v_texto_consentimiento_activo": {"SELECT"},
@@ -81,6 +85,28 @@ FUNCIONES_PERMITIDAS = {
     # cuando la llamada venga de adentro de una vista, así que sin esto la
     # vista sería ilegible para el consumidor.
     "f_persona_convocable",
+    # La de `v_persona_finalidad_vigente`, por el mismo motivo.
+    "f_persona_finalidad_vigente",
+}
+
+# ── La clave de cada relación que expone personas ─────────────────────
+# Cuántas filas puede tener cada persona en cada vista de la superficie. La
+# batería no lo miraba, y por eso no vio que `v_persona_convocable` devolvía
+# una fila por consentimiento (BUG_v_persona_convocable_duplica): chequeaba
+# que la vista fuera legible y que el gate filtrara, no que la cardinalidad
+# fuera la correcta. Se encontró comparando a mano contra el store semántico.
+#
+# Toda relación de la lista blanca que tenga `id_persona` **tiene** que estar
+# acá: el chequeo falla si aparece una sin clave declarada, para que la
+# próxima vista que se sume a la superficie no se saltee la pregunta.
+#
+# `v_fatiga_panelista` es por (persona, panel) a propósito: el umbral de
+# fatiga es por panel (`umbral_fatiga`), y una persona en dos paneles tiene
+# dos historias de convocatoria. Lo que no puede es repetir el par.
+CLAVE_POR_RELACION = {
+    "v_persona_convocable": ("id_persona",),
+    "v_persona_finalidad_vigente": ("id_persona", "finalidad", "ref_estudio"),
+    "v_fatiga_panelista": ("id_persona", "panel_id"),
 }
 
 # Qué cuenta como «función que `coloquio_app` puede ejecutar». Dos exclusiones,
@@ -176,12 +202,23 @@ class Escenario:
                    on conflict (finalidad, version) do nothing""",
                 (marca,))
 
-            self.convocable = self._persona(cur, f"{marca}-con", "099000111")
             cur.execute(
-                """insert into consentimiento
-                          (id_persona, finalidad, estado, version_texto)
-                   values (%s, 'contacto_participacion', 'vigente', %s)""",
-                (self.convocable, marca))
+                """insert into texto_consentimiento (finalidad, version, cuerpo)
+                   values ('uso_semantico', %s,
+                           'Texto de la verificación de la superficie externa.')
+                   on conflict (finalidad, version) do nothing""",
+                (marca,))
+
+            # Con las **dos** finalidades vigentes, que es el caso normal
+            # desde que el alta pide las dos. Es el caso que hacía aparecer a
+            # cada persona dos veces en `v_persona_convocable` (0021).
+            self.convocable = self._persona(cur, f"{marca}-con", "099000111")
+            for finalidad in ("contacto_participacion", "uso_semantico"):
+                cur.execute(
+                    """insert into consentimiento
+                              (id_persona, finalidad, estado, version_texto)
+                       values (%s, %s, 'vigente', %s)""",
+                    (self.convocable, finalidad, marca))
 
             # La segunda persona existe y está activa, pero nunca consintió.
             # Es contra ella que se prueba el gate: usar a la primera para eso
@@ -375,6 +412,54 @@ def lee_la_superficie(coloquio, dueno):
     return ", ".join(f"{v}: {n}" for v, n in leidas.items())
 
 
+def una_fila_por_clave(coloquio, dueno):
+    """Ninguna vista de la superficie repite su clave.
+
+    Lo que COLOQUIO cuenta —la muestra disponible, las cuotas, a quién
+    invitar— lo cuenta sobre estas vistas. Si una repite filas, todo eso sale
+    inflado y nada falla de forma visible: los valores son correctos, solo
+    que repetidos.
+    """
+    with dueno.cursor() as cur:
+        cur.execute(
+            """select c.relname
+                 from pg_class c
+                 join pg_namespace n on n.oid = c.relnamespace
+                 join pg_attribute a on a.attrelid = c.oid
+                where n.nspname = 'public' and a.attname = 'id_persona'
+                  and not a.attisdropped
+                  and c.relname = any(%s)""",
+            (list(RELACIONES_PERMITIDAS),))
+        con_personas = {f["relname"] for f in cur.fetchall()}
+    sin_clave = sorted(con_personas - set(CLAVE_POR_RELACION))
+    if sin_clave:
+        raise Falla("relaciones de la superficie con `id_persona` y sin clave "
+                    "declarada en CLAVE_POR_RELACION: " + ", ".join(sin_clave))
+
+    detalle, repetidas = [], []
+    with coloquio.cursor() as cur:
+        for relacion in sorted(con_personas):
+            columnas = ", ".join(CLAVE_POR_RELACION[relacion])
+            # `select distinct` sobre la clave y no `count(distinct (…))`:
+            # la clave de las finalidades lleva `ref_estudio`, que es nulo
+            # para las de ámbito persona, y `distinct` trata dos nulos como
+            # iguales, que es lo que acá hay que contar.
+            cur.execute(
+                f"""select (select count(*) from {relacion}) as filas,
+                           (select count(*) from
+                              (select distinct {columnas} from {relacion}) k)
+                             as claves""")
+            fila = cur.fetchone()
+            detalle.append(f"{relacion}: {fila['filas']}")
+            if fila["filas"] != fila["claves"]:
+                repetidas.append(
+                    f"{relacion} tiene {fila['filas']} filas para "
+                    f"{fila['claves']} valores de ({columnas})")
+    if repetidas:
+        raise Falla("filas repetidas — " + "; ".join(repetidas))
+    return " · ".join(detalle) + " — ninguna clave repetida"
+
+
 def no_lee_las_tablas(coloquio, dueno):
     errores = []
     for tabla in ("persona", "consentimiento", "participacion"):
@@ -398,15 +483,24 @@ def no_resuelve_atributos_por_su_cuenta(coloquio, dueno):
 
 def solo_ve_a_quien_consintio(coloquio, escenario):
     with coloquio.cursor() as cur:
-        cur.execute("select 1 from v_persona_convocable where id_persona = %s",
-                    (escenario.convocable,))
-        if not cur.fetchone():
+        cur.execute("select finalidades from v_persona_convocable "
+                    " where id_persona = %s", (escenario.convocable,))
+        filas = cur.fetchall()
+        if not filas:
             raise Falla("quien consintió no aparece en `v_persona_convocable`")
+        # Tiene dos finalidades vigentes y tiene que aparecer una vez, con las
+        # dos en el arreglo. Es lo que la 0021 corrigió.
+        if len(filas) != 1:
+            raise Falla(f"quien tiene dos finalidades aparece {len(filas)} veces "
+                        f"en `v_persona_convocable`")
+        if "contacto_participacion" not in (filas[0]["finalidades"] or []):
+            raise Falla("la fila de quien consintió no lista "
+                        "`contacto_participacion` entre sus finalidades")
         cur.execute("select 1 from v_persona_convocable where id_persona = %s",
                     (escenario.sin_consentimiento,))
         if cur.fetchone():
             raise Falla("quien no consintió aparece en `v_persona_convocable`")
-    return "consintió: visible · no consintió: invisible"
+    return "consintió: visible una vez · no consintió: invisible"
 
 
 def contacto_legitimo_queda_auditado(coloquio, escenario, dueno):
@@ -618,6 +712,7 @@ SIN_DATOS = (
     ("tablas sensibles negadas", sin_escritura_en_ninguna_tabla),
     ("la conexión se identifica sola", se_identifica),
     ("lee la superficie del contrato", lee_la_superficie),
+    ("una fila por persona en cada vista", una_fila_por_clave),
     ("no lee las tablas", no_lee_las_tablas),
     ("no resuelve atributos por su cuenta", no_resuelve_atributos_por_su_cuenta),
 )

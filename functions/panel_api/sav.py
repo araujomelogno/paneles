@@ -309,11 +309,19 @@ def _sugerir_demografica(codigo, etiqueta, claves_del_catalogo=()):
     import re
 
     for campo, patron in SUGERENCIAS_DEMOGRAFICAS:
-        if re.search(patron, codigo or "", re.IGNORECASE):
+        # El prefijo tiene que ser una palabra entera, no el comienzo de una:
+        # sin esto `^ci` reconocía «Cigarrillos:…» como documento, `^tel`
+        # «Televisión» como celular y `^age` «Agenda» como edad. El primero es
+        # exactamente el marcado que casi fusiona 1131 personas en dos (ver
+        # `_controlar_documento_plausible`): la sugerencia lo proponía sola.
+        # Lo que sigue al prefijo puede ser un número o un guion bajo
+        # (`CI_NUM`, `loc1`), pero no otra letra.
+        entero = patron + r"(?![^\W\d_])"
+        if re.search(entero, codigo or "", re.IGNORECASE):
             return campo
         # El label también: muchos exports nombran las variables `V1`, `V2` y
         # dejan el sentido solo en el variable label.
-        if re.search(patron, (etiqueta or "").strip(), re.IGNORECASE):
+        if re.search(entero, (etiqueta or "").strip(), re.IGNORECASE):
             return campo
     normalizado = re.sub(r"[^a-z0-9]+", "_", (codigo or "").lower()).strip("_")
     for clave in claves_del_catalogo:
@@ -670,20 +678,45 @@ def _valores_distintos(datos, columnas):
     return valores
 
 
-def analizar(archivo, claves_del_catalogo=()):
+# Fase 8 · R8.8 — cuántos valores reales viajan por variable para la vista
+# previa. Los más frecuentes y los menos: la vista previa muestra los dos
+# extremos, y una abierta con mil respuestas distintas no tiene por qué
+# viajar entera para eso.
+MUESTRA_FRECUENTES = 30
+MUESTRA_RAROS = 10
+
+
+def _muestra(por_valor):
+    """`[{valor, filas}]`: los más frecuentes y los menos, sin repetir."""
+    ordenados = sorted(por_valor.items(), key=lambda p: (-p[1], p[0]))
+    if len(ordenados) > MUESTRA_FRECUENTES + MUESTRA_RAROS:
+        ordenados = ordenados[:MUESTRA_FRECUENTES] + ordenados[-MUESTRA_RAROS:]
+    return [{"valor": v, "filas": n} for v, n in ordenados]
+
+
+def analizar(archivo, claves_del_catalogo=(), valores_no_respuesta=None):
     """Lee el `.sav` y devuelve la metadata precargada, para editar y confirmar.
 
     No escribe nada: es la pantalla previa. `claves_del_catalogo` son los
     atributos activos (R3.14): sirven para sugerir el marcado y viajan de
     vuelta en la respuesta, que es de donde la pantalla arma el desplegable
     de campo demográfico.
+
+    Fase 8 — además devuelve el diagnóstico de calidad del dato
+    (`calidad_dato.diagnosticar`): baterías, textos, tipos, pares, no
+    respuesta, PII en texto libre y variables que no aportan. Son
+    **propuestas**: nada de lo que vuelve acá está aplicado.
     """
+    from . import calidad_dato
+
     claves_del_catalogo = tuple(claves_del_catalogo or ())
     datos, meta = _leer(archivo)
     etiquetas = dict(zip(meta.column_names, meta.column_labels or []))
     value_labels = meta.variable_value_labels or {}
 
     valores_por_variable = _valores_distintos(datos, meta.column_names)
+    distribucion = calidad_dato.distribucion_de_filas(
+        _registros(datos), meta.column_names)
 
     variables = []
     for orden, codigo in enumerate(meta.column_names):
@@ -713,7 +746,19 @@ def analizar(archivo, claves_del_catalogo=()):
             # variables sin etiquetas —un `.xlsx`, un `.sav` mal exportado—
             # son justo las que más necesitan el mapeo a mano.
             "valores": valores_por_variable.get(codigo) or [],
+            # Fase 8 — cuántas celdas con respuesta tiene (R8.7) y una muestra
+            # de valores reales para la vista previa del texto embebido (R8.8).
+            "respuestas": sum((distribucion.get(codigo) or {}).values()),
+            "muestra": _muestra(distribucion.get(codigo) or {}),
         })
+
+    calidad = calidad_dato.diagnosticar(
+        [{"codigo": v["codigo"], "texto": v["texto"],
+          "texto_original": v["texto_del_archivo"], "tipo": v["tipo"],
+          "opciones": v["opciones"], "orden": v["orden"]}
+         for v in variables],
+        distribucion, filas_total=int(meta.number_rows),
+        valores_no_respuesta=valores_no_respuesta)
 
     con_avisos = [v["codigo"] for v in variables if v["avisos"]]
     sugeridas = [
@@ -753,6 +798,7 @@ def analizar(archivo, claves_del_catalogo=()):
                 ),
             }] if sugeridas else []
         ),
+        "calidad": calidad,
         "nota": (
             "Es una propuesta: nada se ingestó. Todos los campos son "
             "editables y ninguna variable se incluye hasta que se la marque."
@@ -783,6 +829,22 @@ def _candidatas_a_id(datos, meta):
     return candidatas
 
 
+def _registros(datos, incluidas=None):
+    """Los registros de un DataFrame como dicts, con los códigos ya
+    normalizados a texto («1.0» → «1») y sin las celdas vacías."""
+    filas = []
+    for registro in datos.to_dict("records"):
+        fila = {}
+        for codigo, valor in registro.items():
+            if incluidas is not None and codigo not in incluidas:
+                continue
+            if valor is None or (isinstance(valor, float) and valor != valor):
+                continue  # NaN: no-respuesta, y una no-respuesta no se embebe
+            fila[codigo] = _clave(valor) if isinstance(valor, float) else str(valor).strip()
+        filas.append(fila)
+    return filas
+
+
 def filas_de(archivo, variables=None):
     """Las filas del `.sav` como dicts, con los códigos ya normalizados a
     texto para que `ingesta.despivotar` los resuelva contra las opciones."""
@@ -790,17 +852,7 @@ def filas_de(archivo, variables=None):
     incluidas = (
         {v["codigo"] for v in variables} if variables else set(meta.column_names)
     )
-    filas = []
-    for registro in datos.to_dict("records"):
-        fila = {}
-        for codigo, valor in registro.items():
-            if codigo not in incluidas:
-                continue
-            if valor is None or (isinstance(valor, float) and valor != valor):
-                continue  # NaN: no-respuesta, y una no-respuesta no se embebe
-            fila[codigo] = _clave(valor) if isinstance(valor, float) else str(valor).strip()
-        filas.append(fila)
-    return filas
+    return _registros(datos, incluidas)
 
 
 # ── Modo «crear los individuos en esta carga» ───────────────────────

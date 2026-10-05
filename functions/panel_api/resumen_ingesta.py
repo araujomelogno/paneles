@@ -26,7 +26,7 @@ resuelve primero por documento, la base entera se fusiona en dos registros.
 Con él es imposible no verlo.
 """
 
-from . import sav
+from . import calidad_dato, ingesta, sav
 
 # Las claves con las que `dedup.resolver` decide, **en su orden**. La
 # compuesta va última porque es la que el dedup usa solo cuando no hay
@@ -183,11 +183,38 @@ def resumir(plan, filas, *, panel=None, evidencia=None, destino_tipo="encuesta",
     estimado = _personas_estimadas(filas, por_campo)
 
     # ── Volumen ──────────────────────────────────────────────────────
-    codigos_semanticos = [v["codigo"] for v in al_semantico]
-    respuestas = sum(
-        1 for fila in filas for codigo in codigos_semanticos
-        if _valor(fila, codigo)
-    )
+    # Fase 8 — las respuestas se cuentan con `ingesta.despivotar`, que es lo
+    # que corre al ingestar: con las decisiones de normalización (solo lo
+    # marcado de una batería, sin los valores de no respuesta) el número que
+    # se muestra es el que se va a escribir, no el de celdas con algo.
+    semanticas = [p for p in preguntas
+                  if demograficas.get(p.get("codigo")) is None and p.get("codigo")]
+    descartes = {}
+    respuestas = len(ingesta.despivotar(
+        filas, [dict(p, texto=p.get("texto") or p.get("codigo"))
+                for p in semanticas],
+        columna_id or "id_en_origen", descartes))
+
+    # ── Fase 8 · Calidad del dato y vista previa ─────────────────────
+    # Del mismo plan y las mismas filas: lo que el resumen dice que se va a
+    # embeber es lo que se embebe.
+    distribucion = calidad_dato.distribucion_de_filas(
+        filas, {p["codigo"] for p in semanticas})
+    calidad = calidad_dato.diagnosticar(
+        semanticas, distribucion, filas_total=len(filas),
+        valores_no_respuesta=(plan.get("normalizacion") or {}).get(
+            "valores_no_respuesta"))
+    previas = calidad_dato.vistas_previas(semanticas, distribucion)
+    for variable in al_semantico:
+        previa = previas.get(variable["codigo"]) or {}
+        variable["respuestas_que_genera"] = previa.get("genera", 0)
+        variable["normalizacion"] = {
+            clave: valor for clave, valor in (
+                (c, next((p.get(c) for p in semanticas
+                          if p.get("codigo") == variable["codigo"]), None))
+                for c in ("solo_marcadas", "excluir_valores",
+                          "prefijo_respuesta", "fusionada_con", "pii_aceptada"))
+            if valor}
 
     resumen = {
         "identidad": {
@@ -217,8 +244,13 @@ def resumir(plan, filas, *, panel=None, evidencia=None, destino_tipo="encuesta",
             "respuestas_a_escribir": respuestas,
             "personas_estimadas": estimado["personas"],
             "filas_sin_clave_de_dedup": estimado["sin_clave_de_dedup"],
+            # Fase 8 — lo que la normalización deja afuera, por motivo.
+            "descartadas_no_marcadas": descartes.get(ingesta.NO_MARCADA, 0),
+            "descartadas_no_respuesta": descartes.get(ingesta.NO_RESPUESTA, 0),
         },
         "dedup": dedup,
+        "calidad": calidad,
+        "vista_previa": previas,
     }
     resumen["advertencias"] = _advertencias(resumen, preguntas, demograficas,
                                             tipo_de, filas)
@@ -299,6 +331,21 @@ def _advertencias(resumen, preguntas, demograficas, tipo_de, filas):
                 f"atributo; puede estar bien —un 99 de «no contesta»— pero "
                 f"conviene decidirlo acá y no en una cuota que no cierra."),
         })
+
+    # Fase 8 — lo que rompe el dato semántico, adelantado acá también. No
+    # bloquea nada (ni siquiera la PII: es un indicio, no una certeza), y por
+    # eso no es `grave`: el resumen lo muestra para que la decisión sea
+    # consciente. La PII que se aceptó a conciencia ya no se repite.
+    aceptadas = {p.get("codigo") for p in preguntas if p.get("pii_aceptada")}
+    for hallazgo in (resumen.get("calidad") or {}).get("hallazgos", []):
+        if hallazgo["severidad"] != calidad_dato.ROMPE:
+            continue
+        if (hallazgo["tipo"] == "pii_en_texto_libre"
+                and set(hallazgo["variables"]) <= aceptadas):
+            continue
+        avisos.append({"tipo": hallazgo["tipo"], "grave": False,
+                       "variables": hallazgo["variables"],
+                       "mensaje": hallazgo["mensaje"]})
 
     if resumen["identidad"]["crea_personas"] and not resumen["dedup"]:
         avisos.append({

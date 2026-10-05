@@ -32,15 +32,17 @@
     <li><a href="#s2"><span><span class="num">2</span> Entrar al sistema</span></a>
       <ul><li>Ingreso · Recuperación de contraseña · Cuentas sin habilitar</li></ul></li>
     <li><a href="#s3"><span><span class="num">3</span> Panelistas</span></a>
-      <ul><li>Buscar · Enrolar · Duplicados · Revisión de altas · La ficha ·
-      Cargar panelistas sin panel · Canales de contacto</li></ul></li>
+      <ul><li>Buscar · Enrolar · Duplicados · Revisión de altas · La ficha y
+      sus respuestas procesadas · Otorgar una finalidad · Cargar panelistas sin
+      panel · Canales de contacto</li></ul></li>
     <li><a href="#s4"><span><span class="num">4</span> Paneles</span></a>
       <ul><li>Crear · Agregar miembros · Dar de baja una membresía</li></ul></li>
     <li><a href="#s5"><span><span class="num">5</span> Encuestas</span></a>
-      <ul><li>Crear una ola · Convocar · Exportar la muestra · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Enviar por WhatsApp · Verificar el cruce</li></ul></li>
+      <ul><li>Crear una ola · Convocar · Exportar la muestra · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Enviar por WhatsApp · Verificar el cruce · Calidad del dato y vista previa · Corregir y reprocesar un estudio</li></ul></li>
     <li><a href="#s6"><span><span class="num">6</span> Consultas</span></a>
-      <ul><li>Buscar por significado · El ranking y la evidencia ·
-      Exclusiones · Reidentificación · Modos · Consultas guardadas</li></ul></li>
+      <ul><li>Buscar por significado · El ranking y la evidencia · Columnas ·
+      La ficha desde un resultado · Exclusiones · Reidentificación · Modos ·
+      Consultas guardadas</li></ul></li>
     <li><a href="#s7"><span><span class="num">7</span> Composición</span></a>
       <ul><li>Universo de referencia · Brecha · Cruce de dos dimensiones</li></ul></li>
     <li><a href="#s8"><span><span class="num">8</span> Participación</span></a>
@@ -413,6 +415,48 @@
     que resulta práctico cuando hay que cruzar información con otro sistema sin
     exponer datos personales.</p>
   </div>
+
+  <h4>Las respuestas procesadas de la persona</h4>
+
+  <p>La tarjeta <strong>Respuestas procesadas</strong> indica de entrada
+  cuántas respuestas tiene esa persona en el store semántico y de qué
+  estudios. La tabla completa —código, texto de la pregunta, respuesta y
+  procedencia— aparece al presionar <strong>Ver las respuestas</strong>. Se
+  puede filtrar por estudio, buscar por texto y activar <strong>Ver el texto
+  embebido</strong>, que muestra exactamente lo que se vectorizó.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/70-respuestas-procesadas.jpg" alt="Tabla de respuestas procesadas de un panelista" />
+    <figcaption><b>Respuestas procesadas.</b> Con el texto embebido a la vista
+    se nota enseguida una cerrada que quedó sin traducir: diría «→ 11427» en
+    lugar de una etiqueta.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">La tabla se pide; no se abre sola</div>
+    <p>Ver qué respondió una persona identificada une los dos lados que el
+    sistema mantiene separados, y por eso queda registrado con fecha, autor y
+    un motivo propio. Si la tabla se cargara al abrir la ficha, abrirla para
+    corregir un correo dejaría anotado que alguien leyó sus opiniones. Por eso
+    el conteo por estudio se ve siempre y el contenido solo cuando se pide.
+    Si la persona no tiene respuestas, la tarjeta lo dice: no va a aparecer en
+    ninguna consulta por concepto.</p>
+  </div>
+
+  <h4>Otorgar una finalidad</h4>
+
+  <p>El botón <strong>Otorgar finalidad</strong> de la tarjeta de
+  consentimiento registra una finalidad que la persona aceptó por otra vía. Se
+  elige la finalidad y, debajo, la <strong>versión del texto</strong> de un
+  desplegable que muestra solo las versiones publicadas y activas de esa
+  finalidad; si hay una sola, viene elegida. <strong>Ver texto</strong>
+  despliega, en el mismo lugar, el texto completo que la persona aceptó.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/71-otorgar-version.jpg" alt="Otorgar una finalidad eligiendo la versión del texto" />
+    <figcaption><b>Otorgar una finalidad.</b> La versión no se escribe: se
+    elige de lo publicado, y el texto se lee antes de confirmar.</figcaption>
+  </figure>
 
   <h3><span class="n">3.6</span> Cargar panelistas sin asociarlos a un panel</h3>
 
@@ -837,9 +881,40 @@
   </div>
 
   <p>El resumen también adelanta las advertencias que antes aparecían recién
-  al final —valores sin mapear a una categoría, preguntas sin texto— y tiene
-  un botón para <strong>copiarlo</strong>: sirve como registro de qué se
-  definió en esa carga.</p>
+  al final —valores sin mapear a una categoría, preguntas sin texto, y lo que
+  la sección 5.8 llama «lo que rompe»: códigos sin traducir, posibles datos
+  personales en texto libre, textos truncados— y tiene un botón para
+  <strong>copiarlo</strong>: sirve como registro de qué se definió en esa
+  carga.</p>
+
+  <p>Las cifras de arriba cuentan exactamente lo que se va a escribir: si se
+  decidió ingestar solo lo marcado de una batería o no ingestar los valores de
+  no respuesta (sección 5.8), aparecen además las respuestas que
+  <strong>se descartan</strong> por cada motivo.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/64-revision-volumen.jpg" alt="Cifras del resumen de revisión con descartes" />
+    <figcaption><b>Volumen.</b> Las respuestas a escribir ya descuentan lo que
+    se decidió no ingestar.</figcaption>
+  </figure>
+
+  <p>La tabla de variables que van al store semántico indica, para cada una,
+  <strong>cuántas respuestas genera</strong> y qué decisiones tiene
+  aplicadas. Y debajo, <strong>cómo va a quedar el texto embebido</strong> de
+  cada variable, con valores reales del archivo: es lo último que conviene
+  leer antes de confirmar.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/65-revision-genera.jpg" alt="Variables al store semántico con las respuestas que genera cada una" />
+    <figcaption><b>Al store semántico.</b> Cada variable con su texto, las
+    decisiones aplicadas y cuántas respuestas va a escribir.</figcaption>
+  </figure>
+
+  <figure>
+    <img class="recorte" src="capturas/66-revision-texto-embebido.jpg" alt="Texto embebido real de cada variable en el resumen" />
+    <figcaption><b>El texto embebido.</b> Lo que se ve acá es lo que se
+    escribe: lo calcula la misma función que ejecuta la ingesta.</figcaption>
+  </figure>
 
   <div class="aviso info">
     <div class="t">Por qué esta carga tiene un paso que otras operaciones no tienen</div>
@@ -1084,7 +1159,9 @@
     <p>Si se detecta un error en el texto de una pregunta, alcanza con
     corregirlo y volver a ingestar el mismo archivo. El sistema reconoce lo que
     ya estaba y solo actualiza lo que cambió, de modo que la operación puede
-    repetirse sin riesgo. Tampoco se duplican membresías ni participaciones, y
+    repetirse sin riesgo. Si el archivo ya no está a mano, el estudio se
+    corrige igual desde <strong>Corregir y reprocesar</strong> (sección
+    5.9). Tampoco se duplican membresías ni participaciones, y
     la fecha de la primera respuesta se conserva.</p>
   </div>
 
@@ -1153,7 +1230,8 @@
     <p>Antes había que escribirla exacta y, si no coincidía con una versión
     publicada, el alta fallaba. Ahora es un desplegable con los textos
     publicados y activos de esa finalidad, y un botón <strong>Ver
-    texto</strong> para leer lo que la persona aceptó antes de confirmar.</p>
+    texto</strong> que despliega, debajo y sin cerrar el formulario, lo que la
+    persona aceptó. Si hay una sola versión activa, viene elegida.</p>
     <p>Si una finalidad no tiene ningún texto activo, en lugar del
     desplegable aparece un aviso: hay que publicarlo primero en
     <strong>Inscripciones → Textos de consentimiento</strong>.</p>
@@ -1346,7 +1424,153 @@
   <p>Es esperable que el número de individuos del lado semántico sea menor que el
   de convocados: no todos responden, y de los que responden solo se conservan las
   respuestas de quienes otorgaron el uso semántico.</p>
+
+  <h3><span class="n">5.8</span> La calidad del dato: lo que el sistema detecta antes de ingestar</h3>
+
+  <p>La búsqueda por significado es tan buena como el texto que se embebe, y
+  ese texto sale del archivo. Un export de campo suele traer cosas como esta:</p>
+
+  <p><em>«Cigarrillos:Pensando en el ÚLTIMO mes, ¿has consumido alguno de
+  estos productos? Seleccione los que correspondan → Checked»</em></p>
+
+  <p>«Checked» no significa nada en español, la pregunta arrastra un prefijo y
+  una consigna del instrumento, y además se guardarían también las opciones que
+  la persona <em>no</em> marcó. Por eso, al cargar el archivo, aparece el
+  bloque <strong>Calidad del dato</strong> con lo que el sistema detectó.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/62-calidad-del-dato.jpg" alt="Panel de calidad del dato con los hallazgos" />
+    <figcaption><b>Calidad del dato</b> (los primeros hallazgos). Primero lo que
+    rompe, después lo que mejora. Cada hallazgo trae sus acciones; ninguna está
+    aplicada.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Son propuestas: ninguna se aplica sola</div>
+    <p>El sistema propone y quien carga decide. Cada acción elegida se ve
+    después como una etiqueta en la variable, que se puede quitar con la ×, y
+    el texto original del archivo queda guardado: <strong>volver al
+    original</strong> lo restituye. Si no se elige nada, la carga se hace
+    exactamente como antes.</p>
+  </div>
+
+  <table class="parte">
+    <thead><tr><th>Lo que detecta</th><th>Qué propone</th></tr></thead>
+    <tr><td class="destacado">Posibles datos personales en texto libre
+      (rompe)</td>
+      <td>Una abierta —típicamente «Otro: especificar»— con algo que tiene forma
+      de correo, teléfono, cédula o dirección web. Muestra cuántas respuestas y
+      ejemplos <strong>enmascarados</strong>. Se puede excluir la variable o
+      ingestarla igual, a conciencia. <strong>Es un indicio, no una
+      certeza</strong>: un número largo puede no ser un teléfono, y un nombre
+      suelto no se detecta. No bloquea la carga.</td></tr>
+    <tr><td class="destacado">Códigos sin traducir (rompe)</td>
+      <td>Valores de una cerrada que no tienen etiqueta: se embeberían como
+      «→ 11427». Se completan las etiquetas o se excluyen esos valores.</td></tr>
+    <tr><td class="destacado">Textos truncados (rompe)</td>
+      <td>Textos que llegan al límite de SPSS, abren una pregunta que no cierra
+      o terminan a mitad de palabra. Hay que completarlos a mano.</td></tr>
+    <tr><td class="destacado">Baterías de respuesta múltiple</td>
+      <td>Variables que son opciones de una misma pregunta (mismo prefijo de
+      código, mismo texto, mismo par Unchecked/Checked). Propone
+      <strong>ingestar solo lo marcado</strong>: quien no marcó una opción no
+      genera respuesta para ella. Ojo: deja de poder buscarse «quiénes no
+      consumen» por significado; para eso está el filtro demográfico.</td></tr>
+    <tr><td class="destacado">Valores de no respuesta</td>
+      <td>98, 99, «No sabe», «No contesta», «No aplica»… Propone no
+      ingestarlos o, si se quieren conservar, ingestarlos con su etiqueta y
+      nunca con el código. La lista se edita en <strong>Qué valores cuentan
+      como «no respuesta»</strong>, y <strong>Volver a detectar</strong> la
+      aplica sin volver a subir el archivo.</td></tr>
+    <tr><td class="destacado">Textos de pregunta más claros</td>
+      <td>Integra la opción en la pregunta (<em>«¿has consumido
+      cigarrillos?»</em>), quita consignas («Seleccione los que correspondan»)
+      y numeración («P5:»), y baja las mayúsculas de énfasis. Hay que revisar
+      que no cambie el sentido.</td></tr>
+    <tr><td class="destacado">Etiquetas sin sentido en español</td>
+      <td>Checked/Unchecked, Yes/No, o 1/0 sin etiqueta: propone Sí/No.</td></tr>
+    <tr><td class="destacado">Tipo de variable</td>
+      <td>Etiquetas iguales al código (16 = «16»): es numérica. Opciones de
+      acuerdo o de frecuencia: es una escala. Una abierta que es el «Otro» de
+      una cerrada: propone <strong>fusionarla</strong>, para que se embeba como
+      «¿Qué marca fuma? → Otro: Nevada Blue».</td></tr>
+    <tr><td class="destacado">Variables que no aportan</td>
+      <td>Sin ninguna respuesta: propone excluirla. Casi siempre igual: lo
+      informa, porque suma volumen y aporta poco a una búsqueda.</td></tr>
+  </table>
+
+  <p>Lo que se repite variable por variable va agrupado en un solo hallazgo,
+  con un botón para aplicarlo a todas y <strong>usar en esta</strong> para
+  elegirlo de a una.</p>
+
+  <h4>La vista previa del texto embebido</h4>
+
+  <p>Debajo de cada pregunta del estudio aparece <strong>Se embebe
+  así</strong>: ejemplos reales del archivo —el valor más frecuente y uno poco
+  frecuente— con el texto exacto que se va a vectorizar, cuántas respuestas
+  genera la variable y cuántas descarta. Se actualiza en el momento cada vez
+  que se corrige el texto, las etiquetas o el tipo.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/63-vista-previa.jpg" alt="Vista previa del texto embebido de una variable" />
+    <figcaption><b>Vista previa.</b> Lo tachado es lo que no se ingesta; las
+    etiquetas de abajo son las decisiones aplicadas, y se pueden
+    quitar.</figcaption>
+  </figure>
+
+  <h3><span class="n">5.9</span> Corregir y reprocesar un estudio ya cargado</h3>
+
+  <p>Si después de cargar se descubre que un texto quedó mal, que una cerrada
+  quedó sin traducir o que convenía ingestar solo lo marcado, <strong>no hace
+  falta volver a subir el archivo</strong>. La opción <strong>Corregir y
+  reprocesar</strong>, en la ficha de la encuesta, muestra las preguntas tal
+  como quedaron cargadas, con el mismo panel de calidad del dato y la vista
+  previa de cada una. Las cargas sin panel se reprocesan desde
+  <strong>Estadísticas → Últimas cargas</strong>.</p>
+
+  <ol class="pasos">
+    <li>Corregir el texto, el tipo o las etiquetas de cada pregunta, marcar
+    <strong>Solo lo marcado</strong> o los valores que no se ingestan, o
+    <strong>Excluir la variable</strong>.</li>
+    <li>Presionar <strong>Revisar los cambios</strong>: el sistema dice qué
+    cambia, cuántas respuestas se re-embeben, cuántas quedan igual y cuántas se
+    borran, con ejemplos de antes y después.</li>
+    <li>Confirmar con <strong>Confirmar y reprocesar</strong>. Corre en
+    segundo plano, como una carga, y el avance se ve en la ficha.</li>
+  </ol>
+
+  <figure>
+    <img class="recorte" src="capturas/67-reproceso-variable.jpg" alt="Corrección de una variable en el reproceso" />
+    <figcaption><b>Corregir una variable.</b> Con la etiqueta del código que
+    faltaba, la vista previa ya muestra «→ Nevada Blue».</figcaption>
+  </figure>
+
+  <figure>
+    <img class="recorte" src="capturas/68-reproceso-revision.jpg" alt="Revisión de un reproceso" />
+    <figcaption><b>Revisión del reproceso.</b> Solo se re-embebe lo que cambió
+    de texto; lo demás no se toca.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Lo que la carga dejó afuera no se recupera</div>
+    <p>El reproceso trabaja sobre lo que quedó guardado. Si al cargar se
+    ingestó solo lo marcado de una batería, o se excluyeron valores de no
+    respuesta, esas respuestas no están en ninguna parte: dejar de excluirlas
+    en un reproceso no las trae de vuelta. Para eso hay que volver a cargar el
+    archivo. La revisión lo advierte.</p>
+  </div>
+
+  <div class="aviso info">
+    <div class="t">Queda registrado</div>
+    <p>Cada reproceso guarda qué se cambió, campo por campo, y cuándo; la
+    pantalla de reproceso muestra los anteriores. Mientras una carga o un
+    reproceso del mismo estudio está en curso, no se puede lanzar otro. Si uno
+    quedó a medias, <strong>Reprocesar todo de nuevo</strong> vuelve a pasar
+    todas las respuestas por la configuración actual y solo re-embebe las
+    desactualizadas.</p>
+  </div>
 </section>
+
 
 <!-- ════════════════ 6 ════════════════ -->
 <section id="s6">
@@ -1519,8 +1743,19 @@
   <h4>Abrir la ficha de un resultado</h4>
 
   <p>El botón <strong>Ficha</strong> de cada fila abre, encima de la lista y
-  sin perderla, lo que se sabe de esa persona: sus atributos demográficos
-  —con la procedencia de cada uno— y los paneles que integra.</p>
+  sin perderla, lo que se sabe de esa persona. Arriba, <strong>por qué aparece
+  en este resultado</strong>: qué respondió y de qué estudio, con el criterio
+  y el veredicto —es la misma evidencia que trae el ranking, leída de la
+  base—. Después, sus atributos demográficos —con la procedencia de cada uno:
+  derivado de la fecha de nacimiento, envejecido desde la edad declarada o
+  cargado— y los paneles que integra. Al cerrarla, el resultado queda como
+  estaba: no se vuelve a consultar.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/69-ficha-desde-resultado.jpg" alt="Ficha de un panelista abierta desde un resultado" />
+    <figcaption><b>Ficha desde un resultado.</b> La evidencia que explica la
+    posición, sin un solo dato identificatorio.</figcaption>
+  </figure>
 
   <div class="aviso">
     <div class="t">La ficha no muestra nombre, documento, correo ni celular</div>
@@ -1530,16 +1765,20 @@
     registrada. Si la ficha mostrara el nombre con un clic, ese registro
     dejaría de reflejar quién vio los datos de quién, que es lo único que
     existe para demostrar.</p>
-    <p>Para ver los nombres sigue estando <strong>Ver quiénes son</strong>,
-    descrito más abajo.</p>
+    <p>Para ver quién es esa persona, la ficha tiene <strong>Ver quién
+    es</strong>: es la misma reidentificación que <strong>Ver quiénes
+    son</strong> (descrita más abajo), para una sola persona, y queda
+    registrada igual.</p>
   </div>
 
   <h4>Las respuestas procesadas de esa persona</h4>
 
   <p>En la misma ficha, abajo, está lo que esa persona respondió: el código
   de la variable, el texto de la pregunta, la respuesta y de qué estudio
-  viene. Se puede filtrar por estudio y buscar por texto, y la tabla está
-  paginada.</p>
+  viene. Se ve primero el conteo por estudio, y la tabla al presionar
+  <strong>Ver las respuestas</strong> (es la misma sección de la ficha de
+  Panelistas, 3.5). Se puede filtrar por estudio y buscar por texto, y la
+  tabla está paginada.</p>
 
   <p>Es lo que hace falta para entender <strong>por qué alguien aparece —o
   no aparece— en una consulta</strong>.</p>
@@ -1558,9 +1797,10 @@
     <div class="t">Ver las respuestas queda registrado</div>
     <p>La separación entre las dos bases existe para que nadie vea identidad
     y opiniones juntas por accidente. Esta pantalla las une a propósito,
-    porque operar lo necesita, y por eso cada vez que se abre queda anotado
-    con fecha y autor —con un motivo propio, distinto del de reidentificar
-    un contacto—.</p>
+    porque operar lo necesita, y por eso cada vez que se pide la tabla queda
+    anotado con fecha y autor —con un motivo propio, distinto del de
+    reidentificar un contacto—. Abrir la ficha sin pedirla no deja ese
+    registro.</p>
   </div>
 
   <h3><span class="n">6.5</span> Resolver a quiénes corresponden los identificadores</h3>
@@ -2741,7 +2981,8 @@
   <h3><span class="n">14.2</span> El resto de los bloques</h3>
 
   <p>Panelistas con sus cortes —activos, sin panel, con correo, con celular,
-  altas del mes—, el consentimiento vigente por finalidad, el corpus
+  altas del mes—, el consentimiento vigente por finalidad (contado por
+  persona: alguien que aceptó dos versiones del texto cuenta una vez), el corpus
   semántico con sus estudios, y el tamaño de la tabla de respuestas y del
   índice vectorial.</p>
 
@@ -2755,7 +2996,9 @@
 
   <p>El último bloque son las <strong>últimas cargas</strong> con su estado.
   Una carga con lotes fallidos aparece destacada: hasta ahora eso solo se
-  veía consultando la base.</p>
+  veía consultando la base. Cada carga tiene un botón
+  <strong>Reprocesar</strong>, que abre la corrección de la sección 5.9; es
+  la vía para las cargas sin panel, que no tienen ficha de encuesta.</p>
 
   <div class="aviso">
     <div class="t">Esta pantalla no muestra a nadie en particular</div>
@@ -2791,6 +3034,23 @@
   encuesta, o que se la haya enrolado sin cargarle el «Id en el origen». También
   conviene verificar que la columna elegida en el paso 2 de la ingesta sea la
   correcta.</p>
+
+  <h4>La vista previa dice que se descartan respuestas</h4>
+  <p>Es lo que se decidió en la calidad del dato (5.8): opciones no marcadas de
+  una batería o valores de no respuesta que no se ingestan. Si no es lo que se
+  quería, se quita la etiqueta correspondiente de la variable con la ×.</p>
+
+  <h4>Cargué un estudio y los textos quedaron mal: ¿hay que volver a subir el archivo?</h4>
+  <p>No. <strong>Corregir y reprocesar</strong> (5.9) corrige textos, etiquetas
+  y decisiones sobre lo ya cargado y re-embebe solo lo que cambió. Lo único que
+  no puede hacer es recuperar lo que la carga dejó afuera.</p>
+
+  <h4>El sistema avisó posibles datos personales en una abierta</h4>
+  <p>Mirar los ejemplos enmascarados y decidir: si son datos personales de
+  verdad, <strong>Excluir la variable</strong>; si es un falso positivo (un
+  número de producto, por ejemplo), <strong>Ingestarla igual, a
+  conciencia</strong>. La detección es por patrones y no reemplaza mirar el
+  archivo.</p>
 
   <h4>Aparecieron personas «sin consentimiento» al ingestar</h4>
   <p>Están convocadas y respondieron, pero no otorgaron el uso semántico. Sus
@@ -2921,6 +3181,18 @@
     <tr><td class="destacado">Uso semántico</td>
       <td>La finalidad que habilita a conservar sus respuestas para poder
       consultarlas por significado entre distintos estudios.</td></tr>
+    <tr><td class="destacado">Texto embebido</td>
+      <td>El texto exacto que se vectoriza de cada respuesta, con la forma
+      «pregunta → respuesta». Es lo que la búsqueda compara.</td></tr>
+    <tr><td class="destacado">Batería</td>
+      <td>Las variables de una pregunta de respuesta múltiple, una por opción,
+      cada una con un par marcado / no marcado.</td></tr>
+    <tr><td class="destacado">No respuesta</td>
+      <td>Valores como 98, 99, «No sabe» o «No contesta»: dicen que la persona
+      no respondió, no qué respondió.</td></tr>
+    <tr><td class="destacado">Reproceso</td>
+      <td>Corregir textos, etiquetas o decisiones de un estudio ya cargado y
+      volver a calcular los embeddings de lo que cambió, sin el archivo.</td></tr>
     <tr><td class="destacado">Bóveda</td>
       <td>La base donde residen los datos personales y toda la gestión del
       panel.</td></tr>

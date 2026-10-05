@@ -14,6 +14,27 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Fase 7 completa y Fase 8 · 2026-10-05.** La sección 5 suma la **5.8,
+> La calidad del dato** (lo que el sistema detecta antes de ingestar y la
+> vista previa del texto embebido) y la **5.9, Corregir y reprocesar un
+> estudio ya cargado**, sin volver a subir el archivo. La 5.4 explica lo que
+> el resumen de revisión agrega (descartes, respuestas que genera cada
+> variable, texto embebido). La 3.5 suma las respuestas procesadas y
+> «Otorgar finalidad» con el desplegable de versión; la 6.3, la evidencia en
+> la ficha desde un resultado y «Ver quién es»; la 14, el botón
+> «Reprocesar» de las últimas cargas. Hay tres preguntas frecuentes y cuatro
+> términos de glosario nuevos.
+>
+> **Esta vez sí hay capturas nuevas: de la 62 a la 71.** No salen del modo
+> demo —`demo.js` no simula las rutas de las fases 7 y 8— sino de la
+> aplicación real servida contra el ruteo de verdad y un Postgres de
+> pruebas, con un `.sav` de ejemplo que copia la estructura de la primera
+> carga real (una batería `var138O132x`, una cerrada con un código sin
+> traducir, su «Otro» con un teléfono). Es el mismo método que la 51: un
+> servidor mínimo que sirve `web/public` y despacha `/api/**` a
+> `ruteo.despachar` con un actor administrador, y Playwright recorriendo las
+> pantallas. La 62 y la 67 se recortaron para que entren en una página.
+
 > **Fase 7 · 2026-10-04.** Cuatro cambios de pantalla y una sección nueva.
 > La **14, Estadísticas de la base**, es nueva —y corre la numeración de
 > Preguntas frecuentes a 15 y del Glosario a 16—. La 5.4 suma el **paso de
