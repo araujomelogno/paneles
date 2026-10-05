@@ -51,6 +51,17 @@
 -- finalidad does not exist» en vez de devolver algo distinto sin avisar. La
 -- receta para COLOQUIO está en el documento de despliegue.
 
+-- ── Se puede correr dos veces ──
+--
+-- El ensayo del despliegue lo mostró: con la primera versión de esta
+-- migración, una segunda corrida con `ON_ERROR_STOP` tiraba la vista, la
+-- recreaba y fallaba antes de los `grant` del final, y **COLOQUIO perdía el
+-- acceso a la superficie**. Ahora va entera en una transacción —falla toda o
+-- no falla— y cada sentencia es re-ejecutable: los objetos nuevos se crean con
+-- `create or replace`, los que cambian de forma se tiran y se rehacen, y los
+-- `grant` se repiten. Correrla de nuevo deja todo exactamente igual.
+begin;
+
 -- ============================================================
 --  1 · Lo que se reemplaza
 -- ============================================================
@@ -137,7 +148,7 @@ comment on function f_persona_convocable() is
 -- que no hay ninguna que pueda variar entre filas repetidas y romperlo. Lo
 -- que colapsa son los re-otorgamientos de la misma finalidad con otra
 -- versión del texto, que para el gate son el mismo permiso.
-create function f_persona_finalidad_vigente()
+create or replace function f_persona_finalidad_vigente()
 returns table (
   id_persona  uuid,
   finalidad   text,
@@ -156,7 +167,7 @@ as $$
                       where b.id_persona = c.id_persona);
 $$;
 
-create view v_persona_finalidad_vigente as
+create or replace view v_persona_finalidad_vigente as
 select * from f_persona_finalidad_vigente();
 
 comment on view v_persona_finalidad_vigente is
@@ -312,3 +323,5 @@ grant select on v_persona_convocable          to coloquio_app;
 grant select on v_persona_finalidad_vigente   to coloquio_app;
 grant execute on function f_persona_convocable()        to coloquio_app;
 grant execute on function f_persona_finalidad_vigente() to coloquio_app;
+
+commit;

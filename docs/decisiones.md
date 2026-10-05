@@ -1,8 +1,8 @@
 # Decisiones de diseño
 
 **Sistema:** Gestión de paneles y consulta semántica · Equipos Consultores
-**Alcance:** Fases 1, 2 y 3
-**Última actualización:** 2026-09-14
+**Alcance:** Fases 1 a 8, y la superficie externa de COLOQUIO
+**Última actualización:** 2026-10-05
 
 ---
 
@@ -76,6 +76,25 @@ restricción real del sistema.
 | [D40](#d40) | La comparabilidad entre olas la declara el analista, no el sistema | 4 |
 | [D41](#d41) | El optimizador propone y explica; no es un solver | 4 |
 | [D42](#d42) | De WhatsApp se elige la plantilla, y nada más | 4 |
+| [D43](#d43) | El gate de consentimiento es una vista; la fatiga son hechos | 5 |
+| [D44](#d44) | El contacto se sirve por función, no por vista | 5 |
+| [D45](#d45) | Las finalidades son un catálogo, no un `check` | 5 |
+| [D46](#d46) | Las vistas del contrato no llevan `security_invoker` | 5 |
+| [D47](#d47) | El rol del consumidor es IAM, no un usuario de Cloud SQL | 5 |
+| [D48](#d48) | La baja avisa a todos y no espera a ninguno | 5 |
+| [D49](#d49) | La regla dura #1 la hace valer la base, no un chequeo que hay que correr | 5 |
+| [D50](#d50) | La convocatoria activa se verifica por sistema, y el consumidor declara la suya | 5 |
+| [D51](#d51) | El mapeo a categorías se declara valor por valor, y lo que no se mapea se guarda igual | 3 |
+| [D52](#d52) | El portal es una superficie separada, aunque comparta el proveedor de identidad | 6 |
+| [D53](#d53) | El login del portal pasa por el backend, no por el SDK del navegador | 6 |
+| [D54](#d54) | Los embeddings van en 512 dimensiones, y la dimensión es un contrato con la base | — |
+| [D55](#d55) | La ingesta deja de vivir en una request, y el estado vive en la base | — |
+| [D56](#d56) | Lo que decidió una carga se guarda con la carga | — |
+| [D57](#d57) | Lo que se revisa es lo que se ejecuta, y lo que se cruza se registra | 7 |
+| [D58](#d58) | Una fila por persona: el gate se pregunta con `exists`, y la cardinalidad se verifica | 5 (bug) |
+| [D59](#d59) | La ficha explica el resultado que se está mirando, y una ruta sin pantalla no existe | 7 |
+| [D60](#d60) | El texto que se embebe: el sistema propone, el analista confirma | 8 |
+| [D61](#d61) | Un estudio se corrige desde lo que quedó cargado, no desde el archivo | 8 |
 
 ---
 
@@ -1867,6 +1886,7 @@ encuesta no se puede marcar como Flow. El token necesita además el permiso
 
 ---
 
+<a id="d43"></a>
 ## D43 · El gate de consentimiento es una vista; la fatiga son hechos
 
 **El problema.** `paneles` fue construido con el supuesto de que hay **un
@@ -1909,6 +1929,7 @@ es agregarle parámetros a una vista: es otra función, como la del contacto.
 
 ---
 
+<a id="d44"></a>
 ## D44 · El contacto se sirve por función, no por vista
 
 **El problema.** Convocar exige leer un canal de contacto, que es PII, y esa
@@ -1944,6 +1965,7 @@ servir para contar.
 
 ---
 
+<a id="d45"></a>
 ## D45 · Las finalidades son un catálogo, no un `check`
 
 **El problema.** `consentimiento.finalidad` y `texto_consentimiento.finalidad`
@@ -1986,6 +2008,7 @@ fallando en producción por un motivo que nadie relacionaría con la migración.
 
 ---
 
+<a id="d46"></a>
 ## D46 · Las vistas del contrato no llevan `security_invoker`
 
 **El problema.** Desde PG15 una vista puede declararse `security_invoker`, y
@@ -2028,6 +2051,7 @@ de privilegios no describe nada.
 
 ---
 
+<a id="d47"></a>
 ## D47 · El rol del consumidor es IAM, no un usuario de Cloud SQL
 
 **El problema.** En Cloud SQL, **todo usuario creado con `gcloud sql users
@@ -2068,6 +2092,7 @@ usa `session_user`, y por eso la función es estricta: un rol que no está en
 
 ---
 
+<a id="d48"></a>
 ## D48 · La baja avisa a todos y no espera a ninguno
 
 **El problema.** `bajas.py` ya resolvía bien el borrado semántico: no es
@@ -2107,6 +2132,7 @@ mucho tiempo no es una tarea atrasada: es un incumplimiento.
 
 ---
 
+<a id="d49"></a>
 ## D49 · La regla dura #1 la hace valer la base, no un chequeo que hay que correr
 
 **El problema.** «La PII nunca se escribe en el store semántico» es la
@@ -2962,6 +2988,294 @@ se cruza todo en esta plataforma.
 `web/public/js/consentimiento.js`, `web/public/js/paginas/estadisticas.js`,
 `web/public/js/paginas/consultas.js`, `web/public/js/paginas/encuestas.js`.
 
+<a id="d58"></a>
+## D58 · Una fila por persona: el gate se pregunta con `exists`, y la cardinalidad se verifica
+
+**El problema.** `v_persona_convocable` —la única superficie desde la que un
+consumidor externo ve personas— se armó en la `0014` con un `join` contra
+`consentimiento`. El gate funcionaba (solo aparecía quien consintió), pero la
+cardinalidad no: **una fila por consentimiento vigente**. Con las dos
+finalidades que pide el alta, cada persona aparecía dos veces; con un
+re-otorgamiento (versión nueva del texto), tres. En la primera carga real,
+1008 personas daban 2016 filas, y COLOQUIO contaba la muestra al doble,
+calculaba cuotas sobre un universo inflado e invitaba a cada persona dos
+veces si no deduplicaba por su cuenta. Nada fallaba: los valores eran
+correctos, solo que repetidos (`specs/BUG_v_persona_convocable_duplica.md`).
+
+**La decisión.** La `boveda/0021` rehace la vista sobre una función nueva:
+
+- **Una fila por persona**, con el consentimiento evaluado con `exists` y
+  las finalidades vigentes en un arreglo, `finalidades text[]`. El gate se
+  pregunta igual que antes con otra sintaxis:
+  `where 'contacto_participacion' = any(finalidades)`. El criterio no cambia
+  —persona activa, sin lápida, con consentimiento vigente—; cambia la forma.
+- Las finalidades de **ámbito estudio** (`grabacion_av`,
+  `moderacion_automatizada`, `difusion_verbatim`) **no** entran al arreglo:
+  `grabacion_av` en la lista de una persona daría a entender que se la puede
+  grabar en cualquier estudio, que es lo que el trigger de la `0013` existe
+  para impedir. Se consultan en `v_persona_finalidad_vigente`, una fila por
+  `(id_persona, finalidad, ref_estudio)`. Ahí el `distinct` no es un parche:
+  las columnas **son** la clave, así que no hay ninguna que pueda variar y
+  volver a abrir las filas.
+- `declarar_convocatoria` y `contacto_para_convocatoria` se reescriben para
+  preguntar sobre el arreglo. La entrega y su fila de auditoría siguen siendo
+  una por lectura: el `insert ... values` nunca dependió de la vista.
+
+**Por qué `exists` y no `distinct`.** Un `distinct` sobre la vista vieja
+habría dado el número correcto hoy y lo habría vuelto a romper el día que
+alguien sumara una columna que variara entre las filas repetidas. El `exists`
+dice lo que el gate quiere decir —«existe un consentimiento vigente»— y no
+multiplica nunca.
+
+**Alternativas descartadas.**
+- *Dejar la vista en `contacto_participacion` solamente y sacar la columna.*
+  «Convocable» se lee como «contactable», pero COLOQUIO también necesita
+  saber quién tiene `uso_semantico_cuali`, y una persona con solo una de las
+  finalidades de persona dejaría de verse.
+- *Mantener la columna `finalidad` con un valor fijo.* Las consultas viejas
+  de un consumidor seguirían corriendo y devolverían otra cosa sin avisar. El
+  cambio es deliberadamente **ruidoso**: `where finalidad = …` falla con
+  «column finalidad does not exist», que es mejor que un número distinto en
+  silencio.
+
+**Lo que se revisó con el mismo patrón.** `v_fatiga_panelista` es una fila
+por `(persona, panel)` **a propósito** —el umbral de fatiga es por panel— y
+agrega con `group by`, así que no multiplica; con participaciones en dos
+encuestas del mismo panel y una persona en dos paneles cuenta bien (hay
+prueba). `f_persona_convocable()` devolvía filas y estaba afectada: es la que
+se corrigió. `contacto_para_convocatoria()` devuelve un escalar y escribe una
+fila de auditoría por entrega. Y de paso apareció la misma clase de error del
+lado de la pantalla: `estadisticas.consentimiento` contaba filas de
+`consentimiento`, así que un re-otorgamiento contaba dos veces a una persona y
+«sin el» podía dar negativo. Ahora cuenta personas, desde la vista.
+
+**Cómo se verifica.** `scripts/verificar_coloquio.py` suma el chequeo «una
+fila por persona en cada vista»: cada relación de la superficie con
+`id_persona` tiene que declarar su clave en `CLAVE_POR_RELACION`, y el chequeo
+compara filas contra claves distintas. Falla también si aparece una vista con
+`id_persona` sin clave declarada: la próxima no se puede saltear la pregunta.
+El escenario usa una persona con las dos finalidades, que es el caso que la
+batería no tenía y por eso no vio el bug. Pruebas:
+`test_bug_convocable_una_fila.py`.
+
+**Consecuencias.** Es un cambio de contrato para COLOQUIO: su código tiene que
+pasar de `finalidad = 'x'` a `'x' = any(finalidades)`, y de `ref_estudio` en
+la vista a `v_persona_finalidad_vigente`. La receta está en el documento de
+despliegue. Del lado de `paneles`, `consentimiento.esta_vigente()` y
+`filtrar_con_consentimiento()` ya preguntan sobre el arreglo.
+
+Y una que apareció al ensayar el despliegue: la `0021` **tira y rehace** la
+vista, y el primer borrador, corrido dos veces, fallaba después del `drop` y
+antes de los `grant` —COLOQUIO quedaba sin acceso—. Ahora va entera en una
+transacción y se puede repetir sin efecto; y como el código anterior y la
+vista nueva no se entienden, el rollback no puede ser «volver el código»: es
+`db/revertir/boveda_0021.sql`, que deja un esquema idéntico al de la `0020`,
+permisos incluidos (comprobado con `pg_dump`).
+
+**Dónde vive.** `db/boveda/0021_persona_convocable_una_fila.sql`,
+`db/revertir/boveda_0021.sql`, `functions/panel_api/consentimiento.py`, `functions/panel_api/estadisticas.py`,
+`scripts/verificar_coloquio.py`.
+
+<a id="d59"></a>
+## D59 · La ficha explica el resultado que se está mirando, y una ruta sin pantalla no existe
+
+**El problema.** El informe de la Fase 7
+(`specs/INFORME_fase7_que_falta.md`) encontró dos cosas. Una ruta declarada
+con `requisito="R7.3"` que no devolvía la mitad del requisito —la evidencia
+del resultado—. Y requisitos con el backend terminado y ninguna pantalla que
+lo usara o con la pantalla en un solo lugar: para quien usa el sistema, eso
+es indistinguible de no tenerlo.
+
+**La decisión.**
+
+- **La evidencia llega desde el resultado y el servidor la relee.** El
+  ranking ya trae, por individuo, los `respuesta_id` que lo justificaron. La
+  ficha los manda (`?respuestas=12,34`) y el servidor devuelve el texto
+  guardado de esas respuestas, **solo si son de esa persona**: un id ajeno se
+  descarta y se informa cuántos. Recalcularla con el criterio como parámetro
+  podía dar otra evidencia que la que el analista tiene en pantalla, y la
+  ficha existe para explicar *este* resultado. Tope de 20 ids: la ficha no es
+  una vía para bajar el contenido de alguien sin pasar por R7.6. No registra
+  reidentificación: es contenido atado a un id opaco, lo mismo que ya
+  mostraba la lista.
+- **Las respuestas procesadas se cargan a pedido.** R7.6 registra cada
+  lectura como cruce de stores. Si la tabla se cargara sola al abrir la
+  ficha, abrirla para corregir un correo dejaría dicho que alguien leyó las
+  opiniones de esa persona, y el registro dejaría de significar algo. De
+  entrada se ve el conteo por estudio (que no se registra: saber *que*
+  respondió no es ver *qué*); la tabla aparece con un botón que dice que
+  queda registrado. La sección es un solo módulo (`respuestas.js`) para las
+  dos fichas: dos copias de la misma tabla terminan divergiendo, y lo que
+  divergiría es el aviso.
+- **«Ver quién es» en la ficha** es la reidentificación de siempre
+  (`POST /reidentificacion`, motivo `consulta`), para una persona. No es un
+  camino nuevo.
+- **Una ruta de las fases 7 y 8 tiene que usarse desde alguna pantalla.**
+  `test_rutas_con_pantalla.py` recorre las rutas declaradas con esos
+  requisitos, busca la función de `api.js` que las llama y exige que esa
+  función se use fuera de `api.js`. Es la recomendación del informe hecha
+  regla. No puede saber si la pantalla *muestra* lo que la ruta devuelve —eso
+  lo cuidan las pruebas de cada requisito—, pero sí que el cable esté
+  conectado.
+
+**Lo que salió al recorrerlo.** Tres defectos que ninguna prueba de backend
+podía ver: «Otorgar finalidad» en la ficha referenciaba una variable
+inexistente (`textosActivos`) y no abría; «Ver texto» del desplegable de
+versión abría un modal que **cerraba el alta** —ver el texto costaba
+volver a llenar el formulario—; y la Fase 7 usaba clases de CSS que no estaban
+definidas. Los tres se corrigieron. El primero lo encontró un `eslint` con
+`no-undef` sobre el frontend, que conviene correr antes de cada entrega.
+
+**Dónde vive.** `functions/panel_api/ficha.py` (`evidencia`),
+`functions/panel_api/ruteo.py` (`ficha_seudonima`),
+`web/public/js/respuestas.js`, `web/public/js/paginas/consultas.js`,
+`web/public/js/paginas/panelistas.js`, `web/public/js/consentimiento.js`,
+`functions/tests/test_rutas_con_pantalla.py`.
+
+<a id="d60"></a>
+## D60 · El texto que se embebe: el sistema propone, el analista confirma
+
+**El problema.** El motor de búsqueda es tan bueno como el texto que se
+embebe, y ese texto salía casi tal cual del archivo:
+«Cigarrillos:Pensando en el ÚLTIMO mes, ¿has consumido alguno de estos
+productos? Seleccione los que correpondan → Checked». `Checked` no significa
+nada en español, la pregunta arrastra un prefijo y una consigna, se guardan
+las opciones que nadie marcó, y una abierta de «Otro» puede traer un
+teléfono. Todo corregible a mano, variable por variable; nadie lo hacía
+porque no se notaba hasta que una búsqueda fallaba.
+
+**La decisión.**
+
+1. **Una sola implementación de «qué se embebe».** `ingesta.respuesta_de`
+   decide, para una celda, si genera respuesta y con qué texto. La usan la
+   ingesta, la vista previa y el reproceso. La vista previa la calcula el
+   servidor aunque la pantalla la pida en cada tecla: una copia en
+   JavaScript divergiría, y lo que divergiría es la vista que dice «esto es lo
+   que se va a escribir».
+2. **Las decisiones viajan en la pregunta.** `solo_marcadas` y
+   `valores_marcados` (batería), `excluir_valores` (no respuesta),
+   `prefijo_respuesta` y `fusionada_con` (el «Otro» de una cerrada),
+   `pii_aceptada`. Sin ninguna, la ingesta hace exactamente lo de antes. Se
+   guardan con la pregunta (`pregunta.normalizacion`) y la lista de no
+   respuesta con el cuestionario: un reproceso tiene que saber qué se decidió.
+3. **Nada se aplica solo, y el original se conserva.** El diagnóstico
+   devuelve hallazgos con **acciones**; la pantalla las aplica cuando el
+   analista las elige, las muestra como etiquetas que se pueden quitar, y
+   guarda el texto y las etiquetas del archivo (`texto_original`,
+   `opciones_originales`). El riesgo central de la fase es una reescritura
+   que cambia el sentido de la pregunta y nadie lee: de ahí la propuesta, el
+   original y la vista previa.
+4. **Jerarquizado y agrupado.** Primero lo que rompe (PII, códigos sin
+   traducir, textos truncados), después lo que mejora, al final lo
+   informativo. Y lo que se repite variable por variable —textos, pares
+   Sí/No, no respuesta, etiquetas, tipos— va en un solo hallazgo por tipo,
+   con «aplicar a todas» y «usar en esta». Treinta tarjetas de «texto más
+   claro» son el paso de revisión que se confirma sin leer, que es peor que
+   no detectar nada.
+5. **La PII en texto libre es un indicio y no bloquea.** Patrones de correo,
+   teléfono uruguayo, cédula (con dígito verificador, que baja los falsos
+   positivos) y URL. Los ejemplos se muestran **enmascarados**: alcanza con
+   ver la forma para decidir, y el aviso no tiene por qué repetir el dato que
+   advierte. Se ofrece excluir la variable o ingestarla a conciencia; lo
+   segundo queda guardado.
+6. **La detección corre sobre distribuciones** (`{código: {valor: filas}}`),
+   que se arman igual desde un `.sav`, desde las filas de un `.csv` y desde un
+   estudio ya cargado. Una sola detección para las tres puertas.
+
+**Alternativas descartadas.**
+- *Aplicar las correcciones evidentes de forma automática* (Checked → Sí).
+  La spec lo descarta y con razón: el texto es lo que se embebe, y una regla
+  automática equivocada degrada la búsqueda sin que nadie se entere.
+- *Detectar PII con un modelo.* Fuera de alcance (spec §3): son patrones, y se
+  dice que son patrones.
+- *Reescribir la pregunta en tercera persona* («¿has consumido?» →
+  «¿consumió?»). La propuesta integra la opción, quita consignas y baja
+  mayúsculas de énfasis; no conjuga. Es editable y el analista termina el
+  trabajo; una conjugación mala es exactamente la reescritura que cambia el
+  sentido.
+
+**Un hallazgo de paso.** El archivo de prueba, armado con la estructura del
+real, reveló que la sugerencia de marcado demográfico buscaba `^ci` y
+proponía «Cigarrillos:…» como **documento** —el marcado que casi fusiona 1131
+personas en dos—. Los patrones ahora piden palabra entera (`CI_NUM` sí,
+«Cigarrillos», «Televisión» y «Agenda» no).
+
+**Consecuencias.** Descartar lo no marcado cambia qué se puede consultar:
+deja de poder buscarse «quiénes **no** consumen» por la vía semántica. El
+hallazgo lo dice; para eso está el filtro demográfico o una cerrada normal.
+Y la detección de patrones tiene falsos positivos y negativos que se informan
+como tales.
+
+**Dónde vive.** `functions/panel_api/calidad_dato.py`,
+`functions/panel_api/ingesta.py` (`respuesta_de`, `despivotar`),
+`functions/panel_api/semantica.py`, `functions/panel_api/sav.py`,
+`functions/panel_api/resumen_ingesta.py`, `db/semantica/0007_fase8_calidad_del_dato.sql`,
+`web/public/js/calidad.js`, `web/public/js/paginas/encuestas.js`.
+
+<a id="d61"></a>
+## D61 · Un estudio se corrige desde lo que quedó cargado, no desde el archivo
+
+**El problema.** Descubrir después de cargar que los textos quedaron mal
+obligaba a pedir el archivo otra vez y rehacer todo. Y el archivo no está: las
+filas de la ingesta diferida se purgan a los siete días.
+
+**La decisión.**
+
+- **El dato sale del store semántico.** Cada respuesta guarda su
+  `valor_texto` —la etiqueta con la que se embebió— y cada pregunta sus
+  opciones de ahora y las originales del archivo. Invirtiendo las etiquetas se
+  recupera el código, y con el código y la configuración nueva se recompone
+  el texto con `ingesta.respuesta_de`. Un código que no se había traducido
+  (`11427`) está guardado como `11427`, así que darle etiqueta lo traduce.
+- **Solo se re-embebe lo que cambió.** Si el texto nuevo tiene el mismo
+  `hash_texto`, la respuesta no se toca —ni se re-embebe ni se re-escribe;
+  hay una prueba que mira el `xmin`—. Si cambió, se re-embebe. Si con la
+  configuración nueva ya no genera respuesta (variable excluida, valor de no
+  respuesta, opción no marcada), se borra.
+- **Por la vía diferida, con el plan congelado.** El reproceso es un
+  `ingesta_trabajo` como cualquier carga, con `plan.operacion = 'reproceso'`:
+  la pregunta *antes* (para invertir las etiquetas viejas) y *después*. Cada
+  lote son ids de respuestas. No es una segunda ingesta: no resuelve
+  identidades, no crea individuos ni toca la bóveda; recompone el texto con
+  la función de siempre, escribe por `semantica.upsert_respuestas` (con el
+  guardia de PII) y **reaplica el gate de `uso_semantico`** en cada lote. Dos
+  reprocesos —o un reproceso y una carga— del mismo estudio no corren a la vez.
+- **La misma ruta revisa y ejecuta** (`solo_revisar`), como la importación:
+  cuántas respuestas se re-embeben, quedan igual o se borran, con ejemplos
+  de antes y después.
+- **Queda registrado qué se cambió y cuándo** en `reproceso` (store
+  semántico), campo por campo. Quién lo pidió queda en el trabajo diferido,
+  del lado de la bóveda: el uid de un usuario interno no tiene por qué viajar
+  al store semántico.
+- **Una variable excluida conserva su pregunta**, marcada `excluida`: una
+  serie de la Fase 4 puede apuntarle, y que existió y se excluyó es parte de
+  la historia del estudio.
+
+**Alternativas descartadas.**
+- *Guardar el valor crudo en `respuesta`.* Habría hecho la inversión
+  innecesaria, pero la spec pide no tocar `respuesta`, y con las etiquetas
+  originales conservadas la inversión alcanza. El caso en que no alcanza —dos
+  códigos con la misma etiqueta— es un archivo mal etiquetado que el
+  diagnóstico ya señala.
+- *Reprocesar llamando a la ingesta con filas reconstruidas.* Habría
+  reincorporado al panel y re-registrado participaciones: efectos sobre la
+  bóveda que un cambio de texto no tiene por qué tener.
+- *Un destino nuevo en `ingesta_trabajo`.* Habría pedido migrar la bóveda
+  para nada: el destino de un reproceso **es** la encuesta o la carga, y la
+  operación va en el plan.
+
+**Consecuencias.** Lo que la ingesta dejó afuera no se puede recuperar: lo no
+marcado de una batería o los valores de no respuesta excluidos no están en
+ninguna parte. La revisión lo avisa cuando se intenta. Y si un reproceso queda
+a medias (se actualizaron las preguntas y no se encoló), «Reprocesar todo de
+nuevo» pasa todas las respuestas por la configuración actual; el hash hace
+que solo se re-embeba lo desactualizado.
+
+**Dónde vive.** `functions/panel_api/reproceso.py`,
+`functions/panel_api/diferida.py` (`_ingestar_el_lote`),
+`db/semantica/0007_fase8_calidad_del_dato.sql`,
+`web/public/js/paginas/reproceso.js`.
+
 ---
 
 ## Anexo · Decisiones que no se tomaron
@@ -3023,4 +3337,10 @@ Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 | Saltear el paso de revisión en cargas chicas | **No se hace.** Agrega un clic a una operación que ya tiene varios, y si molesta se puede evaluar un umbral de filas — pero **nunca** en el modo «crear los individuos», que es el irreversible | [D57](#d57) |
 | Cachear los conteos de la pantalla de estadísticas | **No hizo falta todavía.** Se resuelven en pocas consultas agregadas, pero un `count(*)` sobre `respuesta` crece con el corpus. Conviene medirlo cuando haya 200.000 respuestas | [D57](#d57), `SPEC_fase7` §7 |
 | Acotar por rol quién puede ver las respuestas de un panelista | **Abierto.** Hoy alcanza el permiso `leer`, el mismo de la lista de resultados, y queda registrado. Si se decide acotarlo, el registro ya permite ver quién lo usaba | [D57](#d57) |
+| Que COLOQUIO adapte sus consultas a `v_persona_convocable` de una fila por persona | **Pendiente, y es de otro repositorio.** `finalidad = 'x'` pasa a `'x' = any(finalidades)` y lo de ámbito estudio va a `v_persona_finalidad_vigente`. Falla ruidosamente hasta que se haga | [D58](#d58) |
+| Que `v_fatiga_panelista` aplique el gate de consentimiento | **Abierto.** Expone hechos de fatiga de todos los miembros activos, también de quien no consintió el contacto. No es PII, pero sí un `id_persona` fuera del gate; conviene filtrarla o documentar por qué no | [D58](#d58) |
+| Pantalla de configuración global de los valores de no respuesta | **No se hizo.** La lista es editable por carga y se guarda con el cuestionario; el default vive en `calidad_dato.VALORES_NO_RESPUESTA` | [D60](#d60) |
+| Conjugar la pregunta propuesta («¿has consumido?» → «¿consumió?») | **Descartado a propósito.** La propuesta integra, limpia y baja énfasis; no reescribe | [D60](#d60) |
+| Recuperar en un reproceso lo que la ingesta descartó | **Imposible sin el archivo, y deliberado.** Lo no marcado y lo excluido no se guardan; la revisión lo avisa | [D61](#d61) |
+| Que el modo demo cubra las pantallas de las fases 7 y 8 | **Pendiente.** `demo.js` no simula la ficha seudónima, las respuestas, las estadísticas, la calidad del dato ni el reproceso; por eso las capturas de esas secciones del manual siguen pendientes | `docs/manual/README.md` |
 | Alinear el voseo de la interfaz con el registro formal del manual | Sin decidir; requeriría recapturar las 44 pantallas | PR de la Fase 2 |

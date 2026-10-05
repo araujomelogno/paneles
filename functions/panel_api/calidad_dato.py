@@ -415,9 +415,16 @@ def inferir_tipo(pregunta, por_valor, por_codigo):
     if tipo == ABIERTA or not opciones:
         cerrada = _cerrada_de(pregunta.get("codigo"), por_codigo)
         if cerrada:
+            # El texto de la cerrada ya limpio («P5: … (ESPONTÁNEA)» → «…»):
+            # es el que va a tener la cerrada si el analista acepta su
+            # propuesta, y si no, igual es el mejor texto para el «Otro».
+            texto_cerrada = cerrada.get("texto") or pregunta.get("texto")
+            texto_cerrada = (proponer_texto(cerrada.get("texto_original")
+                                            or texto_cerrada)["texto"]
+                             or texto_cerrada)
             propuestas.append((None, {
                 "fusionada_con": cerrada["codigo"],
-                "texto": cerrada.get("texto") or pregunta.get("texto"),
+                "texto": texto_cerrada,
                 "prefijo_respuesta": f"{_etiqueta_de_otro(cerrada)}:",
                 "tipo": ABIERTA,
             }, f"es el «Otro: especificar» de {cerrada['codigo']}: fusionada, "

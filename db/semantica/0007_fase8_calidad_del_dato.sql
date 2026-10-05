@@ -29,13 +29,18 @@
 -- Los nombres de columna pasan por el event trigger de la 0005 como
 -- cualquier otro: ninguno es de PII.
 
+-- Va entera en una transacción y se puede correr dos veces sin efecto: las
+-- columnas y la tabla llevan `if not exists`, y el relleno del original solo
+-- toca las filas que no lo tienen.
+begin;
+
 -- ============================================================
 --  1 · La pregunta: original y normalización
 -- ============================================================
 alter table pregunta
-  add column texto_original      text,
-  add column opciones_originales jsonb,
-  add column normalizacion       jsonb not null default '{}'::jsonb;
+  add column if not exists texto_original      text,
+  add column if not exists opciones_originales jsonb,
+  add column if not exists normalizacion       jsonb not null default '{}'::jsonb;
 
 comment on column pregunta.texto_original is
   'Fase 8 — el texto de la pregunta tal como vino en el archivo (el '
@@ -60,7 +65,7 @@ update pregunta
 --  2 · La configuración de la carga
 -- ============================================================
 alter table cuestionario
-  add column normalizacion jsonb not null default '{}'::jsonb;
+  add column if not exists normalizacion jsonb not null default '{}'::jsonb;
 
 comment on column cuestionario.normalizacion is
   'Fase 8 — la configuración de la carga que no es de ninguna pregunta: '
@@ -80,7 +85,7 @@ comment on column cuestionario.normalizacion is
 --
 -- Quién lo pidió **no** está acá: es un dato de un usuario interno y vive del
 -- lado de la identidad (`ingesta_trabajo.creado_por`).
-create table reproceso (
+create table if not exists reproceso (
   id                    bigint generated always as identity primary key,
   cuestionario_id       bigint not null references cuestionario(id) on delete cascade,
   creado_en             timestamptz not null default now(),
@@ -89,7 +94,7 @@ create table reproceso (
   trabajo_id            bigint
 );
 
-create index reproceso_por_cuestionario on reproceso (cuestionario_id, creado_en desc);
+create index if not exists reproceso_por_cuestionario on reproceso (cuestionario_id, creado_en desc);
 
 comment on table reproceso is
   'Fase 8 · R8.9 — qué se cambió de un estudio ya ingestado, y cuándo. El '
@@ -97,3 +102,5 @@ comment on table reproceso is
   '`hash_texto`) y borra las de lo que se excluyó.';
 
 alter table reproceso enable row level security;
+
+commit;
