@@ -96,6 +96,7 @@ restricción real del sistema.
 | [D60](#d60) | El texto que se embebe: el sistema propone, el analista confirma | 8 |
 | [D61](#d61) | Un estudio se corrige desde lo que quedó cargado, no desde el archivo | 8 |
 | [D62](#d62) | Un chequeo que no puede probar se omite, no falla; y la auditoría se prueba con el actor del contrato | 5 |
+| [D63](#d63) | El paso de revisión advierte; solo frena lo que una decisión no puede suplir | 8 (bug) |
 
 ---
 
@@ -3341,6 +3342,93 @@ un cambio de contrato y de migración.
 **Dónde vive.** `scripts/verificar_coloquio.py` (`Omitido`, `es_cloud_sql`,
 `veredicto`), `functions/tests/test_bateria_coloquio_estados.py`,
 `docs/DESPLIEGUE - COLOQUIO Fase 0.md` §7.1.1.
+
+---
+
+<a id="d63"></a>
+## D63 · El paso de revisión advierte; solo frena lo que una decisión no puede suplir
+
+**El problema.** Con la Fase 8 desplegada, una carga con el correo marcado
+como `email` mostraba «no hay ninguna variable marcada como documento,
+correo…» y no se podía ejecutar (`specs/BUG_validacion_dedup_bloquea.md`).
+Eran tres defectos encadenados:
+
+1. **El correo no llegaba.** El diagnóstico de calidad del dato corría sobre
+   todas las variables del `.sav`, también las marcadas como demográficas.
+   La columna de correo es una abierta llena de correos, así que salía como
+   «posibles datos personales» —en rojo— con la acción «Excluir la
+   variable», y esa acción **borraba la fila**, marcado `email` incluido.
+   Quien seguía el consejo perdía la clave de dedup sin enterarse, y la
+   revisión decía la verdad sobre lo que había recibido.
+2. **Advertir con una bandera que se leía como prohibir.** `grave` hacía dos
+   cosas a la vez —mostrar en rojo y, en la lectura de todos, frenar— y el
+   botón seguía diciendo «Confirmar e importar» debajo de un cartel rojo.
+3. **Un botón que no respondía.** Con la revisión abierta, el «Ingestar» del
+   pie del modal seguía a la vista. Apretarlo volvía a pedir la revisión, la
+   pintaba igual encima y dejaba colgada la anterior: nada se movía y no
+   llegaba ninguna ingesta.
+
+**Lo que se decidió.**
+
+- **La calidad del dato es sobre lo que se embebe.** El panel filtra al
+  pintar (`calidad.soloSemanticas`) lo que habla de variables con rol
+  demográfico —se filtra al pintar y no al recibir porque el rol se puede
+  cambiar después—, y `aplicarPropuesta` no toca nunca una fila demográfica.
+- **«Hay clave» tiene una sola definición**, `resumen_ingesta.claves_de_dedup`,
+  en los términos de `dedup.resolver`: documento, correo, nombre con fecha de
+  nacimiento. Una clave parcial cuenta y se informa con su cobertura («300 de
+  1131 filas»); una marcada sin ningún valor no, y el mensaje la nombra. La
+  misma función decide el aviso de la revisión y la constancia de la ingesta.
+- **Dos campos y no uno:** `grave` es cómo se muestra, `bloquea` es si frena.
+  Ninguna advertencia del resumen frena. Lo que frena lo rechaza la ruta
+  (`DatosInvalidos`) y su motivo se escribe **junto al botón**.
+- **Sin clave se puede continuar**, con dos salidas que dicen su nombre
+  —«Volver a corregir el mapeo» y «Continuar igual, sin clave de dedup»— y la
+  decisión queda en el plan del trabajo (`plan.sin_clave_de_dedup`), que se
+  guarda con la carga (D56) y vuelve con el estado: al retomar la carga otro
+  día, la constancia sigue ahí.
+- **El pie del modal se esconde mientras se revisa**, y toda salida temprana
+  de «Ingestar» escribe su motivo. Lo que revienta sin estar previsto también
+  se muestra.
+
+**El inventario.** `resumen_ingesta.VALIDACIONES` lista cada validación del
+paso con su clase y su motivo, y una prueba falla si el resumen emite una que
+no está:
+
+| Bloquea | Por qué |
+|---|---|
+| Crear personas sin evidencia de consentimiento | No hay base legal para el alta |
+| La variable de consentimiento no está en el archivo | Ninguna fila evidenciaría nada |
+| Ningún campo de identidad (documento, correo, nombre) | No hay a quién dar de alta |
+| Un sí/no marcado como documento | Fusiona la base entera: es un error de marcado |
+
+| Advierte | Por qué |
+|---|---|
+| Sin clave de dedup | Duplicados futuros; hay cargas legítimas sin clave |
+| Clave sospechosa (muchas filas, pocos valores) | Suele ser un marcado equivocado, pero un padrón con repetidos existe |
+| Pregunta sin texto | Queda fuera de las búsquedas, no rompe nada |
+| Valores sin mapear | Un 99 de «no contesta» sin categoría puede estar bien |
+| Lo que rompe el texto embebido (Fase 8) | Degrada la búsqueda; la PII en texto libre es un indicio |
+
+**La regla para lo que venga.** Bloquear solo cuando falta algo que el
+sistema no puede suplir con una decisión del usuario; advertir cuando falta
+algo cuyo costo el usuario puede asumir a conciencia. Y una advertencia
+siempre dice la consecuencia y deja seguir.
+
+**Lo que se descartó.**
+
+- *No diagnosticar las demográficas en el servidor.* El análisis del `.sav`
+  sugiere el rol, pero el analista lo cambia después; filtrar en el servidor
+  dejaría sin hallazgos a una variable que se desmarca.
+- *Un botón «Ignorar» en el aviso.* Habría sido una tercera salida para lo
+  mismo que «Continuar igual», y sin dejar constancia.
+
+**Dónde vive.** `functions/panel_api/resumen_ingesta.py` (`claves_de_dedup`,
+`sin_clave_de_dedup`, `VALIDACIONES`), `functions/panel_api/ruteo.py`
+(`_con_constancia_de_dedup`), `functions/panel_api/diferida.py` (`estado`),
+`web/public/js/calidad.js` (`soloSemanticas`),
+`web/public/js/paginas/encuestas.js`,
+`functions/tests/test_bug_dedup_no_bloquea.py`.
 
 ---
 

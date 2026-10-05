@@ -132,6 +132,15 @@ Desde que se completó la fase, dos más:
   Y toda ruta de las fases 7 y 8 tiene que usarse desde una pantalla:
   `test_rutas_con_pantalla.py` falla si una queda solo en `api.js`.
 
+Y en el paso de revisión, **advertir no es bloquear** (D63). Solo frena lo
+que el sistema no puede suplir con una decisión —crear personas sin evidencia
+de consentimiento, sin ningún dato de identidad— y eso lo rechaza la ruta, con
+el motivo junto al botón. Todo lo demás es advertencia (`bloquea: false`),
+dice su consecuencia y deja seguir; cada una figura en
+`resumen_ingesta.VALIDACIONES` y una prueba falla si aparece una que no está.
+«Hay clave de dedup» se pregunta a `claves_de_dedup`, en los términos de
+`dedup.resolver`, y no se vuelve a calcular en otro lado.
+
 Y una que parece un descuido y no lo es: **`motivo_reidentificacion` no
 tiene clave foránea**. `registrar_reidentificacion` documenta que nunca
 pierde el rastro por una etiqueta desconocida, y una FK invertiría ese
@@ -158,6 +167,10 @@ Lo que no hay que deshacer:
 - **La PII en texto libre es un indicio y no bloquea.** Son patrones, se
   informan como tales y los ejemplos van enmascarados. El guardia duro sigue
   siendo el de nombres de columna.
+- **La calidad del dato es sobre lo que se embebe.** Una variable con rol
+  demográfico no recibe hallazgos (`calidad.soloSemanticas`) y ninguna
+  propuesta toca su fila: «Excluir la variable» sobre la columna de correo
+  se llevaba el marcado `email` y con él la clave de dedup.
 - **El reproceso no es una segunda ingesta.** Recompone el texto desde el
   store semántico (invirtiendo las etiquetas) con `respuesta_de`, re-embebe
   solo lo que cambió por `hash_texto`, corre por la vía diferida con el plan

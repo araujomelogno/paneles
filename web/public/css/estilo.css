@@ -583,3 +583,11 @@ tr.fila-problema td { background: var(--red-light); }
 .btn-link { border: none; background: none; color: var(--orange); font-weight: 700;
   cursor: pointer; font-size: 0.72rem; padding: 0 0.25rem; }
 .btn-link:disabled { color: var(--gray); cursor: default; }
+
+/* BUG_validacion_dedup_bloquea — el motivo junto al botón. Ocupa todo el
+   ancho del pie, arriba de los botones, y no existe cuando está vacío. El
+   pie de la revisión ya es `sticky` como cualquier `.modal-foot`: sus dos
+   salidas quedan a la vista aunque el resumen sea largo. */
+.alerta-pie { flex-basis: 100%; }
+.alerta-pie:empty { display: none; }
+.alerta-pie .alert { margin: 0 0 0.4rem; text-align: left; }

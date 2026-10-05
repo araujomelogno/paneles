@@ -42,6 +42,58 @@ PROPORCION_SOSPECHOSA = 0.5
 FILAS_PARA_SOSPECHAR = 10
 EJEMPLOS_POR_CLAVE = 5
 
+# ── Qué frena y qué solo avisa ──────────────────────────────────────
+# El inventario de lo que el paso de revisión puede decir, cada cosa con su
+# clase y su motivo (BUG_validacion_dedup_bloquea §6). Una detección que
+# bloquea sin salida convierte una ayuda en un obstáculo, así que la regla es:
+#
+#   · **Bloquea** solo lo que falta y el sistema no puede suplir con una
+#     decisión del analista: la base legal del alta, una variable que no está
+#     en el archivo. Esos no son advertencias del resumen: los rechaza la
+#     ruta (`DatosInvalidos`) y la pantalla muestra el motivo junto al botón.
+#   · **Advierte** todo lo demás: lo que tiene un costo que el analista puede
+#     asumir a conciencia. Se muestra, se explica la consecuencia, y se puede
+#     continuar.
+#
+# `grave` es cómo se muestra (destacada, en rojo); `bloquea` es si frena. Que
+# sean dos campos es el punto: antes una sola bandera hacía las dos cosas, y
+# «importante» terminaba leyéndose como «prohibido».
+BLOQUEA, ADVIERTE = "bloquea", "advierte"
+
+VALIDACIONES = {
+    # — Las que rechaza la ruta antes de escribir nada —
+    "sin_evidencia_de_consentimiento": (
+        BLOQUEA, "crear personas sin evidencia de consentimiento no tiene base "
+                 "legal: falta algo que ninguna decisión del analista suple"),
+    "variable_de_consentimiento_ausente": (
+        BLOQUEA, "la variable declarada no está en el archivo: ninguna fila "
+                 "evidenciaría consentimiento y el alta daría cero sin explicar"),
+    "sin_campo_de_identidad": (
+        BLOQUEA, "para crear personas hace falta al menos documento, correo o "
+                 "nombre: sin eso no hay a quién dar de alta"),
+    "documento_implausible": (
+        BLOQUEA, "una variable de sí/no marcada como documento fusiona la base "
+                 "entera en dos personas: es un error de marcado, no un costo"),
+    # — Las del resumen: se muestran y se puede seguir —
+    "sin_clave_de_dedup": (
+        ADVIERTE, "una carga futura con la misma gente va a crear duplicados; "
+                  "hay casos legítimos —una base que se carga una vez, una "
+                  "identidad que resuelve el alias— y el costo se puede asumir"),
+    "clave_de_dedup_sospechosa": (
+        ADVIERTE, "muchas filas comparten la clave: suele ser un marcado "
+                  "equivocado, pero un padrón con repetidos existe"),
+    "pregunta_sin_texto": (
+        ADVIERTE, "la respuesta queda fuera de las búsquedas, no rompe nada"),
+    "valores_sin_mapear": (
+        ADVIERTE, "esas personas quedan sin el atributo; un 99 de «no "
+                  "contesta» sin categoría puede estar bien"),
+    # Los hallazgos de calidad del dato que rompen el texto embebido (Fase 8)
+    # entran con su propio tipo, todos como advertencia: la PII en texto libre
+    # es un indicio, no una certeza.
+    "calidad_del_dato": (
+        ADVIERTE, "degrada el texto que se embebe; el analista decide"),
+}
+
 
 def _valor(fila, variable):
     if not variable:
@@ -68,6 +120,63 @@ def _grupos(filas, variables):
     return conteo
 
 
+def _canonica(marca):
+    """Una marca demográfica en la forma `{"campo": …, "mapeo": …}`.
+
+    La ruta de `.sav` manda el marcado ya normalizado; la de filas (`.csv`,
+    `.xlsx`) lo manda como viene, y la forma vieja es `{"MAIL": "email"}`.
+    Sin esto el resumen de esa ruta reventaba con la primera demográfica.
+    """
+    if isinstance(marca, dict):
+        return marca
+    return {"campo": marca, "mapeo": {}}
+
+
+def _por_campo(demograficas):
+    """`{campo de persona: variable del archivo}` del marcado."""
+    return {m["campo"]: variable
+            for variable, m in ((v, _canonica(m)) for v, m in
+                                (demograficas or {}).items())
+            if m.get("campo") in sav.CAMPOS_DEMOGRAFICOS}
+
+
+def claves_de_dedup(demograficas, filas):
+    """Las claves con las que `dedup.resolver` va a poder reconocer a alguien.
+
+    **En los mismos términos que el dedup**: documento, correo, y nombre con
+    fecha de nacimiento. Una clave presente en parte de las filas **cuenta**
+    —300 correos sobre 1131 filas deduplican a esos 300— y se informa con su
+    cobertura. Lo que no cuenta es una marcada que no trae ni un valor: el
+    dedup no tendría con qué comparar.
+
+    Es la única definición de «hay clave»: la usan el resumen y la ingesta,
+    para que lo que la revisión avisa sea lo que la carga registra.
+    """
+    filas = list(filas or [])
+    por_campo = _por_campo(demograficas)
+    claves = []
+    for campo in CLAVES_SIMPLES:
+        if por_campo.get(campo):
+            claves.append(_estadistica_de_clave(
+                campo, (campo,), (por_campo[campo],), filas))
+    if all(por_campo.get(c) for c in CLAVE_COMPUESTA):
+        claves.append(_estadistica_de_clave(
+            "nombre + fecha de nacimiento", CLAVE_COMPUESTA,
+            tuple(por_campo[c] for c in CLAVE_COMPUESTA), filas))
+    return claves
+
+
+def sin_clave_de_dedup(plan, filas):
+    """¿La carga crea personas sin ninguna clave de dedup con valores?
+
+    Es lo que la revisión advierte y lo que la ingesta deja registrado cuando
+    el analista decide continuar igual."""
+    if (plan or {}).get("modo") != "crear_individuos":
+        return False
+    return not any(c["filas_con_valor"]
+                   for c in claves_de_dedup(plan.get("demograficas"), filas))
+
+
 def _estadistica_de_clave(nombre, campos, variables, filas):
     conteo = _grupos(filas, variables)
     con_valor = sum(conteo.values())
@@ -84,6 +193,10 @@ def _estadistica_de_clave(nombre, campos, variables, filas):
         "campos": list(campos),
         "variables": list(variables),
         "filas_con_valor": con_valor,
+        # La cobertura: «email: 300 de 1131 filas». Una clave parcial sirve
+        # —deduplica a los que la traen— y el número dice cuánto.
+        "filas_total": len(filas),
+        "cobertura": f"{con_valor} de {len(filas)} filas",
         "valores_distintos": distintos,
         "filas_que_colisionan": colisionan,
         "grupos_repetidos": len(repetidos),
@@ -130,7 +243,8 @@ def resumir(plan, filas, *, panel=None, evidencia=None, destino_tipo="encuesta",
     """
     filas = list(filas or [])
     preguntas = list(plan.get("preguntas") or [])
-    demograficas = plan.get("demograficas") or {}
+    demograficas = {v: _canonica(m)
+                    for v, m in (plan.get("demograficas") or {}).items()}
     columna_id = plan.get("columna_id")
 
     texto_de = {p.get("codigo"): (p.get("texto") or "") for p in preguntas}
@@ -168,17 +282,8 @@ def resumir(plan, filas, *, panel=None, evidencia=None, destino_tipo="encuesta",
                           "motivo": "no se declaró en la lista de variables"})
 
     # ── Las claves de dedup ──────────────────────────────────────────
-    por_campo = {m["campo"]: variable for variable, m in demograficas.items()
-                 if m.get("campo") in (*sav.CAMPOS_DEMOGRAFICOS,)}
-    dedup = []
-    for campo in CLAVES_SIMPLES:
-        if por_campo.get(campo):
-            dedup.append(_estadistica_de_clave(
-                campo, (campo,), (por_campo[campo],), filas))
-    if all(por_campo.get(c) for c in CLAVE_COMPUESTA):
-        dedup.append(_estadistica_de_clave(
-            "nombre + fecha de nacimiento", CLAVE_COMPUESTA,
-            tuple(por_campo[c] for c in CLAVE_COMPUESTA), filas))
+    por_campo = _por_campo(demograficas)
+    dedup = claves_de_dedup(demograficas, filas)
 
     estimado = _personas_estimadas(filas, por_campo)
 
@@ -249,11 +354,20 @@ def resumir(plan, filas, *, panel=None, evidencia=None, destino_tipo="encuesta",
             "descartadas_no_respuesta": descartes.get(ingesta.NO_RESPUESTA, 0),
         },
         "dedup": dedup,
+        # El mismo cálculo que va a registrar la ingesta si se continúa.
+        "sin_clave_de_dedup": sin_clave_de_dedup(
+            {"modo": plan.get("modo"), "demograficas": demograficas}, filas),
         "calidad": calidad,
         "vista_previa": previas,
     }
     resumen["advertencias"] = _advertencias(resumen, preguntas, demograficas,
                                             tipo_de, filas)
+    # Ninguna advertencia del resumen frena la carga: lo que frena lo rechaza
+    # la ruta. Se dice explícito en cada una para que la pantalla no tenga
+    # que deducirlo de `grave`.
+    for aviso in resumen["advertencias"]:
+        aviso["bloquea"] = False
+    resumen["bloquea"] = False
     return resumen
 
 
@@ -344,17 +458,33 @@ def _advertencias(resumen, preguntas, demograficas, tipo_de, filas):
                 and set(hallazgo["variables"]) <= aceptadas):
             continue
         avisos.append({"tipo": hallazgo["tipo"], "grave": False,
+                       "clase": "calidad_del_dato",
                        "variables": hallazgo["variables"],
                        "mensaje": hallazgo["mensaje"]})
 
-    if resumen["identidad"]["crea_personas"] and not resumen["dedup"]:
+    if resumen["sin_clave_de_dedup"]:
+        # El mensaje dice exactamente lo que la condición mira: las tres
+        # claves del dedup y si traen valores. Si hay alguna marcada pero
+        # vacía, lo nombra: «no hay clave» a secas, con el correo marcado,
+        # es lo que hizo creer que el sistema no lo veía.
+        vacias = [c["clave"] for c in resumen["dedup"] if not c["filas_con_valor"]]
+        marcadas = (
+            f" {', '.join(f'«{c}»' for c in vacias)} está(n) marcada(s), pero "
+            f"ninguna fila trae un valor." if vacias else "")
         avisos.append({
             "tipo": "sin_clave_de_dedup", "grave": True,
+            "acciones": ["volver_a_corregir", "continuar_igual"],
             "mensaje": (
-                "No hay ninguna variable marcada como documento, correo, ni "
-                "nombre con fecha de nacimiento. Sin clave de deduplicación "
-                "no hay forma de reconocer a alguien que ya esté en el "
-                "sistema, y cada carga vuelve a crear a las mismas personas."),
+                "Ninguna fila trae una clave de deduplicación: ni documento, "
+                "ni correo, ni nombre con fecha de nacimiento." + marcadas +
+                " Sin clave no hay forma de reconocer a alguien que ya esté "
+                "en el sistema: una carga futura con la misma gente va a "
+                "crear registros duplicados. Podés volver a corregir el "
+                "mapeo o continuar igual —hay casos en que está bien, como "
+                "una base que se carga una sola vez—; si continuás, queda "
+                "registrado en el resultado de la carga."),
         })
 
+    for aviso in avisos:
+        aviso.setdefault("clase", aviso["tipo"])
     return avisos

@@ -795,9 +795,24 @@ function abrirIngesta(destino, alTerminar) {
       </div>`,
     acciones: [
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
-      { texto: 'Ingestar', clase: 'btn-orange', onClick: () => correr() },
+      // Ninguna acción sin respuesta visible: si `correr` revienta por algo
+      // que nadie previó, el motivo aparece junto al botón y no queda como
+      // «uncaught in promise» en una consola que nadie mira.
+      { texto: 'Ingestar', clase: 'btn-orange',
+        onClick: () => correr().catch((error) => avisarEnIngesta(alerta(
+          `No se pudo continuar: ${error.message}`))) },
     ],
   });
+
+  /* El aviso junto al botón. El de arriba del modal sigue —es donde va la
+     barra de avance—, pero con una lista larga de variables quien aprieta
+     «Ingestar» está mirando el pie: un motivo escrito solo arriba se ve
+     como un botón que no hace nada (BUG_validacion_dedup_bloquea §4). */
+  const pie$ = $('.modal-foot', caja);
+  const alertaPie$ = document.createElement('div');
+  alertaPie$.id = 'ing-alerta-pie';
+  alertaPie$.className = 'alerta-pie';
+  pie$.prepend(alertaPie$);
 
   /* Editor de preguntas. */
   const preguntas$ = $('#preguntas', caja);
@@ -1058,6 +1073,7 @@ function abrirIngesta(destino, alTerminar) {
       // existen.
       refrescarMapeo(fila);
       pedirPrevia(fila);
+      pintarCalidad();
     };
     fila.querySelector('.p-opciones').oninput = () => {
       ajustarFila(fila);
@@ -1203,6 +1219,10 @@ function abrirIngesta(destino, alTerminar) {
     Object.entries(propuesta || {}).forEach(([codigo, campos]) => {
       const fila = filaDe(codigo);
       if (!fila) return;
+      // Una propuesta de calidad del dato es sobre lo que se embebe. Nunca
+      // toca una fila demográfica: quitarla se llevaría su marcado —el
+      // correo, el documento— y con él la clave de dedup.
+      if (fila.querySelector('.p-rol').value) return;
       if (campos.incluir === false) { quitarFila(fila); return; }
       if ('texto' in campos) fila.querySelector('.p-texto').value = campos.texto || '';
       if ('tipo' in campos) fila.querySelector('.p-tipo').value = campos.tipo;
@@ -1220,12 +1240,19 @@ function abrirIngesta(destino, alTerminar) {
     });
   }
 
+  /* ¿La variable está marcada como demográfica? Va a la bóveda, no se
+     embebe, y el panel de calidad no tiene nada que proponerle. */
+  const esDemografica = (codigo) => Boolean(filaDe(codigo)?.querySelector('.p-rol').value);
+
   function pintarCalidad() {
     const destino = $('#calidad-panel', caja);
     if (!diagnostico) return;
     $('#bloque-calidad', caja).classList.remove('hidden');
-    destino.innerHTML = calidad.panelHtml(diagnostico, aplicados);
-    calidad.activarPanel(destino, diagnostico, aplicados,
+    // Se filtra al pintar, no al recibir: el rol se puede cambiar después,
+    // y una variable que deja de ser demográfica recupera sus hallazgos.
+    const visible = calidad.soloSemanticas(diagnostico, esDemografica);
+    destino.innerHTML = calidad.panelHtml(visible, aplicados);
+    calidad.activarPanel(destino, visible, aplicados,
       (_h, accion) => aplicarPropuesta(accion.propuesta), pintarCalidad);
   }
 
@@ -1619,6 +1646,7 @@ function abrirIngesta(destino, alTerminar) {
   function avisarEnIngesta(html) {
     const alerta$ = $('#ing-alerta', caja);
     alerta$.innerHTML = html;
+    alertaPie$.innerHTML = html;
     // De golpe y no con `smooth`: el desplazamiento suave tarda unos 300 ms
     // y una respuesta rápida termina antes, así que el usuario alcanza a ver
     // la vista moviéndose hacia algo que ya no está. Acá lo que importa es
@@ -1646,13 +1674,25 @@ function abrirIngesta(destino, alTerminar) {
        debajo, solo oculto. */
     const revision$ = $('#ing-revision', caja);
     const formulario$ = $('#ing-formulario', caja);
+    // Sin clave de dedup la revisión no frena: ofrece las dos salidas con su
+    // nombre. «Confirmar e importar» a secas, debajo de un cartel rojo, se
+    // lee como «no se puede», y es justo lo que el analista puede decidir.
+    const sinClave = Boolean(resumen.sin_clave_de_dedup);
     revision$.innerHTML = resumenHtml(resumen) + `
-      <div class="modal-foot" style="padding-left:0;padding-right:0">
-        <button class="btn btn-outline" id="volver-a-corregir">Volver a corregir</button>
-        <button class="btn btn-orange" id="confirmar-importar">Confirmar e importar</button>
+      <div class="modal-foot pie-revision" style="padding-left:0;padding-right:0">
+        <button class="btn btn-outline" id="volver-a-corregir">${sinClave
+          ? 'Volver a corregir el mapeo' : 'Volver a corregir'}</button>
+        <button class="btn btn-orange" id="confirmar-importar">${sinClave
+          ? 'Continuar igual, sin clave de dedup' : 'Confirmar e importar'}</button>
       </div>`;
     revision$.classList.remove('hidden');
     formulario$.classList.add('hidden');
+    // El pie del modal se esconde mientras se revisa. Si quedaba a la vista,
+    // apretar su «Ingestar» volvía a pedir la revisión, la pintaba igual
+    // encima y dejaba la anterior colgada: para quien mira, el botón no
+    // hacía nada. Ése fue el «cuelgue» del bug.
+    pie$.classList.add('hidden');
+    alertaPie$.innerHTML = '';
     caja.scrollTop = 0;
 
     return new Promise((resolver) => {
@@ -1660,6 +1700,7 @@ function abrirIngesta(destino, alTerminar) {
         revision$.classList.add('hidden');
         revision$.innerHTML = '';
         formulario$.classList.remove('hidden');
+        pie$.classList.remove('hidden');
         resolver(confirmado);
       };
       $('#volver-a-corregir', revision$).onclick = () => cerrar(false);
@@ -1679,9 +1720,18 @@ function abrirIngesta(destino, alTerminar) {
         <td>${extra}</td></tr>`;
 
   function resumenHtml(r) {
-    const graves = r.advertencias.filter((a) => a.grave);
+    // Ninguna advertencia del resumen frena (`bloquea: false`): lo que frena
+    // lo rechaza el servidor y se ve junto al botón. `grave` es cómo se
+    // muestra, no si se puede seguir.
+    const sinClave = r.advertencias.find((a) => a.tipo === 'sin_clave_de_dedup');
+    const graves = r.advertencias.filter((a) => a.grave && a !== sinClave);
     const leves = r.advertencias.filter((a) => !a.grave);
     return `
+    ${sinClave ? `<div class="aviso grave" id="aviso-sin-clave">
+      <h4>Esta carga no tiene clave de deduplicación</h4>
+      <p>${esc(sinClave.mensaje)}</p>
+      <p class="small">Abajo: <strong>Volver a corregir el mapeo</strong> o
+        <strong>Continuar igual</strong>.</p></div>` : ''}
     ${graves.map((a) => alerta(a.mensaje, 'error')).join('')}
     ${leves.map((a) => alerta(a.mensaje, 'warn')).join('')}
 
@@ -1823,7 +1873,8 @@ function abrirIngesta(destino, alTerminar) {
           <td>${esc(c.clave)}
               <div class="small">${c.variables.map(
                 (v) => `<code>${esc(v)}</code>`).join(' + ')}</div></td>
-          <td class="num">${c.filas_con_valor}</td>
+          <td class="num">${c.filas_con_valor}
+              <div class="small muted">${esc(c.cobertura || '')}</div></td>
           <td class="num"><strong>${c.valores_distintos}</strong></td>
           <td class="num">${c.filas_que_colisionan}</td>
           <td class="small">${c.ejemplos.map(
@@ -1864,8 +1915,9 @@ function abrirIngesta(destino, alTerminar) {
                + ` · ${f.version_texto}`));
     }
     r.dedup.forEach((c) => lineas.push(
-      `${c.clave}: ${c.filas_con_valor} filas, ${c.valores_distintos} distintos,`
+      `${c.clave}: ${c.cobertura || `${c.filas_con_valor} filas`}, ${c.valores_distintos} distintos,`
       + ` ${c.filas_que_colisionan} colisionan`));
+    if (r.sin_clave_de_dedup) lineas.push('Sin clave de deduplicación: se continuó igual.');
     r.advertencias.forEach((a) => lineas.push(
       `${a.grave ? '[!]' : '[.]'} ${a.mensaje}`));
     return lineas.join('\n');
@@ -2070,6 +2122,9 @@ function mostrarResumenDeIngesta(resultado, esCarga, titulo = 'Ingesta terminada
         ['Datos completados en la bóveda', resultado.demograficos_completados || 0],
         ['Discrepancias con la ficha', (resultado.discrepancias_demograficas || []).length, true],
       ], [
+        resultado.sin_clave_de_dedup
+          ? 'Esta carga se hizo sin clave de deduplicación —ni documento, ni correo, ni nombre con fecha de nacimiento—: se decidió continuar igual en la revisión. Una carga futura con la misma gente va a crear registros duplicados.'
+          : null,
         resultado.creacion_de_individuos?.aviso_sin_consentimiento?.mensaje,
         resultado.creacion_de_individuos?.aviso_sin_la_otra_finalidad?.mensaje,
         (resultado.sin_mapear || []).length
@@ -2160,10 +2215,14 @@ async function seguirIngesta(trabajoId, { avance, esCarga, alTerminar,
   // se la agrega acá para que el resumen diga la carga entera. Al retomar
   // una carga desde cero —otra pestaña, otro día— no se tiene, y entonces
   // no se muestra: ya pasó y las personas están en Panelistas.
-  mostrarResumenDeIngesta(
-    creacion ? { ...(estado.resumen || {}), creacion_de_individuos: creacion }
-             : estado.resumen,
-    esCarga, titulo);
+  // La constancia de que se cargó sin clave de dedup viene del plan del
+  // trabajo, no de esta pestaña: al retomar la carga otro día también está.
+  const resultado = {
+    ...(estado.resumen || {}),
+    ...(creacion ? { creacion_de_individuos: creacion } : {}),
+    sin_clave_de_dedup: Boolean(estado.sin_clave_de_dedup),
+  };
+  mostrarResumenDeIngesta(resultado, esCarga, titulo);
   if ((estado.fallidos || []).length) avisarDeLotesFallidos(estado, esCarga, alTerminar);
   return estado;
 }

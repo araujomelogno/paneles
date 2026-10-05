@@ -67,6 +67,41 @@ export function muestraDeFilas(filas, codigo) {
   return lista.map(([valor, n]) => ({ valor, filas: n }));
 }
 
+/* ── Solo lo que va al store semántico ────────────────────────────── */
+
+/* El diagnóstico sin lo que habla de variables marcadas como demográficas.
+
+   Una demográfica va a la bóveda, no se embebe: un hallazgo sobre su texto
+   embebido no tiene objeto, y uno de «datos personales en texto libre» sobre
+   la columna de correo es directamente dañino. Ofrecía «Excluir la
+   variable», quien seguía el consejo en rojo borraba la fila con su marcado
+   `email`, y la revisión decía después que no había clave de dedup
+   (BUG_validacion_dedup_bloquea). `esDemografica(codigo)` lo decide la
+   pantalla, porque el rol se puede cambiar después del análisis.
+
+   Un hallazgo agrupado pierde solo las variables demográficas —sus ítems y
+   sus propuestas—, y si no le queda ninguna, desaparece. */
+export function soloSemanticas(diagnostico, esDemografica) {
+  if (!diagnostico) return diagnostico;
+  const resumen = { rompe: 0, mejora: 0, info: 0 };
+  const hallazgos = [];
+  (diagnostico.hallazgos || []).forEach((h) => {
+    const variables = (h.variables || []).filter((c) => !esDemografica(c));
+    if ((h.variables || []).length && !variables.length) return;
+    const filtrar = (propuesta) => Object.fromEntries(Object.entries(propuesta || {})
+      .filter(([codigo]) => !esDemografica(codigo)));
+    const acciones = (h.acciones || [])
+      .map((a) => ({ ...a, propuesta: filtrar(a.propuesta) }))
+      .filter((a) => Object.keys(a.propuesta).length);
+    const detalle = h.detalle?.items
+      ? { ...h.detalle, items: h.detalle.items.filter((it) => !esDemografica(it.codigo)) }
+      : h.detalle;
+    hallazgos.push({ ...h, variables, acciones, detalle });
+    resumen[h.severidad] = (resumen[h.severidad] || 0) + 1;
+  });
+  return { ...diagnostico, hallazgos, resumen };
+}
+
 /* ── El panel ─────────────────────────────────────────────────────── */
 
 export function panelHtml(diagnostico, aplicados = new Set()) {
