@@ -108,9 +108,10 @@ def test_el_mensaje_nombra_las_mismas_claves_que_mira_la_condicion():
     r = resumen_ingesta.resumir(
         _plan(demograficas={"NOM": {"campo": "nombre", "mapeo": {}}}), _filas(12))
     aviso = next(a for a in r["advertencias"] if a["tipo"] == "sin_clave_de_dedup")
-    for nombre in ("documento", "correo", "nombre con fecha de nacimiento"):
+    for nombre in ("documento", "correo", "celular",
+                   "nombre con fecha de nacimiento"):
         assert nombre in aviso["mensaje"]
-    assert resumen_ingesta.CLAVES_SIMPLES == ("documento", "email")
+    assert resumen_ingesta.CLAVES_SIMPLES == ("documento", "email", "celular")
     assert resumen_ingesta.CLAVE_COMPUESTA == ("nombre", "fecha_nacimiento")
 
 

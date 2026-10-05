@@ -77,6 +77,22 @@ def _tirados_y_recreados(sql):
     return objetos
 
 
+def _indices_del_ddl(sql):
+    """Los índices con nombre que crea la migración.
+
+    No se exige declararlos —un índice es un detalle de rendimiento, y la
+    mayoría de las migraciones crean otras cosas visibles—, pero sí se
+    permite: es lo único que crea la 0022. Lo que no se permite es declarar
+    uno que el DDL no crea."""
+    sql = re.sub(r"--[^\n]*", "", sql)
+    sql = re.sub(r"'[^']*'", "''", sql)
+    return {
+        nombre.lower() for nombre in re.findall(
+            r"create\s+(?:unique\s+)?index\s+(?:if\s+not\s+exists\s+)?"
+            r"([a-z_][a-z0-9_]*)\s+on\b", sql, re.I)
+    }
+
+
 def _objetos_del_ddl(sql):
     """Tablas, vistas, funciones y columnas que declara un archivo de migración."""
     # Los literales de texto se sacan primero. La 0005 del store semántico
@@ -152,11 +168,14 @@ def test_lo_declarado_coincide_con_lo_que_crean_las_migraciones(store, migracion
             f"la migración por aplicada sin haber corrido. El objeto queda "
             f"declarado en la migración que lo creó"
         )
-        sobran = set(declarados) - reales
+        sobran = set(declarados) - reales - _indices_del_ddl(sql)
         assert not sobran, (
             f"esquema.py declara {sorted(sobran)} en {store}/{archivo} y el DDL "
             f"no lo crea"
         )
+        # Toda migración tiene que dejar algo visible: si no declara nada,
+        # `verificar_esquema` la daría por aplicada sin poder mirarla.
+        assert declarados, f"{store}/{archivo} no declara ningún objeto"
         ya_existian |= reales
 
 

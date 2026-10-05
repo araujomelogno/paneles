@@ -1145,6 +1145,42 @@ def _controlar_documento_plausible(filas, mapeo, opciones_por_variable=None):
     )
 
 
+def _controlar_celular_plausible(filas, mapeo):
+    """Frena un archivo donde `celular` no puede ser el celular de cada uno.
+
+    Desde que el celular es clave de dedup tiene el mismo riesgo que el
+    documento: un número de relleno repetido en todas las filas —el de la
+    oficina, un «099000000» que pidió el sistema de campo— fusionaría a todo
+    el archivo en una persona, porque la primera fila la crea y las demás la
+    encuentran. Se compara en E.164, como compara el dedup, y lo que no se
+    puede normalizar no cuenta: el dedup tampoco lo usa.
+    """
+    from . import preferencias
+
+    variable = (mapeo or {}).get("celular")
+    if not variable:
+        return
+    valores = {
+        preferencias.normalizar_celular(str(fila[variable]))
+        for fila in filas if fila.get(variable) not in (None, "")
+    }
+    valores.discard(None)
+    if len(filas) < FILAS_PARA_SOSPECHAR_DEL_DOCUMENTO or not valores:
+        return
+    if len(valores) >= DOCUMENTOS_DISTINTOS_MINIMOS:
+        return
+    raise DatosInvalidos(
+        f"La variable «{variable}» está marcada como celular, pero en "
+        f"{len(filas)} filas trae solo {len(valores)} número(s) distinto(s): "
+        f"{sorted(valores)[:5]}. No parece el celular de cada persona, y como "
+        f"el celular es clave de dedup, crear estas personas las fusionaría a "
+        f"todas en {len(valores)}. Revisá el marcado de esa variable, o no la "
+        f"marques como celular, antes de volver a intentar.",
+        {"variable": variable, "valores_distintos": sorted(valores)[:10],
+         "filas": len(filas)},
+    )
+
+
 def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
                      evidencia_consentimiento, actor=None, panel_id=None,
                      opciones_por_variable=None,
@@ -1238,6 +1274,7 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
         )
 
     _controlar_documento_plausible(filas, mapeo, opciones_por_variable)
+    _controlar_celular_plausible(filas, mapeo)
 
     creados, reutilizados, en_revision = [], [], []
     sin_datos, sin_consentimiento = [], []

@@ -96,7 +96,7 @@ select current_database() as base, e.migracion, e.objeto
            join pg_catalog.pg_namespace n on n.oid = c.relnamespace
            join pg_catalog.pg_attribute a on a.attrelid = c.oid
           where n.nspname = 'public'
-            and c.relkind in ('r', 'v', 'm', 'p', 'f')
+            and c.relkind in ('r', 'v', 'm', 'p', 'f', 'i')
             and a.attnum > 0
             and not a.attisdropped
             and c.relname = e.relacion

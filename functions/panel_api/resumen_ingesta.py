@@ -27,12 +27,13 @@ Con él es imposible no verlo.
 """
 
 from . import calidad_dato, ingesta, sav
+from .preferencias import normalizar_celular
 
 # Las claves con las que `dedup.resolver` decide, **en su orden**. La
 # compuesta va última porque es la que el dedup usa solo cuando no hay
 # ninguna clave fuerte, y el resumen tiene que contar lo mismo que va a
 # pasar, no lo que sería razonable contar.
-CLAVES_SIMPLES = ("documento", "email")
+CLAVES_SIMPLES = ("documento", "email", "celular")
 CLAVE_COMPUESTA = ("nombre", "fecha_nacimiento")
 
 # Cuándo una clave deja de ser un número y pasa a ser una advertencia.
@@ -74,6 +75,9 @@ VALIDACIONES = {
     "documento_implausible": (
         BLOQUEA, "una variable de sí/no marcada como documento fusiona la base "
                  "entera en dos personas: es un error de marcado, no un costo"),
+    "celular_implausible": (
+        BLOQUEA, "un celular de relleno repetido en todo el archivo fusionaría "
+                 "a todos en una persona: es un error de marcado, no un costo"),
     # — Las del resumen: se muestran y se puede seguir —
     "sin_clave_de_dedup": (
         ADVIERTE, "una carga futura con la misma gente va a crear duplicados; "
@@ -104,16 +108,33 @@ def _valor(fila, variable):
     return str(bruto).strip()
 
 
-def _grupos(filas, variables):
+def _comparable(campo, valor):
+    """El valor de una clave como lo compara el dedup.
+
+    El celular en E.164: «099 123 456» y «+59899123456» son el mismo número,
+    y uno que no se puede normalizar no se compara con nada —el dedup lo
+    ignora, así que el resumen tampoco puede contarlo como clave—. El correo
+    sin mayúsculas. El resto, tal cual."""
+    if not valor:
+        return ""
+    if campo == "celular":
+        return normalizar_celular(valor) or ""
+    if campo == "email":
+        return valor.lower()
+    return valor
+
+
+def _grupos(filas, variables, campos=None):
     """`{valor compuesto: cuántas filas}`, sin las filas que no traen la clave.
 
     Una fila sin el dato no colisiona con nada: no se la cuenta ni como
     repetida ni como distinta. Contarla inflaría «valores distintos» con un
     vacío que el dedup nunca va a comparar.
     """
+    campos = campos or (None,) * len(variables)
     conteo = {}
     for fila in filas:
-        partes = [_valor(fila, v) for v in variables]
+        partes = [_comparable(c, _valor(fila, v)) for c, v in zip(campos, variables)]
         if not all(partes):
             continue
         conteo["\x1f".join(partes)] = conteo.get("\x1f".join(partes), 0) + 1
@@ -143,8 +164,8 @@ def _por_campo(demograficas):
 def claves_de_dedup(demograficas, filas):
     """Las claves con las que `dedup.resolver` va a poder reconocer a alguien.
 
-    **En los mismos términos que el dedup**: documento, correo, y nombre con
-    fecha de nacimiento. Una clave presente en parte de las filas **cuenta**
+    **En los mismos términos que el dedup**: documento, correo, celular, y
+    nombre con fecha de nacimiento. Una clave presente en parte de las filas **cuenta**
     —300 correos sobre 1131 filas deduplican a esos 300— y se informa con su
     cobertura. Lo que no cuenta es una marcada que no trae ni un valor: el
     dedup no tendría con qué comparar.
@@ -178,7 +199,7 @@ def sin_clave_de_dedup(plan, filas):
 
 
 def _estadistica_de_clave(nombre, campos, variables, filas):
-    conteo = _grupos(filas, variables)
+    conteo = _grupos(filas, variables, campos)
     con_valor = sum(conteo.values())
     distintos = len(conteo)
     repetidos = {v: n for v, n in conteo.items() if n > 1}
@@ -212,20 +233,27 @@ def _estadistica_de_clave(nombre, campos, variables, filas):
 def _personas_estimadas(filas, por_campo):
     """Cuántas personas distintas saldrían, siguiendo el orden del dedup.
 
-    Documento, si no correo, si no nombre + fecha de nacimiento. Una fila sin
-    ninguna de las tres no se puede agrupar con nadie: cuenta como propia,
-    que es lo que va a pasar al crearla.
+    Documento, si no correo, si no celular, si no nombre + fecha de
+    nacimiento. Una fila sin ninguna no se puede agrupar con nadie: cuenta
+    como propia, que es lo que va a pasar al crearla.
+
+    Es una estimación: dentro del archivo, dos filas con el mismo celular se
+    cuentan como una persona, aunque el dedup pueda mandar alguna a revisión
+    si los nombres no coinciden.
     """
     claves, sueltas = set(), 0
     for indice, fila in enumerate(filas):
         documento = _valor(fila, por_campo.get("documento"))
-        email = _valor(fila, por_campo.get("email"))
+        email = _comparable("email", _valor(fila, por_campo.get("email")))
+        celular = _comparable("celular", _valor(fila, por_campo.get("celular")))
         nombre = _valor(fila, por_campo.get("nombre"))
         nacimiento = _valor(fila, por_campo.get("fecha_nacimiento"))
         if documento:
             claves.add(("documento", documento.lower()))
         elif email:
-            claves.add(("email", email.lower()))
+            claves.add(("email", email))
+        elif celular:
+            claves.add(("celular", celular))
         elif nombre and nacimiento:
             claves.add(("nombre_fnac", nombre.lower(), nacimiento))
         else:
@@ -476,7 +504,8 @@ def _advertencias(resumen, preguntas, demograficas, tipo_de, filas):
             "acciones": ["volver_a_corregir", "continuar_igual"],
             "mensaje": (
                 "Ninguna fila trae una clave de deduplicación: ni documento, "
-                "ni correo, ni nombre con fecha de nacimiento." + marcadas +
+                "ni correo, ni celular, ni nombre con fecha de nacimiento."
+                + marcadas +
                 " Sin clave no hay forma de reconocer a alguien que ya esté "
                 "en el sistema: una carga futura con la misma gente va a "
                 "crear registros duplicados. Podés volver a corregir el "

@@ -512,7 +512,11 @@ async function guardarAlta(caja, paneles) {
     if (resultado.estado === 'revision') {
       avisarRevision(resultado);
     } else if (resultado.estado === 'reutilizada') {
-      toast(`Ya estaba enrolada (match por ${resultado.motivo_dedup}): se reutilizó su identificador.`, 'ok');
+      // Por cuál clave la reconoció el dedup (D64: el celular es la tercera).
+      const clave = { documento: 'documento', email: 'correo', celular: 'celular',
+                      alias_origen: 'id de la plataforma de origen' }[resultado.motivo_dedup]
+        || resultado.motivo_dedup;
+      toast(`Ya estaba enrolada (coincide por ${clave}): se reutilizó su identificador.`, 'ok');
     } else {
       toast('Panelista enrolado.', 'ok');
     }

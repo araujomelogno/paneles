@@ -316,10 +316,18 @@
   <h3><span class="n">3.3</span> Cuando la persona ya estaba enrolada</h3>
 
   <p>El sistema no crea una persona nueva cada vez que se completa el
-  formulario. Antes de dar el alta compara el documento y el correo con los que
-  ya están registrados y, si encuentra una coincidencia, reutiliza el registro
-  existente en lugar de duplicarlo. El aviso indica por cuál de las dos claves
-  se produjo la coincidencia.</p>
+  formulario. Antes de dar el alta compara el documento, el correo y el
+  celular —en ese orden— con los que ya están registrados y, si encuentra una
+  coincidencia, reutiliza el registro existente en lugar de duplicarlo. El
+  aviso indica por cuál de las claves se produjo la coincidencia.</p>
+
+  <p>El celular se compara escrito de cualquier forma: <code>099 123 456</code>,
+  <code>099-123-456</code> y <code>+598 99 123 456</code> son el mismo número.
+  Pero es una clave más prudente que las otras dos, porque un celular puede
+  ser compartido —el de un hogar, el que un padre usa y es del hijo—: solo
+  reutiliza cuando una sola persona lo tiene, cuando no la contradice un
+  documento o un correo distintos y cuando el nombre coincide. Si algo de eso
+  falla, el alta va a revisión (sección 3.4) o se crea aparte.</p>
 
   <figure>
     <img class="recorte" src="capturas/06-dedup-reutiliza.jpg" alt="Aviso de persona ya enrolada" />
@@ -344,6 +352,12 @@
 
   <p>En esa situación el alta queda pendiente de una decisión humana y no se crea
   ninguna persona todavía.</p>
+
+  <p>Lo mismo pasa con el celular en dos casos: cuando el número ya lo tienen
+  <strong>varias</strong> personas registradas —fusionar con cualquiera sería
+  elegir al azar— y cuando lo tiene una sola pero <strong>con otro
+  nombre</strong>. En la bandeja, el motivo lo dice: «Celular que ya tienen
+  varias personas» o «Celular de otra persona registrada con otro nombre».</p>
 
   <figure>
     <img class="recorte" src="capturas/07-alta-en-revision.jpg" alt="Alta en revisión por coincidencia ambigua" />
@@ -869,8 +883,8 @@
   <div class="aviso">
     <div class="t">El recuadro de claves de deduplicación es el que hay que mirar</div>
     <p>El sistema reconoce a las personas primero por el documento, después
-    por el correo, y si no tiene ninguno de los dos, por nombre y fecha de
-    nacimiento. Para cada una de esas claves, el resumen informa cuántas
+    por el correo, después por el celular, y si no tiene ninguno, por nombre
+    y fecha de nacimiento. Para cada una de esas claves, el resumen informa cuántas
     filas la traen, <strong>cuántos valores distintos hay</strong> y cuántas
     filas comparten su valor con otra.</p>
     <p>Si una clave tiene muchas filas y pocos valores distintos, aparece en
@@ -1309,6 +1323,11 @@
       <td>Queda en la bandeja de <strong>revisión de altas</strong> (sección
       3.4), con su consentimiento a cuestas, para que una persona decida si es
       la misma o es otra.</td></tr>
+    <tr><td class="destacado">Un celular de relleno en todo el archivo</td>
+      <td>La carga se frena antes de escribir nada: si la columna marcada como
+      celular trae el mismo número —o dos— en todas las filas, crear esas
+      personas las fusionaría en una. Es lo mismo que pasa con un documento
+      implausible.</td></tr>
     <tr><td class="destacado">Sin documento, correo ni nombre</td>
       <td>Se informa como fila sin datos suficientes. No se crea nada: no hay
       con qué identificar a nadie.</td></tr>

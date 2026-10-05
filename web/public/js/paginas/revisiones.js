@@ -2,13 +2,23 @@
 
    Cuando un alta coincide por nombre y fecha de nacimiento pero no trae
    documento ni email, no se fusiona: homónimos con la misma fecha existen,
-   y fusionar mal es peor que preguntar. La decisión la toma una persona. */
+   y fusionar mal es peor que preguntar. Desde D64 también llegan acá las
+   del celular que comparten varias personas, o que tiene otra con otro
+   nombre. La decisión la toma una persona. */
 
 import * as api from '../api.js';
 import {
   $, $$, esc, encabezado, vacio, cargando, toast, modal, cerrarModal,
   activarTokens, fechaCorta, fechaHora, estado, token,
 } from '../ui.js';
+
+/* Por qué un alta quedó para decidir a mano. Las claves son las de
+   `dedup.resolver`; una que no esté acá se muestra tal cual. */
+const MOTIVOS_DE_REVISION = {
+  nombre_fecha_nacimiento: 'Mismo nombre y fecha de nacimiento',
+  celular_compartido: 'Celular que ya tienen varias personas',
+  celular_otro_nombre: 'Celular de otra persona registrada con otro nombre',
+};
 
 let contexto = {};
 let filtroEstado = 'pendiente';
@@ -65,7 +75,7 @@ async function cargar() {
           <td>${(r.candidatos || []).map((c) => `
             <div class="small"><span class="td-strong">${esc(c.nombre || '—')}</span>
             <span class="muted"> · ${esc(c.localidad || '—')}</span></div>`).join('') || '—'}</td>
-          <td class="small mono">${esc(r.motivo)}</td>
+          <td class="small">${esc(MOTIVOS_DE_REVISION[r.motivo] || r.motivo)}</td>
           <td>${estado(r.estado)}</td>
           <td class="small">${fechaCorta(r.creado_en)}</td>
           <td class="right">${r.estado === 'pendiente'
