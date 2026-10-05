@@ -55,8 +55,12 @@ def test_la_bateria_pasa_entera(dsn_boveda, conn_boveda):
         _dsn(dsn_boveda, "coloquio_app"),
         _dsn(dsn_boveda, "intruso"),
         imprimir=lambda *_: None)
-    fallaron = [(nombre, detalle) for nombre, ok, detalle in resultados if not ok]
-    assert not fallaron, fallaron
+    no_pasaron = [(nombre, estado, detalle)
+                  for nombre, estado, detalle in resultados if estado != vc.PASADO]
+    # En el cluster local no hay nada que omitir: el intruso se puede
+    # conectar sin credenciales y el escenario llena las vistas. Un omitido
+    # acá sería un chequeo que dejó de probar algo sin que nadie lo note.
+    assert not no_pasaron, no_pasaron
     # Y que efectivamente corrió todo, no que la lista vino vacía.
     assert len(resultados) == len(vc.SIN_DATOS) + len(vc.CON_DATOS)
 
@@ -69,7 +73,7 @@ def test_el_modo_solo_lectura_no_escribe_nada(dsn_boveda, dueno):
         antes = cur.fetchone()["n"]
     resultados = vc.correr(dsn_boveda, _dsn(dsn_boveda, "coloquio_app"),
                            solo_lectura=True, imprimir=lambda *_: None)
-    assert all(ok for _, ok, _ in resultados)
+    assert not [r for r in resultados if r[1] == vc.FALLIDO], resultados
     with dueno.cursor() as cur:
         cur.execute("select count(*) as n from persona")
         assert cur.fetchone()["n"] == antes

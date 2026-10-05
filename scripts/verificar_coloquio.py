@@ -29,7 +29,16 @@ Con `--solo-lectura` no se arma escenario ni se escribe nada: corren nada más
 los chequeos que no necesitan datos de prueba —privilegios efectivos, negativas
 de acceso, forma de las vistas—. Es el modo para apuntarlo a producción.
 
-Sale con 0 si pasa todo y con 1 si falla algo, así que se puede encadenar.
+Cada chequeo termina en uno de tres estados: **pasado**, **fallido** u
+**omitido**. Omitido no es «pasó»: es un chequeo que en este entorno no puede
+probar lo que quiere probar —el del intruso contra Cloud SQL, la cardinalidad
+sobre vistas vacías, los que necesitan escenario en `--solo-lectura`— y el
+resumen dice cuáles y por qué. Lo que no hace es contarlo como fallo: una
+batería que falla siempre deja de leerse, y la próxima vez que una falla sea
+real nadie la va a ver.
+
+Sale con 0 si no falló nada (aunque haya omitidos) y con 1 si falló algo, así
+que se puede encadenar.
 """
 
 import argparse
@@ -306,6 +315,40 @@ class Falla(AssertionError):
     pass
 
 
+class Omitido(Exception):
+    """Un chequeo que en este entorno no puede probar lo que quiere probar.
+
+    Se levanta con el motivo, que es lo que el resumen muestra. No es una
+    forma elegante de esconder un fallo: un chequeo que puede correr y da mal
+    levanta `Falla`, siempre."""
+
+
+PASADO, FALLIDO, OMITIDO = "pasado", "fallido", "omitido"
+
+# El actor que el chequeo de auditoría manda como `p_actor`. Es lo que
+# COLOQUIO tiene que mandar en cada llamada según el contrato
+# (`HANDOFF_coloquio_fase1.md`): el email del usuario humano que pidió el
+# contacto, no la cuenta de servicio. Dominio `.invalid` a propósito: no es
+# nadie.
+ACTOR_DE_PRUEBA = "analista-verificacion@ejemplo.invalid"
+
+
+def es_cloud_sql(dueno):
+    """¿La bóveda es una instancia de Cloud SQL?
+
+    Se le pregunta al servidor y no al DSN: contra el Auth Proxy el DSN dice
+    `127.0.0.1`, igual que el cluster local de pruebas. Cloud SQL tiene un rol
+    `cloudsqlsuperuser` y parámetros `cloudsql.*` que un Postgres común no
+    tiene."""
+    with dueno.cursor() as cur:
+        cur.execute(
+            """select exists (select 1 from pg_roles
+                               where rolname = 'cloudsqlsuperuser')
+                   or exists (select 1 from pg_settings
+                               where name like 'cloudsql.%') as es""")
+        return bool(cur.fetchone()["es"])
+
+
 def _niega(conn, sql, parametros=None):
     """Corre algo que **tiene** que fallar y devuelve el error.
 
@@ -436,7 +479,7 @@ def una_fila_por_clave(coloquio, dueno):
         raise Falla("relaciones de la superficie con `id_persona` y sin clave "
                     "declarada en CLAVE_POR_RELACION: " + ", ".join(sin_clave))
 
-    detalle, repetidas = [], []
+    detalle, repetidas, vacias = [], [], []
     with coloquio.cursor() as cur:
         for relacion in sorted(con_personas):
             columnas = ", ".join(CLAVE_POR_RELACION[relacion])
@@ -450,6 +493,12 @@ def una_fila_por_clave(coloquio, dueno):
                               (select distinct {columnas} from {relacion}) k)
                              as claves""")
             fila = cur.fetchone()
+            if not fila["filas"]:
+                # Sin filas, «ninguna clave repetida» es cierto sin probar
+                # nada. Se dice, para que no se lea como verificado.
+                vacias.append(relacion)
+                detalle.append(f"{relacion}: vacía, sin verificar")
+                continue
             detalle.append(f"{relacion}: {fila['filas']}")
             if fila["filas"] != fila["claves"]:
                 repetidas.append(
@@ -457,6 +506,11 @@ def una_fila_por_clave(coloquio, dueno):
                     f"{fila['claves']} valores de ({columnas})")
     if repetidas:
         raise Falla("filas repetidas — " + "; ".join(repetidas))
+    if vacias and len(vacias) == len(con_personas):
+        raise Omitido(
+            f"las {len(vacias)} vistas con personas están vacías: «ninguna "
+            "clave repetida» sería cierto sin probar nada. Con escenario "
+            "(sin --solo-lectura) corre sobre datos.")
     return " · ".join(detalle) + " — ninguna clave repetida"
 
 
@@ -503,28 +557,78 @@ def solo_ve_a_quien_consintio(coloquio, escenario):
     return "consintió: visible una vez · no consintió: invisible"
 
 
+def _ultima_auditoria(dueno, id_persona):
+    with dueno.cursor() as cur:
+        cur.execute(
+            """select sistema, actor_uid, actor_email, contexto
+                 from reidentificacion
+                where id_persona = %s order by id desc limit 1""",
+            (id_persona,))
+        return cur.fetchone()
+
+
 def contacto_legitimo_queda_auditado(coloquio, escenario, dueno):
+    """La entrega queda registrada con **la persona** que la pidió.
+
+    El contrato (`HANDOFF_coloquio_fase1.md`) es que `p_actor` es el email del
+    usuario humano de COLOQUIO, no la cuenta de servicio, y la función
+    registra `coalesce(p_actor, session_user)`. Así que se le manda un email
+    de usuario y se verifica que **ese** quede escrito.
+
+    Antes este chequeo llamaba sin actor y esperaba ver `coloquio_app`: en el
+    cluster local pasaba porque ése es el `session_user`, y contra Cloud SQL
+    fallaba siempre, porque ahí el rol es la cuenta IAM. Probaba el nombre del
+    rol, no la auditoría.
+    """
     with coloquio.cursor() as cur:
+        cur.execute(
+            "select contacto_para_convocatoria(%s, 'celular', p_actor => %s) as dato",
+            (escenario.convocable, ACTOR_DE_PRUEBA))
+        dato = cur.fetchone()["dato"]
+    if not dato:
+        raise Falla("no devolvió el celular")
+    fila = _ultima_auditoria(dueno, escenario.convocable)
+    if not fila:
+        raise Falla("entregó el dato y no dejó rastro en `reidentificacion`")
+    if fila["sistema"] != "coloquio":
+        raise Falla(f"lo auditó como «{fila['sistema']}» y no como «coloquio»")
+    if fila["actor_uid"] != ACTOR_DE_PRUEBA or fila["actor_email"] != ACTOR_DE_PRUEBA:
+        raise Falla(f"pidió «{ACTOR_DE_PRUEBA}» y quedó registrado "
+                    f"«{fila['actor_uid']}» / «{fila['actor_email']}»: se perdió "
+                    "quién fue la persona")
+    return f"{dato} · auditado como {fila['sistema']}/{fila['actor_uid']}"
+
+
+def contacto_sin_actor_queda_marcado(coloquio, escenario, dueno):
+    """Si COLOQUIO **omite** `p_actor`, la entrega igual queda registrada —con
+    el rol de la conexión— y la fila se distingue: `actor_email` nulo.
+
+    Es el riesgo real del contrato: sin actor se pierde quién fue la persona,
+    que es justo lo que una reidentificación necesita poder demostrar. Que lo
+    cubra un chequeo hace visible la obligación del cliente; que la fila se
+    distinga permite encontrar después las llamadas que la incumplieron
+    (`where sistema = 'coloquio' and actor_email is null`).
+    """
+    with coloquio.cursor() as cur:
+        cur.execute("select session_user as u")
+        rol = cur.fetchone()["u"]
         cur.execute("select contacto_para_convocatoria(%s, 'celular') as dato",
                     (escenario.convocable,))
         dato = cur.fetchone()["dato"]
     if not dato:
         raise Falla("no devolvió el celular")
-    with dueno.cursor() as cur:
-        cur.execute(
-            """select sistema, actor_uid, contexto
-                 from reidentificacion
-                where id_persona = %s order by id desc limit 1""",
-            (escenario.convocable,))
-        fila = cur.fetchone()
+    fila = _ultima_auditoria(dueno, escenario.convocable)
     if not fila:
-        raise Falla("entregó el dato y no dejó rastro en `reidentificacion`")
-    if fila["sistema"] != "coloquio":
-        raise Falla(f"lo auditó como «{fila['sistema']}» y no como «coloquio»")
-    if fila["actor_uid"] != "coloquio_app":
-        raise Falla(f"el actor quedó como «{fila['actor_uid']}»: adentro de un "
-                    "`security definer` hay que usar `session_user`")
-    return f"{dato} · auditado como {fila['sistema']}/{fila['actor_uid']}"
+        raise Falla("entregó el dato sin actor y no dejó rastro en "
+                    "`reidentificacion`")
+    if fila["actor_uid"] != rol:
+        raise Falla(f"sin `p_actor` tenía que registrar el rol de la conexión "
+                    f"(«{rol}») y registró «{fila['actor_uid']}»")
+    if fila["actor_email"] is not None:
+        raise Falla(f"sin `p_actor` la fila dice actor_email "
+                    f"«{fila['actor_email']}»: no se distingue de una con "
+                    "actor humano")
+    return f"registrado como {rol}, sin actor_email: se ve que no hubo persona"
 
 
 def contacto_sin_consentimiento_es_rechazado(coloquio, escenario, dueno):
@@ -690,6 +794,8 @@ def un_rol_sin_registrar_no_consigue_nada(dsn_intruso, escenario):
     dueño de la función, el intruso se llevaba el contacto **firmado como
     `paneles`**. Era lavado de origen, no una fuga menor.
     """
+    if dsn_intruso is None:
+        raise Omitido("sin DSN_BOVEDA_INTRUSO")
     intruso = conectar(dsn_intruso)
     try:
         error = _niega(intruso, "select contacto_para_convocatoria(%s, 'celular')",
@@ -712,15 +818,22 @@ SIN_DATOS = (
     ("tablas sensibles negadas", sin_escritura_en_ninguna_tabla),
     ("la conexión se identifica sola", se_identifica),
     ("lee la superficie del contrato", lee_la_superficie),
-    ("una fila por persona en cada vista", una_fila_por_clave),
     ("no lee las tablas", no_lee_las_tablas),
     ("no resuelve atributos por su cuenta", no_resuelve_atributos_por_su_cuenta),
 )
 
 # Con escenario: necesitan datos de prueba, así que escriben.
+#
+# La cardinalidad va acá y no entre los de arriba, aunque no escriba nada:
+# sobre una bóveda vacía pasa sin probar nada, y el escenario tiene
+# exactamente el caso que hacía aparecer el bug —una persona con las dos
+# finalidades vigentes—. En `--solo-lectura` corre igual, sobre los datos que
+# haya (ver `CORREN_SIN_ESCENARIO`).
 CON_DATOS = (
+    ("una fila por persona en cada vista", una_fila_por_clave),
     ("solo ve a quien consintió", solo_ve_a_quien_consintio),
     ("el contacto legítimo queda auditado", contacto_legitimo_queda_auditado),
+    ("el contacto sin actor queda marcado", contacto_sin_actor_queda_marcado),
     ("el contacto sin consentimiento se rechaza",
      contacto_sin_consentimiento_es_rechazado),
     ("un canal por vez", un_canal_por_vez),
@@ -732,10 +845,29 @@ CON_DATOS = (
     ("un rol sin registrar no consigue nada", un_rol_sin_registrar_no_consigue_nada),
 )
 
+# Los de `CON_DATOS` que no escriben: en `--solo-lectura` corren sin
+# escenario, sobre lo que haya en la base.
+CORREN_SIN_ESCENARIO = (una_fila_por_clave,)
+
+# Cómo se llama a cada uno de `CON_DATOS`.
+_SOLO_COLOQUIO_Y_ESCENARIO = (solo_ve_a_quien_consintio, un_canal_por_vez,
+                              la_declaracion_tiene_tope)
+
+MOTIVO_INTRUSO_EN_CLOUD_SQL = (
+    "no verificable contra Cloud SQL (toda conexión exige credenciales, y el "
+    "intento muere en la autenticación sin llegar a la superficie). Corre "
+    "contra el cluster local de pruebas, o pasando DSN_BOVEDA_INTRUSO con "
+    "credenciales de un rol sin registrar.")
+
 
 def correr(dsn_dueno, dsn_coloquio, dsn_intruso=None, solo_lectura=False,
-           imprimir=print):
-    """Corre la batería y devuelve la lista de (nombre, ok, detalle)."""
+           imprimir=print, intruso_derivado=False):
+    """Corre la batería y devuelve la lista de (nombre, estado, detalle).
+
+    `estado` es `PASADO`, `FALLIDO` u `OMITIDO`. `intruso_derivado` dice que
+    el DSN del intruso no lo pasó nadie: se armó cambiándole el usuario al
+    del dueño, sin credenciales, y eso solo sirve contra el cluster local.
+    """
     resultados = []
     dueno = conectar(dsn_dueno)
     coloquio = conectar(dsn_coloquio)
@@ -743,31 +875,43 @@ def correr(dsn_dueno, dsn_coloquio, dsn_intruso=None, solo_lectura=False,
     def registrar(nombre, funcion, *argumentos):
         try:
             detalle = funcion(*argumentos)
-            resultados.append((nombre, True, detalle))
-            imprimir(f"  {VERDE}✓{FIN} {nombre}  {GRIS}{detalle}{FIN}")
+        except Omitido as motivo:
+            omitir(nombre, str(motivo))
         except Exception as error:  # noqa: BLE001
-            resultados.append((nombre, False, str(error)))
+            resultados.append((nombre, FALLIDO, str(error)))
             imprimir(f"  {ROJO}✗{FIN} {nombre}\n      {ROJO}{error}{FIN}")
+        else:
+            resultados.append((nombre, PASADO, detalle))
+            imprimir(f"  {VERDE}✓{FIN} {nombre}  {GRIS}{detalle}{FIN}")
+
+    def omitir(nombre, motivo):
+        resultados.append((nombre, OMITIDO, motivo))
+        imprimir(f"  {AMARILLO}○{FIN} {nombre}  {GRIS}omitido: {motivo}{FIN}")
 
     try:
         for nombre, funcion in SIN_DATOS:
             registrar(nombre, funcion, coloquio, dueno)
 
         if solo_lectura:
-            imprimir(f"\n  {AMARILLO}--solo-lectura: se saltean "
-                     f"{len(CON_DATOS)} chequeos que necesitan escenario.{FIN}")
+            for nombre, funcion in CON_DATOS:
+                if funcion in CORREN_SIN_ESCENARIO:
+                    registrar(nombre, funcion, coloquio, dueno)
+                else:
+                    omitir(nombre, "--solo-lectura: necesita escenario, y "
+                                   "armarlo es escribir")
             return resultados
 
+        en_cloud_sql = es_cloud_sql(dueno)
         with Escenario(dueno) as escenario:
             for nombre, funcion in CON_DATOS:
-                if funcion is un_rol_sin_registrar_no_consigue_nada:
-                    if not dsn_intruso:
-                        imprimir(f"  {AMARILLO}·{FIN} {nombre}  {GRIS}"
-                                 f"sin DSN_BOVEDA_INTRUSO{FIN}")
-                        continue
-                    registrar(nombre, funcion, dsn_intruso, escenario)
-                elif funcion in (solo_ve_a_quien_consintio, un_canal_por_vez,
-                                 la_declaracion_tiene_tope):
+                if funcion is una_fila_por_clave:
+                    registrar(nombre, funcion, coloquio, dueno)
+                elif funcion is un_rol_sin_registrar_no_consigue_nada:
+                    if en_cloud_sql and intruso_derivado:
+                        omitir(nombre, MOTIVO_INTRUSO_EN_CLOUD_SQL)
+                    else:
+                        registrar(nombre, funcion, dsn_intruso, escenario)
+                elif funcion in _SOLO_COLOQUIO_Y_ESCENARIO:
                     registrar(nombre, funcion, coloquio, escenario)
                 else:
                     registrar(nombre, funcion, coloquio, escenario, dueno)
@@ -775,6 +919,46 @@ def correr(dsn_dueno, dsn_coloquio, dsn_intruso=None, solo_lectura=False,
     finally:
         coloquio.close()
         dueno.close()
+
+
+def _plural(n, singular, plural):
+    return f"{n} {singular if n == 1 else plural}"
+
+
+def veredicto(resultados):
+    """El resumen final, como líneas de texto sin color. Devuelve
+    `(líneas, hay_fallos)`.
+
+    Tres estados y no dos: con un chequeo legítimamente omitido, «pasó o
+    falló» ya no alcanza. El veredicto es afirmativo si no falló nada, y aun
+    así dice qué quedó sin verificar y por qué; «no está lista» aparece solo
+    con fallos reales.
+    """
+    pasados = [r for r in resultados if r[1] == PASADO]
+    fallidos = [r for r in resultados if r[1] == FALLIDO]
+    omitidos = [r for r in resultados if r[1] == OMITIDO]
+    lineas = [
+        f"{_plural(len(resultados), 'chequeo', 'chequeos')} · "
+        f"{_plural(len(pasados), 'pasado', 'pasados')} · "
+        f"{_plural(len(fallidos), 'fallido', 'fallidos')} · "
+        f"{_plural(len(omitidos), 'omitido', 'omitidos')}"]
+    for nombre, _, detalle in fallidos:
+        lineas += [f"  ✗ {nombre}", f"      {detalle}"]
+    # Los que comparten motivo van juntos, con el motivo una vez: en
+    # `--solo-lectura` son diez con la misma razón, y repetirla diez veces
+    # esconde el omitido que tiene otra.
+    por_motivo = {}
+    for nombre, _, motivo in omitidos:
+        por_motivo.setdefault(motivo, []).append(nombre)
+    for motivo, nombres in por_motivo.items():
+        lineas += [f"  ○ {nombre}" for nombre in nombres]
+        lineas.append(f"      omitido: {motivo}")
+    lineas.append("")
+    if fallidos:
+        lineas.append("La bóveda no está lista para COLOQUIO.")
+    else:
+        lineas.append("La bóveda está lista para COLOQUIO.")
+    return lineas, bool(fallidos)
 
 
 def _dsn_con_usuario(dsn, usuario):
@@ -807,8 +991,10 @@ def main():
     if not dsn_coloquio:
         dsn_coloquio = _dsn_con_usuario(dsn_dueno, "coloquio_app")
         derivado = True
-    dsn_intruso = os.environ.get("DSN_BOVEDA_INTRUSO", "").strip() or (
-        _dsn_con_usuario(dsn_dueno, "intruso"))
+    dsn_intruso = os.environ.get("DSN_BOVEDA_INTRUSO", "").strip()
+    intruso_derivado = not dsn_intruso
+    if intruso_derivado:
+        dsn_intruso = _dsn_con_usuario(dsn_dueno, "intruso")
 
     try:
         import psycopg  # noqa: F401
@@ -825,7 +1011,8 @@ def main():
 
     try:
         resultados = correr(dsn_dueno, dsn_coloquio, dsn_intruso,
-                            solo_lectura=argumentos.solo_lectura)
+                            solo_lectura=argumentos.solo_lectura,
+                            intruso_derivado=intruso_derivado)
     except Exception as error:  # noqa: BLE001
         print(f"\n  {ROJO}no se pudo correr la batería:{FIN} {error}")
         if "coloquio_app" in str(error):
@@ -833,14 +1020,13 @@ def main():
                   f"cluster de pruebas lo crea `scripts/pg_pruebas.sh`.{FIN}")
         return 2
 
-    fallaron = [r for r in resultados if not r[1]]
-    if fallaron:
-        print(f"\n{ROJO}Fallaron {len(fallaron)} de {len(resultados)}.{FIN} "
-              "La bóveda no está lista para COLOQUIO.")
-        return 1
-    print(f"\n{VERDE}Pasaron los {len(resultados)} chequeos.{FIN} "
-          "La bóveda se defiende sola.")
-    return 0
+    lineas, hay_fallos = veredicto(resultados)
+    color = ROJO if hay_fallos else VERDE
+    print()
+    for linea in lineas[:-1]:
+        print(linea)
+    print(f"{color}{lineas[-1]}{FIN}")
+    return 1 if hay_fallos else 0
 
 
 if __name__ == "__main__":

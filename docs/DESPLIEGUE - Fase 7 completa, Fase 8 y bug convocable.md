@@ -431,6 +431,22 @@ del texto de contacto no la duplican.
 Los números de producción van a ser otros; lo que tiene que coincidir es
 **17 de 17**.
 
+> **Si se despliega con el script ya corregido** (la batería de tres
+> estados, ver `DESPLIEGUE - COLOQUIO Fase 0.md` §7.1.1), la salida cambia
+> de forma: son **18** chequeos —se sumó «el contacto sin actor queda
+> marcado»—, la cardinalidad corre dentro del escenario y el cierre es un
+> resumen. Contra Cloud SQL, con la bóveda sana, lo que tiene que dar es:
+>
+> ```
+> 18 chequeos · 17 pasados · 0 fallidos · 1 omitido
+>   ○ un rol sin registrar no consigue nada
+>       omitido: no verificable contra Cloud SQL (…)
+>
+> La bóveda está lista para COLOQUIO.
+> ```
+>
+> El omitido es esperado. Lo que no puede haber es un **fallido**.
+
 ---
 
 ## Paso 6 · Desplegar
@@ -712,7 +728,7 @@ quedan con el texto corregido, y las filas de `reidentificacion` con motivo
 | `column "texto_original" … does not exist` al importar | Se desplegó el código nuevo sin la `0007` | Paso 4 |
 | Paso 3.1: `personas` dio menos que antes | El gate cambió de criterio | No debería pasar —se probó—; revertir (Rollback) y reportar con las dos fotos |
 | Paso 3.2: falta un `SELECT` o una función da `f` | Una corrida a medias de un borrador viejo de la `0021` | Volver a correr la `0021`: es una transacción y se puede repetir |
-| `verificar_coloquio.py` dice 16 chequeos | Se está corriendo una copia vieja del script | Correr el del commit desplegado: son 17 |
+| `verificar_coloquio.py` dice 16 chequeos | Se está corriendo una copia vieja del script | Correr el del commit desplegado: son 17, o 18 con la batería de tres estados |
 | «una fila por persona en cada vista» falla con «sin clave declarada» | Una vista nueva de la superficie expone `id_persona` y el script no sabe su clave | Declararla en `CLAVE_POR_RELACION` de `verificar_coloquio.py` |
 | `NOTICE: … already exists, skipping` | Se corrió una migración por segunda vez | Nada: es la salida esperada de una segunda corrida |
 | No aparece el bloque de calidad del dato | Caché del navegador, o no se desplegó `hosting` | `Cmd+Shift+R`; si sigue, paso 6 |
@@ -735,7 +751,7 @@ quedan con el texto corregido, y las filas de `reidentificacion` con motivo
 - [ ] 3.3 · COLOQUIO avisado de que la `0021` está puesta
 - [ ] 4 · `0007` aplicada: de `BEGIN` a `COMMIT`
 - [ ] 5 · Los dos stores `completo`
-- [ ] 5 · `verificar_coloquio.py`: **17** de 17
+- [ ] 5 · `verificar_coloquio.py`: **17** de 17 (con la batería de tres estados: 18, **0 fallidos**, el intruso omitido)
 - [ ] 6 · `VPC_CONNECTOR` exportado **antes** del deploy
 - [ ] 6 · `functions` **y** `hosting`, conector verificado en `api` y `procesaringesta`
 - [ ] 7.1 · Ficha con evidencia, sin PII, sin perder el resultado
