@@ -21,24 +21,37 @@ def _vector(valores):
     return "[" + ",".join(f"{float(v):.7g}" for v in valores) + "]"
 
 
-def asegurar_cuestionario(conn, ref_estudio, nombre, fecha_campo=None, metadata=None):
+def asegurar_cuestionario(conn, ref_estudio, nombre, fecha_campo=None, metadata=None,
+                          normalizacion=None):
     """Crea (o recupera) el cuestionario del estudio. Idempotente por
     `ref_estudio`, que es la misma uuid que `encuesta.ref_estudio` del
-    store de bóveda: ese es el puente entre los dos stores."""
+    store de bóveda: ese es el puente entre los dos stores.
+
+    `normalizacion` (Fase 8) es la configuración de la carga que no es de
+    ninguna pregunta —la lista de valores de no respuesta—. Se guarda para
+    que un reproceso sepa qué se había decidido. `None` no pisa lo que haya:
+    una re-ingesta sin configuración no borra la de la carga anterior.
+    """
     metadata = metadata or {}
-    pii.validar_sin_pii({"nombre": nombre, "metadata": metadata}, contexto="cuestionario")
+    pii.validar_sin_pii({"nombre": nombre, "metadata": metadata,
+                         "normalizacion": normalizacion or {}},
+                        contexto="cuestionario")
 
     fila = db.una(
         conn,
         """
-        insert into cuestionario (nombre, fecha_campo, ref_estudio, metadata)
-             values (%s, %s, %s, %s::jsonb)
+        insert into cuestionario (nombre, fecha_campo, ref_estudio, metadata,
+                                  normalizacion)
+             values (%s, %s, %s, %s::jsonb, coalesce(%s::jsonb, '{}'::jsonb))
         on conflict (ref_estudio) do update
                 set nombre = excluded.nombre,
-                    fecha_campo = coalesce(excluded.fecha_campo, cuestionario.fecha_campo)
+                    fecha_campo = coalesce(excluded.fecha_campo, cuestionario.fecha_campo),
+                    normalizacion = coalesce(%s::jsonb, cuestionario.normalizacion)
           returning id
         """,
-        (nombre, fecha_campo, str(ref_estudio), json.dumps(metadata)),
+        (nombre, fecha_campo, str(ref_estudio), json.dumps(metadata),
+         json.dumps(normalizacion) if normalizacion else None,
+         json.dumps(normalizacion) if normalizacion else None),
     )
     return fila["id"]
 
@@ -68,22 +81,64 @@ def asegurar_individuos(conn, ids_persona):
     return {str(f["id_persona"]): f["id"] for f in filas}
 
 
+# Las decisiones de normalización de una pregunta (Fase 8) que se guardan
+# con ella. Son las mismas claves que lee `ingesta.respuesta_de`, más las que
+# documentan de dónde salió la pregunta (`fusionada_con`, `bateria`) y lo que
+# el analista aceptó a conciencia (`pii_aceptada`).
+CLAVES_DE_NORMALIZACION = (
+    "solo_marcadas", "valores_marcados", "excluir_valores",
+    "prefijo_respuesta", "fusionada_con", "bateria", "pii_aceptada",
+    "excluida",
+)
+
+
+def normalizacion_de(pregunta):
+    """La parte de la pregunta que es decisión de normalización."""
+    return {c: pregunta[c] for c in CLAVES_DE_NORMALIZACION
+            if pregunta.get(c) not in (None, "", [], False)}
+
+
 def upsert_preguntas(conn, cuestionario_id, preguntas):
-    """`preguntas`: [{codigo, texto, tipo, opciones, orden}]. Idempotente por
-    (cuestionario, codigo)."""
+    """`preguntas`: [{codigo, texto, tipo, opciones, orden, ...}]. Idempotente
+    por (cuestionario, codigo).
+
+    Fase 8 — guarda también el **texto original** del archivo junto al
+    editado (`texto_original`, y las etiquetas en `opciones_originales`),
+    para poder volver y para auditar qué se cambió, y las decisiones de
+    normalización con las que se embebió. El original no se pisa con nada
+    vacío: una re-ingesta que no lo trae conserva el que había.
+
+    Si el texto cambia, la huella de la pregunta para sugerir series
+    (`embedding_texto`) queda vieja: se anula y `series` la recalcula a pedido.
+    """
     pii.validar_sin_pii(preguntas, contexto="pregunta")
     codigos = []
     for p in preguntas:
+        original = (p.get("texto_original") or p.get("texto_del_archivo")
+                    or None)
         db.ejecutar(
             conn,
             """
-            insert into pregunta (cuestionario_id, codigo, texto, tipo, opciones, orden)
-                 values (%s, %s, %s, %s, %s::jsonb, %s)
+            insert into pregunta (cuestionario_id, codigo, texto, tipo, opciones,
+                                  orden, texto_original, opciones_originales,
+                                  normalizacion)
+                 values (%s, %s, %s, %s, %s::jsonb, %s,
+                         coalesce(%s, %s), coalesce(%s::jsonb, %s::jsonb),
+                         %s::jsonb)
             on conflict (cuestionario_id, codigo) do update
                     set texto = excluded.texto,
                         tipo = excluded.tipo,
                         opciones = excluded.opciones,
-                        orden = excluded.orden
+                        orden = excluded.orden,
+                        texto_original = coalesce(%s, pregunta.texto_original,
+                                                  excluded.texto_original),
+                        opciones_originales = coalesce(
+                            %s::jsonb, pregunta.opciones_originales,
+                            excluded.opciones_originales),
+                        normalizacion = excluded.normalizacion,
+                        embedding_texto = case
+                            when pregunta.texto is distinct from excluded.texto
+                            then null else pregunta.embedding_texto end
             """,
             (
                 cuestionario_id,
@@ -92,6 +147,14 @@ def upsert_preguntas(conn, cuestionario_id, preguntas):
                 p.get("tipo"),
                 json.dumps(p.get("opciones")) if p.get("opciones") else None,
                 p.get("orden"),
+                original, p["texto"],
+                json.dumps(p.get("opciones_originales"))
+                if p.get("opciones_originales") else None,
+                json.dumps(p.get("opciones")) if p.get("opciones") else None,
+                json.dumps(normalizacion_de(p)),
+                original,
+                json.dumps(p.get("opciones_originales"))
+                if p.get("opciones_originales") else None,
             ),
         )
         codigos.append(p["codigo"])

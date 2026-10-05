@@ -15,6 +15,7 @@ from . import (
     desafio,
     diferida,
     calidad,
+    calidad_dato,
     cargas,
     composicion,
     consentimiento,
@@ -35,6 +36,7 @@ from . import (
     ficha,
     premios,
     puntos,
+    reproceso,
     resumen_ingesta,
     revision,
     sav,
@@ -203,9 +205,21 @@ def _plan_de(cuerpo, **extra):
         # devuelve por API.
         "modo": cuerpo.get("modo") or "existen",
         "evidencia_declarada": bool(cuerpo.get("evidencia_consentimiento")),
+        # Fase 8 — la configuración de normalización de la carga (la lista de
+        # valores de no respuesta con la que se detectó). Las decisiones por
+        # pregunta van adentro de cada pregunta.
+        "normalizacion": _normalizacion_de(cuerpo),
     }
     plan.update(extra)
     return plan
+
+
+def _normalizacion_de(cuerpo):
+    """`{valores_no_respuesta: [...]}` si la pantalla la mandó, o `None`."""
+    lista = (cuerpo or {}).get("valores_no_respuesta")
+    if not lista:
+        return None
+    return {"valores_no_respuesta": calidad_dato.lista_no_respuesta(lista)}
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1239,7 +1253,8 @@ def _claves_del_catalogo(ctx):
 def analizar_sav(ctx, actor, params, cuerpo, consulta):
     """Devuelve la metadata precargada del `.sav`. No ingesta nada."""
     contenido = _archivo_de(cuerpo)
-    return 200, sav.analizar(contenido, _claves_del_catalogo(ctx))
+    return 200, sav.analizar(contenido, _claves_del_catalogo(ctx),
+                             cuerpo.get("valores_no_respuesta"))
 
 
 @ruta("POST", "/encuestas/<encuesta_id>/sav/ingesta", "ingestar", requisito="R3.9")
@@ -1359,7 +1374,8 @@ def listar_cargas(ctx, actor, params, cuerpo, consulta):
 def analizar_sav_de_carga(ctx, actor, params, cuerpo, consulta):
     """Mismo contrato que el análisis de R3.9: la pantalla es la misma."""
     cargas.obtener(ctx.boveda, _entero(params["carga_id"]))
-    return 200, sav.analizar(_archivo_de(cuerpo), _claves_del_catalogo(ctx))
+    return 200, sav.analizar(_archivo_de(cuerpo), _claves_del_catalogo(ctx),
+                             cuerpo.get("valores_no_respuesta"))
 
 
 @ruta("POST", "/cargas/<carga_id>/ingesta", "ingestar", requisito="R3.13")
@@ -1426,6 +1442,118 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
     if creacion is not None:
         salida["creacion_de_individuos"] = creacion
     return 202, salida
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Fase 8 — Calidad del dato semántico
+# ════════════════════════════════════════════════════════════════════
+#
+# Todo lo de acá **propone**: ninguna ruta aplica una corrección. El texto es
+# lo que se embebe, y una reescritura automática equivocada degrada la
+# búsqueda en silencio. Las decisiones viajan después, en las preguntas de la
+# ingesta o del reproceso, y solo si el analista las eligió.
+
+def _distribucion_del_cuerpo(cuerpo, codigos):
+    """La distribución de valores que mandó la pantalla, en cualquiera de
+    sus tres formas: las filas del archivo (`.csv`/`.xlsx`, que viven en el
+    navegador), `{codigo: {valor: filas}}`, o las muestras `{codigo:
+    [{valor, filas}]}` que devuelve el análisis de un `.sav`."""
+    if cuerpo.get("filas") is not None:
+        return calidad_dato.distribucion_de_filas(cuerpo.get("filas"), codigos)
+    if isinstance(cuerpo.get("distribucion"), dict):
+        return {str(c): {str(v): int(n) for v, n in (pv or {}).items()}
+                for c, pv in cuerpo["distribucion"].items()}
+    muestras = cuerpo.get("muestras") or {}
+    if not isinstance(muestras, dict):
+        raise DatosInvalidos("`muestras` es un objeto «código → [{valor, filas}]».")
+    return {
+        str(codigo): {str(m.get("valor")): int(m.get("filas") or 0)
+                      for m in (lista or []) if m.get("valor") not in (None, "")}
+        for codigo, lista in muestras.items()
+    }
+
+
+def _preguntas_del_cuerpo(cuerpo):
+    preguntas = [p for p in (cuerpo.get("preguntas") or [])
+                 if isinstance(p, dict) and p.get("codigo")]
+    if not preguntas:
+        raise DatosInvalidos("Hace falta la lista de preguntas a analizar.")
+    return preguntas
+
+
+@ruta("POST", "/calidad/diagnostico", "ingestar",
+      requisito="R8.1, R8.2, R8.3, R8.4, R8.5, R8.6, R8.7")
+def diagnosticar_calidad(ctx, actor, params, cuerpo, consulta):
+    """El diagnóstico de calidad de un archivo que no es `.sav`.
+
+    Con un `.sav` llega en la respuesta de `/sav/analizar`; un `.csv` o un
+    `.xlsx` se leen en el navegador, así que la pantalla manda las filas acá.
+    No escribe nada.
+    """
+    preguntas = _preguntas_del_cuerpo(cuerpo)
+    distribucion = _distribucion_del_cuerpo(
+        cuerpo, {p["codigo"] for p in preguntas})
+    filas = cuerpo.get("filas")
+    return 200, calidad_dato.diagnosticar(
+        preguntas, distribucion,
+        filas_total=len(filas) if isinstance(filas, list) else None,
+        valores_no_respuesta=cuerpo.get("valores_no_respuesta"))
+
+
+@ruta("POST", "/calidad/vista-previa", "ingestar", requisito="R8.8")
+def vista_previa_calidad(ctx, actor, params, cuerpo, consulta):
+    """Cómo va a quedar el texto embebido de cada variable, con valores
+    reales del archivo.
+
+    Lo calcula el servidor con `ingesta.respuesta_de` —lo mismo que corre al
+    ingestar— y no la pantalla con una copia en JavaScript: dos
+    implementaciones de «qué se embebe» divergirían, y lo que divergiría es
+    justamente la vista que dice «esto es lo que se va a escribir». La
+    pantalla la pide cada vez que se corrige algo.
+    """
+    preguntas = _preguntas_del_cuerpo(cuerpo)
+    distribucion = _distribucion_del_cuerpo(
+        cuerpo, {p["codigo"] for p in preguntas})
+    return 200, {"items": calidad_dato.vistas_previas(preguntas, distribucion)}
+
+
+@ruta("GET", "/encuestas/<encuesta_id>/preguntas", "leer", requisito="R8.9")
+def preguntas_de_encuesta(ctx, actor, params, cuerpo, consulta):
+    """Las preguntas de un estudio ya ingestado, como están, con lo que hace
+    falta para corregirlas y reprocesar."""
+    return 200, reproceso.estado(ctx.boveda, ctx.semantica, "encuesta",
+                                 _entero(params["encuesta_id"]))
+
+
+@ruta("GET", "/cargas/<carga_id>/preguntas", "leer", requisito="R8.9")
+def preguntas_de_carga(ctx, actor, params, cuerpo, consulta):
+    return 200, reproceso.estado(ctx.boveda, ctx.semantica, "carga",
+                                 _entero(params["carga_id"]))
+
+
+def _reprocesar(ctx, actor, destino_tipo, destino_id, cuerpo):
+    """Misma ruta para revisar y para ejecutar, con `solo_revisar`: como en
+    la importación (R7.2), lo que la revisión dice que va a pasar sale del
+    mismo plan que después se encola."""
+    return reproceso.lanzar(
+        ctx.boveda, ctx.semantica, destino_tipo, destino_id,
+        cuerpo.get("preguntas") or [], actor=actor, encolador=ctx.encolador,
+        solo_revisar=_revision_pedida(cuerpo),
+        forzar=bool(cuerpo.get("forzar")))
+
+
+@ruta("POST", "/encuestas/<encuesta_id>/reproceso", "ingestar", requisito="R8.9")
+def reprocesar_encuesta(ctx, actor, params, cuerpo, consulta):
+    """Corrige textos, mapeos o normalización de un estudio ya ingestado y
+    re-embebe solo lo que cambió, por la vía diferida. Sin volver a subir el
+    archivo."""
+    return _reprocesar(ctx, actor, "encuesta", _entero(params["encuesta_id"]),
+                       cuerpo)
+
+
+@ruta("POST", "/cargas/<carga_id>/reproceso", "ingestar", requisito="R8.9")
+def reprocesar_carga(ctx, actor, params, cuerpo, consulta):
+    return _reprocesar(ctx, actor, "carga", _entero(params["carga_id"]), cuerpo)
 
 
 # Tope del archivo subido. El `.sav` viaja en base64 adentro del JSON, así

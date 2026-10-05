@@ -92,7 +92,7 @@ def listar(conn):
 
 def ingestar(conn_boveda, conn_semantica, carga_id, preguntas, filas,
              columna_id="id_en_origen", origen=None, proveedor=None,
-             demograficas=None, tipo_identificador=None):
+             demograficas=None, tipo_identificador=None, normalizacion=None):
     """Incorpora los individuos del archivo y sus respuestas. Sin panel.
 
     Es `encuestas.ingestar` menos las dos cosas que este flujo evita: no
@@ -142,6 +142,7 @@ def ingestar(conn_boveda, conn_semantica, carga_id, preguntas, filas,
         proveedor=proveedor,
         mapa_personas=mapa or None,
         motivos_sin_mapear=motivos,
+        normalizacion=normalizacion,
     )
     resultado["carga_id"] = carga_id
     resultado["tipo_identificador"] = tipo
