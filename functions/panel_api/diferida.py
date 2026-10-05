@@ -290,13 +290,19 @@ def estado(conn, trabajo_id, con_lotes=False):
 
     resumen = db.una(
         conn,
-        "select resumen, plan->>'operacion' as operacion "
+        "select resumen, plan->>'operacion' as operacion, "
+        "       coalesce((plan->>'sin_clave_de_dedup')::boolean, false) "
+        "         as sin_clave_de_dedup "
         "  from ingesta_trabajo where id = %s",
         (trabajo_id,))
     salida["resumen"] = (resumen or {}).get("resumen")
     # Fase 8 — un reproceso (R8.9) es un trabajo diferido como una carga, y
     # la pantalla los tiene que poder distinguir.
     salida["operacion"] = (resumen or {}).get("operacion") or "ingesta"
+    # La constancia de que se cargó sin clave de dedup, con el resultado: es
+    # una decisión que se tomó al revisar, y tiene que verse al terminar y
+    # cuando alguien mire esta carga dentro de un mes.
+    salida["sin_clave_de_dedup"] = bool((resumen or {}).get("sin_clave_de_dedup"))
     if con_lotes:
         salida["lotes"] = lotes_de(conn, trabajo_id)
     salida["fallidos"] = lotes_de(conn, trabajo_id, solo_fallidos=True)

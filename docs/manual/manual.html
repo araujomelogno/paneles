@@ -878,6 +878,23 @@
     cuya columna de documento trae 2 valores distintos crearía
     <strong>2 personas</strong>: ese aviso es la última oportunidad de ver el
     error antes de que ocurra.</p>
+    <p>Una clave que solo traen algunas filas <strong>cuenta igual</strong>, y
+    el resumen dice cuántas: «300 de 1131 filas». Deduplica a esas 300.</p>
+  </div>
+
+  <div class="aviso">
+    <div class="t">Sin ninguna clave, se advierte y se puede continuar</div>
+    <p>Si al crear personas ninguna fila trae documento, correo ni nombre con
+    fecha de nacimiento, el resumen lo destaca arriba: una carga futura con
+    la misma gente va a crear registros duplicados. No es un bloqueo —hay
+    casos en que está bien, como una base que se carga una sola vez— y abajo
+    hay dos salidas: <strong>Volver a corregir el mapeo</strong> o
+    <strong>Continuar igual, sin clave de dedup</strong>. Si se continúa, el
+    resultado de la carga lo deja dicho.</p>
+    <p>Lo que <strong>sí</strong> frena es lo que el sistema no puede suplir
+    con una decisión: crear personas sin evidencia de consentimiento, o sin
+    ningún dato con qué identificarlas. En ese caso el motivo aparece junto
+    al botón <strong>Ingestar</strong>, además de arriba.</p>
   </div>
 
   <p>El resumen también adelanta las advertencias que antes aparecían recién
@@ -1452,6 +1469,17 @@
     el texto original del archivo queda guardado: <strong>volver al
     original</strong> lo restituye. Si no se elige nada, la carga se hace
     exactamente como antes.</p>
+  </div>
+
+  <div class="aviso">
+    <div class="t">Las variables demográficas no aparecen acá</div>
+    <p>La calidad del dato es sobre <strong>lo que se embebe</strong>. Una
+    variable marcada como demográfica —el correo, el documento, el sexo— va a
+    la ficha del panelista y no al store semántico, así que el panel no le
+    propone nada: una columna de correo marcada como <strong>Correo</strong>
+    no aparece como «posibles datos personales», y ninguna acción del panel
+    puede quitarla. Si se le saca la marca, sus hallazgos vuelven a
+    aparecer.</p>
   </div>
 
   <table class="parte">

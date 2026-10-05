@@ -214,6 +214,20 @@ def _plan_de(cuerpo, **extra):
     return plan
 
 
+def _con_constancia_de_dedup(plan, filas):
+    """Deja en el plan si la carga crea personas sin clave de dedup.
+
+    La revisión lo advierte y no lo frena (BUG_validacion_dedup_bloquea): hay
+    cargas legítimas sin clave. Lo que sí tiene que quedar es la constancia de
+    que se continuó igual, y queda en el plan porque el plan se guarda con la
+    carga (D56) y es lo que `diferida.estado` devuelve con el resultado. Se
+    calcula con la misma función que usa la revisión, así que lo que se
+    registra es lo que se advirtió.
+    """
+    plan["sin_clave_de_dedup"] = resumen_ingesta.sin_clave_de_dedup(plan, filas)
+    return plan
+
+
 def _normalizacion_de(cuerpo):
     """`{valores_no_respuesta: [...]}` si la pantalla la mandó, o `None`."""
     lista = (cuerpo or {}).get("valores_no_respuesta")
@@ -1336,12 +1350,14 @@ def ingestar_sav(ctx, actor, params, cuerpo, consulta):
     # cuerpo: normalizarlas consulta el catálogo de atributos, y hacerlo una
     # vez por lote sería re-resolver el mapeo, que es justo lo que R-ASYNC.1
     # prohíbe.
-    salida = diferida.encolar(
-        ctx.boveda, "encuesta", encuesta_id,
+    plan = _con_constancia_de_dedup(
         _plan_de(cuerpo, columna_id=columna_id,
                  origen=(cuerpo.get("origen") or "sav"),
-                 preguntas=preguntas, demograficas=demograficas),
+                 preguntas=preguntas, demograficas=demograficas), filas)
+    salida = diferida.encolar(
+        ctx.boveda, "encuesta", encuesta_id, plan,
         filas, actor=actor, encolador=ctx.encolador)
+    salida["sin_clave_de_dedup"] = plan["sin_clave_de_dedup"]
 
     # Lo que se puede decir sin procesar nada se dice ya: son chequeos sobre
     # el archivo, no sobre lo ingestado, y esperarlos al final no aportaría.
@@ -1434,12 +1450,14 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
         ctx.boveda.commit()
 
     cargas.obtener(ctx.boveda, carga_id)   # que exista, antes de guardar nada
-    salida = diferida.encolar(
-        ctx.boveda, "carga", carga_id,
+    plan = _con_constancia_de_dedup(
         _plan_de(cuerpo, columna_id=columna_id,
                  origen=(cuerpo.get("origen") or "carga"),
-                 preguntas=preguntas, demograficas=demograficas),
+                 preguntas=preguntas, demograficas=demograficas), filas)
+    salida = diferida.encolar(
+        ctx.boveda, "carga", carga_id, plan,
         filas, actor=actor, encolador=ctx.encolador)
+    salida["sin_clave_de_dedup"] = plan["sin_clave_de_dedup"]
 
     salida["duplicados_en_el_archivo"] = calidad.detectar_duplicados_en_filas(
         filas, columna_id
