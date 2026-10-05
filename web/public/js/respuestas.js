@@ -57,7 +57,7 @@ export function seccionHtml(estudios, { prefijo = 'resp' } = {}) {
           ${estudios.map((e) => `<option value="${esc(e.ref_estudio)}">
             ${esc(e.estudio)} (${e.respuestas})</option>`).join('')}
         </select>
-        <input class="finput" id="${prefijo}-buscar"
+        <input type="text" class="finput" id="${prefijo}-buscar"
                placeholder="Buscar en pregunta o respuesta" />
         <label class="check"><input type="checkbox" id="${prefijo}-embebido" />
           Ver el texto embebido</label>

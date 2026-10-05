@@ -138,8 +138,9 @@ def test_la_bateria_se_ofrece_sugerida_y_no_aplicada(analisis):
 
 def test_una_pregunta_del_tipo_opcion_y_pregunta_se_propone_autocontenida(analisis):
     """R8.2 — el caso exacto de la spec."""
-    hallazgo = next(h for h in _hallazgos(analisis, "texto_propuesto")
-                    if h["variables"] == ["var138O1320"])
+    hallazgo = _hallazgos(analisis, "texto_propuesto")[0]
+    # Agrupado: un solo hallazgo para todos los textos, con la lista.
+    assert set(BATERIA) <= set(hallazgo["variables"])
     propuesta = hallazgo["acciones"][0]["propuesta"]["var138O1320"]["texto"]
     assert propuesta == "Pensando en el último mes, ¿has consumido cigarrillos?"
     # Editable y no aplicada: el texto de la variable sigue siendo el label.
@@ -182,7 +183,7 @@ def test_el_original_queda_guardado_junto_al_editado(
 def test_etiquetas_iguales_al_codigo_se_proponen_numericas(analisis):
     """R8.3 — `EDAD` con 16: "16", 17: "17"…"""
     hallazgo = next(h for h in _hallazgos(analisis, "tipo")
-                    if h["variables"] == ["EDAD"])
+                    if "EDAD" in h["variables"])
     assert hallazgo["acciones"][0]["propuesta"]["EDAD"] == {
         "tipo": "numerica", "opciones": None}
 
@@ -214,8 +215,8 @@ def test_el_otro_especificar_se_ofrece_fusionar_con_su_cerrada(analisis):
 # ════════════════════════════════════════════════════════════════════
 
 def test_checked_unchecked_se_propone_como_si_no(analisis):
-    hallazgo = next(h for h in _hallazgos(analisis, "par_conocido")
-                    if h["variables"] == ["var138O1320"])
+    hallazgo = _hallazgos(analisis, "par_conocido")[0]
+    assert set(BATERIA) <= set(hallazgo["variables"])
     assert hallazgo["acciones"][0]["propuesta"]["var138O1320"]["opciones"] == {
         "0": "No", "1": "Sí"}
 
@@ -254,9 +255,9 @@ def test_los_espacios_y_las_mayusculas_se_normalizan_sin_cambiar_el_contenido():
 
 
 def test_los_valores_de_no_respuesta_se_detectan(analisis):
-    hallazgo = next(h for h in _hallazgos(analisis, "no_respuesta")
-                    if h["variables"] == ["MARCA"])
-    assert [d["valor"] for d in hallazgo["detalle"]["valores"]] == ["99"]
+    hallazgo = _hallazgos(analisis, "no_respuesta")[0]
+    item = next(i for i in hallazgo["detalle"]["items"] if i["codigo"] == "MARCA")
+    assert [d["valor"] for d in item["valores"]] == ["99"]
     assert hallazgo["acciones"][0]["propuesta"]["MARCA"] == {
         "excluir_valores": ["99"]}
 
@@ -264,8 +265,7 @@ def test_los_valores_de_no_respuesta_se_detectan(analisis):
 def test_los_valores_de_no_respuesta_se_pueden_excluir(
         conn_boveda, conn_semantica, proveedor, analisis, ola):
     pregunta = _aplicar(_pregunta(analisis, "MARCA"),
-                        next(h for h in _hallazgos(analisis, "no_respuesta")
-                             if h["variables"] == ["MARCA"]))
+                        _hallazgos(analisis, "no_respuesta")[0])
     resultado = _ingestar(conn_boveda, conn_semantica, proveedor, ola, [pregunta])
     assert resultado["descartadas_no_respuesta"] == N // 4
     textos = _textos(conn_semantica, "MARCA")
@@ -807,3 +807,15 @@ def test_la_bateria_no_se_sugiere_como_documento(analisis):
     assert sav._sugerir_demografica("CI_NUM", "") == "documento"
     assert sav._sugerir_demografica("V1", "Televisión: ¿mira?") is None
     assert sav._sugerir_demografica("V2", "Agenda cultural") is None
+
+
+def test_el_resumen_de_una_encuesta_dice_a_que_panel_van(
+        ctx, actor, archivo, analisis, ola):
+    """Encontrado al recorrer la pantalla: en el modo «ya existen» la
+    pantalla no manda `panel_id`, y el resumen decía «no quedan asociados a
+    ningún panel» cuando la ingesta igual los incorpora al de la encuesta."""
+    _status, resumen = _ingesta_por_ruta(
+        ctx, actor, archivo, ola, [_pregunta(analisis, "MARCA")],
+        solo_revisar=True)
+    assert resumen["panel"]["sin_panel"] is False
+    assert resumen["panel"]["panel_id"] == ola["panel_id"]

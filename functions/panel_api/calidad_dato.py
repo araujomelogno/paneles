@@ -457,6 +457,9 @@ def detectar_no_respuesta(pregunta, por_valor, lista):
 #  R8.6 · PII en texto libre
 # ════════════════════════════════════════════════════════════════════
 
+NOMBRES_DE_PII = {"correo": "correo", "telefono": "teléfono",
+                  "cedula": "cédula", "url": "dirección web"}
+
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _URL = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
 # Celulares uruguayos (09x xxx xxx, con o sin +598) y fijos (2xxx xxxx,
@@ -784,7 +787,7 @@ def diagnosticar(preguntas, distribucion, filas_total=None,
 
     # ════ Lo que rompe ════
     for codigo, pii in piis:
-        tipos_vistos = ", ".join(sorted(pii["por_tipo"]))
+        tipos_vistos = ", ".join(NOMBRES_DE_PII.get(t, t) for t in sorted(pii["por_tipo"]))
         hallazgos.append(_hallazgo(
             "pii_en_texto_libre", ROMPE,
             f"Posibles datos personales en {codigo}",
@@ -850,69 +853,111 @@ def diagnosticar(preguntas, distribucion, filas_total=None,
             }],
             detalle=bateria))
 
-    for codigo, detectados in no_respuesta:
-        cuantos = sum(d["filas"] for d in detectados)
-        valores = [d["valor"] for d in detectados]
-        sin_etiqueta = {d["valor"]: ETIQUETA_NO_RESPUESTA
-                        for d in detectados if d["etiqueta"] is None
-                        and _es_numero(d["valor"])}
-        acciones = [{"etiqueta": "No ingestarlos",
-                     "propuesta": {codigo: {"excluir_valores": valores}}}]
-        if sin_etiqueta:
-            opciones = dict(por_codigo[codigo].get("opciones") or {})
-            acciones.append({
-                "etiqueta": "Ingestarlos con su etiqueta en texto",
-                "propuesta": {codigo: {"opciones": {**opciones, **sin_etiqueta}}}})
+    # Desde acá, los hallazgos que se repiten variable por variable van
+    # **agrupados**: uno por tipo, con una acción para todas y la lista de
+    # cada variable con la suya. Treinta tarjetas de «texto más claro» son
+    # exactamente el paso de revisión que se confirma sin leer.
+    if no_respuesta:
+        items, excluir, etiquetar = [], {}, {}
+        for codigo, detectados in no_respuesta:
+            valores = [d["valor"] for d in detectados]
+            excluir[codigo] = {"excluir_valores": valores}
+            sin_etiqueta = {d["valor"]: ETIQUETA_NO_RESPUESTA
+                            for d in detectados if d["etiqueta"] is None
+                            and _es_numero(d["valor"])}
+            if sin_etiqueta:
+                opciones = dict(por_codigo[codigo].get("opciones") or {})
+                etiquetar[codigo] = {"opciones": {**opciones, **sin_etiqueta}}
+            items.append({
+                "codigo": codigo,
+                "texto": ", ".join(f"{d['etiqueta'] or d['valor']} "
+                                   f"({d['filas']})" for d in detectados),
+                "propuesta": excluir[codigo], "valores": detectados})
+        cuantos = sum(d["filas"] for _c, ds in no_respuesta for d in ds)
+        acciones = [{"etiqueta": "No ingestarlos", "propuesta": excluir}]
+        if etiquetar:
+            acciones.append({"etiqueta": "Ingestarlos con su etiqueta en texto",
+                             "propuesta": etiquetar})
         hallazgos.append(_hallazgo(
             "no_respuesta", MEJORA,
-            f"Valores de no respuesta en {codigo}",
-            f"{cuantos} respuesta(s) de «{codigo}» son de no respuesta "
-            f"({', '.join(d['etiqueta'] or d['valor'] for d in detectados)}). "
-            f"Embebidas compiten en el ranking con respuestas reales sobre el "
-            f"mismo tema y no dicen nada de la persona. A veces sí interesa "
-            f"saber quién no contestó: por eso es una opción.",
-            [codigo], cuantos, acciones=acciones, detalle={"valores": detectados}))
+            f"Valores de no respuesta en {len(items)} variable(s)",
+            f"{cuantos} respuesta(s) son de no respuesta (no sabe, no "
+            f"contesta, 98, 99…). Embebidas compiten en el ranking con "
+            f"respuestas reales sobre el mismo tema y no dicen nada de la "
+            f"persona. A veces sí interesa saber quién no contestó: por eso es "
+            f"una opción, y si se ingestan van con su etiqueta, nunca con el "
+            f"código.",
+            [it["codigo"] for it in items], cuantos, acciones=acciones,
+            detalle={"items": items}))
 
-    for codigo, texto in textos:
+    if textos:
+        items = [{"codigo": codigo, "texto": texto["texto"],
+                  "cambios": texto["cambios"],
+                  "propuesta": {"texto": texto["texto"]}}
+                 for codigo, texto in textos]
         hallazgos.append(_hallazgo(
             "texto_propuesto", MEJORA,
-            f"Texto más claro para {codigo}",
-            f"Propuesta: «{texto['texto']}» ({'; '.join(texto['cambios'])}). "
-            f"El texto de la pregunta es la mitad de lo que se embebe. Revisá "
-            f"que no cambie el sentido: el original se conserva.",
-            [codigo], 1,
-            acciones=[{"etiqueta": "Usar el texto propuesto",
-                       "propuesta": {codigo: {"texto": texto["texto"]}}}]))
+            f"Textos de pregunta más claros para {len(items)} variable(s)",
+            "Se propone integrar la opción en la pregunta («Cigarrillos: "
+            "¿has consumido alguno de estos productos?» → «¿has consumido "
+            "cigarrillos?»), quitar consignas del instrumento y numeración, y "
+            "bajar mayúsculas de énfasis. El texto de la pregunta es la mitad "
+            "de lo que se embebe. Revisá que ninguna cambie el sentido: el "
+            "original se conserva y se puede volver.",
+            [it["codigo"] for it in items], len(items),
+            acciones=[{"etiqueta": "Usar todos los textos propuestos",
+                       "propuesta": {it["codigo"]: it["propuesta"] for it in items}}],
+            detalle={"items": items}))
 
-    for codigo, par in pares:
-        opciones = dict(por_codigo[codigo].get("opciones") or {})
+    if pares:
+        items = []
+        for codigo, par in pares:
+            opciones = dict(por_codigo[codigo].get("opciones") or {})
+            items.append({
+                "codigo": codigo,
+                "texto": f"{', '.join(sorted(opciones.values())) or '0 y 1 sin etiqueta'}"
+                         f" → Sí / No",
+                "propuesta": {"opciones": {**opciones, **par["normalizar"]}}})
         hallazgos.append(_hallazgo(
             "par_conocido", MEJORA,
-            f"Etiquetas sin sentido en español en {codigo}",
-            f"«{codigo}» es una dicotómica cuyas etiquetas no dicen lo que "
-            f"representan ({', '.join(sorted(opciones.values())) or '0 y 1 sin etiqueta'}). "
-            f"Se propone normalizarlas a Sí / No.",
-            [codigo], sum((distribucion.get(codigo) or {}).values()),
-            acciones=[{"etiqueta": "Normalizar a Sí / No",
-                       "propuesta": {codigo: {"opciones": {**opciones,
-                                                           **par["normalizar"]}}}}]))
+            f"Etiquetas sin sentido en español en {len(items)} variable(s)",
+            "Dicotómicas cuyas etiquetas no dicen lo que representan "
+            "(Checked/Unchecked, Yes/No, 1/0 sin etiqueta). El modelo distingue "
+            "mal «Checked» de «Unchecked»: se propone normalizarlas a Sí / No.",
+            [it["codigo"] for it in items],
+            sum(sum((distribucion.get(it["codigo"]) or {}).values()) for it in items),
+            acciones=[{"etiqueta": "Normalizar todas a Sí / No",
+                       "propuesta": {it["codigo"]: it["propuesta"] for it in items}}],
+            detalle={"items": items}))
 
-    for codigo, opciones in etiquetas_sucias:
+    if etiquetas_sucias:
+        items = [{"codigo": codigo,
+                  "texto": "; ".join(f"{k}={v}" for k, v in opciones.items()),
+                  "propuesta": {"opciones": opciones}}
+                 for codigo, opciones in etiquetas_sucias]
         hallazgos.append(_hallazgo(
             "etiquetas_inconsistentes", MEJORA,
-            f"Espacios o mayúsculas inconsistentes en {codigo}",
-            f"Las etiquetas de «{codigo}» tienen espacios de más o están en "
-            f"mayúsculas. Se propone normalizarlas sin cambiar su contenido.",
-            [codigo], 0,
+            f"Espacios o mayúsculas inconsistentes en {len(items)} variable(s)",
+            "Etiquetas con espacios de más o enteras en mayúsculas. Se propone "
+            "normalizarlas sin cambiar su contenido.",
+            [it["codigo"] for it in items], 0,
             acciones=[{"etiqueta": "Normalizar las etiquetas",
-                       "propuesta": {codigo: {"opciones": opciones}}}]))
+                       "propuesta": {it["codigo"]: it["propuesta"] for it in items}}],
+            detalle={"items": items}))
 
+    por_tipo = {}
     for codigo, propuesta, mensaje in tipos:
+        por_tipo.setdefault(propuesta["tipo"], []).append(
+            {"codigo": codigo, "texto": mensaje, "propuesta": propuesta})
+    for tipo_nuevo, items in sorted(por_tipo.items()):
         hallazgos.append(_hallazgo(
-            "tipo", MEJORA, f"Tipo de {codigo}: {propuesta['tipo']}",
-            f"«{codigo}»: {mensaje}.", [codigo], 0,
-            acciones=[{"etiqueta": f"Tratarla como {propuesta['tipo']}",
-                       "propuesta": {codigo: propuesta}}]))
+            "tipo", MEJORA,
+            f"Tratar como {tipo_nuevo}: {len(items)} variable(s)",
+            f"{items[0]['texto'][:1].upper()}{items[0]['texto'][1:]}.",
+            [it["codigo"] for it in items], 0,
+            acciones=[{"etiqueta": f"Tratarlas como {tipo_nuevo}",
+                       "propuesta": {it["codigo"]: it["propuesta"] for it in items}}],
+            detalle={"items": items}))
 
     for codigo, propuesta, mensaje in fusiones:
         hallazgos.append(_hallazgo(

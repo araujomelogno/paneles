@@ -521,3 +521,65 @@ label.check input { width: 16px; height: 16px; accent-color: var(--orange); }
 .texto-consentido { white-space: pre-wrap; font-family: inherit; font-size: 0.8rem;
   background: var(--gray-xlight); border: 1px solid var(--border); border-radius: 3px;
   padding: 0.7rem 0.9rem; margin-top: 0.5rem; max-height: 260px; overflow-y: auto; }
+/* El resumen de revisión (R7.2) y las estadísticas (R7.5): cifras grandes
+   arriba, tablas con números alineados, y la fila que hay que mirar. */
+.grid-datos { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem; margin: 0.75rem 0 1rem; }
+.tarjeta-dato { background: var(--gray-xlight); border: 1px solid var(--border);
+  border-radius: 3px; padding: 0.75rem 0.9rem; }
+.tarjeta-dato .valor { font-size: 1.35rem; font-weight: 800; color: var(--dark); line-height: 1.1; }
+.tarjeta-dato .etiqueta { font-size: 0.66rem; font-weight: 700; color: var(--gray);
+  text-transform: uppercase; letter-spacing: 0.06em; margin-top: 0.3rem; }
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.fila-problema td { background: var(--red-light); }
+
+/* ══ FASE 8 · calidad del dato semántico ══ */
+/* El panel de hallazgos, jerarquizado: lo que rompe en rojo, lo que mejora
+   en ámbar y lo informativo en gris. El orden lo da el servidor. */
+.calidad { border: 1px solid var(--border); border-radius: 4px; padding: 0.9rem 1rem;
+  background: var(--white); }
+.calidad-resumen { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
+.sev { display: inline-block; font-size: 0.66rem; font-weight: 800; letter-spacing: 0.05em;
+  text-transform: uppercase; padding: 0.15rem 0.5rem; border-radius: 999px; }
+.sev-rompe { background: var(--red-light); color: var(--red); }
+.sev-mejora { background: var(--amber-light); color: var(--amber); }
+.sev-info { background: var(--gray-light); color: var(--gray); }
+.hallazgo { border-left: 3px solid var(--border); padding: 0.55rem 0.75rem; margin-bottom: 0.5rem;
+  background: var(--gray-xlight); border-radius: 0 3px 3px 0; }
+.hallazgo.rompe { border-left-color: var(--red); }
+.hallazgo.mejora { border-left-color: var(--amber); }
+.hallazgo.info { border-left-color: var(--gray); }
+.hallazgo h5 { font-size: 0.8rem; font-weight: 800; margin-bottom: 0.2rem; color: var(--dark); }
+.hallazgo p { font-size: 0.78rem; margin: 0; }
+.hallazgo .acciones { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.45rem; }
+.hallazgo.aplicado { opacity: 0.6; }
+.hallazgo .ejemplos-pii { font-family: ui-monospace, monospace; font-size: 0.72rem;
+  color: var(--gray); margin-top: 0.3rem; }
+/* La vista previa, debajo de cada variable: lo que de verdad se va a
+   embeber. Monoespaciada porque es dato, no prosa. */
+.p-previa { margin: 0.1rem 0 0.6rem 1.2rem; padding: 0.45rem 0.7rem;
+  border-left: 3px solid var(--blue); background: var(--blue-light);
+  border-radius: 0 6px 6px 0; font-size: 0.74rem; }
+.p-previa .ej { font-family: ui-monospace, monospace; word-break: break-word; margin: 0.1rem 0; }
+.p-previa .ej .n { color: var(--gray); }
+.p-previa .ej.fuera { color: var(--gray); text-decoration: line-through; }
+.p-previa .chips { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-top: 0.3rem; }
+.chip { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.68rem;
+  font-weight: 700; padding: 0.1rem 0.45rem; border-radius: 999px;
+  background: var(--white); border: 1px solid var(--border); }
+.chip button { border: none; background: none; cursor: pointer; color: var(--gray);
+  font-weight: 800; padding: 0; line-height: 1; }
+.p-previa .original { color: var(--gray); margin-top: 0.25rem; }
+.p-previa .original a { color: var(--orange); cursor: pointer; font-weight: 700; }
+/* El editor del reproceso: una variable por tarjeta, con su vista previa. */
+.rep-variable { border: 1px solid var(--border); border-radius: 4px; padding: 0.7rem 0.8rem;
+  margin-bottom: 0.6rem; }
+.rep-variable.excluida { opacity: 0.55; }
+.rep-variable .rep-cab { display: flex; justify-content: space-between; gap: 0.5rem;
+  align-items: baseline; margin-bottom: 0.4rem; }
+.rep-variable .grid-2 { gap: 0.5rem; }
+.hallazgo ul.items { margin: 0.35rem 0 0 1rem; font-size: 0.74rem; }
+.hallazgo ul.items li { margin-bottom: 0.15rem; }
+.btn-link { border: none; background: none; color: var(--orange); font-weight: 700;
+  cursor: pointer; font-size: 0.72rem; padding: 0 0.25rem; }
+.btn-link:disabled { color: var(--gray); cursor: default; }

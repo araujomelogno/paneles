@@ -1294,15 +1294,20 @@ def ingestar_sav(ctx, actor, params, cuerpo, consulta):
     # verlo antes. Si esto estuviera más abajo, revisar ya habría dado de
     # alta a la gente.
     if _revision_pedida(cuerpo):
+        encuesta = encuestas.obtener(ctx.boveda, encuesta_id)
         return 200, resumen_ingesta.resumir(
             _plan_de(cuerpo, columna_id=columna_id,
                      origen=(cuerpo.get("origen") or "sav"),
                      preguntas=preguntas, demograficas=demograficas),
-            filas, panel=cuerpo.get("panel_id"),
+            # El panel de la encuesta, y no solo el que viene en el cuerpo:
+            # en el modo «ya existen» la pantalla no lo manda, y la ingesta
+            # igual incorpora a todos al panel de la encuesta (R3.9.a). El
+            # resumen decía «no quedan asociados a ningún panel», que era
+            # falso.
+            filas, panel=cuerpo.get("panel_id") or encuesta.get("panel_id"),
             evidencia=_evidencia_normalizada(cuerpo),
             destino_tipo="encuesta",
-            nombre_destino=encuestas.obtener(
-                ctx.boveda, encuesta_id).get("nombre"))
+            nombre_destino=encuesta.get("nombre"))
 
     creacion = None
     if cuerpo.get("modo") == "crear_individuos":

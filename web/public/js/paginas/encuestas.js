@@ -9,6 +9,7 @@
 import * as api from '../api.js';
 import * as consentimiento from '../consentimiento.js';
 import * as catalogo from '../catalogo.js';
+import * as calidad from '../calidad.js';
 import {
   $, $$, esc, encabezado, token, vacio, cargando, toast, modal, cerrarModal,
   leerFormulario, activarTokens, fechaCorta, estado, alerta, confirmar,
@@ -132,6 +133,9 @@ async function renderDetalle(main, encuestaId) {
           <button class="btn btn-outline btn-sm" id="convocar">Convocar al panel</button>
           <button class="btn btn-outline btn-sm" id="muestra">Exportar muestra</button>
           <button class="btn btn-orange btn-sm" id="ingestar">Ingestar respuestas</button>
+          <button class="btn btn-outline btn-sm" id="reprocesar"
+            title="Corregir textos, etiquetas o normalización de lo ya ingestado, sin volver a subir el archivo">
+            Corregir y reprocesar</button>
         </div>
       </div>
       <div class="card-body tight"><div id="participacion">${cargando('20vh')}</div></div>
@@ -196,6 +200,16 @@ async function renderDetalle(main, encuestaId) {
   $('#convocar').onclick = () => convocar(encuestaId);
   $('#muestra').onclick = () => exportarMuestra(encuestaId);
   $('#ingestar').onclick = () => abrirIngesta(encuesta);
+  // R8.9 — corregir lo ya ingestado sin volver a subir el archivo. El avance
+  // se sigue en esta misma ficha, como el de una carga.
+  $('#reprocesar').onclick = async () => {
+    const { abrirReproceso } = await import('./reproceso.js');
+    abrirReproceso({ tipo: 'encuesta', id: encuesta.id, nombre: encuesta.nombre },
+      (salida) => (salida?.trabajo_id
+        ? seguirTrabajo(salida.trabajo_id,
+                        { alTerminar: () => cargarParticipacion(encuestaId) })
+        : null));
+  };
   $('#verificar').onclick = () => verificarCruce(encuestaId);
 
   await cargarParticipacion(encuestaId);
@@ -680,6 +694,29 @@ function abrirIngesta(destino, alTerminar) {
         <div class="field-hint" id="hint-identificador"></div>
       </div>
 
+      <!-- Fase 8 — lo que el sistema detectó sobre la calidad del texto que
+           se va a embeber. Son propuestas: ninguna se aplica sola. -->
+      <div id="bloque-calidad" class="form-group hidden">
+        <label>Calidad del dato · lo que se detectó en el archivo</label>
+        <div class="field-hint" style="margin:-0.3rem 0 0.6rem">
+          Son <strong>propuestas</strong>: ninguna se aplica sola. Elegí las
+          que correspondan; debajo de cada variable, la vista previa muestra
+          cómo va a quedar el texto que se embebe, y el texto original se
+          conserva para poder volver.
+        </div>
+        <div id="calidad-panel"></div>
+        <details style="margin-top:0.5rem">
+          <summary class="small">Qué valores cuentan como «no respuesta»</summary>
+          <div class="toolbar" style="margin-top:0.4rem">
+            <input type="text" class="finput" id="valores-nr" style="flex:1 1 auto" />
+            <button class="btn btn-outline btn-sm" id="redetectar">Volver a detectar</button>
+          </div>
+          <div class="field-hint">Separados por coma. Los códigos (98, 99) solo
+            cuentan en variables con etiquetas: en una numérica, 99 puede ser
+            una edad.</div>
+        </details>
+      </div>
+
       <div class="form-group">
         <label>3 · Variables del archivo</label>
         <div class="field-hint" style="margin:-0.3rem 0 0.6rem">
@@ -735,7 +772,7 @@ function abrirIngesta(destino, alTerminar) {
             <label>Consentimiento de contacto y participación</label>
             <div class="grid-3">
               <select class="fselect" id="cons-contacto-var"></select>
-              <input class="finput" id="cons-contacto-valor" placeholder="Valor afirmativo (1, Sí…)" />
+              <input type="text" class="finput" id="cons-contacto-valor" placeholder="Valor afirmativo (1, Sí…)" />
               <div id="caja-version-contacto"></div>
             </div>
           </div>
@@ -749,7 +786,7 @@ function abrirIngesta(destino, alTerminar) {
             <label>Consentimiento de uso semántico</label>
             <div class="grid-3">
               <select class="fselect" id="cons-semantico-var"></select>
-              <input class="finput" id="cons-semantico-valor" placeholder="Valor afirmativo" />
+              <input type="text" class="finput" id="cons-semantico-valor" placeholder="Valor afirmativo" />
               <div id="caja-version-semantico"></div>
             </div>
           </div>
@@ -790,10 +827,18 @@ function abrirIngesta(destino, alTerminar) {
   const textoDeOpciones = (opciones) => (opciones
     ? Object.entries(opciones).map(([c, e]) => `${c}=${e}`).join('; ') : '');
 
+  /* Fase 8 — además de lo que se ve, cada fila guarda tres cosas: el texto
+     y las etiquetas **originales** del archivo (para poder volver y para que
+     la ingesta las conserve), las decisiones de normalización elegidas, y
+     una muestra de valores reales para la vista previa. */
   const filaPregunta = (codigo = '', texto = '', tipo = 'cerrada',
-                        opciones = null, rol = '', valores = null) => `
+                        opciones = null, rol = '', valores = null, extra = {}) => `
     <div class="pregunta-fila" data-tenia-etiquetas="${opciones ? '1' : '0'}"
-         data-valores="${esc(JSON.stringify(valores || []))}">
+         data-valores="${esc(JSON.stringify(valores || []))}"
+         data-norm="{}"
+         data-texto-original="${esc(extra.textoOriginal || '')}"
+         data-opciones-originales="${esc(JSON.stringify(opciones || null))}"
+         data-muestra="${esc(JSON.stringify(extra.muestra || []))}">
       <input type="text" class="p-codigo" placeholder="P1" value="${esc(codigo)}" />
       <input type="text" class="p-texto" placeholder="Texto de la pregunta" value="${esc(texto)}" />
       <select class="fselect p-tipo">
@@ -990,9 +1035,9 @@ function abrirIngesta(destino, alTerminar) {
   }
 
   let proximaClave = 0;
-  const agregarFila = (codigo, texto, tipo, opciones, rol, valores) => {
+  const agregarFila = (codigo, texto, tipo, opciones, rol, valores, extra) => {
     preguntas$.insertAdjacentHTML(
-      'beforeend', filaPregunta(codigo, texto, tipo, opciones, rol, valores));
+      'beforeend', filaPregunta(codigo, texto, tipo, opciones, rol, valores, extra));
     const fila = preguntas$.lastElementChild;
     // Una clave propia por fila: el bloque de mapeo va **después** de la
     // fila, no adentro, y sin esto dos variables con el mismo código —o una
@@ -1000,22 +1045,234 @@ function abrirIngesta(destino, alTerminar) {
     fila.dataset.clave = `v${proximaClave += 1}`;
     fila.querySelector('.p-quitar').onclick = (e) => {
       e.preventDefault();
-      const f = e.target.closest('.pregunta-fila');
-      f.parentElement.querySelector(
-        `.p-mapeo[data-de="${CSS.escape(f.dataset.clave)}"]`)?.remove();
-      f.remove();
+      quitarFila(e.target.closest('.pregunta-fila'));
     };
-    fila.querySelector('.p-tipo').onchange = () => ajustarFila(fila);
+    fila.querySelector('.p-tipo').onchange = () => {
+      ajustarFila(fila);
+      pedirPrevia(fila);
+    };
     fila.querySelector('.p-rol').onchange = () => {
       ajustarFila(fila);
       // R-MAP.1 — cambiar el atributo reinicia el mapeo: las categorías del
       // nuevo son otras, y conservar lo elegido apuntaría a claves que ya no
       // existen.
       refrescarMapeo(fila);
+      pedirPrevia(fila);
     };
-    fila.querySelector('.p-opciones').oninput = () => ajustarFila(fila);
+    fila.querySelector('.p-opciones').oninput = () => {
+      ajustarFila(fila);
+      pedirPrevia(fila);
+    };
+    // R8.8 — la vista previa se actualiza en el momento en que se corrige.
+    fila.querySelector('.p-texto').oninput = () => pedirPrevia(fila);
     ajustarFila(fila);
     if (rol) refrescarMapeo(fila);
+  };
+
+  function quitarFila(fila) {
+    fila.parentElement.querySelector(
+      `.p-mapeo[data-de="${CSS.escape(fila.dataset.clave)}"]`)?.remove();
+    bloquePrevia(fila)?.remove();
+    fila.remove();
+  }
+
+  /* ── Fase 8 · Calidad del dato y vista previa ──────────────────────
+
+     El diagnóstico vuelve del servidor junto con el análisis del `.sav`
+     (o, con un `.csv`, de `/calidad/diagnostico`). Acá se pinta, y cada
+     acción elegida se aplica **a la fila**: al texto, al tipo, a las
+     etiquetas o a las decisiones de normalización que la fila guarda. Lo
+     que se manda al ingestar sale de las filas, así que lo aplicado es lo
+     que viaja y nada más. */
+  let diagnostico = null;
+  const aplicados = new Set();
+
+  const filaDe = (codigo) => $$('.pregunta-fila', preguntas$).find(
+    (f) => f.querySelector('.p-codigo').value.trim() === codigo);
+  const normDe = (fila) => {
+    try { return JSON.parse(fila.dataset.norm || '{}'); } catch { return {}; }
+  };
+  const muestraDe = (fila) => {
+    try { return JSON.parse(fila.dataset.muestra || '[]'); } catch { return []; }
+  };
+  const opcionesOriginalesDe = (fila) => {
+    try { return JSON.parse(fila.dataset.opcionesOriginales || 'null'); } catch { return null; }
+  };
+
+  /* La pregunta tal como se va a mandar: lo que se ve en la fila más las
+     decisiones de normalización y el original. */
+  function preguntaDeFila(fila, orden) {
+    const codigo = fila.querySelector('.p-codigo').value.trim();
+    return {
+      codigo,
+      texto: fila.querySelector('.p-texto').value.trim(),
+      tipo: fila.querySelector('.p-tipo').value,
+      opciones: parsearOpciones(fila.querySelector('.p-opciones').value.trim()),
+      orden,
+      ...(fila.dataset.textoOriginal ? { texto_original: fila.dataset.textoOriginal } : {}),
+      ...(opcionesOriginalesDe(fila) ? { opciones_originales: opcionesOriginalesDe(fila) } : {}),
+      ...normDe(fila),
+    };
+  }
+
+  function bloquePrevia(fila) {
+    return preguntas$.querySelector(
+      `.p-previa[data-de="${CSS.escape(fila.dataset.clave || '')}"]`);
+  }
+
+  function pintarPrevia(fila, previa) {
+    let bloque = bloquePrevia(fila);
+    // Solo para las preguntas del estudio: una demográfica no se embebe.
+    if (fila.querySelector('.p-rol').value !== '') { bloque?.remove(); return; }
+    if (!bloque) {
+      bloque = document.createElement('div');
+      bloque.className = 'p-previa';
+      bloque.dataset.de = fila.dataset.clave || '';
+      fila.after(bloque);
+    }
+    const pregunta = preguntaDeFila(fila, 0);
+    if (!pregunta.texto) pregunta.texto = pregunta.codigo;
+    bloque.innerHTML = calidad.previaHtml(previa, pregunta, fila.dataset.textoOriginal);
+    bloque.querySelectorAll('[data-quitar]').forEach((b) => {
+      b.onclick = () => {
+        const norm = normDe(fila);
+        delete norm[b.dataset.quitar];
+        // Las tres de la batería van juntas: sin `solo_marcadas`, los
+        // valores marcados no significan nada.
+        if (b.dataset.quitar === 'solo_marcadas') {
+          delete norm.valores_marcados;
+          delete norm.bateria;
+        }
+        fila.dataset.norm = JSON.stringify(norm);
+        pedirPrevia(fila, 0);
+      };
+    });
+    const volver = bloque.querySelector('[data-volver]');
+    if (volver) {
+      volver.onclick = () => {
+        fila.querySelector('.p-texto').value = fila.dataset.textoOriginal;
+        pedirPrevia(fila, 0);
+      };
+    }
+  }
+
+  /* Pide la vista previa al servidor. Con espera: se llama en cada tecla, y
+     una vista previa por tecla sería ruido para el servidor y para la vista. */
+  function pedirPrevia(fila, espera = 350) {
+    clearTimeout(fila._relojPrevia);
+    if (fila.querySelector('.p-rol').value !== '') { bloquePrevia(fila)?.remove(); return; }
+    const muestra = muestraDe(fila);
+    if (!muestra.length && !diagnostico) return;
+    fila._relojPrevia = setTimeout(async () => {
+      const pregunta = preguntaDeFila(fila, 0);
+      if (!pregunta.codigo) return;
+      if (!pregunta.texto) pregunta.texto = pregunta.codigo;
+      try {
+        const { items } = await api.calidadDato.vistaPrevia(
+          [pregunta], { [pregunta.codigo]: muestra });
+        pintarPrevia(fila, items[pregunta.codigo]);
+      } catch {
+        // Sin vista previa se puede seguir: es una ayuda, no un requisito.
+        bloquePrevia(fila)?.remove();
+      }
+    }, espera);
+  }
+
+  /* Todas las vistas previas en un solo pedido, al cargar el archivo. */
+  async function pedirTodasLasPrevias() {
+    const filas = $$('.pregunta-fila', preguntas$)
+      .filter((f) => f.querySelector('.p-rol').value === '');
+    const preguntas = filas.map((f, i) => {
+      const p = preguntaDeFila(f, i + 1);
+      return { ...p, texto: p.texto || p.codigo };
+    }).filter((p) => p.codigo);
+    if (!preguntas.length) return;
+    const muestras = Object.fromEntries(filas.map(
+      (f) => [f.querySelector('.p-codigo').value.trim(), muestraDe(f)]));
+    try {
+      const { items } = await api.calidadDato.vistaPrevia(preguntas, muestras);
+      filas.forEach((f) => {
+        const codigo = f.querySelector('.p-codigo').value.trim();
+        if (items[codigo]) pintarPrevia(f, items[codigo]);
+      });
+    } catch { /* la vista previa es una ayuda */ }
+  }
+
+  /* Aplica una acción elegida: `{codigo: {campo: valor}}`. */
+  function aplicarPropuesta(propuesta) {
+    Object.entries(propuesta || {}).forEach(([codigo, campos]) => {
+      const fila = filaDe(codigo);
+      if (!fila) return;
+      if (campos.incluir === false) { quitarFila(fila); return; }
+      if ('texto' in campos) fila.querySelector('.p-texto').value = campos.texto || '';
+      if ('tipo' in campos) fila.querySelector('.p-tipo').value = campos.tipo;
+      if ('opciones' in campos) {
+        fila.querySelector('.p-opciones').value = textoDeOpciones(campos.opciones);
+        delete fila.dataset.opcionesGuardadas;
+      }
+      const norm = normDe(fila);
+      calidad.CLAVES.forEach((clave) => {
+        if (clave in campos) norm[clave] = campos[clave];
+      });
+      fila.dataset.norm = JSON.stringify(norm);
+      ajustarFila(fila);
+      pedirPrevia(fila, 0);
+    });
+  }
+
+  function pintarCalidad() {
+    const destino = $('#calidad-panel', caja);
+    if (!diagnostico) return;
+    $('#bloque-calidad', caja).classList.remove('hidden');
+    destino.innerHTML = calidad.panelHtml(diagnostico, aplicados);
+    calidad.activarPanel(destino, diagnostico, aplicados,
+      (_h, accion) => aplicarPropuesta(accion.propuesta), pintarCalidad);
+  }
+
+  const listaNoRespuesta = () => ($('#valores-nr', caja).value || '')
+    .split(',').map((v) => v.trim()).filter(Boolean);
+
+  function mostrarDiagnostico(nuevo) {
+    diagnostico = nuevo;
+    $('#valores-nr', caja).value = (nuevo?.valores_no_respuesta || []).join(', ');
+    pintarCalidad();
+  }
+
+  /* Con otra lista de no respuesta, se vuelve a detectar **sin volver a
+     subir el archivo**: con las muestras de cada variable alcanza para eso.
+     Del diagnóstico nuevo se toma solo lo de no respuesta; el resto (la PII,
+     por ejemplo) sale del archivo entero y la muestra no lo reemplaza. */
+  $('#redetectar', caja).onclick = async (e) => {
+    e.preventDefault();
+    const filas = $$('.pregunta-fila', preguntas$)
+      .filter((f) => f.querySelector('.p-rol').value === '');
+    const preguntas = filas.map((f, i) => {
+      const p = preguntaDeFila(f, i + 1);
+      return { ...p, texto: p.texto || p.codigo };
+    }).filter((p) => p.codigo);
+    try {
+      const cuerpo = datosArchivo.savBase64
+        ? { preguntas, muestras: Object.fromEntries(filas.map(
+            (f) => [f.querySelector('.p-codigo').value.trim(), muestraDe(f)])) }
+        : { preguntas, filas: datosArchivo.filas };
+      const nuevo = await api.calidadDato.diagnostico(
+        { ...cuerpo, valores_no_respuesta: listaNoRespuesta() });
+      const conservados = (diagnostico?.hallazgos || [])
+        .filter((h) => h.tipo !== 'no_respuesta');
+      const deNoRespuesta = nuevo.hallazgos.filter((h) => h.tipo === 'no_respuesta');
+      const orden = { rompe: 0, mejora: 1, info: 2 };
+      const hallazgos = [...conservados, ...deNoRespuesta]
+        .sort((a, b) => (orden[a.severidad] - orden[b.severidad]) || (b.cuantos - a.cuantos));
+      mostrarDiagnostico({
+        ...(diagnostico || nuevo), hallazgos,
+        valores_no_respuesta: nuevo.valores_no_respuesta,
+        resumen: Object.fromEntries(['rompe', 'mejora', 'info'].map(
+          (s) => [s, hallazgos.filter((h) => h.severidad === s).length])),
+      });
+      toast('Valores de no respuesta detectados de nuevo.', 'ok');
+    } catch (error) {
+      toast(error.message, 'err');
+    }
   };
   agregarFila();
   $('#add-pregunta', caja).onclick = (e) => { e.preventDefault(); agregarFila(); };
@@ -1081,11 +1338,32 @@ function abrirIngesta(destino, alTerminar) {
         .map((h) => `<option value="${esc(h)}" ${h === probable ? 'selected' : ''}>${esc(h)}</option>`).join('');
 
       // Precarga las preguntas con las columnas que no son la de identidad.
+      // Fase 8 — con una muestra de sus valores para la vista previa: el
+      // archivo se leyó acá, así que se cuenta acá (contar no es componer
+      // texto, que sí es del servidor).
       preguntas$.innerHTML = '';
       datosArchivo.encabezados
         .filter((h) => h !== (probable || ''))
-        .forEach((h) => agregarFila(h, ''));
+        .forEach((h) => agregarFila(h, '', undefined, null, '', null,
+          { muestra: calidad.muestraDeFilas(datosArchivo.filas, h) }));
       if (!preguntas$.children.length) agregarFila();
+
+      // El diagnóstico de calidad de un .csv lo hace el servidor con las
+      // filas, igual que el de un .sav.
+      aplicados.clear();
+      try {
+        mostrarDiagnostico(await api.calidadDato.diagnostico({
+          preguntas: datosArchivo.encabezados
+            .filter((h) => h !== (probable || ''))
+            .map((h, i) => ({ codigo: h, texto: h, tipo: 'cerrada', orden: i + 1 })),
+          filas: datosArchivo.filas,
+          ...(diagnostico ? { valores_no_respuesta: listaNoRespuesta() } : {}),
+        }));
+      } catch {
+        // Sin diagnóstico se puede importar igual, como antes de la Fase 8.
+        mostrarDiagnostico(null);
+      }
+      pedirTodasLasPrevias();
     } catch (error) {
       // Los errores del backend ya vienen redactados para que se entiendan
       // —archivo demasiado grande, .sav ilegible, sin permiso—: envolverlos
@@ -1112,6 +1390,9 @@ function abrirIngesta(destino, alTerminar) {
 
       avance.medido('Subiendo al servidor', 0);
       analisis = await (esCarga ? api.cargas : api.sav).analizar(encuesta.id, base64, {
+        // Fase 8 — si el analista ya editó la lista de no respuesta (volvió a
+        // cargar otro archivo en el mismo modal), se usa la suya.
+        extra: diagnostico ? { valores_no_respuesta: listaNoRespuesta() } : {},
         alSubir: (f) => (f < 1
           ? avance.medido('Subiendo al servidor', f)
           : avance.abierto('Analizando el archivo en el servidor…',
@@ -1140,8 +1421,13 @@ function abrirIngesta(destino, alTerminar) {
       // segmentador en un estudio y ser el objeto de análisis en otro.
       .forEach((v) => agregarFila(
         v.codigo, v.texto, v.tipo, v.opciones, v.demografica_sugerida || '',
-        v.valores));
+        v.valores, { textoOriginal: v.texto_del_archivo || '', muestra: v.muestra }));
     if (!preguntas$.children.length) agregarFila();
+
+    // Fase 8 — el diagnóstico y la vista previa de cada variable.
+    aplicados.clear();
+    mostrarDiagnostico(analisis.calidad || null);
+    pedirTodasLasPrevias();
 
     $('#resumen-archivo', caja).textContent =
       `${archivo.name} — ${analisis.filas} filas, ${analisis.variables.length} variables. `
@@ -1406,6 +1692,12 @@ function abrirIngesta(destino, alTerminar) {
         <div class="etiqueta">personas que quedarían</div></div>
       <div class="tarjeta-dato"><div class="valor">${r.volumen.respuestas_a_escribir}</div>
         <div class="etiqueta">respuestas a escribir</div></div>
+      ${r.volumen.descartadas_no_marcadas ? `<div class="tarjeta-dato">
+        <div class="valor">${r.volumen.descartadas_no_marcadas}</div>
+        <div class="etiqueta">no marcadas, descartadas</div></div>` : ''}
+      ${r.volumen.descartadas_no_respuesta ? `<div class="tarjeta-dato">
+        <div class="valor">${r.volumen.descartadas_no_respuesta}</div>
+        <div class="etiqueta">de no respuesta, descartadas</div></div>` : ''}
     </div>
 
     <h4>Identidad</h4>
@@ -1421,7 +1713,8 @@ function abrirIngesta(destino, alTerminar) {
           <td>${esc(r.identidad.tipo_identificador)}</td></tr>
       <tr><td>Panel</td><td>${r.panel.sin_panel
         ? 'No quedan asociados a ningún panel'
-        : esc(r.panel.nombre || `#${r.panel.panel_id}`)}</td></tr>
+        : `Quedan en el panel #${esc(r.panel.panel_id)}${r.panel.nombre
+            ? ` (el de «${esc(r.panel.nombre)}»)` : ''}`}</td></tr>
     </tbody></table>
 
     <h4>Consentimiento</h4>
@@ -1441,11 +1734,21 @@ function abrirIngesta(destino, alTerminar) {
 
     <h4>Al store semántico · ${r.al_store_semantico.cuantas} variable(s)</h4>
     <table class="tabla">
-      <thead><tr><th>Código</th><th>Texto de la pregunta</th><th>Tipo</th></tr></thead>
-      <tbody>${r.al_store_semantico.variables.map(
-        (v) => filaVar(v, esc(v.tipo || ''))).join('') || '<tr><td colspan="3">Ninguna</td></tr>'}
+      <thead><tr><th>Código</th><th>Texto de la pregunta</th><th>Tipo</th>
+                 <th class="num">Genera</th></tr></thead>
+      <tbody>${r.al_store_semantico.variables.map((v) => `
+        <tr><td><code>${esc(v.codigo)}</code></td>
+            <td>${esc(v.texto || '—')}
+              ${Object.keys(v.normalizacion || {}).length
+                ? `<div class="chips">${calidad.chipsHtml(v.normalizacion)
+                    .replace(/<button[^>]*>×<\/button>/g, '')}</div>` : ''}</td>
+            <td>${esc(v.tipo || '')}</td>
+            <td class="num">${v.respuestas_que_genera ?? '—'}</td></tr>`).join('')
+        || '<tr><td colspan="4">Ninguna</td></tr>'}
       </tbody>
     </table>
+
+    ${previasHtml(r)}
 
     <h4>A la bóveda · identidad y contacto</h4>
     <table class="tabla">
@@ -1480,6 +1783,28 @@ function abrirIngesta(destino, alTerminar) {
 
     <button class="btn btn-outline btn-sm" id="copiar-resumen"
             style="margin-top:0.8rem">Copiar el resumen</button>`;
+  }
+
+  /* R8.8 — en la revisión, el texto embebido real de cada variable. Es lo
+     que más errores evita de toda la fase: ver «… → Checked» escrito tal
+     cual, antes de ingestar, hace evidente lo que ninguna lista deja ver. */
+  function previasHtml(r) {
+    const previas = Object.entries(r.vista_previa || {});
+    if (!previas.length) return '';
+    return `
+    <h4>Cómo va a quedar el texto embebido</h4>
+    <table class="tabla">
+      <thead><tr><th>Código</th><th>Ejemplos reales del archivo</th></tr></thead>
+      <tbody>${previas.map(([codigo, p]) => `
+        <tr><td><code>${esc(codigo)}</code>
+              <div class="small muted">${p.genera} de ${p.respuestas}</div></td>
+            <td>${(p.ejemplos || []).map((e) => (e.texto_embebido
+              ? `<div class="small mono">${esc(e.texto_embebido)}</div>`
+              : `<div class="small muted"><s>${esc(e.valor)}</s> · ${esc(
+                  calidad.MOTIVOS[e.motivo] || e.motivo)}</div>`)).join('')
+              || '<span class="small muted">Sin valores.</span>'}</td></tr>`).join('')}
+      </tbody>
+    </table>`;
   }
 
   /* El conteo que detecta el error que destruye datos. Va en su propia
@@ -1520,7 +1845,11 @@ function abrirIngesta(destino, alTerminar) {
       `Columna identificadora: ${r.identidad.columna_id} (${r.identidad.tipo_identificador})`,
       `Panel: ${r.panel.sin_panel ? 'sin panel' : r.panel.nombre}`,
       `Filas: ${r.volumen.filas_del_archivo} · Personas estimadas: ${r.volumen.personas_estimadas}`
-        + ` · Respuestas: ${r.volumen.respuestas_a_escribir}`,
+        + ` · Respuestas: ${r.volumen.respuestas_a_escribir}`
+        + (r.volumen.descartadas_no_marcadas
+          ? ` · Descartadas no marcadas: ${r.volumen.descartadas_no_marcadas}` : '')
+        + (r.volumen.descartadas_no_respuesta
+          ? ` · Descartadas no respuesta: ${r.volumen.descartadas_no_respuesta}` : ''),
       '',
       `Al store semántico (${r.al_store_semantico.cuantas}): `
         + r.al_store_semantico.variables.map((v) => v.codigo).join(', '),
@@ -1555,6 +1884,9 @@ function abrirIngesta(destino, alTerminar) {
       columna_id: columnaId,
       demograficas: marcadoDemografico(),
       tipo_identificador: tipoId$.value,
+      // Fase 8 — la lista de no respuesta con la que se detectó, para que
+      // quede guardada con el estudio y un reproceso sepa qué se decidió.
+      ...(diagnostico ? { valores_no_respuesta: listaNoRespuesta() } : {}),
     };
     return datosArchivo.savBase64
       ? { ...comun, archivo_base64: datosArchivo.savBase64, origen: 'sav',
@@ -1591,13 +1923,11 @@ function abrirIngesta(destino, alTerminar) {
       avisarEnIngesta(alerta('Elegí la columna que identifica al respondente.'));
       return;
     }
-    const preguntas = $$('.pregunta-fila', preguntas$).map((fila, i) => ({
-      codigo: fila.querySelector('.p-codigo').value.trim(),
-      texto: fila.querySelector('.p-texto').value.trim(),
-      tipo: fila.querySelector('.p-tipo').value,
-      opciones: parsearOpciones(fila.querySelector('.p-opciones').value.trim()),
-      orden: i + 1,
-    })).filter((p) => p.codigo && p.texto);
+    // Fase 8 — con las decisiones de normalización elegidas y el texto
+    // original del archivo, que la ingesta guarda junto al editado.
+    const preguntas = $$('.pregunta-fila', preguntas$)
+      .map((fila, i) => preguntaDeFila(fila, i + 1))
+      .filter((p) => p.codigo && p.texto);
 
     if (!preguntas.length) {
       avisarEnIngesta(alerta(
@@ -1691,9 +2021,30 @@ function abrirIngesta(destino, alTerminar) {
    carga que terminó mientras la pestaña estaba cerrada—. */
 function mostrarResumenDeIngesta(resultado, esCarga, titulo = 'Ingesta terminada') {
   resultado = resultado || {};
-  mostrarResultado('Ingesta terminada', [
+  // R8.9 — un reproceso corre por la misma vía y se sigue igual, pero su
+  // resumen es otro: qué se re-embebió, qué quedó igual y qué se borró.
+  if (resultado.operacion === 'reproceso') {
+    mostrarResultado('Reproceso terminado', [
+      ['Re-embebidas', resultado.reembebidas || 0],
+      ['Sin cambios, no se tocaron', resultado.sin_cambios || 0],
+      ['Borradas del store semántico', resultado.borradas || 0],
+      ['Sin uso semántico vigente', resultado.sin_consentimiento_reproceso || 0, true],
+    ], [
+      'Solo se re-embebieron las respuestas cuyo texto cambió.',
+      resultado.sin_consentimiento_reproceso
+        ? `${resultado.sin_consentimiento_reproceso} respuesta(s) no se re-embebieron porque la persona ya no tiene uso semántico vigente.`
+        : null,
+    ].filter(Boolean).join(' '));
+    return;
+  }
+  mostrarResultado(titulo, [
         ['Respuestas escritas', resultado.respuestas_escritas],
         ['Personas', resultado.personas],
+        // Fase 8 — lo que la normalización dejó afuera, por motivo.
+        ...(resultado.descartadas_no_marcadas
+          ? [['No marcadas, descartadas', resultado.descartadas_no_marcadas]] : []),
+        ...(resultado.descartadas_no_respuesta
+          ? [['No respuesta, descartadas', resultado.descartadas_no_respuesta]] : []),
         ['Sin mapear', (resultado.sin_mapear || []).length, true],
         ['Sin consentimiento', (resultado.sin_consentimiento || []).length, true],
         ...(resultado.creacion_de_individuos ? [
@@ -1844,6 +2195,12 @@ function avisarDeLotesFallidos(estado, esCarga, alTerminar) {
       await reanudarIngesta(vuelta.trabajo_id, { esCarga, alTerminar });
     } catch (error) { toast(error.message, 'error'); }
   };
+}
+
+/* R8.9 — seguir un trabajo que se acaba de lanzar desde otra pantalla (un
+   reproceso). Es lo mismo que retomar una carga: el estado vive en la base. */
+export function seguirTrabajo(trabajoId, opciones = {}) {
+  return reanudarIngesta(trabajoId, opciones);
 }
 
 /* Retomar una carga que ya estaba en curso. Es lo que hace que cerrar la
