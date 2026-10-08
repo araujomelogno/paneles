@@ -61,7 +61,10 @@ from . import (
     atributos, bajas, consentimiento, credenciales as credenciales_mod, db,
     preferencias, premios, puntos, verificacion_contacto as verif,
 )
-from .errores import Conflicto, DatosInvalidos, NoAutenticado, NoEncontrado, SinPermiso
+from .errores import (
+    ComprobacionNoDisponible, Conflicto, DatosInvalidos, NoAutenticado,
+    NoEncontrado, SinPermiso,
+)
 
 # ── R6.1.a · Parámetros del acceso ───────────────────────────────────
 
@@ -123,6 +126,31 @@ RESPUESTA_DE_ENLACE = (
 # eso es una filtración de datos personales aunque nunca se muestre un
 # perfil.
 MENSAJE_CREDENCIAL_INVALIDA = "Correo o contraseña incorrectos."
+
+# PEDIDO R3 — y lo que se contesta cuando la credencial **no se pudo
+# comprobar**: el proveedor de identidad está caído, no contesta o está mal
+# configurado. No es «contraseña incorrecta» —podía ser correcta— y no
+# cuenta como intento fallido. Tampoco revela nada: es el mismo texto para
+# cualquier correo, exista o no.
+MENSAJE_COMPROBACION_NO_DISPONIBLE = (
+    "No pudimos comprobar tu contraseña por un problema técnico de nuestro "
+    "lado. No es un error tuyo: intentá de nuevo en unos minutos."
+)
+
+
+def _verificar(credenciales, email, clave):
+    """`credenciales.verificar_clave` con el mensaje del portal.
+
+    El motivo técnico exacto ya quedó en el log (`credenciales._registrar`);
+    a la persona le llega la constante. Se levanta **antes** de registrar un
+    intento: una caída del servicio no puede dejar bloqueado a nadie.
+    """
+    try:
+        return credenciales.verificar_clave(email, clave)
+    except ComprobacionNoDisponible:
+        raise ComprobacionNoDisponible(
+            MENSAJE_COMPROBACION_NO_DISPONIBLE,
+            {"motivo": "comprobacion_no_disponible"}) from None
 
 
 def _hash(valor):
@@ -464,7 +492,7 @@ def iniciar_sesion(conn, email, clave, credenciales, origen=None):
         MAX_FALLOS_POR_ORIGEN_POR_HORA, MAX_FALLOS_POR_CORREO_POR_HORA,
         "intentos fallidos")
 
-    cuenta = credenciales.verificar_clave(email, clave)
+    cuenta = _verificar(credenciales, email, clave)
     persona = _panelista_por_email(conn, email)
     if not cuenta or not persona:
         _registrar_intento(conn, email, origen_hash,
@@ -539,7 +567,7 @@ def reautenticar(conn, id_persona, clave, credenciales, origen=None):
         MAX_FALLOS_POR_ORIGEN_POR_HORA, MAX_FALLOS_POR_CORREO_POR_HORA,
         "intentos fallidos")
 
-    cuenta = credenciales.verificar_clave(email, clave)
+    cuenta = _verificar(credenciales, email, clave)
     if not cuenta or cuenta["uid"] != fila["uid"]:
         _registrar_intento(conn, email, origen_hash, id_persona)
         raise NoAutenticado(

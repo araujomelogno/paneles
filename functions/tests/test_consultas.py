@@ -421,9 +421,14 @@ def test_la_consulta_solo_demografica_no_abre_el_store_semantico(
     assert resultado["abrio_semantica"] is False
     assert resultado["diagnostico"]["abrio_semantica"] is False
     assert resultado["puente"]["estrategia"] is None
-    assert {i["nombre"] for i in resultado["items"]} == {
-        "Ana Pérez", "Cora Díaz", "Elena Núñez"
-    }
+    # SC2 — el resultado es seudónimo: los nombres se resuelven con
+    # «Ver quiénes son», que queda registrado. Acá se resuelven a mano para
+    # comprobar que el segmento es el de siempre.
+    ids = [i["id_persona"] for i in resultado["items"]]
+    nombres = {f["nombre"] for f in conn_boveda.execute(
+        "select nombre from persona where id_persona = any(%s::uuid[])",
+        (ids,)).fetchall()}
+    assert nombres == {"Ana Pérez", "Cora Díaz", "Elena Núñez"}
 
 
 def test_la_consulta_demografica_no_exige_uso_semantico(ctx_solo_boveda, corpus):
@@ -433,7 +438,7 @@ def test_la_consulta_demografica_no_exige_uso_semantico(ctx_solo_boveda, corpus)
     resultado = consultas.ejecutar(
         ctx_solo_boveda, {"criterios": [{"dimension": "localidad", "valor": "Colonia"}]}
     )
-    assert [i["nombre"] for i in resultado["items"]] == ["Elena Núñez"]
+    assert nombres(resultado, corpus) == ["Elena Núñez"]
 
 
 def test_la_consulta_demografica_puede_exigir_una_finalidad(ctx_solo_boveda, corpus):
@@ -441,7 +446,7 @@ def test_la_consulta_demografica_puede_exigir_una_finalidad(ctx_solo_boveda, cor
         "criterios": [{"dimension": "sexo", "valor": "F"}],
         "finalidad": consentimiento.SEMANTICO,
     })
-    assert "Elena Núñez" not in {i["nombre"] for i in resultado["items"]}
+    assert "Elena Núñez" not in set(nombres(resultado, corpus))
 
 
 @pytest.mark.parametrize("criterio", [

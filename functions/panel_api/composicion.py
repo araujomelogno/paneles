@@ -22,6 +22,21 @@ tener bien el sexo y bien la edad, y no tener ninguna mujer de más de 65).
 
 Todo pasa en la bóveda: los atributos demográficos son autoritativos acá.
 
+**R-ORG.2 — el ámbito.** La composición se calcula sobre un conjunto de
+personas, y ese conjunto ya no es siempre un panel:
+
+* **todos** — la bóveda entera, incluidas las personas cargadas sin panel
+  (R3.13), que hasta acá no aparecían en ninguna composición;
+* **panel** — los miembros, lo de siempre y con el mismo SQL;
+* **carga** — las personas vinculadas a una carga (R-ORG.1), creadas o
+  reutilizadas.
+
+Lo único que cambia entre los tres es *quién cuenta*; cómo se cuenta, cómo
+se separan los «sin dato» y cómo se calcula la brecha es la misma función.
+Objetivo admiten «panel» y «todos»; una carga no (R-ORG.3, D67): es un hecho
+del pasado y no se corrige reclutando, así que su brecha es «no disponible»
+con ese motivo, nunca un cero.
+
 **R4.1.a — la composición a fecha.** Con `momento`, la composición se calcula
 con los atributos que estaban vigentes entonces y con la membresía que existía
 entonces. Es una corrección, no un extra: sin historial, recalcular la
@@ -109,6 +124,44 @@ def _validar_objetivos(objetivos, categoricas=None):
     return por_dimension
 
 
+# R-ORG.2 — los tres ámbitos. El orden es el de la pantalla.
+TODOS = "todos"
+PANEL = "panel"
+CARGA = "carga"
+AMBITOS = (TODOS, PANEL, CARGA)
+# R-ORG.3 — los que admiten universo de referencia (D67).
+AMBITOS_CON_OBJETIVO = (PANEL, TODOS)
+
+
+def _donde_objetivo(ambito, panel_id):
+    """El filtro de `objetivo_composicion` para un ámbito."""
+    if ambito == TODOS:
+        return "ambito = 'todos'", ()
+    return "ambito = 'panel' and panel_id = %s", (panel_id,)
+
+
+def _guardar(conn, ambito, panel_id, objetivos):
+    por_dimension = _validar_objetivos(objetivos, demografia.categoricas(conn))
+    donde, params = _donde_objetivo(ambito, panel_id)
+    for dimension, categorias in por_dimension.items():
+        db.ejecutar(
+            conn,
+            f"delete from objetivo_composicion where {donde} and dimension = %s",
+            params + (dimension,),
+        )
+        for categoria, proporcion in categorias.items():
+            db.ejecutar(
+                conn,
+                """
+                insert into objetivo_composicion
+                       (ambito, panel_id, dimension, categoria, proporcion_objetivo)
+                     values (%s, %s, %s, %s, %s)
+                """,
+                (ambito, panel_id if ambito == PANEL else None, dimension,
+                 categoria, proporcion),
+            )
+
+
 def guardar_objetivo(conn, panel_id, objetivos):
     """Carga (o reemplaza) el universo de referencia de un panel.
 
@@ -119,37 +172,32 @@ def guardar_objetivo(conn, panel_id, objetivos):
     """
     if not db.una(conn, "select 1 from panel where id = %s", (panel_id,)):
         raise NoEncontrado(f"No existe el panel {panel_id}.")
-    por_dimension = _validar_objetivos(objetivos, demografia.categoricas(conn))
-
-    for dimension, categorias in por_dimension.items():
-        db.ejecutar(
-            conn,
-            "delete from objetivo_composicion where panel_id = %s and dimension = %s",
-            (panel_id, dimension),
-        )
-        for categoria, proporcion in categorias.items():
-            db.ejecutar(
-                conn,
-                """
-                insert into objetivo_composicion
-                       (panel_id, dimension, categoria, proporcion_objetivo)
-                     values (%s, %s, %s, %s)
-                """,
-                (panel_id, dimension, categoria, proporcion),
-            )
+    _guardar(conn, PANEL, panel_id, objetivos)
     return obtener_objetivo(conn, panel_id)
 
 
-def obtener_objetivo(conn, panel_id):
+def guardar_objetivo_de_todos(conn, objetivos):
+    """R-ORG.3 — el universo de referencia de **toda** la bóveda.
+
+    Es otro universo que el de cualquier panel, y por eso es otra fila: el
+    objetivo del panel nacional y el del total de la bóveda no se pisan.
+    Mismas reglas de validación y de reemplazo por dimensión.
+    """
+    _guardar(conn, TODOS, None, objetivos)
+    return obtener_objetivo_de_todos(conn)
+
+
+def _leer(conn, ambito, panel_id):
+    donde, params = _donde_objetivo(ambito, panel_id)
     filas = db.todas(
         conn,
-        """
+        f"""
         select dimension, categoria, proporcion_objetivo
           from objetivo_composicion
-         where panel_id = %s
+         where {donde}
          order by dimension, categoria
         """,
-        (panel_id,),
+        params,
     )
     por_dimension = {}
     for f in filas:
@@ -157,7 +205,6 @@ def obtener_objetivo(conn, panel_id):
             f["proporcion_objetivo"]
         )
     return {
-        "panel_id": panel_id,
         "dimensiones": por_dimension,
         "items": [
             {
@@ -170,23 +217,39 @@ def obtener_objetivo(conn, panel_id):
     }
 
 
+def obtener_objetivo(conn, panel_id):
+    return {"panel_id": panel_id, **_leer(conn, PANEL, panel_id)}
+
+
+def obtener_objetivo_de_todos(conn):
+    return {"ambito": TODOS, **_leer(conn, TODOS, None)}
+
+
+def _borrar(conn, ambito, panel_id, dimension=None):
+    donde, params = _donde_objetivo(ambito, panel_id)
+    if dimension:
+        return db.ejecutar(
+            conn,
+            f"delete from objetivo_composicion where {donde} and dimension = %s",
+            params + (dimension,),
+        )
+    return db.ejecutar(
+        conn, f"delete from objetivo_composicion where {donde}", params)
+
+
 def borrar_objetivo(conn, panel_id, dimension=None):
     """Saca el objetivo de una dimensión (o el del panel entero).
 
     Después de esto la composición de esa dimensión vuelve a ser puramente
     descriptiva, con la brecha marcada no disponible.
     """
-    if dimension:
-        n = db.ejecutar(
-            conn,
-            "delete from objetivo_composicion where panel_id = %s and dimension = %s",
-            (panel_id, dimension),
-        )
-    else:
-        n = db.ejecutar(
-            conn, "delete from objetivo_composicion where panel_id = %s", (panel_id,)
-        )
+    n = _borrar(conn, PANEL, panel_id, dimension)
     return {"panel_id": panel_id, "dimension": dimension, "borradas": n}
+
+
+def borrar_objetivo_de_todos(conn, dimension=None):
+    n = _borrar(conn, TODOS, None, dimension)
+    return {"ambito": TODOS, "dimension": dimension, "borradas": n}
 
 
 SIN_DATO = "(sin dato)"
@@ -215,51 +278,80 @@ def _params_membresia(estado, momento):
     return (momento, estado, estado, momento, estado, momento)
 
 
-def _observada(conn, panel_id, dimension, estado="activo", momento=None):
-    """Cuántos miembros hay en cada categoría de una dimensión.
+def _universo_panel(panel_id, estado="activo", momento=None):
+    """Quiénes cuentan en la composición de un panel: sus miembros.
+
+    Devuelve `(from, where, parámetros)`. Las tres consultas que
+    cuentan (total, por dimensión, cruce) lo usan igual, así que el ámbito
+    se decide en un solo lugar.
+    """
+    return (
+        "from membresia m join persona p on p.id_persona = m.id_persona",
+        "m.panel_id = %s and " + _MEMBRESIA_VIGENTE,
+        (panel_id,) + _params_membresia(estado, momento),
+    )
+
+
+def _universo_todos():
+    """R-ORG.2 — la bóveda entera, con y sin panel."""
+    return "from persona p", "true", ()
+
+
+def _universo_carga(carga_id):
+    """R-ORG.2 — las personas vinculadas a la carga, creadas o reutilizadas.
+
+    Mira la carga **desde hoy**: quien se dio de baja ya no tiene fila ni
+    vínculo, así que no aparece. La pantalla lo dice.
+    """
+    return (
+        "from persona_carga pc join persona p on p.id_persona = pc.id_persona",
+        "pc.carga_id = %s",
+        (carga_id,),
+    )
+
+
+def _observada(conn, universo, dimension, momento=None):
+    """Cuántas personas del universo hay en cada categoría de una dimensión.
 
     R3.14 — la dimensión puede ser cualquier atributo del catálogo, así que
     el conteo va contra la resolución de atributos y no contra columnas fijas.
     Quien no tiene valor no tiene fila: cae en `(sin dato)`.
 
     R4.1.a — con `momento`, el valor de cada persona es el que estaba vigente
-    entonces, y la membresía también: quien se incorporó después no estaba en
-    el panel ese día y no tiene por qué contarse en su composición.
+    entonces (y, en un panel, la membresía también: quien se incorporó
+    después no estaba en el panel ese día).
     """
+    desde, donde, params = universo
     filas = db.todas(
         conn,
-        """
+        f"""
         select coalesce(va.valor, %s) as categoria,
                count(*)::int as observados
-          from membresia m
-          join persona p on p.id_persona = m.id_persona
+          {desde}
           left join f_atributo_persona(coalesce(%s::timestamptz, now())) va
                  on va.id_persona = p.id_persona and va.atributo = %s
-         where m.panel_id = %s
-           and """ + _MEMBRESIA_VIGENTE + """
+         where {donde}
          group by 1
          order by 1
         """,
-        (SIN_DATO, momento, dimension, panel_id) + _params_membresia(estado, momento),
+        (SIN_DATO, momento, dimension) + params,
     )
     return {f["categoria"]: f["observados"] for f in filas}
 
 
+def _contar(conn, universo):
+    desde, donde, params = universo
+    return db.una(conn, f"select count(*)::int as n {desde} where {donde}",
+                  params)["n"]
+
+
 def contar_miembros(conn, panel_id, estado="activo", momento=None):
-    fila = db.una(
-        conn,
-        """
-        select count(*)::int as n from membresia m
-         where m.panel_id = %s and """ + _MEMBRESIA_VIGENTE + """
-        """,
-        (panel_id,) + _params_membresia(estado, momento),
-    )
-    return fila["n"]
+    return _contar(conn, _universo_panel(panel_id, estado, momento))
 
 
-def _dimension(conn, panel_id, dimension, objetivos, total, estado,
-               momento=None):
-    observada = _observada(conn, panel_id, dimension, estado, momento)
+def _dimension(conn, universo, dimension, objetivos, total, momento=None,
+               motivo_sin_objetivo=None, quienes="miembro(s)"):
+    observada = _observada(conn, universo, dimension, momento)
     del_objetivo = objetivos.get(dimension) or {}
     hay_objetivo = bool(del_objetivo)
 
@@ -305,15 +397,16 @@ def _dimension(conn, panel_id, dimension, objetivos, total, estado,
         "dimension": dimension,
         "brecha_disponible": hay_objetivo,
         "motivo_sin_brecha": None if hay_objetivo else (
-            f"No hay universo de referencia cargado para «{dimension}»: la "
-            f"composición es descriptiva y la brecha no se puede calcular."
+            motivo_sin_objetivo
+            or f"No hay universo de referencia cargado para «{dimension}»: la "
+               f"composición es descriptiva y la brecha no se puede calcular."
         ),
         "categorias": categorias,
         "con_dato": con_dato,
         "sin_dato": sin_dato,
         "proporcion_sin_dato": round(sin_dato / total, 4) if total else 0.0,
         "aviso_sin_dato": (
-            f"{sin_dato} miembro(s) no tienen «{dimension}» cargado. No se "
+            f"{sin_dato} {quienes} no tienen «{dimension}» cargado. No se "
             f"cuentan en ninguna categoría: las proporciones de arriba son "
             f"sobre los {con_dato} que sí lo tienen."
         ) if sin_dato else None,
@@ -326,18 +419,7 @@ def _dimension(conn, panel_id, dimension, objetivos, total, estado,
     }
 
 
-def cruce(conn, panel_id, dimension_a, dimension_b, estado="activo",
-          momento=None):
-    """P1 — composición por el cruce de dos dimensiones.
-
-    Es donde aparecen los huecos que las marginales esconden: un panel puede
-    tener la proporción correcta de mujeres y la correcta de mayores de 65, y
-    no tener ninguna mujer mayor de 65.
-
-    No lleva brecha: un objetivo cruzado es un universo distinto, con una
-    celda por combinación, y `objetivo_composicion` guarda marginales. El
-    cruce es descriptivo por diseño, y lo dice.
-    """
+def _validar_cruce(conn, dimension_a, dimension_b):
     categoricas = demografia.categoricas(conn)
     for dimension in (dimension_a, dimension_b):
         if dimension not in categoricas:
@@ -348,28 +430,29 @@ def cruce(conn, panel_id, dimension_a, dimension_b, estado="activo",
     if dimension_a == dimension_b:
         raise DatosInvalidos("El cruce necesita dos dimensiones distintas.")
 
-    total = contar_miembros(conn, panel_id, estado, momento)
+
+def _cruce(conn, universo, dimension_a, dimension_b, momento=None):
+    _validar_cruce(conn, dimension_a, dimension_b)
+    total = _contar(conn, universo)
+    desde, donde, params = universo
     filas = db.todas(
         conn,
-        """
+        f"""
         select coalesce(va.valor, %s) as a,
                coalesce(vb.valor, %s) as b,
                count(*)::int as observados
-          from membresia m
-          join persona p on p.id_persona = m.id_persona
+          {desde}
           left join f_atributo_persona(coalesce(%s::timestamptz, now())) va
                  on va.id_persona = p.id_persona and va.atributo = %s
           left join f_atributo_persona(coalesce(%s::timestamptz, now())) vb
                  on vb.id_persona = p.id_persona and vb.atributo = %s
-         where m.panel_id = %s and """ + _MEMBRESIA_VIGENTE + """
+         where {donde}
          group by 1, 2
          order by 1, 2
         """,
-        (SIN_DATO, SIN_DATO, momento, dimension_a, momento, dimension_b,
-         panel_id) + _params_membresia(estado, momento),
+        (SIN_DATO, SIN_DATO, momento, dimension_a, momento, dimension_b) + params,
     )
     return {
-        "panel_id": panel_id,
         "dimensiones": [dimension_a, dimension_b],
         "miembros": total,
         "brecha_disponible": False,
@@ -389,17 +472,25 @@ def cruce(conn, panel_id, dimension_a, dimension_b, estado="activo",
     }
 
 
-def composicion(conn, panel_id, dimensiones=None, estado="activo",
-                cruce_de=None, momento=None):
-    """R2.3 — composición del panel, con brecha si hay objetivo cargado.
+def cruce(conn, panel_id, dimension_a, dimension_b, estado="activo",
+          momento=None):
+    """P1 — composición por el cruce de dos dimensiones.
 
-    R4.1.a — con `momento` la composición es la de esa fecha: los atributos
-    que estaban vigentes y la membresía que existía. Sin `momento`, idéntica
-    a la de siempre.
+    Es donde aparecen los huecos que las marginales esconden: un panel puede
+    tener la proporción correcta de mujeres y la correcta de mayores de 65, y
+    no tener ninguna mujer mayor de 65.
+
+    No lleva brecha: un objetivo cruzado es un universo distinto, con una
+    celda por combinación, y `objetivo_composicion` guarda marginales. El
+    cruce es descriptivo por diseño, y lo dice.
     """
-    if not db.una(conn, "select 1 from panel where id = %s", (panel_id,)):
-        raise NoEncontrado(f"No existe el panel {panel_id}.")
+    _validar_cruce(conn, dimension_a, dimension_b)
+    return {"panel_id": panel_id,
+            **_cruce(conn, _universo_panel(panel_id, estado, momento),
+                     dimension_a, dimension_b, momento)}
 
+
+def _dimensiones_pedidas(conn, dimensiones):
     categoricas = demografia.categoricas(conn)
     pedidas = [d.strip().lower() for d in (dimensiones or categoricas)]
     desconocidas = [d for d in pedidas if d not in categoricas]
@@ -408,20 +499,39 @@ def composicion(conn, panel_id, dimensiones=None, estado="activo",
             f"Dimensiones desconocidas: {desconocidas}.",
             {"dimensiones_validas": list(categoricas)},
         )
+    return pedidas
 
+
+def composicion(conn, panel_id, dimensiones=None, estado="activo",
+                cruce_de=None, momento=None):
+    """R2.3 — composición del panel, con brecha si hay objetivo cargado.
+
+    R4.1.a — con `momento` la composición es la de esa fecha: los atributos
+    que estaban vigentes y la membresía que existía. Sin `momento`, idéntica
+    a la de siempre.
+    """
+    panel = db.una(conn, "select id, nombre from panel where id = %s", (panel_id,))
+    if not panel:
+        raise NoEncontrado(f"No existe el panel {panel_id}.")
+
+    pedidas = _dimensiones_pedidas(conn, dimensiones)
     objetivos = obtener_objetivo(conn, panel_id)["dimensiones"]
-    total = contar_miembros(conn, panel_id, estado, momento)
+    universo = _universo_panel(panel_id, estado, momento)
+    total = _contar(conn, universo)
 
     salida = {
         "panel_id": panel_id,
+        # R-ORG.2 — el ámbito va junto al resultado, también para el panel.
+        "ambito": {"tipo": PANEL, "id": panel_id, "nombre": panel["nombre"]},
+        "objetivo_admitido": True,
         "estado_membresia": estado,
         "miembros": total,
         "objetivo_cargado": bool(objetivos),
         "dimensiones": [
-            _dimension(conn, panel_id, dimension, objetivos, total, estado,
-                       momento)
+            _dimension(conn, universo, dimension, objetivos, total, momento)
             for dimension in pedidas
         ],
+        "avisos": [],
     }
     if momento:
         salida["momento"] = str(momento)
@@ -439,4 +549,105 @@ def composicion(conn, panel_id, dimensiones=None, estado="activo",
     if cruce_de:
         salida["cruce"] = cruce(conn, panel_id, cruce_de[0], cruce_de[1], estado,
                                 momento)
+    return salida
+
+
+# R-ORG.3 — por qué una carga no tiene brecha. Es un motivo, no un hueco: la
+# pantalla lo muestra donde iría la brecha, para que no se lea como cero.
+MOTIVO_SIN_OBJETIVO_CARGA = (
+    "Una carga no tiene universo de referencia: es un hecho del pasado —lo "
+    "que entró, entró— y no algo que se corrija reclutando. La composición "
+    "es descriptiva y la brecha no está disponible."
+)
+
+# R-ORG §7 — lo que la pantalla tiene que decir de cada ámbito nuevo.
+AVISO_CARGA = (
+    "La composición de una carga muestra cómo está hoy ese grupo, no un "
+    "registro fiel de lo que se cargó: quien se dio de baja ya no aparece. "
+    "Y cuenta solo a las personas vinculadas desde que el sistema registra "
+    "de qué carga viene cada una."
+)
+AVISO_TODOS = (
+    "Este universo de referencia es el de la bóveda entera —todas las "
+    "personas, con y sin panel—, no el de un panel. Un objetivo del panel "
+    "nacional y uno del total de la bóveda son comparaciones distintas."
+)
+
+
+def composicion_de_ambito(conn, ambito, referencia=None, dimensiones=None,
+                          cruce_de=None, estado="activo", momento=None):
+    """R-ORG.2 — la composición de cualquiera de los tres ámbitos.
+
+    El panel delega en `composicion()`, que es la de siempre (y la que usan
+    el muestreo y el optimizador), así que su resultado no cambia. Los dos
+    nuevos usan las mismas funciones de conteo con otro universo.
+    """
+    ambito = (ambito or PANEL).strip().lower()
+    if ambito not in AMBITOS:
+        raise DatosInvalidos(
+            f"Ámbito desconocido: {ambito!r}.", {"ambitos": list(AMBITOS)})
+    if ambito == PANEL:
+        if referencia is None:
+            raise DatosInvalidos("Para el ámbito «panel» hace falta el panel.")
+        return composicion(conn, referencia, dimensiones=dimensiones,
+                           estado=estado, cruce_de=cruce_de, momento=momento)
+    if momento:
+        # La composición a fecha (R4.1.a) existe para reconstruir una ola de
+        # un panel. Para «todos» o una carga no hay membresía que fechar, y
+        # devolver los atributos de entonces con las personas de hoy sería
+        # una mezcla que no corresponde a ningún momento.
+        raise DatosInvalidos(
+            "La composición a una fecha está disponible solo por panel.",
+            {"ambito": ambito})
+
+    pedidas = _dimensiones_pedidas(conn, dimensiones)
+    if ambito == TODOS:
+        universo = _universo_todos()
+        objetivos = obtener_objetivo_de_todos(conn)["dimensiones"]
+        descriptor = {"tipo": TODOS, "id": None, "nombre": "Todos los panelistas",
+                      "descripcion": "La bóveda entera, con y sin panel."}
+        motivo = None
+        avisos = [AVISO_TODOS] if objetivos else []
+        quienes = "persona(s)"
+    else:
+        from . import cargas
+
+        if referencia is None:
+            raise DatosInvalidos("Para el ámbito «carga» hace falta la carga.")
+        carga = cargas.obtener(conn, referencia)
+        universo = _universo_carga(referencia)
+        objetivos = {}
+        descriptor = {"tipo": CARGA, "id": carga["id"], "nombre": carga["nombre"],
+                      "fecha_estudio": carga["fecha_estudio"],
+                      "publico_objetivo": carga["publico_objetivo"],
+                      "creado_en": carga["creado_en"]}
+        motivo = MOTIVO_SIN_OBJETIVO_CARGA
+        avisos = [AVISO_CARGA]
+        quienes = "persona(s)"
+
+    total = _contar(conn, universo)
+    salida = {
+        "ambito": descriptor,
+        "objetivo_admitido": ambito in AMBITOS_CON_OBJETIVO,
+        "miembros": total,
+        "objetivo_cargado": bool(objetivos),
+        "dimensiones": [
+            _dimension(conn, universo, dimension, objetivos, total,
+                       motivo_sin_objetivo=motivo, quienes=quienes)
+            for dimension in pedidas
+        ],
+        "avisos": avisos,
+    }
+    if ambito == TODOS:
+        # Cuántos de esos no están en ningún panel: son los que este ámbito
+        # muestra por primera vez (R3.13).
+        salida["sin_panel"] = db.una(
+            conn,
+            """select count(*)::int as n from persona p
+                where not exists (select 1 from membresia m
+                                   where m.id_persona = p.id_persona
+                                     and m.estado = 'activo')""")["n"]
+    if cruce_de:
+        salida["cruce"] = {"ambito": descriptor,
+                           **_cruce(conn, universo, cruce_de[0], cruce_de[1])}
     return salida

@@ -76,6 +76,20 @@ agrega tres reglas más:
   viviera en un solo camino los otros dejarían la credencial viva. Misma
   razón por la que el gate de consentimiento es una vista y no Python.
 
+Y desde el PEDIDO de la API key web (D68), dos más:
+
+- **La web API key es `WEB_API_KEY`, variable común de `functions/.env`, no
+  un secreto.** Firebase rechaza cualquier variable o secreto que empiece
+  con `FIREBASE_`, `X_GOOGLE_`, `EXT_` o `KIT_`; ese nombre dejó el
+  placeholder en producción y nadie entraba. `test_main.py` lo vigila.
+- **«No entró» y «no se pudo comprobar» son dos cosas.** Un 400 de
+  credencial es `None` y el mensaje genérico; un 403/5xx/timeout/key
+  inválida es `ComprobacionNoDisponible`, con
+  `MENSAJE_COMPROBACION_NO_DISPONIBLE`, y **no suma intentos**. El motivo
+  exacto va al log (`[credenciales]`) sin contraseña ni key. Un `except` que
+  devuelve un valor por defecto sin registrar nada es como se escondió ese
+  incidente: no agreguen otro.
+
 ## La ingesta no corre adentro de una request
 
 Desde la ingesta diferida, confirmar una carga **la encola**: el trabajo se
@@ -225,6 +239,31 @@ presupuesto de tiempo por consulta (60 s, para que COLOQUIO entre en sus
   7 días, solo admin. El payload a Claude no lleva identificadores; no se los
   agreguen «para depurar mejor». El diagnóstico de rutina (`[verificacion]`
   en el log) lleva números, nunca contenido.
+
+## De qué carga viene cada persona, y sobre quién se calcula la composición
+
+Desde R-ORG (D67) cada persona queda vinculada a las cargas de las que
+proviene (`persona_carga`, `boveda/0024`), y la composición se calcula por
+ámbito: `todos`, `panel` o `carga`.
+
+- **El vínculo es de muchos a muchos y no se pisa.** `creada` o
+  `reutilizada`, fijado la primera vez (`cargas.registrar_vinculos`, `on
+  conflict do nothing`). No le agreguen un `carga_id` a `persona`.
+- **Los datos del estudio viven en la carga** (`fecha_estudio`,
+  `publico_objetivo`) y se leen por join. No los copien en la persona: la
+  corrección se tiene que ver en todas las fichas sin tocar ninguna.
+- **No se reconstruye el pasado.** Sin vínculo, la ficha lo explica
+  (`cargas.SIN_VINCULO_REGISTRADO`); no se infiere de `alias_origen`.
+- **Una carga no tiene objetivo de composición; «todos» sí**, y es otro
+  universo que el de cualquier panel. El ámbito `panel` es el SQL de
+  siempre: el muestreo y el optimizador dependen de él.
+- `estudio_de_origen` es una columna de resultados, no un atributo:
+  `atributos.CLAVES_RESERVADAS` impide crear un atributo con esa clave.
+
+Y desde la paridad de consultas (D69): **el resultado demográfico es
+seudónimo** —sin nombre, correo, documento ni celular— y usa la misma barra
+de acciones que el semántico (`barraDeAcciones`). Una acción nueva sobre
+resultados se agrega ahí, una vez.
 
 ## Reglas de negocio que el código debe respetar
 

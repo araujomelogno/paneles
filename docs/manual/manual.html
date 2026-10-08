@@ -33,8 +33,9 @@
       <ul><li>Ingreso · Recuperación de contraseña · Cuentas sin habilitar</li></ul></li>
     <li><a href="#s3"><span><span class="num">3</span> Panelistas</span></a>
       <ul><li>Buscar · Enrolar · Duplicados · Revisión de altas · La ficha y
-      sus respuestas procesadas · Otorgar una finalidad · Cargar panelistas sin
-      panel · Canales de contacto</li></ul></li>
+      sus respuestas procesadas · El origen de cada persona · Otorgar una
+      finalidad · Cargar panelistas sin panel · Los datos del estudio ·
+      Filtrar por carga · Canales de contacto</li></ul></li>
     <li><a href="#s4"><span><span class="num">4</span> Paneles</span></a>
       <ul><li>Crear · Agregar miembros · Dar de baja una membresía</li></ul></li>
     <li><a href="#s5"><span><span class="num">5</span> Encuestas</span></a>
@@ -43,9 +44,10 @@
       <ul><li>Buscar por significado · El ranking y la evidencia · Columnas ·
       La ficha desde un resultado · Exclusiones · Verificación incompleta ·
       Reidentificación · Modos · Consultas guardadas · Diagnóstico e
-      intercambio con el verificador</li></ul></li>
+      intercambio con el verificador · Consultas solo demográficas</li></ul></li>
     <li><a href="#s7"><span><span class="num">7</span> Composición</span></a>
-      <ul><li>Universo de referencia · Brecha · Cruce de dos dimensiones</li></ul></li>
+      <ul><li>El ámbito: todos, un panel o una carga · Universo de referencia ·
+      Brecha · Cruce de dos dimensiones</li></ul></li>
     <li><a href="#s8"><span><span class="num">8</span> Participación</span></a>
       <ul><li>Tasa de respuesta · Último contacto · Fatiga del panel</li></ul></li>
     <li><a href="#s9"><span><span class="num">9</span> Análisis longitudinal</span></a>
@@ -459,6 +461,44 @@
     ninguna consulta por concepto.</p>
   </div>
 
+  <h4>El origen: de qué estudios proviene</h4>
+
+  <p>La tarjeta <strong>Origen</strong> lista las cargas de las que proviene
+  la persona, cada una con su <strong>nombre</strong>, la <strong>fecha del
+  estudio</strong> y el <strong>público objetivo</strong> (sección 3.6). La
+  última columna dice qué pasó con la persona en esa carga:</p>
+
+  <ul class="puntos">
+    <li><strong>creada</strong>: la carga la dio de alta; antes no existía en
+    el sistema.</li>
+    <li><strong>reutilizada</strong>: ya existía y la carga la encontró por la
+    deduplicación (documento, correo, celular o el id de la plataforma de
+    campo); la carga le sumó respuestas y completó datos vacíos.</li>
+  </ul>
+
+  <figure>
+    <img class="recorte" src="capturas/79-ficha-origen.jpg" alt="Tarjeta Origen de la ficha de un panelista" />
+    <figcaption><b>Origen.</b> Esta persona entró con el ómnibus de agosto y el
+    estudio de bebidas la volvió a encontrar: se ven los dos estudios, cada uno
+    con sus datos.</figcaption>
+  </figure>
+
+  <p>Los datos del estudio se leen de la carga en el momento de abrir la
+  ficha: si alguien corrige la fecha de un estudio, la corrección se ve en
+  las fichas de todas las personas que provienen de él, sin tocar a
+  ninguna.</p>
+
+  <div class="aviso info">
+    <div class="t">«No hay registro de la carga de la que proviene»</div>
+    <p>El sistema registra de qué carga viene cada persona desde la versión
+    de octubre de 2026. Quien se cargó antes no dejó esa constancia, y el
+    sistema no la inventa: dos cargas de la misma plataforma de campo son
+    indistinguibles a posteriori. Ese mensaje no significa que la persona no
+    tenga origen, sino que no quedó registrado. Tampoco aparece en las
+    personas enroladas a mano o por la inscripción pública, que no vienen de
+    ninguna carga.</p>
+  </div>
+
   <h4>Otorgar una finalidad</h4>
 
   <p>El botón <strong>Otorgar finalidad</strong> de la tarjeta de
@@ -490,10 +530,37 @@
 
   <figure>
     <img src="capturas/47-cargar-panelistas.jpg" alt="Inicio de una carga de panelistas" />
-    <figcaption><b>Inicio de una carga.</b> Lo único que se pide en este paso es
-    un nombre, que después permite saber de qué base salió cada respuesta. El
-    aviso naranja indica la condición que define el flujo.</figcaption>
+    <figcaption><b>Inicio de una carga.</b> El nombre es obligatorio; la fecha
+    del estudio y el público objetivo, recomendables. El aviso naranja indica la
+    condición que define el flujo.</figcaption>
   </figure>
+
+  <p>En este primer paso se describen los <strong>datos del estudio</strong>
+  del que sale el archivo:</p>
+
+  <ul class="puntos">
+    <li><strong>Nombre de la carga</strong> (obligatorio): cómo se va a
+    reconocer el estudio en todas las pantallas, por ejemplo <i>Ómnibus agosto
+    2026</i>.</li>
+    <li><strong>Fecha del estudio</strong>: cuándo se hizo el campo, no cuándo
+    se carga el archivo.</li>
+    <li><strong>Público objetivo</strong>: a quién estaba dirigido el estudio,
+    en texto libre (<i>Población adulta de Montevideo</i>).</li>
+  </ul>
+
+  <p>Estos datos se guardan <strong>en la carga, no en cada persona</strong>.
+  Cada persona queda vinculada a la carga, y su ficha los muestra a través de
+  ese vínculo (sección 3.5). Por eso una persona que aparece en tres cargas
+  muestra los tres estudios, y corregir un dato del estudio se hace una sola
+  vez.</p>
+
+  <div class="aviso info">
+    <div class="t">El público objetivo describe al estudio, no a las personas</div>
+    <p>Es documentación de procedencia y no un filtro: no sirve para segmentar
+    ni para fijar cuotas. Dos cargas pueden decir «adultos de Montevideo» y
+    «población adulta montevideana» y significar lo mismo. Para segmentar
+    personas están los atributos demográficos (sección 12.6).</p>
+  </div>
 
   <p>Tras confirmar el nombre se abre <strong>la misma pantalla de ingesta</strong>
   que se describe en las secciones 5.4 y 5.5: archivo, columna que identifica al
@@ -539,6 +606,33 @@
     <figcaption><b>Individuos sin panel.</b> Quedaron incorporados con sus
     respuestas y sus demográficos, con consentimiento de uso semántico y sin
     consentimiento de contacto: son consultables y no convocables.</figcaption>
+  </figure>
+
+  <h4>Filtrar el listado por carga</h4>
+
+  <p>El segundo desplegable del listado, <i>Todas las cargas</i>, muestra
+  las cargas por nombre y fecha del estudio. Al elegir una, el listado se
+  reduce a las personas que provienen de ella, tanto las que creó como las
+  que reutilizó.</p>
+
+  <figure>
+    <img src="capturas/77-panelistas-por-carga.jpg" alt="Listado de panelistas filtrado por carga" />
+    <figcaption><b>Filtro por carga.</b> Cinco personas creadas por el ómnibus
+    y una panelista que ya existía (con un panel), reutilizada.</figcaption>
+  </figure>
+
+  <h4>Corregir los datos del estudio</h4>
+
+  <p>Con una carga elegida aparece el botón <strong>Datos del
+  estudio</strong>. Abre el nombre, la fecha, el público objetivo y la
+  descripción, junto con cuántas personas creó y reutilizó la carga. Lo que se
+  guarda ahí se refleja de inmediato en la ficha de cada una de esas
+  personas. Hace falta el permiso de ingestar.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/78-datos-del-estudio.jpg" alt="Datos del estudio de una carga" />
+    <figcaption><b>Datos del estudio.</b> Una sola corrección alcanza a las seis
+    fichas.</figcaption>
   </figure>
 
   <p>Desde ese momento son consultables con normalidad: entran en las consultas
@@ -1852,7 +1946,7 @@
   el catálogo—. Es útil cuando se busca por concepto pero hace falta ver un
   dato para juzgar si el resultado sirve.</p>
 
-  <ul>
+  <ul class="puntos">
     <li><strong>No vuelve a correr la consulta.</strong> Los atributos se
     resuelven sobre el resultado que ya está en pantalla; el ranking no
     cambia.</li>
@@ -1863,6 +1957,10 @@
     <li>Los atributos marcados como <strong>categoría especial</strong> no
     se ofrecen. Verlos de a uno en una ficha no es lo mismo que verlos en
     una planilla de doscientas filas.</li>
+    <li>La última opción, <strong>Estudio de origen</strong>, no es un
+    atributo: muestra de qué carga proviene cada persona, con el nombre y la
+    fecha del estudio (sección 3.6). Si viene de varias, se listan todas. No se
+    puede usar como filtro: se mira, no se segmenta.</li>
   </ul>
 
   <h4>Abrir la ficha de un resultado</h4>
@@ -2133,6 +2231,72 @@
     menos preciso que de costumbre. Conviene informarlo a quien administra el
     sistema.</p>
   </div>
+  <h3><span class="n">6.10</span> Consultas solo demográficas</h3>
+
+  <p>Una consulta que solo tiene criterios demográficos —por ejemplo, todas
+  las mujeres de Montevideo— se resuelve entera en la bóveda, sin tocar las
+  respuestas. Es el uso más frecuente de la pantalla, y su resultado tiene
+  <strong>la misma barra de acciones</strong> que el ranking de una consulta
+  semántica:</p>
+
+  <ul class="puntos">
+    <li><strong>Ficha</strong> en cada fila (sección 6.3), sin perder el
+    resultado;</li>
+    <li><strong>Columnas</strong>, con las mismas reglas: no vuelve a correr
+    la consulta y quien no tiene el dato muestra «sin dato»;</li>
+    <li><strong>Descargar CSV</strong>, con las mismas tres columnas
+    (<code>id_persona</code>, <code>puntaje</code>, <code>evidencia</code>),
+    las dos últimas vacías;</li>
+    <li><strong>Ver quiénes son</strong> y <strong>CSV con datos</strong>
+    (sección 6.5): el segundo se habilita después del primero y los dos
+    quedan registrados;</li>
+    <li><strong>Crear panel</strong> con las personas del resultado, igual
+    que desde un ranking.</li>
+  </ul>
+
+  <figure>
+    <img src="capturas/83-consulta-demografica.jpg" alt="Resultado de una consulta solo demográfica" />
+    <figcaption><b>Consulta solo demográfica.</b> Identificadores en lugar de
+    nombres, la misma barra que el ranking y, sin columnas elegidas, sexo,
+    tramo etario y localidad.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Ya no muestra nombres ni correos</div>
+    <p>Hasta esta versión, el resultado demográfico mostraba nombre y correo
+    de cada persona sin registrar que alguien los había visto. Ahora es
+    seudónimo como el semántico: para ver quiénes son se usa <strong>Ver
+    quiénes son</strong>, que pide confirmación y queda registrado. No es un
+    paso de más: es lo que hace que el registro de reidentificaciones diga la
+    verdad sobre quién vio los datos de quién.</p>
+  </div>
+
+  <p>Lo que <strong>no</strong> tiene, porque no corresponde: puntaje,
+  confianza, criterios ni evidencia. No hubo búsqueda por significado, así
+  que no hay nada que ordenar ni que justificar, y el orden de la lista es el
+  del listado, no un ranking. Tampoco aparecen el aviso de verificación, las
+  degradaciones ni el diagnóstico del puente, que son de la parte
+  semántica.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/84-ficha-demografica.jpg" alt="Ficha abierta desde un resultado demográfico" />
+    <figcaption><b>La ficha desde un resultado demográfico.</b> Sin la sección
+    «Por qué aparece en este resultado», que no aplica, y con el
+    origen de la persona.</figcaption>
+  </figure>
+
+  <figure>
+    <img class="recorte" src="capturas/85-columnas-estudio-origen.jpg" alt="Elegir columnas, con Estudio de origen" />
+    <figcaption><b>Columnas.</b> El selector es el mismo que el del ranking; la
+    elección se recuerda para las dos clases de consulta.</figcaption>
+  </figure>
+
+  <figure>
+    <img src="capturas/86-demografica-con-columnas.jpg" alt="Resultado demográfico con columnas elegidas" />
+    <figcaption><b>Con columnas.</b> Quien no proviene de ninguna carga
+    registrada muestra «sin dato» en <i>Estudio de origen</i>.</figcaption>
+  </figure>
+
 </section>
 
 <!-- ════════════════ 7 ════════════════ -->
@@ -2141,7 +2305,7 @@
     <div class="barra"></div>
     <div class="kicker">Sección 7</div>
     <h2>Composición</h2>
-    <p>Cuánto se parece el panel al universo que pretende representar.</p>
+    <p>Cuánto se parece un conjunto de personas al universo que pretende representar.</p>
   </div>
 
   <p>El tamaño de un panel dice poco por sí solo. Mil personas no sirven de mucho
@@ -2149,10 +2313,16 @@
   muestra cómo está compuesto el panel y, cuando hay un universo de referencia
   cargado, cuánto le falta para parecerse a él.</p>
 
+  <p>El primer desplegable, <strong>Ámbito</strong>, elige sobre quién se
+  calcula: <i>Un panel</i> (lo habitual, y lo que describen las secciones 7.1
+  a 7.4), <i>Todos los panelistas</i> o <i>Una carga</i>. Los dos últimos se
+  explican en la sección 7.5. El ámbito elegido se muestra siempre junto al
+  resultado.</p>
+
   <figure>
     <img src="capturas/37-composicion.jpg" alt="Composición del panel" />
-    <figcaption><b>Composición.</b> Una tarjeta por dimensión: sexo, tramo etario
-    y localidad.</figcaption>
+    <figcaption><b>Composición de un panel.</b> El ámbito arriba, y una tarjeta
+    por dimensión: sexo, tramo etario y localidad.</figcaption>
   </figure>
 
   <h3><span class="n">7.1</span> Sin universo de referencia cargado</h3>
@@ -2246,6 +2416,66 @@
   muestran; el cruce sí. El cruce es puramente descriptivo y no incluye brecha,
   porque el universo de referencia se carga por dimensión y no por celda
   cruzada.</p>
+
+  <h3><span class="n">7.5</span> El ámbito: todos los panelistas, un panel o una carga</h3>
+
+  <p><strong>Todos los panelistas</strong> calcula la composición de la
+  bóveda entera: todas las personas, estén o no en un panel. Es la única vista
+  donde aparecen las personas cargadas sin panel (sección 3.6), que hasta
+  ahora solo se veían en el total de Estadísticas. La tarjeta <i>Sin ningún
+  panel</i> dice cuántas son.</p>
+
+  <figure>
+    <img src="capturas/80-composicion-todos.jpg" alt="Composición de todos los panelistas" />
+    <figcaption><b>Todos los panelistas.</b> Catorce personas, seis de ellas
+    sin ningún panel, y todavía sin universo de referencia.</figcaption>
+  </figure>
+
+  <p>Este ámbito admite su <strong>propio universo de referencia</strong>,
+  con el botón <i>Cargar universo de referencia de toda la bóveda</i> y las
+  mismas reglas de la sección 7.2. Es otro objetivo que el de cualquier
+  panel: cargarlo no toca el de ninguno, y el de un panel no cambia este.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/81-objetivo-todos.jpg" alt="Universo de referencia de toda la bóveda" />
+    <figcaption><b>Universo de toda la bóveda.</b> El aviso de arriba recuerda
+    contra qué conjunto se compara.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Dos universos que no conviene confundir</div>
+    <p>El objetivo del <i>Panel Nacional</i> dice cómo debería ser ese panel;
+    el de <i>Todos los panelistas</i>, cómo debería ser todo lo que hay en la
+    bóveda, que incluye bases de terceros y gente que no se va a convocar.
+    Responden preguntas distintas: se cargan por separado y la pantalla lo
+    advierte cada vez que se mira el segundo.</p>
+  </div>
+
+  <p><strong>Una carga</strong> muestra la composición de las personas que
+  provienen de una carga, creadas o reutilizadas. El desplegable lista las
+  cargas por nombre y fecha del estudio, y el resultado se muestra con el
+  público objetivo al lado.</p>
+
+  <figure>
+    <img src="capturas/82-composicion-carga.jpg" alt="Composición de una carga" />
+    <figcaption><b>Una carga.</b> Descriptiva siempre: la brecha figura como
+    «no disponible» con su motivo.</figcaption>
+  </figure>
+
+  <ul class="puntos">
+    <li><strong>No tiene universo de referencia.</strong> Una carga es un
+    hecho del pasado —lo que entró, entró— y no algo que se corrija
+    reclutando. La brecha figura como <i>no disponible</i>, nunca como
+    cero.</li>
+    <li><strong>Muestra cómo está hoy ese grupo</strong>, no un registro
+    histórico fiel de lo que se cargó: quien se dio de baja ya no aparece.</li>
+    <li><strong>Cuenta solo lo vinculado.</strong> Las cargas anteriores a
+    octubre de 2026 no registraron qué personas trajeron (sección 3.5), así
+    que su composición aparece vacía.</li>
+  </ul>
+
+  <p>La composición a una fecha pasada (sección 9.5) sigue disponible solo
+  por panel.</p>
 </section>
 
 <!-- ════════════════ 8 ════════════════ -->
@@ -3061,6 +3291,21 @@
     que esté en el padrón</strong>. Eso se mira desde la administración.</p>
   </div>
 
+  <div class="aviso">
+    <div class="t">«No pudimos comprobar tu contraseña por un problema técnico»</div>
+    <p>Es distinto de «correo o contraseña incorrectos», y la diferencia
+    importa. Aparece cuando el servicio que comprueba las contraseñas no
+    respondió o está mal configurado: <strong>la contraseña podía ser
+    correcta</strong>. Por eso ese intento no cuenta para el límite de
+    intentos fallidos —una caída del servicio no bloquea a nadie— y la
+    persona solo tiene que volver a probar en unos minutos.</p>
+    <p>Si el aviso se repite para todos los panelistas, es un problema de
+    configuración: hay que avisar a quien administra el sistema. El motivo
+    exacto queda en el registro del servidor (líneas que empiezan con
+    <code>[credenciales]</code>), sin la contraseña. El mensaje es el mismo
+    exista o no el correo, así que tampoco revela quién integra el panel.</p>
+  </div>
+
   <h3>Mandarle el enlace a alguien que ya está en el panel</h3>
 
   <p>Los panelistas enrolados antes de esta versión no tienen contraseña, y
@@ -3145,7 +3390,7 @@
 
   <h3>Lo que el portal no muestra, a propósito</h3>
 
-  <ul>
+  <ul class="puntos">
     <li><strong>Las respuestas anteriores del panelista.</strong> Ver lo que
     respondió antes condiciona lo que responde ahora, y complica lo prometido
     sobre confidencialidad.</li>
@@ -3235,6 +3480,18 @@
     número que nadie mira hasta que el sistema ya está lento.</p>
   </div>
 
+  <p>El bloque <strong>Estudios de origen</strong> lista cada carga con su
+  nombre, la fecha y el público objetivo del estudio, y cuántas personas
+  <strong>creó</strong> y cuántas <strong>reutilizó</strong> (sección 3.6).
+  Cuenta a las personas que siguen en la bóveda y que se cargaron desde que
+  se registra el vínculo con la carga.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/87-estadisticas-estudios.jpg" alt="Estudios de origen en Estadísticas" />
+    <figcaption><b>Estudios de origen.</b> El estudio de bebidas creó una sola
+    persona: las otras tres ya habían llegado con el ómnibus.</figcaption>
+  </figure>
+
   <p>El último bloque son las <strong>últimas cargas</strong> con su estado.
   Una carga con lotes fallidos aparece destacada: hasta ahora eso solo se
   veía consultando la base. Cada carga tiene un botón
@@ -3256,6 +3513,29 @@
     <h2>Preguntas frecuentes</h2>
     <p>Situaciones habituales y su explicación.</p>
   </div>
+
+  <h4>Hice una consulta solo demográfica y ya no veo los nombres</h4>
+  <p>Es a propósito: el resultado demográfico es seudónimo, igual que el
+  semántico. <strong>Ver quiénes son</strong> los muestra y deja registrado
+  quién los vio (6.10). Antes los nombres aparecían sin registro, y eso hacía
+  que el registro de reidentificaciones no reflejara la realidad.</p>
+
+  <h4>La ficha dice «No hay registro de la carga de la que proviene»</h4>
+  <p>La persona se cargó antes de octubre de 2026, cuando el sistema todavía
+  no anotaba de qué carga venía cada uno, o se enroló a mano o por la
+  inscripción. No es un error y no se corrige: el sistema no inventa un
+  origen que no puede probar (3.5).</p>
+
+  <h4>Quiero el objetivo de cuotas de una carga y no aparece el botón</h4>
+  <p>Una carga no tiene universo de referencia: lo que entró, entró, y no se
+  corrige reclutando. Su composición es descriptiva. Si la pregunta es la
+  representatividad del conjunto, el ámbito que admite objetivo es
+  <i>Todos los panelistas</i> (7.5).</p>
+
+  <h4>Un panelista dice que el portal no lo deja entrar «por un problema técnico»</h4>
+  <p>No es su contraseña: el servicio que la comprueba no respondió. Que
+  vuelva a probar en unos minutos; ese intento no le cuenta para el bloqueo.
+  Si les pasa a todos, avisar a quien administra el sistema (13).</p>
 
   <h4>Enrolé a una persona y no aparece en el listado</h4>
   <p>Lo más probable es que el alta haya quedado en <strong>Revisión de
@@ -3421,6 +3701,16 @@
     <tr><td class="destacado">Panel</td>
       <td>Conjunto estable de personas al que se le fieldean encuestas de forma
       repetida.</td></tr>
+    <tr><td class="destacado">Carga</td>
+      <td>Un archivo de personas y respuestas incorporado sin panel, con los
+      datos del estudio del que sale: nombre, fecha y público objetivo.</td></tr>
+    <tr><td class="destacado">Origen (creada / reutilizada)</td>
+      <td>De qué cargas proviene una persona. <i>Creada</i>: la carga la dio de
+      alta. <i>Reutilizada</i>: ya existía y la carga la encontró por la
+      deduplicación.</td></tr>
+    <tr><td class="destacado">Ámbito de composición</td>
+      <td>Sobre quién se calcula la composición: todos los panelistas, un panel
+      o una carga.</td></tr>
     <tr><td class="destacado">Membresía</td>
       <td>La pertenencia de una persona a un panel. Una persona puede tener
       varias, y darse de baja de una no afecta a las demás.</td></tr>

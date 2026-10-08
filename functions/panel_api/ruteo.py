@@ -261,6 +261,8 @@ def listar_panelistas(ctx, actor, params, cuerpo, consulta):
         # R3.13.e — los que entraron por una carga externa y no son miembros
         # de ningún panel. Sin filtro se mezclan con el resto.
         sin_panel=_bandera(consulta.get("sin_panel")),
+        # R-ORG.5 — los que provienen de una carga, creados o reutilizados.
+        carga_id=_entero(consulta.get("carga_id")),
     )
 
 
@@ -739,8 +741,7 @@ def _momento(ctx, consulta):
     return str(fila["fecha_campo"] or fila["creado_en"])
 
 
-@ruta("GET", "/paneles/<panel_id>/composicion", "leer", requisito="R2.3")
-def ver_composicion(ctx, actor, params, cuerpo, consulta):
+def _dimensiones_y_cruce(consulta):
     dimensiones = consulta.get("dimensiones")
     if isinstance(dimensiones, str):
         dimensiones = [d for d in dimensiones.split(",") if d.strip()]
@@ -752,6 +753,53 @@ def ver_composicion(ctx, actor, params, cuerpo, consulta):
             "El cruce necesita exactamente dos dimensiones, separadas por coma "
             "(por ejemplo `cruce=sexo,tramo_etario`)."
         )
+    return dimensiones, cruce_de
+
+
+@ruta("GET", "/composicion", "leer", requisito="R-ORG.2, R-ORG.3")
+def ver_composicion_de_ambito(ctx, actor, params, cuerpo, consulta):
+    """La composición de un ámbito: `ambito=todos`, `ambito=panel&panel_id=…`
+    o `ambito=carga&carga_id=…`. El ámbito vuelve en la respuesta, junto al
+    resultado, para que la pantalla diga qué se está mirando."""
+    dimensiones, cruce_de = _dimensiones_y_cruce(consulta)
+    ambito = (consulta.get("ambito") or "panel").strip().lower()
+    referencia = _entero(consulta.get("carga_id" if ambito == "carga"
+                                      else "panel_id"))
+    return 200, composicion.composicion_de_ambito(
+        ctx.boveda, ambito, referencia,
+        dimensiones=dimensiones or None,
+        cruce_de=cruce_de or None,
+        estado=consulta.get("estado", "activo"),
+        momento=_momento(ctx, consulta),
+    )
+
+
+@ruta("GET", "/composicion/todos/objetivo", "leer", requisito="R-ORG.3")
+def ver_objetivo_de_todos(ctx, actor, params, cuerpo, consulta):
+    return 200, composicion.obtener_objetivo_de_todos(ctx.boveda)
+
+
+@ruta("PUT", "/composicion/todos/objetivo", "gestionar_paneles", requisito="R-ORG.3")
+def cargar_objetivo_de_todos(ctx, actor, params, cuerpo, consulta):
+    """El universo de referencia de toda la bóveda. Mismo permiso que el de
+    un panel: es la misma decisión, sobre otro conjunto."""
+    resultado = composicion.guardar_objetivo_de_todos(
+        ctx.boveda, cuerpo.get("objetivos") or cuerpo.get("items") or [])
+    ctx.boveda.commit()
+    return 200, resultado
+
+
+@ruta("DELETE", "/composicion/todos/objetivo", "gestionar_paneles", requisito="R-ORG.3")
+def borrar_objetivo_de_todos(ctx, actor, params, cuerpo, consulta):
+    resultado = composicion.borrar_objetivo_de_todos(
+        ctx.boveda, consulta.get("dimension"))
+    ctx.boveda.commit()
+    return 200, resultado
+
+
+@ruta("GET", "/paneles/<panel_id>/composicion", "leer", requisito="R2.3")
+def ver_composicion(ctx, actor, params, cuerpo, consulta):
+    dimensiones, cruce_de = _dimensiones_y_cruce(consulta)
     return 200, composicion.composicion(
         ctx.boveda, _entero(params["panel_id"]),
         dimensiones=dimensiones or None,
@@ -896,7 +944,13 @@ def columnas_disponibles(ctx, actor, params, cuerpo, consulta):
     Los de categoría especial no están, y es a propósito: ver uno en una
     ficha no es lo mismo que verlos todos en una planilla.
     """
-    return 200, {"items": atributos.columnas_ofrecibles(ctx.boveda)}
+    return 200, {"items": atributos.columnas_ofrecibles(ctx.boveda) + [
+        # R-ORG.5 — de qué estudio salió cada persona. No es un atributo:
+        # sale del vínculo persona ↔ carga y de los datos de la carga, y por
+        # eso no se puede filtrar ni fijar cuota con ella. Solo se mira.
+        {"clave": cargas.COLUMNA_ESTUDIO_DE_ORIGEN,
+         "etiqueta": "Estudio de origen", "tipo": "procedencia"},
+    ]}
 
 
 @ruta("POST", "/resultados/atributos", "leer", requisito="R7.4")
@@ -908,7 +962,12 @@ def atributos_de_resultados(ctx, actor, params, cuerpo, consulta):
     todos: de a uno, una lista de 200 dispara 200 consultas.
     """
     ids = (cuerpo or {}).get("ids_persona") or []
-    return 200, {"items": atributos.valores_de_varias(ctx.boveda, ids)}
+    valores = atributos.valores_de_varias(ctx.boveda, ids)
+    # R-ORG.5 — el estudio de origen como una columna más. Va en la misma
+    # llamada: sigue siendo una sola ida a la base por tanda de resultados.
+    for id_persona, origen in cargas.origen_de_varias(ctx.boveda, ids).items():
+        valores.setdefault(id_persona, {})[cargas.COLUMNA_ESTUDIO_DE_ORIGEN] = origen
+    return 200, {"items": valores}
 
 
 @ruta("GET", "/mi/preferencias", "leer", requisito="R7.4")
@@ -1413,14 +1472,33 @@ def crear_carga(ctx, actor, params, cuerpo, consulta):
     """Abre una carga y devuelve su `ref_estudio`, que es lo que la ata a su
     cuestionario del lado semántico."""
     carga = cargas.crear(
-        ctx.boveda, cuerpo.get("nombre"), cuerpo.get("descripcion"), actor)
+        ctx.boveda, cuerpo.get("nombre"), cuerpo.get("descripcion"), actor,
+        # R-ORG.4 — los datos del estudio, en la carga y no en cada persona.
+        fecha_estudio=cuerpo.get("fecha_estudio"),
+        publico_objetivo=cuerpo.get("publico_objetivo"))
     ctx.boveda.commit()
     return 201, carga
 
 
-@ruta("GET", "/cargas", "leer", requisito="R3.13")
+@ruta("GET", "/cargas", "leer", requisito="R3.13, R-ORG.5")
 def listar_cargas(ctx, actor, params, cuerpo, consulta):
+    """Las cargas con los datos del estudio y cuántas personas creó y
+    reutilizó cada una. Es lo que arma los selectores por nombre y fecha."""
     return 200, {"items": cargas.listar(ctx.boveda)}
+
+
+@ruta("GET", "/cargas/<carga_id>", "leer", requisito="R-ORG.4")
+def ver_carga(ctx, actor, params, cuerpo, consulta):
+    return 200, cargas.obtener(ctx.boveda, _entero(params["carga_id"]))
+
+
+@ruta("PATCH", "/cargas/<carga_id>", "ingestar", requisito="R-ORG.4")
+def editar_carga(ctx, actor, params, cuerpo, consulta):
+    """Corrige los datos del estudio. Se refleja en todas las fichas que
+    provienen de esa carga sin tocar ninguna persona."""
+    salida = cargas.editar(ctx.boveda, _entero(params["carga_id"]), cuerpo)
+    ctx.boveda.commit()
+    return 200, salida
 
 
 @ruta("POST", "/cargas/<carga_id>/analizar", "ingestar", requisito="R3.13")
@@ -1476,6 +1554,7 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
             origen=(cuerpo.get("origen") or "carga"), columna_id=columna_id,
             evidencia_consentimiento=cuerpo.get("evidencia_consentimiento"),
             actor=actor, opciones_por_variable=opciones_por_variable,
+            carga_id=carga_id,
         )
         # Igual que en R3.9: las personas tienen que estar commiteadas antes
         # de que arranque la primera tarea.

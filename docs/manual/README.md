@@ -14,6 +14,28 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Ámbitos de composición, origen de cada persona, consultas demográficas
+> y acceso al portal · 2026-10-08.** La 3.5 suma la tarjeta **Origen** (de
+> qué estudios proviene la persona, creada o reutilizada, y qué significa
+> «no hay registro»); la 3.6, los **datos del estudio** al cargar (fecha y
+> público objetivo), el **filtro por carga** del listado y **Datos del
+> estudio** para corregirlos. La 6.3 suma la columna **Estudio de origen** y
+> la **6.10, Consultas solo demográficas**, es nueva: la misma barra de
+> acciones que el ranking y el resultado seudónimo. La 7 explica el
+> desplegable **Ámbito** y la **7.5** es nueva (todos los panelistas, con su
+> propio universo de referencia, y una carga, siempre descriptiva). La 13
+> distingue «correo o contraseña incorrectos» de **«no pudimos comprobar tu
+> contraseña por un problema técnico»**; la 14 suma **Estudios de origen**.
+> Cuatro preguntas frecuentes y tres términos de glosario nuevos.
+> `MANUAL_panelista.md` explica el mensaje técnico del portal.
+>
+> **Capturas nuevas, de la 77 a la 87, y recapturadas la 02, 37, 46 y 47**
+> (las pantallas cambiaron: el filtro por carga, el formulario de carga y el
+> ámbito de composición). Con el método de la 62: un servidor mínimo que
+> sirve `web/public` y despacha `/api/**` a `ruteo.despachar` con un actor
+> administrador, contra un Postgres de pruebas sembrado con un panel, dos
+> cargas con sus estudios y personas creadas y reutilizadas.
+
 > **Correo por Workspace y verificación por lotes · 2026-10-05.** La 6.3
 > suma el veredicto **Sin verificar** y la marca **verificación
 > incompleta**; la 6.4, el apartado «Si la verificación quedó incompleta»
@@ -212,7 +234,7 @@ node docs/manual/generar_pdf.mjs
 | `portada.html` | Portada, a sangre |
 | `manual.html` | Índice y las catorce secciones |
 | `estilo.css` | Estilos, compartidos por los dos |
-| `capturas/` | Las capturas, de la 01 a la 76 |
+| `capturas/` | Las capturas, de la 01 a la 87 |
 | `tipografia/` | Montserrat local, para que el PDF salga igual sin red |
 | `preparar_demo.sh` | Arma y sirve la copia en modo demo |
 | `capturar.mjs` | Toma las capturas |

@@ -1185,7 +1185,7 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
                      evidencia_consentimiento, actor=None, panel_id=None,
                      opciones_por_variable=None,
                      finalidad_obligatoria=CONTACTO,
-                     evidencia_canales=None):
+                     evidencia_canales=None, carga_id=None):
     """Da de alta a la gente del archivo, con el dedup de R1.2 y con la
     evidencia de consentimiento que trae el propio archivo.
 
@@ -1380,6 +1380,10 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
                         "consentimientos": consentimientos,
                         "origen": origen, "id_en_origen": id_en_origen,
                         "panel_id": panel_id,
+                        # R-ORG.1 — la carga de la que sale, para que al
+                        # resolver la revisión quede el vínculo. Sin esto,
+                        # quien pasó por revisión sería el único sin origen.
+                        "carga_id": carga_id,
                         "nota": (
                             f"Alta por ingesta SAV. Consentimiento evidenciado "
                             f"en la variable "

@@ -105,6 +105,7 @@ const bd = {
       creado_en: '2026-01-15T10:00:00Z' },
   ],
   cargas: [],              // R3.13 — lotes incorporados sin panel
+  vinculos: [],            // R-ORG.1 — de qué carga proviene cada persona
   atributos: [],           // R3.14 — el catálogo de segmentadores
   canales: [],             // R4.4 — preferencias de canal por persona
   series: [],              // R4.1.b — series comparables entre olas
@@ -349,6 +350,8 @@ function sembrar() {
   const omnibus = {
     id: siguiente('carga'), nombre: 'Ómnibus agosto 2026',
     descripcion: 'Estudio de terceros. Esta gente no es panelista.',
+    // R-ORG.4 — los datos del estudio viven en la carga.
+    fecha_estudio: '2026-08-15', publico_objetivo: 'Población adulta de todo el país',
     ref_estudio: uuid(), creado_en: diasAtras(25), creado_por: 'demo',
   };
   bd.cargas.push(omnibus);
@@ -367,7 +370,12 @@ function sembrar() {
     // La finalidad obligatoria de una carga es el uso semántico; el contacto
     // no se pide y por eso no lo tienen: son consultables y no convocables.
     otorgar(idPersona, 'uso_semantico', VERSION, diasAtras(25));
+    // R-ORG.1 — la carga los creó.
+    vincular(idPersona, omnibus.id, 'creada');
   });
+  // Y una panelista que ya existía y el dedup encontró en el ómnibus: así la
+  // ficha muestra los dos orígenes, «creada» y «reutilizada».
+  vincular(bd.personas[0].id_persona, omnibus.id, 'reutilizada');
   ingestarCarga(omnibus.id, {
     columna_id: 'documento',
     tipo_identificador: 'documento',
@@ -587,10 +595,49 @@ function ingestarCarga(cargaId, cuerpo) {
   const carga = bd.cargas.find((c) => c.id === cargaId);
   if (!carga) throw new ErrorDemo('No existe la carga.', 404);
   const resultado = ingestarEn(carga, cuerpo, { sinPanel: true });
+  // R-ORG.1 — todos los que la carga resolvió participaron de ella. Si ya
+  // estaban vinculados (la carga los creó) el vínculo no se pisa.
+  (resultado.resueltos || []).forEach((id) => vincular(id, cargaId, 'reutilizada'));
+  delete resultado.resueltos;
   resultado.carga_id = cargaId;
   resultado.sin_panel = true;
   delete resultado.encuesta_id;
   return resultado;
+}
+
+/* R-ORG.1 — el vínculo persona ↔ carga. Se fija la primera vez y no se pisa. */
+function vincular(idPersona, cargaId, origen) {
+  if (bd.vinculos.some((v) => v.id_persona === idPersona && v.carga_id === cargaId)) return;
+  bd.vinculos.push({ id_persona: idPersona, carga_id: cargaId, origen, creado_en: ahora() });
+}
+
+function resumenCarga(carga) {
+  const suyos = bd.vinculos.filter((v) => v.carga_id === carga.id
+    && bd.personas.some((p) => p.id_persona === v.id_persona));
+  return {
+    fecha_estudio: null, publico_objetivo: null, ...carga,
+    personas_creadas: suyos.filter((v) => v.origen === 'creada').length,
+    personas_reutilizadas: suyos.filter((v) => v.origen === 'reutilizada').length,
+    personas: suyos.length,
+  };
+}
+
+function origenDe(idPersona) {
+  const estudios = bd.vinculos.filter((v) => v.id_persona === idPersona).map((v) => {
+    const carga = bd.cargas.find((c) => c.id === v.carga_id) || {};
+    return {
+      carga_id: v.carga_id, nombre: carga.nombre, fecha_estudio: carga.fecha_estudio || null,
+      publico_objetivo: carga.publico_objetivo || null, origen: v.origen,
+      vinculado_en: v.creado_en,
+    };
+  });
+  return {
+    estudios,
+    aviso: estudios.length ? null
+      : 'No hay registro de la carga de la que proviene. El vínculo entre personas y '
+        + 'cargas se registra desde la versión R-ORG; lo que se cargó antes no dejó '
+        + 'constancia, y no se reconstruye para no inventar un origen.',
+  };
 }
 
 function ingestarEn(encuesta, cuerpo, { sinPanel }) {
@@ -666,11 +713,13 @@ function ingestarEn(encuesta, cuerpo, { sinPanel }) {
   const motivos = {};
   const sinConsentimiento = new Set();
   const ingestados = new Set();
+  const resueltos = new Set();
   let escritas = 0;
 
   filas.forEach((fila) => {
     const idOrigen = String(fila[columnaId] || '').trim();
     const idPersona = mapa[idOrigen];
+    if (idPersona) resueltos.add(idPersona);
     if (!idPersona) {
       if (idOrigen) {
         sinMapear.push(idOrigen);
@@ -782,6 +831,7 @@ function ingestarEn(encuesta, cuerpo, { sinPanel }) {
   return {
     encuesta_id: encuestaId, ref_estudio: encuesta.ref_estudio,
     respuestas_escritas: escritas,
+    resueltos: [...resueltos],
     excluidas_por_demografica: excluidas.sort(),
     demograficos_completados: completados,
     discrepancias_demograficas: discrepancias,
@@ -904,6 +954,12 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     if (['1', 'true'].includes(String(consulta.sin_panel || ''))) {
       items = items.filter((p) => !p.paneles);
     }
+    // R-ORG.5 — los que provienen de una carga, creados o reutilizados.
+    if (consulta.carga_id) {
+      const deLaCarga = new Set(bd.vinculos
+        .filter((v) => v.carga_id === Number(consulta.carga_id)).map((v) => v.id_persona));
+      items = items.filter((p) => deLaCarga.has(p.id_persona));
+    }
     return { total: items.length, items };
   }
 
@@ -942,6 +998,8 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
       consentimientos: bd.consentimientos
         .filter((c) => c.id_persona === persona.id_persona)
         .sort((a, b) => b.otorgado_en.localeCompare(a.otorgado_en)),
+      // R-ORG.5 — de qué estudios proviene.
+      origen: origenDe(persona.id_persona),
       participacion: (() => {
         const suyas = bd.participaciones.filter((p) => p.id_persona === persona.id_persona);
         return {
@@ -1492,16 +1550,34 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   if (metodo === 'POST' && clave === 'POST /cargas') {
     const nombre = (cuerpo.nombre || '').trim();
     if (!nombre) throw new ErrorDemo('La carga necesita un nombre.', 400);
+    if (cuerpo.fecha_estudio && !/^\d{4}-\d{2}-\d{2}$/.test(cuerpo.fecha_estudio)) {
+      throw new ErrorDemo('La fecha del estudio no es una fecha válida. Usá el formato AAAA-MM-DD.', 400);
+    }
     const carga = {
       id: siguiente('carga'), nombre,
       descripcion: (cuerpo.descripcion || '').trim() || null,
+      // R-ORG.4 — los datos del estudio, en la carga.
+      fecha_estudio: cuerpo.fecha_estudio || null,
+      publico_objetivo: (cuerpo.publico_objetivo || '').trim() || null,
       ref_estudio: uuid(), creado_en: ahora(), creado_por: 'demo',
     };
     bd.cargas.push(carga);
-    return carga;
+    return resumenCarga(carga);
   }
 
-  if (clave === 'GET /cargas') return { items: [...bd.cargas].reverse() };
+  if (clave === 'GET /cargas') return { items: [...bd.cargas].reverse().map(resumenCarga) };
+
+  if (partes[0] === 'cargas' && partes.length === 2 && ['GET', 'PATCH'].includes(metodo)) {
+    const carga = bd.cargas.find((c) => c.id === Number(partes[1]));
+    if (!carga) throw new ErrorDemo('No existe la carga.', 404);
+    if (metodo === 'PATCH') {
+      ['nombre', 'descripcion', 'fecha_estudio', 'publico_objetivo'].forEach((campo) => {
+        if (campo in cuerpo) carga[campo] = (cuerpo[campo] ?? '').toString().trim() || null;
+      });
+      if (!carga.nombre) throw new ErrorDemo('La carga necesita un nombre.', 400);
+    }
+    return resumenCarga(carga);
+  }
 
   if (metodo === 'POST' && partes[0] === 'cargas' && partes[2] === 'ingesta') {
     return ingestarCarga(Number(partes[1]), cuerpo);
@@ -1691,12 +1767,19 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     return composicionDemo(Number(partes[1]), consulta);
   }
 
+  /* R-ORG.2 — la composición de un ámbito. */
+  if (clave === 'GET /composicion') return composicionDeAmbitoDemo(consulta);
+  if (camino === '/composicion/todos/objetivo') {
+    return responder(metodo, '/paneles/todos/objetivo', cuerpo, consulta);
+  }
+
   if (metodo === 'GET' && partes[0] === 'paneles' && partes[2] === 'objetivo') {
     return objetivoDemo(Number(partes[1]));
   }
 
   if (metodo === 'PUT' && partes[0] === 'paneles' && partes[2] === 'objetivo') {
-    const panelId = Number(partes[1]);
+    // R-ORG.3 — «todos» es el universo de la bóveda entera; va aparte.
+    const panelId = partes[1] === 'todos' ? 'todos' : Number(partes[1]);
     const objetivos = cuerpo.objetivos || cuerpo.items || [];
     if (!objetivos.length) throw new ErrorDemo('No hay objetivos para cargar.', 400);
     const porDimension = {};
@@ -1729,7 +1812,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   }
 
   if (metodo === 'DELETE' && partes[0] === 'paneles' && partes[2] === 'objetivo') {
-    const panelId = Number(partes[1]);
+    const panelId = partes[1] === 'todos' ? 'todos' : Number(partes[1]);
     const dimension = consulta.dimension;
     const antes = bd.objetivos.length;
     bd.objetivos = bd.objetivos.filter(
@@ -3170,14 +3253,15 @@ function correrConsulta(cuerpo) {
     const desde = performance.now();
     const items = bd.personas.filter((p) => enSegmento(p)
       && (!cuerpo.finalidad || vigente(p.id_persona, cuerpo.finalidad)))
+      // SC2 — seudónimo, como el semántico: el nombre sale con «Ver quiénes son».
       .map((p) => ({
-        id_persona: p.id_persona, nombre: p.nombre, email: p.email,
+        id_persona: p.id_persona,
         sexo: p.sexo, localidad: p.localidad,
         tramo_etario: tramoEtario(p.fecha_nacimiento),
       }));
     marca('consulta_demografica', desde, { personas: items.length });
     return {
-      tipo: 'demografica', store: 'boveda', abrio_semantica: false, modo,
+      tipo: 'demografica', store: 'boveda', abrio_semantica: false, modo, seudonimo: true,
       criterios, panel_id: panelId, finalidad_exigida: cuerpo.finalidad || null,
       total: items.length, items, excluidos: [], degradaciones: [],
       puente: {
@@ -3425,12 +3509,57 @@ function miembrosDe(panelId, estado = 'activo') {
     .filter(Boolean);
 }
 
-function composicionDemo(panelId, consulta) {
-  const panel = bd.paneles.find((p) => p.id === panelId);
-  if (!panel) throw new ErrorDemo('No existe el panel.', 404);
+/* R-ORG.2 — los dos ámbitos nuevos usan el mismo cálculo con otro conjunto
+   de personas. Una carga no admite objetivo (R-ORG.3). */
+function composicionDeAmbitoDemo(consulta) {
+  const ambito = consulta.ambito || 'panel';
+  if (ambito === 'panel') {
+    const salida = composicionDemo(Number(consulta.panel_id), consulta);
+    const panel = bd.paneles.find((p) => p.id === Number(consulta.panel_id));
+    return { ...salida, ambito: { tipo: 'panel', id: panel.id, nombre: panel.nombre },
+             objetivo_admitido: true, avisos: [] };
+  }
+  if (ambito === 'todos') {
+    const salida = composicionDemo(null, consulta, {
+      personas: bd.personas, objetivos: objetivoDemo('todos').dimensiones });
+    return {
+      ...salida,
+      ambito: { tipo: 'todos', id: null, nombre: 'Todos los panelistas',
+                descripcion: 'La bóveda entera, con y sin panel.' },
+      objetivo_admitido: true,
+      sin_panel: bd.personas.filter((p) => !bd.membresias.some(
+        (m) => m.id_persona === p.id_persona && m.estado === 'activo')).length,
+      avisos: salida.objetivo_cargado ? ['Este universo de referencia es el de la bóveda '
+        + 'entera —todas las personas, con y sin panel—, no el de un panel. Un objetivo '
+        + 'del panel nacional y uno del total de la bóveda son comparaciones distintas.'] : [],
+    };
+  }
+  const carga = bd.cargas.find((c) => c.id === Number(consulta.carga_id));
+  if (!carga) throw new ErrorDemo('No existe la carga.', 404);
+  const ids = new Set(bd.vinculos.filter((v) => v.carga_id === carga.id).map((v) => v.id_persona));
+  const salida = composicionDemo(null, consulta, {
+    personas: bd.personas.filter((p) => ids.has(p.id_persona)), objetivos: {},
+    motivo: 'Una carga no tiene universo de referencia: es un hecho del pasado —lo que '
+      + 'entró, entró— y no algo que se corrija reclutando. La composición es descriptiva '
+      + 'y la brecha no está disponible.' });
+  return {
+    ...salida,
+    ambito: { tipo: 'carga', id: carga.id, nombre: carga.nombre,
+              fecha_estudio: carga.fecha_estudio || null,
+              publico_objetivo: carga.publico_objetivo || null, creado_en: carga.creado_en },
+    objetivo_admitido: false,
+    avisos: ['La composición de una carga muestra cómo está hoy ese grupo, no un registro '
+      + 'fiel de lo que se cargó: quien se dio de baja ya no aparece. Y cuenta solo a las '
+      + 'personas vinculadas desde que el sistema registra de qué carga viene cada una.'],
+  };
+}
+
+function composicionDemo(panelId, consulta, otro = null) {
+  const panel = otro ? null : bd.paneles.find((p) => p.id === panelId);
+  if (!otro && !panel) throw new ErrorDemo('No existe el panel.', 404);
   const estado = consulta.estado || 'activo';
-  const miembros = miembrosDe(panelId, estado);
-  const objetivos = objetivoDemo(panelId).dimensiones;
+  const miembros = otro ? otro.personas : miembrosDe(panelId, estado);
+  const objetivos = otro ? otro.objetivos : objetivoDemo(panelId).dimensiones;
   const pedidas = consulta.dimensiones
     ? consulta.dimensiones.split(',').map((d) => d.trim()).filter(Boolean)
     : Object.keys(DIMENSIONES_DEMO);
@@ -3474,7 +3603,7 @@ function composicionDemo(panelId, consulta) {
       return {
         dimension, brecha_disponible: hay,
         motivo_sin_brecha: hay ? null
-          : `No hay universo de referencia cargado para «${dimension}»: la composición `
+          : otro?.motivo || `No hay universo de referencia cargado para «${dimension}»: la composición `
             + 'es descriptiva y la brecha no se puede calcular.',
         categorias,
         disimilitud: hay

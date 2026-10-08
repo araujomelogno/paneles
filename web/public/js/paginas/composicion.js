@@ -1,4 +1,4 @@
-/* Composición del panel y universo de referencia (R2.2, R2.3 + P1).
+/* Composición y universo de referencia (R2.2, R2.3 + P1, R-ORG.2/3).
 
    Dos cosas en la misma pantalla, porque no se entienden por separado: la
    composición observada del panel y el universo con el que se la compara.
@@ -7,18 +7,33 @@
    brecha» y «no se puede calcular la brecha». Sin objetivo cargado, la
    composición es descriptiva y la brecha aparece explícitamente como no
    disponible: una columna vacía se leería como «está todo bien».
+
+   R-ORG.2 — el conjunto ya no es siempre un panel: se elige el ámbito
+   (todos los panelistas, un panel o una carga) y se muestra junto al
+   resultado. «Todos» admite su propio universo de referencia; una carga no.
 */
 
 import * as api from '../api.js';
 import * as catalogo from '../catalogo.js';
 import {
   $, $$, esc, encabezado, vacio, cargando, toast, modal, cerrarModal,
-  leerFormulario, alerta, confirmar,
+  leerFormulario, alerta, confirmar, fechaCorta,
 } from '../ui.js';
 
 let contexto = {};
 let panelActual = null;
 let cruceActual = null;
+
+/* R-ORG.2 — sobre quién se calcula: «todos» (la bóveda entera, con y sin
+   panel), un panel (lo de siempre) o una carga. Se elige antes de calcular y
+   vuelve en la respuesta, que es lo que se muestra junto al resultado. */
+let ambitoActual = null;
+let cargaActual = null;
+const AMBITOS = {
+  todos: 'Todos los panelistas',
+  panel: 'Un panel',
+  carga: 'Una carga',
+};
 
 /* R3.14 — las dimensiones de cuota salen del catálogo de atributos, no de
    una lista escrita acá. Definir «nivel socioeconómico» en Configuración
@@ -28,28 +43,42 @@ const dimensiones = () => catalogo.categoricos(catalogoDeAtributos);
 const etiqueta = (clave) => catalogo.etiquetaDe(catalogoDeAtributos, clave);
 
 const pct = (n) => (n == null ? '—' : `${(n * 100).toFixed(1)} %`);
+const rotuloCarga = (c) => [c.nombre, c.fecha_estudio ? fechaCorta(c.fecha_estudio) : null]
+  .filter(Boolean).join(' · ');
 
 export async function render(main, ctx) {
   contexto = ctx;
-  const [{ items: paneles }, delCatalogo] = await Promise.all([
+  const [{ items: paneles }, delCatalogo, { items: cargas }] = await Promise.all([
     api.paneles.listar(), catalogo.cargar(),
+    api.cargas.listar().catch(() => ({ items: [] })),
   ]);
   catalogoDeAtributos = delCatalogo;
   const activos = paneles.filter((p) => p.estado === 'activo');
-  if (!activos.length) {
-    main.innerHTML = encabezado('Composición', 'del panel', '')
-      + vacio('No hay paneles activos todavía.', '📋');
-    return;
+  panelActual = activos.some((p) => p.id === panelActual) ? panelActual : activos[0]?.id ?? null;
+  cargaActual = cargas.some((c) => c.id === cargaActual) ? cargaActual : cargas[0]?.id ?? null;
+  // Sin paneles activos ya no hay pantalla vacía: «todos» siempre existe.
+  if (!ambitoActual || (ambitoActual === 'panel' && !panelActual)
+      || (ambitoActual === 'carga' && !cargaActual)) {
+    ambitoActual = panelActual ? 'panel' : 'todos';
   }
-  panelActual = activos.some((p) => p.id === panelActual) ? panelActual : activos[0].id;
 
   main.innerHTML = encabezado('Composición', 'y brecha',
-    'Cuánto se parece el panel al universo que pretende representar.') + `
+    'Cuánto se parece un conjunto de personas al universo que pretende representar.') + `
     <div class="card"><div class="card-body">
       <div class="form-row" style="margin:0">
-        <div class="form-group" style="margin:0"><label>Panel</label>
+        <div class="form-group" style="margin:0"><label>Ámbito</label>
+          <select class="fselect" id="ambito">${Object.entries(AMBITOS).map(([clave, texto]) =>
+            `<option value="${clave}" ${clave === ambitoActual ? 'selected' : ''}
+              ${(clave === 'panel' && !activos.length) || (clave === 'carga' && !cargas.length)
+                ? 'disabled' : ''}>${esc(texto)}</option>`).join('')}
+          </select></div>
+        <div class="form-group" style="margin:0" id="grupo-panel"><label>Panel</label>
           <select class="fselect" id="panel">${activos.map((p) =>
             `<option value="${p.id}" ${p.id === panelActual ? 'selected' : ''}>${esc(p.nombre)}</option>`
+          ).join('')}</select></div>
+        <div class="form-group" style="margin:0" id="grupo-carga"><label>Carga</label>
+          <select class="fselect" id="carga">${cargas.map((c) =>
+            `<option value="${c.id}" ${c.id === cargaActual ? 'selected' : ''}>${esc(rotuloCarga(c))}</option>`
           ).join('')}</select></div>
         <div class="form-group" style="margin:0"><label>Cruce de dos dimensiones</label>
           <select class="fselect" id="cruce">
@@ -62,7 +91,14 @@ export async function render(main, ctx) {
     </div></div>
     <div id="cuerpo">${cargando()}</div>`;
 
+  const mostrarSelectores = () => {
+    $('#grupo-panel').style.display = ambitoActual === 'panel' ? '' : 'none';
+    $('#grupo-carga').style.display = ambitoActual === 'carga' ? '' : 'none';
+  };
+  mostrarSelectores();
+  $('#ambito').onchange = (e) => { ambitoActual = e.target.value; mostrarSelectores(); cargar(); };
   $('#panel').onchange = (e) => { panelActual = Number(e.target.value); cargar(); };
+  $('#carga').onchange = (e) => { cargaActual = Number(e.target.value); cargar(); };
   $('#cruce').value = cruceActual ? cruceActual.join(',') : '';
   $('#cruce').onchange = (e) => {
     cruceActual = e.target.value ? e.target.value.split(',') : null;
@@ -71,13 +107,18 @@ export async function render(main, ctx) {
   await cargar();
 }
 
+const referenciaActual = () => (ambitoActual === 'panel' ? panelActual
+  : ambitoActual === 'carga' ? cargaActual : null);
+
 async function cargar() {
   const caja = $('#cuerpo');
   caja.innerHTML = cargando();
   try {
-    const salida = await api.composicion.ver(panelActual, { cruce: cruceActual });
+    const salida = await api.composicion.verAmbito(
+      ambitoActual, referenciaActual(), { cruce: cruceActual });
     caja.innerHTML = pintar(salida);
-    $('#cargar-objetivo').onclick = () => abrirObjetivo(salida);
+    const boton = $('#cargar-objetivo');
+    if (boton) boton.onclick = () => abrirObjetivo(salida);
     $$('[data-borrar-objetivo]', caja).forEach((b) => {
       b.onclick = () => borrarObjetivo(b.dataset.borrarObjetivo);
     });
@@ -86,30 +127,61 @@ async function cargar() {
   }
 }
 
+/* El ámbito, junto al resultado: qué conjunto se está mirando. Para una
+   carga, con los datos del estudio. */
+function pintarAmbito(ambito) {
+  if (!ambito) return '';
+  const detalle = ambito.tipo === 'carga'
+    ? [ambito.fecha_estudio ? `estudio del ${fechaCorta(ambito.fecha_estudio)}` : null,
+       ambito.publico_objetivo].filter(Boolean).join(' · ')
+    : ambito.descripcion || '';
+  return `<div class="ambito-elegido small" style="margin:0 0 1rem">
+      <span class="badge badge-user">${esc(AMBITOS[ambito.tipo] || ambito.tipo)}</span>
+      ${ambito.nombre && ambito.nombre !== AMBITOS[ambito.tipo]
+        ? `<strong>${esc(ambito.nombre)}</strong>` : ''}
+      ${detalle ? `<span class="muted"> — ${esc(detalle)}</span>` : ''}
+    </div>`;
+}
+
 function pintar(salida) {
   const puedeGestionar = ['admin', 'operaciones'].includes(contexto.actor?.rol);
+  const ambito = salida.ambito || { tipo: 'panel' };
+  const esPanel = ambito.tipo === 'panel';
+  const admite = salida.objetivo_admitido !== false;
   return `
+    ${pintarAmbito(salida.ambito)}
     <div class="stat-grid">
-      <div class="stat s-total"><label>Miembros activos</label><strong>${salida.miembros}</strong></div>
+      <div class="stat s-total"><label>${esPanel ? 'Miembros activos' : 'Personas'}</label>
+        <strong>${salida.miembros}</strong></div>
+      ${ambito.tipo === 'todos' ? `<div class="stat"><label>Sin ningún panel</label>
+        <strong>${salida.sin_panel ?? '—'}</strong></div>` : ''}
       <div class="stat ${salida.objetivo_cargado ? 's-ok' : 's-warn'}">
         <label>Universo de referencia</label>
-        <strong>${salida.objetivo_cargado ? 'cargado' : 'sin cargar'}</strong></div>
+        <strong>${!admite ? 'no aplica' : salida.objetivo_cargado ? 'cargado' : 'sin cargar'}</strong></div>
     </div>
 
-    ${salida.objetivo_cargado ? '' : `<div class="alert alert-warn">
+    ${(salida.avisos || []).map((a) => `<div class="alert alert-info">${esc(a)}</div>`).join('')}
+
+    ${!admite ? `<div class="alert alert-warn">
+      Una carga <strong>no tiene universo de referencia</strong>: es un hecho
+      del pasado —lo que entró, entró— y no algo que se corrija reclutando. La
+      composición es descriptiva y la brecha figura como no disponible, no
+      como cero.</div>`
+    : salida.objetivo_cargado ? '' : `<div class="alert alert-warn">
       Sin universo de referencia cargado la composición es <strong>solo
       descriptiva</strong>: la brecha no se puede calcular, no es que sea
       cero. ${puedeGestionar ? 'Cargá el objetivo para poder compararla.' : ''}
     </div>`}
 
-    <div class="toolbar" style="margin-bottom:1rem">
+    ${admite ? `<div class="toolbar" style="margin-bottom:1rem">
       <button class="btn btn-orange" id="cargar-objetivo"
         ${puedeGestionar ? '' : 'disabled title="Hace falta rol de operaciones o admin"'}>
         ${salida.objetivo_cargado ? 'Editar universo de referencia' : 'Cargar universo de referencia'}
+        ${ambito.tipo === 'todos' ? ' de toda la bóveda' : ''}
       </button>
-    </div>
+    </div>` : ''}
 
-    ${salida.dimensiones.map((d) => pintarDimension(d, salida.miembros, puedeGestionar)).join('')}
+    ${salida.dimensiones.map((d) => pintarDimension(d, salida.miembros, puedeGestionar && admite)).join('')}
     ${salida.cruce ? pintarCruce(salida.cruce) : ''}`;
 }
 
@@ -148,7 +220,7 @@ function pintarDimension(dimension, miembros, puedeGestionar) {
         </tr>`).join('')}</tbody>
       </table></div>
       ${dimension.sin_dato ? `<div class="alert alert-info" style="margin:1rem 1.5rem 0">
-        <strong>${dimension.sin_dato}</strong> miembro(s) no tienen esta
+        <strong>${dimension.sin_dato}</strong> persona(s) no tienen esta
         variable cargada y no se cuentan en ninguna categoría: los porcentajes
         de arriba son sobre los <strong>${dimension.con_dato}</strong> que sí
         la tienen. Contarlos como una categoría más haría que la brecha de las
@@ -213,6 +285,10 @@ function abrirObjetivo(salida) {
     titulo: 'Universo de referencia',
     ancho: '680px',
     cuerpo: `
+      ${ambitoActual === 'todos' ? `<div class="alert alert-warn">
+        Este es el universo de referencia de <strong>toda la bóveda</strong>,
+        no el de un panel: se compara contra todas las personas, con y sin
+        panel. El objetivo de cada panel es otro y no se toca.</div>` : ''}
       <div class="alert alert-info">
         Se carga <strong>una dimensión a la vez</strong>, en proporciones que
         sumen 1. Una dimensión que suma 0,8 no es un universo incompleto:
@@ -307,7 +383,8 @@ async function guardarObjetivo(caja) {
 
   if (!objetivos.length) { toast('Cargá al menos una categoría.', 'err'); return; }
   try {
-    await api.composicion.cargarObjetivo(panelActual, objetivos);
+    if (ambitoActual === 'todos') await api.composicion.cargarObjetivoDeTodos(objetivos);
+    else await api.composicion.cargarObjetivo(panelActual, objetivos);
     cerrarModal();
     toast(`Universo de referencia de «${etiqueta(dimension)}» guardado.`, 'ok');
     await cargar();
@@ -327,7 +404,8 @@ async function borrarObjetivo(dimension) {
   });
   if (!ok) return;
   try {
-    await api.composicion.borrarObjetivo(panelActual, dimension);
+    if (ambitoActual === 'todos') await api.composicion.borrarObjetivoDeTodos(dimension);
+    else await api.composicion.borrarObjetivo(panelActual, dimension);
     toast('Objetivo quitado.', 'ok');
     await cargar();
   } catch (error) {
