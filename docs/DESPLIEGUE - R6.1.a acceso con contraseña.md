@@ -204,6 +204,14 @@ cambiar en el código, pero conviene saber que el texto del portal dice
 
 ## Paso 6 · `FIREBASE_WEB_API_KEY` y desplegar
 
+> **⚠ Reemplazado (2026-10-08).** No seguir este paso. La key ya no va a
+> Secret Manager ni se llama así: es la variable común `WEB_API_KEY` de
+> `functions/.env`. Firebase reserva el prefijo `FIREBASE_` y el valor real
+> nunca se pudo cargar; además, el comando de abajo, copiado tal cual,
+> guarda el placeholder `AIza...`, que es exactamente lo que quedó en
+> producción. Ver `DESPLIEGUE - R-ORG, paridad demográfica y API key web.md`,
+> pasos 0 y 5.
+
 El login pasa por la función —el porqué está en
 [D53](decisiones.md#d53)— y para comprobar una contraseña necesita la *web
 API key* del proyecto.

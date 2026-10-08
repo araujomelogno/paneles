@@ -57,6 +57,10 @@ Si errás la contraseña muchas veces seguidas, el portal se toma un rato antes
 de dejarte probar de nuevo. Pedir el enlace para recuperarla **sigue
 funcionando** en ese rato: no te quedás afuera.
 
+> **Si te decimos «no pudimos comprobar tu contraseña por un problema
+> técnico»**, no es tu contraseña: es un problema nuestro. Volvé a probar en
+> unos minutos con la misma. Ese intento no cuenta para el límite de arriba.
+
 ### Cambiar tu contraseña
 
 En **Mis datos → Tu contraseña**. Te pedimos la actual y la nueva.

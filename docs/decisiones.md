@@ -3722,3 +3722,110 @@ Cosas que quedaron abiertas a propósito, para que no se confundan con olvidos:
 | OAuth2 o un servicio transaccional para el correo | **Solo si hace falta.** Si la organización deja de permitir contraseñas de aplicación, o el volumen pasa los 2.000 destinatarios por día | [D65](#d65) |
 | Una rutina programada que purgue `verificacion_captura` | **No se hizo.** La purga corre en cada escritura y cada lectura; si el modo queda apagado meses, las filas vencidas esperan a la próxima consulta con el modo encendido o a la purga manual del manual de despliegue | [D66](#d66) |
 | Calibrar `VERIFICACION_LOTE` con datos reales | **Pendiente.** 25 es un punto de partida: más chico trunca menos y repite más prompt; más grande ahorra prompt y arriesga el doble pago de la subdivisión | [D66](#d66) |
+
+## D67 · De qué carga viene cada persona: un vínculo, no un campo; y una carga no tiene objetivo
+
+**El problema.** `carga` tenía nombre y `ref_estudio`, pero nada la
+relacionaba con sus personas. Sin eso no se podía calcular la composición de
+una carga ni decirle a un panelista de qué estudio salió. El cruce por
+`ref_estudio` no alcanza: lleva a las respuestas del lado semántico, no a las
+personas, y no distingue a quien nació en la carga de quien ya existía.
+
+**La decisión.**
+
+- **`persona_carga`, de muchos a muchos** (`boveda/0024`), con `origen`
+  `creada` | `reutilizada` y clave `(id_persona, carga_id)`. Un campo en
+  `persona` obligaría a elegir entre pisar el primer origen o ignorar los
+  siguientes. `on delete cascade` desde `persona`: la baja lo arrastra como
+  al resto.
+- **El vínculo se fija la primera vez y no se pisa** (`on conflict do
+  nothing`). La ruta registra `creada`/`reutilizada` al dar de alta (antes de
+  encolar) y cada lote registra `reutilizada` sobre todo lo que resolvió; así
+  el orden y los reintentos no cambian el resultado. Quien pasa por revisión
+  se vincula al resolverla (`carga_id` viaja en `alta_en_revision.datos`).
+- **Los datos del estudio viven en la carga** (`fecha_estudio`,
+  `publico_objetivo`) y la ficha los lee por join. Copiarlos en cada persona
+  haría que corregir una fecha toque 1.131 filas y que una persona de tres
+  estudios muestre uno solo.
+- **El público objetivo es texto libre** (R-ORG.6): documenta procedencia,
+  no segmenta. Si un día hace falta filtrar por él, se evalúa un vocabulario
+  con el criterio del catálogo de atributos.
+- **La encuesta no lleva vínculo propio**: `participacion` ya cumple ese
+  papel para la ingesta desde encuesta.
+- **No hay reconstrucción retroactiva.** `alias_origen` guarda la plataforma,
+  no la carga, y dos cargas de la misma plataforma son indistinguibles. Las
+  personas anteriores quedan sin vínculo, y la ficha lo dice en vez de
+  mostrar «sin origen».
+- **Ámbitos de composición:** `todos` (la bóveda entera, también lo cargado
+  sin panel), `panel` (el de siempre, mismo SQL) y `carga`. **Objetivo para
+  `todos` sí, para una carga no**: la representatividad del conjunto es una
+  pregunta legítima y recurrente; una carga es un hecho del pasado que no se
+  corrige reclutando. `objetivo_composicion` gana `ambito` y `panel_id`
+  nulo para `todos`, con un índice único parcial (con `panel_id` nulo el
+  `unique` de la 0001 no protege). La pantalla advierte que el objetivo de
+  «todos» es otro universo que el de un panel, y que la composición de una
+  carga mira el presente (quien se dio de baja ya no aparece).
+- **La composición a fecha (R4.1.a) queda solo por panel**: sin membresía
+  que fechar, mezclar atributos de entonces con personas de hoy no
+  corresponde a ningún momento.
+
+## D68 · La web API key no es un secreto, y «no se pudo comprobar» no es «no entró»
+
+**El problema.** El portal rechazaba toda contraseña. El secreto
+`FIREBASE_WEB_API_KEY` tenía el placeholder `AIza...` porque Firebase
+**reserva el prefijo `FIREBASE_`** —para secretos y también para variables de
+`.env` (en `firebase-tools`, archivo lib/functions/env.js, `RESERVED_PREFIXES`)—, así que el
+valor real no se pudo cargar nunca. Identity Toolkit contestaba 400 «API key
+not valid», el código lo convertía en `None` sin log y el panelista leía
+«contraseña incorrecta». Diagnosticarlo llevó más de una hora.
+
+**La decisión.**
+
+- **Variable de entorno común, `WEB_API_KEY`**, en `functions/.env`. Es
+  pública por diseño (está en `index.html`); en Secret Manager solo agregaba
+  un valor que nadie podía ver en un `describe`. **El nombre cambia** aunque
+  el pedido proponía conservarlo: con el prefijo `FIREBASE_` tampoco la
+  acepta el `.env`. No se lee el nombre viejo como alternativa: haría
+  parecer vigente un valor muerto. `test_main.py` falla si cualquier
+  variable usa un prefijo reservado.
+- **Un placeholder se frena antes de llamar**: la key tiene que tener la
+  forma `AIza` + 35 caracteres.
+- **Al usuario un mensaje, al log el motivo.** `verificar_clave` registra el
+  estado y el cuerpo de Identity Toolkit (con la key reemplazada) y el
+  correo; nunca la contraseña ni la key. También los errores de red, que antes
+  ni se capturaban.
+- **Dos resultados distintos.** Un 400 por motivo de credencial
+  (`INVALID_LOGIN_CREDENTIALS`, `INVALID_PASSWORD`, `EMAIL_NOT_FOUND`,
+  `USER_DISABLED`…) es «no entró» → `None` y el mensaje genérico de siempre.
+  Un 403, 429, 5xx, timeout, error de red, respuesta ilegible, key ausente o
+  un **400 por key inválida** es «no se pudo comprobar» →
+  `ComprobacionNoDisponible` (503), con `MENSAJE_COMPROBACION_NO_DISPONIBLE`,
+  y **no cuenta para el límite de intentos**: una caída no bloquea a nadie una
+  hora. El 400 de la key se clasifica como técnico a propósito: es el caso del
+  incidente, y tratarlo como credencial es exactamente el error que el pedido
+  corrige. Un 400 de motivo desconocido sigue siendo «no entró».
+- **Lo irreversible sigue fallando cerrado**: si no se puede comprobar, la
+  baja o el cambio de correo no ocurren; solo cambia que no suman intento.
+- **A2 — el mismo patrón en otros `except`.** `credenciales.buscar` y
+  `usuarios.buscar_por_email` devolvían `None` ante **cualquier** excepción:
+  Firebase caído se leía como «la cuenta no existe». Ahora solo
+  `UserNotFoundError` es `None`; lo demás se loguea y sube.
+  `link_de_reseteo` conserva el `None` pero loguea el motivo.
+
+## D69 · El resultado demográfico es seudónimo y tiene las mismas acciones
+
+**El problema.** `pintarResultado` salía por un `return` temprano para la
+consulta demográfica, así que ficha, columnas, CSV, reidentificar, CSV con
+datos y crear panel solo existían para la semántica, que es el camino menos
+transitado. Además el resultado demográfico traía **nombre y correo** y la
+pantalla los mostraba sin registrar ninguna reidentificación.
+
+**La decisión.** La barra de acciones es un bloque común
+(`barraDeAcciones` + `engancharAcciones`) que usan los dos tipos; cambia la
+tabla. El resultado demográfico se **seudonimiza en `consultas.ejecutar`**
+(sin nombre, correo, documento ni celular), y ver quiénes son pasa por la
+misma reidentificación registrada. `a_csv` deja vacío el puntaje en vez de
+fallar o inventar un cero. Las diferencias legítimas se conservan: sin
+puntaje, evidencia, veredicto, degradaciones ni diagnóstico del puente, y el
+orden es el del listado. Los endpoints ya aceptaban cualquier conjunto de
+`id_persona`; no hizo falta tocarlos.
