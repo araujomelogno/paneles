@@ -137,7 +137,8 @@ function pintarAmbito(ambito) {
     : ambito.descripcion || '';
   return `<div class="ambito-elegido small" style="margin:0 0 1rem">
       <span class="badge badge-user">${esc(AMBITOS[ambito.tipo] || ambito.tipo)}</span>
-      <strong>${esc(ambito.nombre || '')}</strong>
+      ${ambito.nombre && ambito.nombre !== AMBITOS[ambito.tipo]
+        ? `<strong>${esc(ambito.nombre)}</strong>` : ''}
       ${detalle ? `<span class="muted"> — ${esc(detalle)}</span>` : ''}
     </div>`;
 }
