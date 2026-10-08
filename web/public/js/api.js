@@ -276,6 +276,21 @@ export const composicion = {
       cruce: cruce?.join(','),
       estado,
     }),
+  /* R-ORG.2 — la composición de un ámbito: `todos`, `panel` o `carga`. El
+     ámbito vuelve en la respuesta, junto al resultado. */
+  verAmbito: (ambito, referencia, { dimensiones, cruce } = {}) =>
+    GET('/composicion', {
+      ambito,
+      panel_id: ambito === 'panel' ? referencia : undefined,
+      carga_id: ambito === 'carga' ? referencia : undefined,
+      dimensiones: dimensiones?.join(','),
+      cruce: cruce?.join(','),
+    }),
+  /* R-ORG.3 — el universo de referencia de toda la bóveda. Una carga no
+     tiene: es un hecho del pasado y no se corrige reclutando. */
+  cargarObjetivoDeTodos: (objetivos) => PUT('/composicion/todos/objetivo', { objetivos }),
+  borrarObjetivoDeTodos: (dimension) =>
+    DELETE('/composicion/todos/objetivo', dimension ? { dimension } : {}),
   objetivo: (panelId) => GET(`/paneles/${panelId}/objetivo`),
   cargarObjetivo: (panelId, objetivos) => PUT(`/paneles/${panelId}/objetivo`, { objetivos }),
   borrarObjetivo: (panelId, dimension) =>
@@ -440,8 +455,17 @@ export const atributos = {
    pantalla de ingesta elige uno u otro por el destino, sin ramificar nada
    más. */
 export const cargas = {
-  crear: (nombre, descripcion) => POST('/cargas', { nombre, descripcion }),
+  /* R-ORG.4 — los datos del estudio viajan con la carga y se guardan en
+     ella, no copiados en cada persona. */
+  crear: (nombre, descripcion, { fechaEstudio, publicoObjetivo } = {}) =>
+    POST('/cargas', {
+      nombre, descripcion,
+      fecha_estudio: fechaEstudio || null,
+      publico_objetivo: publicoObjetivo || null,
+    }),
   listar: () => GET('/cargas'),
+  ver: (cargaId) => GET(`/cargas/${cargaId}`),
+  editar: (cargaId, cambios) => PATCH(`/cargas/${cargaId}`, cambios),
   analizar: (cargaId, archivoBase64, opciones) =>
     subir(`/cargas/${cargaId}/analizar`,
           { archivo_base64: archivoBase64, ...(opciones?.extra || {}) }, opciones),

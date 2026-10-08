@@ -5,6 +5,7 @@ import * as api from '../api.js';
 import * as consentimiento from '../consentimiento.js';
 import * as catalogo from '../catalogo.js';
 import * as respuestas from '../respuestas.js';
+import { pintarOrigen } from '../origen.js';
 import {
   $, $$, esc, encabezado, consentimientos, token, vacio, cargando, toast,
   modal, cerrarModal, leerFormulario, confirmar, activarTokens, fechaCorta,
@@ -52,7 +53,13 @@ const CANALES = [
 
 const ETIQUETA_CANAL = Object.fromEntries(CANALES.map(([k, v]) => [k, v]));
 
-let filtro = { q: '', panel_id: '', sin_panel: false };
+let filtro = { q: '', panel_id: '', sin_panel: false, carga_id: '' };
+
+/* R-ORG.5 — las cargas, para filtrar el listado por la de la que proviene
+   cada persona. Se listan por nombre y fecha del estudio, nunca por id. */
+let cargasConocidas = [];
+const rotuloCarga = (c) => [c.nombre, c.fecha_estudio ? fechaCorta(c.fecha_estudio) : null]
+  .filter(Boolean).join(' · ');
 let contexto = {};
 
 /* R3.14 — sexo y localidad dejaron de ser texto libre: son atributos del
@@ -76,10 +83,12 @@ export async function render(main, ctx) {
   contexto = ctx;
   if (ctx.contexto?.idPersona) return renderFicha(main, ctx.contexto.idPersona);
 
-  const [{ items: paneles }, delCatalogo] = await Promise.all([
-    api.paneles.listar(), catalogo.cargar(), cargarTextosActivos(),
+  const [{ items: paneles }, delCatalogo, { items: cargasDisponibles }] = await Promise.all([
+    api.paneles.listar(), catalogo.cargar(),
+    api.cargas.listar().catch(() => ({ items: [] })), cargarTextosActivos(),
   ]);
   catalogoDeAtributos = delCatalogo;
+  cargasConocidas = cargasDisponibles;
 
   main.innerHTML = encabezado('Panelistas', 'de la bóveda',
     'Alta con deduplicación, consentimiento por finalidad y ficha de cada persona.') + `
@@ -95,6 +104,13 @@ export async function render(main, ctx) {
             <option value="__sin__" ${filtro.sin_panel ? 'selected' : ''}>— Sin panel —</option>
             ${paneles.map((p) => `<option value="${p.id}" ${String(filtro.panel_id) === String(p.id) ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')}
           </select>
+          <select class="fselect" id="f-carga" style="width:auto"
+                  title="De qué carga provienen (creadas o reutilizadas en ella)">
+            <option value="">Todas las cargas</option>
+            ${cargasConocidas.map((c) => `<option value="${c.id}" ${String(filtro.carga_id) === String(c.id) ? 'selected' : ''}>${esc(rotuloCarga(c))}</option>`).join('')}
+          </select>
+          <button class="btn btn-outline btn-sm" id="editar-estudio"
+                  style="${filtro.carga_id ? '' : 'display:none'}">Datos del estudio</button>
         </div>
       </div>
       <div class="card-body tight"><div id="tabla">${cargando()}</div></div>
@@ -119,6 +135,19 @@ export async function render(main, ctx) {
     filtro.panel_id = filtro.sin_panel ? '' : e.target.value;
     cargarTabla();
   };
+  // R-ORG.5 — por carga: quienes provienen de ella, creados o reutilizados.
+  $('#f-carga').onchange = (e) => {
+    filtro.carga_id = e.target.value;
+    $('#editar-estudio').style.display = filtro.carga_id ? '' : 'none';
+    cargarTabla();
+  };
+  // Se relee la carga en vez de usar la del selector: los conteos de
+  // creadas y reutilizadas pudieron cambiar con una carga en curso.
+  $('#editar-estudio').onclick = async () => {
+    try {
+      abrirDatosDelEstudio(await api.cargas.ver(filtro.carga_id));
+    } catch (error) { toast(error.message, 'err'); }
+  };
 
   await cargarTabla();
   // R-ASYNC.3 — si quedó una carga sin panel a medias, se retoma. Acá no se
@@ -137,11 +166,14 @@ async function cargarTabla() {
   const { items, total } = await api.panelistas.listar({
     q: filtro.q, panel_id: filtro.panel_id, limite: 100,
     sin_panel: filtro.sin_panel ? '1' : '',
+    carga_id: filtro.carga_id,
   });
 
   if (!items.length) {
     contenedor.innerHTML = vacio(
       filtro.sin_panel ? 'Todos los individuos pertenecen a algún panel.'
+        : filtro.carga_id ? 'No hay personas vinculadas a esa carga. El vínculo '
+          + 'se registra desde la versión R-ORG: lo cargado antes no dejó constancia.'
         : filtro.q ? 'Ningún panelista coincide con la búsqueda.'
         : 'Todavía no hay panelistas enrolados.',
       '👤');
@@ -321,6 +353,22 @@ function abrirCarga() {
         <div class="field-hint">Identifica el origen de estos datos. Es lo que
           después permite saber de qué base salió cada respuesta.</div>
       </div>
+      <!-- R-ORG.4 — los datos del estudio. Se guardan en la carga y no en
+           cada persona: la ficha de cada panelista los muestra por el
+           vínculo, y corregirlos acá se ve en todas a la vez. -->
+      <div class="form-row">
+        <div class="form-group">
+          <label>Fecha del estudio</label>
+          <input type="date" name="fecha_estudio" />
+          <div class="field-hint">Cuándo se hizo el campo, no cuándo se carga.</div>
+        </div>
+        <div class="form-group">
+          <label>Público objetivo</label>
+          <input type="text" name="publico_objetivo"
+                 placeholder="Población adulta de Montevideo" />
+          <div class="field-hint">Texto libre: describe al estudio, no a las personas.</div>
+        </div>
+      </div>
       <div class="form-group">
         <label>Descripción (opcional)</label>
         <textarea class="finput" name="descripcion"
@@ -344,7 +392,9 @@ async function seguirConLaCarga(caja) {
     return;
   }
   try {
-    const carga = await api.cargas.crear(datos.nombre.trim(), datos.descripcion);
+    const carga = await api.cargas.crear(datos.nombre.trim(), datos.descripcion, {
+      fechaEstudio: datos.fecha_estudio, publicoObjetivo: datos.publico_objetivo,
+    });
     cerrarModal();
     // La pantalla de ingesta vive en Encuestas y es la misma para los dos
     // destinos; se importa acá para no arrastrar ese módulo en cada carga de
@@ -356,6 +406,52 @@ async function seguirConLaCarga(caja) {
   }
 }
 
+
+/* R-ORG.4 — corregir los datos del estudio de una carga. Es una fila: la
+   ficha de cada persona que viene de ahí lo muestra por el vínculo, así que
+   no hay que tocar a nadie. */
+function abrirDatosDelEstudio(carga) {
+  modal({
+    titulo: 'Datos del estudio',
+    ancho: '560px',
+    cuerpo: `
+      <div id="estudio-alerta"></div>
+      <p class="small muted">${esc(carga.personas ?? 0)} persona(s) vinculadas:
+        ${esc(carga.personas_creadas ?? 0)} creadas y
+        ${esc(carga.personas_reutilizadas ?? 0)} reutilizadas en esta carga.
+        Lo que corrijas acá se ve en todas sus fichas.</p>
+      <div class="form-group"><label>Nombre del estudio</label>
+        <input type="text" name="nombre" value="${esc(carga.nombre || '')}" /></div>
+      <div class="form-row">
+        <div class="form-group"><label>Fecha del estudio</label>
+          <input type="date" name="fecha_estudio" value="${esc(carga.fecha_estudio || '')}" /></div>
+        <div class="form-group"><label>Público objetivo</label>
+          <input type="text" name="publico_objetivo"
+                 value="${esc(carga.publico_objetivo || '')}" /></div>
+      </div>
+      <div class="form-group"><label>Descripción</label>
+        <textarea class="finput" name="descripcion">${esc(carga.descripcion || '')}</textarea></div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Guardar', clase: 'btn-orange', onClick: async (caja) => {
+        const datos = leerFormulario(caja);
+        try {
+          const nueva = await api.cargas.editar(carga.id, {
+            nombre: datos.nombre, descripcion: datos.descripcion,
+            fecha_estudio: datos.fecha_estudio || null,
+            publico_objetivo: datos.publico_objetivo,
+          });
+          cargasConocidas = cargasConocidas.map((c) => (c.id === nueva.id ? { ...c, ...nueva } : c));
+          cerrarModal();
+          toast('Datos del estudio actualizados. Se ven en todas sus fichas.', 'ok');
+          contexto.irA('panelistas');
+        } catch (error) {
+          $('#estudio-alerta', caja).innerHTML = alerta(error.message);
+        }
+      } },
+    ],
+  });
+}
 
 function abrirAlta(paneles) {
   const caja = modal({
@@ -664,6 +760,14 @@ async function renderFicha(main, idPersona) {
               </tbody></table></div>`
               : vacio('No pertenece a ningún panel.', '📋')}
           </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-header-title">Origen</span>
+            <span class="small muted">de qué estudios proviene</span>
+          </div>
+          <div class="card-body tight">${pintarOrigen(ficha.origen)}</div>
         </div>
 
         <div class="card">

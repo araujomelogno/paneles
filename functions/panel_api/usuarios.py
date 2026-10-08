@@ -185,8 +185,16 @@ class PadronFirebase(Padron):
     def buscar_por_email(self, email):
         try:
             usuario = self.auth.get_user_by_email(email)
-        except Exception:  # noqa: BLE001 — el SDK usa UserNotFoundError
-            return None
+        except Exception as error:  # noqa: BLE001
+            # PEDIDO A2 — solo «no existe» es None. Cualquier otra falla de
+            # Firebase se registra y sube: tratarla como «no hay cuenta»
+            # convierte una caída en un alta duplicada o en un error opaco.
+            from .credenciales import es_cuenta_inexistente
+
+            if es_cuenta_inexistente(self.auth, error):
+                return None
+            print(f"[usuarios] buscar_por_email falló: {type(error).__name__}")
+            raise
         return {
             "uid": usuario.uid,
             "email": usuario.email,
@@ -217,7 +225,12 @@ class PadronFirebase(Padron):
     def link_de_reseteo(self, email):
         try:
             return self.auth.generate_password_reset_link(email)
-        except Exception:  # noqa: BLE001 — sin dominio configurado, por ejemplo
+        except Exception as error:  # noqa: BLE001 — sin dominio configurado, por ejemplo
+            # PEDIDO A2 — el None se conserva (quien llama ya lo trata), pero
+            # deja el motivo en el log: sin él, «no se generó el enlace» no
+            # tiene diagnóstico posible.
+            print(f"[usuarios] link_de_reseteo falló: {type(error).__name__}: "
+                  f"{str(error)[:300]}")
             return None
 
 

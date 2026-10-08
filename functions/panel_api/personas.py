@@ -730,6 +730,10 @@ def ficha(conn, id_persona):
             {"origen": a["origen"], "id_en_origen": a["id_en_origen"]} for a in alias
         ],
         "consentimientos": consentimiento.listar(conn, id_persona),
+        # R-ORG.5 — de qué estudios proviene, resuelto por el vínculo con la
+        # carga. Los datos del estudio son los de la carga **hoy**: no hay
+        # copia en la persona que pueda quedar desactualizada.
+        "origen": _origen(conn, id_persona),
         "participacion": {
             "convocatorias": convocatorias["convocatorias"],
             "respondidas": convocatorias["respondidas"],
@@ -742,14 +746,25 @@ def ficha(conn, id_persona):
     }
 
 
+def _origen(conn, id_persona):
+    # Import local: `cargas` importa este módulo.
+    from . import cargas
+
+    return cargas.origen_de(conn, id_persona)
+
+
 def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
-           sin_panel=False):
+           sin_panel=False, carga_id=None):
     """Listado de panelistas para la grilla de administración.
 
     `sin_panel` (R3.13.e) deja solo a quienes no son miembros de ningún
     panel: la gente que entró por una carga externa y a la que nadie
     incorporó todavía. Sin este filtro se mezcla con el resto y no hay forma
     de encontrarla.
+
+    `carga_id` (R-ORG.5) deja a quienes provienen de esa carga, creados o
+    reutilizados. Va por el vínculo `persona_carga`: quien se cargó antes de
+    que existiera no aparece, porque no hay constancia de que viniera de ahí.
     """
     condiciones = []
     params = []
@@ -770,6 +785,12 @@ def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
             "not exists (select 1 from membresia m where m.id_persona = p.id_persona "
             "and m.estado = 'activo')"
         )
+    if carga_id:
+        condiciones.append(
+            "exists (select 1 from persona_carga pc where pc.id_persona = p.id_persona "
+            "and pc.carga_id = %s)"
+        )
+        params.append(carga_id)
     donde = ("where " + " and ".join(condiciones)) if condiciones else ""
 
     total = db.una(

@@ -120,7 +120,8 @@ function pintar(main, d) {
     </p>
   </div>
 
-  ${cargasHtml(cargas)}`;
+  ${cargasHtml(cargas)}
+  ${estudiosHtml(d.estudios_de_origen)}`;
 
   $('#ver-sin-respuestas', main)?.addEventListener('click', verSinRespuestas);
   // R8.9 — corregir lo ya cargado de una encuesta o de una carga sin panel.
@@ -173,6 +174,34 @@ function brechaHtml(b, p) {
                 ? '<span class="chip chip-error">Problema de integridad</span>'
                 : '<span class="chip chip-ok">Correcto</span>'}</td>
         </tr>
+      </tbody>
+    </table>
+  </div>`;
+}
+
+/* R-ORG.5 — las cargas como estudios: con su nombre, la fecha del estudio y
+   cuántas personas creó y reutilizó cada una. Sale del vínculo persona ↔
+   carga, así que cuenta a quienes siguen en la bóveda y a lo cargado desde
+   que el vínculo existe; la nota lo dice. */
+function estudiosHtml(estudios) {
+  if (!estudios?.items?.length) return '';
+  return `
+  <div class="card">
+    <h3>Estudios de origen</h3>
+    <p class="small muted">${esc(estudios.nota)}</p>
+    <table class="tabla">
+      <thead><tr><th>Estudio</th><th>Fecha del estudio</th><th>Público objetivo</th>
+                 <th class="num">Creadas</th><th class="num">Reutilizadas</th>
+                 <th class="num">Total</th></tr></thead>
+      <tbody>${estudios.items.map((e) => `
+        <tr>
+          <td>${esc(e.nombre)}</td>
+          <td>${e.fecha_estudio ? esc(fechaCorta(e.fecha_estudio)) : '—'}</td>
+          <td class="small">${esc(e.publico_objetivo || '—')}</td>
+          <td class="num">${numero(e.personas_creadas)}</td>
+          <td class="num">${numero(e.personas_reutilizadas)}</td>
+          <td class="num">${numero(e.personas)}</td>
+        </tr>`).join('')}
       </tbody>
     </table>
   </div>`;

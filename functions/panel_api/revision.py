@@ -130,6 +130,15 @@ def resolver(conn, revision_id, decision, id_persona=None, actor=None):
         from . import paneles
 
         paneles.agregar_miembro(conn, panel_id, destino)
+    # R-ORG.1 — el alta venía de una carga: queda el vínculo, con el origen
+    # que corresponde a la decisión. Fusionar es reutilizar a alguien que ya
+    # estaba; crear es que la carga dio de alta a una persona nueva.
+    if datos.get("carga_id") is not None:
+        from . import cargas
+
+        cargas.registrar_vinculos(
+            conn, datos["carga_id"], [destino],
+            cargas.CREADA if decision == "crear" else cargas.REUTILIZADA)
 
     _cerrar(conn, revision_id, estado_final, destino, actor)
     return {

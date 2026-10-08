@@ -262,6 +262,33 @@ def cargas_recientes(conn_boveda, limite=10):
     }
 
 
+def estudios_de_origen(conn_boveda, limite=50):
+    """R-ORG.5 — cada carga con los datos del estudio y cuántas personas creó
+    y reutilizó.
+
+    Sale de `v_carga_resumen`, que cuenta por el vínculo persona ↔ carga: es
+    el estado de **hoy** (quien se dio de baja ya no figura) y solo de lo
+    cargado desde que el vínculo existe. La pantalla lo dice.
+    """
+    filas = db.todas(
+        conn_boveda,
+        """select id, nombre, fecha_estudio, publico_objetivo, creado_en,
+                  personas_creadas, personas_reutilizadas, personas
+             from v_carga_resumen
+            order by coalesce(fecha_estudio, creado_en::date) desc, id desc
+            limit %s""", (limite,))
+    return {
+        "items": [
+            {**f,
+             "fecha_estudio": f["fecha_estudio"].isoformat() if f["fecha_estudio"] else None,
+             "creado_en": f["creado_en"].isoformat()}
+            for f in filas
+        ],
+        "nota": ("Cuenta a las personas que siguen en la bóveda y que se "
+                 "cargaron desde que se registra el vínculo con la carga."),
+    }
+
+
 def todo(conn_boveda, conn_semantica):
     """La pantalla entera. Sin parámetros: se abre y muestra."""
     return {
@@ -271,4 +298,5 @@ def todo(conn_boveda, conn_semantica):
         "salud": salud_del_corpus(conn_semantica),
         "brecha": brecha(conn_boveda, conn_semantica),
         "cargas": cargas_recientes(conn_boveda),
+        "estudios_de_origen": estudios_de_origen(conn_boveda),
     }

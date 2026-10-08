@@ -19,6 +19,7 @@
 import * as api from '../api.js';
 import * as catalogo from '../catalogo.js';
 import * as respuestas from '../respuestas.js';
+import { pintarOrigen } from '../origen.js';
 import {
   $, $$, esc, encabezado, token, vacio, cargando, toast, modal, cerrarModal,
   leerFormulario, alerta, activarTokens, fechaCorta, confirmar,
@@ -408,55 +409,62 @@ function pintarResultado(resultado) {
   const caja = $('#resultado');
   if (!caja) return;
 
-  if (resultado.tipo === 'demografica') {
-    caja.innerHTML = pintarDemografica(resultado);
-    activarTokens(caja);
-    return;
-  }
+  /* SC1 — la consulta demográfica salía acá por un `return` temprano y nunca
+     llegaba a la barra de acciones: ficha, columnas, CSV, reidentificar y
+     crear panel existían solo para la semántica, que es el camino menos
+     transitado. Ahora los dos tipos pasan por la misma barra
+     (`barraDeAcciones` + `engancharAcciones`); lo que cambia es la tabla. */
+  const esDemografica = resultado.tipo === 'demografica';
 
   caja.innerHTML = `
-    ${pintarVerificacionIncompleta(resultado)}
-    ${pintarDegradaciones(resultado)}
-    ${pintarPuente(resultado)}
+    ${esDemografica ? avisoDemografica(resultado) : `
+      ${pintarVerificacionIncompleta(resultado)}
+      ${pintarDegradaciones(resultado)}
+      ${pintarPuente(resultado)}`}
     <div class="card">
       <div class="card-header">
-        <span class="card-header-title">Ranking — ${resultado.total} persona(s)</span>
-        <div class="toolbar">
-          <button class="btn btn-outline btn-sm" id="ver-nombres">Ver quiénes son</button>
-          <button class="btn btn-outline btn-sm" id="bajar-csv">Descargar CSV</button>
-          <button class="btn btn-outline btn-sm" id="bajar-csv-pii"
-            ${hayReidentificacion(resultado) ? '' : 'disabled'}
-            title="${hayReidentificacion(resultado)
-              ? 'CSV con nombre, documento y contacto. Queda registrado.'
-              : 'Primero hay que reidentificar: exportar con datos no puede ser un segundo camino para sacar PII.'}"
-            >CSV con datos</button>
-          <button class="btn btn-outline btn-sm" id="elegir-columnas">Columnas</button>
-          <button class="btn btn-outline btn-sm" id="crear-panel">Crear panel</button>
-        </div>
+        <span class="card-header-title">${esDemografica
+          ? `${resultado.total} persona(s)${resultado.items.length < resultado.total
+            ? ` <span class="small muted">· se muestran ${resultado.items.length}</span>` : ''}`
+          : `Ranking — ${resultado.total} persona(s)`}</span>
+        ${barraDeAcciones(resultado)}
       </div>
       <div class="card-body tight">
-        ${resultado.items.length ? `<div class="table-wrap"><table>
-          <thead><tr>
-            <th>#</th><th>Persona</th>
-            ${columnasElegidas.map((c) => `<th>${esc(etiquetaDeColumna(c))}</th>`).join('')}
-            <th>Puntaje</th><th>Confianza</th>
-            <th>Criterios</th><th>Evidencia</th>
-          </tr></thead>
-          <tbody>${resultado.items.map((item, i) => filaItem(item, i)).join('')}</tbody>
-        </table></div>` : vacio(
-          'Nadie quedó en el ranking. Probá el modo laxo, subí el pool o '
-          + 'revisá los criterios.', '🕳️')}
+        ${esDemografica ? tablaDemografica(resultado) : tablaRanking(resultado)}
       </div>
     </div>
-    ${pintarExcluidos(resultado)}
-    ${pintarDiagnostico(resultado)}`;
+    ${esDemografica ? '' : `${pintarExcluidos(resultado)}${pintarDiagnostico(resultado)}`}`;
 
   activarTokens(caja);
-  $('#ver-nombres').onclick = verNombres;
-  $('#bajar-csv').onclick = bajarCsv;
-  $('#bajar-csv-pii').onclick = bajarCsvIdentificado;
-  $('#crear-panel').onclick = crearPanelDesdeConsulta;
-  $('#elegir-columnas').onclick = abrirElegirColumnas;
+  engancharAcciones(caja, resultado);
+}
+
+/* SC3 — la barra de acciones, una sola vez para los dos tipos de
+   resultado. La próxima acción que se agregue se agrega acá y aparece en
+   los dos: duplicarla en cada tabla es lo que dejó a la demográfica sin
+   ninguna. */
+function barraDeAcciones(resultado) {
+  const reidentificado = hayReidentificacion(resultado);
+  return `<div class="toolbar" id="acciones-resultado">
+      <button class="btn btn-outline btn-sm" id="ver-nombres">Ver quiénes son</button>
+      <button class="btn btn-outline btn-sm" id="bajar-csv">Descargar CSV</button>
+      <button class="btn btn-outline btn-sm" id="bajar-csv-pii"
+        ${reidentificado ? '' : 'disabled'}
+        title="${reidentificado
+          ? 'CSV con nombre, documento y contacto. Queda registrado.'
+          : 'Primero hay que reidentificar: exportar con datos no puede ser un segundo camino para sacar PII.'}"
+        >CSV con datos</button>
+      <button class="btn btn-outline btn-sm" id="elegir-columnas">Columnas</button>
+      <button class="btn btn-outline btn-sm" id="crear-panel">Crear panel</button>
+    </div>`;
+}
+
+function engancharAcciones(caja, resultado) {
+  $('#ver-nombres', caja).onclick = verNombres;
+  $('#bajar-csv', caja).onclick = bajarCsv;
+  $('#bajar-csv-pii', caja).onclick = bajarCsvIdentificado;
+  $('#crear-panel', caja).onclick = crearPanelDesdeConsulta;
+  $('#elegir-columnas', caja).onclick = abrirElegirColumnas;
   $$('[data-detalle]', caja).forEach((b) => {
     b.onclick = () => abrirDetalle(resultado.items[Number(b.dataset.detalle)]);
   });
@@ -465,8 +473,78 @@ function pintarResultado(resultado) {
   $$('[data-ficha]', caja).forEach((b) => {
     b.onclick = () => abrirFicha(resultado.items[Number(b.dataset.ficha)]);
   });
-  const intercambio = $('#ver-intercambio');
+  const intercambio = $('#ver-intercambio', caja);
   if (intercambio) intercambio.onclick = () => verIntercambio(intercambio.dataset.ejecucion);
+}
+
+function tablaRanking(resultado) {
+  return resultado.items.length ? `<div class="table-wrap"><table>
+      <thead><tr>
+        <th>#</th><th>Persona</th>
+        ${columnasElegidas.map((c) => `<th>${esc(etiquetaDeColumna(c))}</th>`).join('')}
+        <th>Puntaje</th><th>Confianza</th>
+        <th>Criterios</th><th>Evidencia</th>
+      </tr></thead>
+      <tbody>${resultado.items.map((item, i) => filaItem(item, i)).join('')}</tbody>
+    </table></div>` : vacio(
+      'Nadie quedó en el ranking. Probá el modo laxo, subí el pool o '
+      + 'revisá los criterios.', '🕳️');
+}
+
+/* SC2 — la lista demográfica. Las diferencias legítimas se conservan: no
+   tiene puntaje, ni confianza, ni criterios, ni evidencia, y no se inventan
+   columnas vacías para que se parezca al ranking. El orden es el del
+   listado, no un ranking. Y es seudónima, como la semántica: el nombre
+   aparece solo después de «Ver quiénes son», que queda registrado. */
+const COLUMNAS_DEMOGRAFICAS_POR_DEFECTO = ['sexo', 'tramo_etario', 'localidad'];
+
+function columnasDeLaDemografica() {
+  return columnasElegidas.length ? columnasElegidas : COLUMNAS_DEMOGRAFICAS_POR_DEFECTO;
+}
+
+function tablaDemografica(resultado) {
+  if (!resultado.items.length) return vacio('El segmento está vacío.', '🕳️');
+  const columnas = columnasDeLaDemografica();
+  return `<div class="table-wrap"><table>
+      <thead><tr>
+        <th>#</th><th>Persona</th>
+        ${columnas.map((c) => `<th>${esc(etiquetaDeColumna(c))}</th>`).join('')}
+      </tr></thead>
+      <tbody>${resultado.items.map((item, i) => filaDemografica(item, i, columnas)).join('')}</tbody>
+    </table></div>
+    ${columnasElegidas.length ? '' : `<p class="field-hint" style="padding:.5rem 1.5rem">
+      Con «Columnas» elegís qué atributos ver; la elección se recuerda y no
+      vuelve a correr la consulta.</p>`}`;
+}
+
+function filaDemografica(item, indice, columnas) {
+  const nombre = nombresResueltos[item.id_persona]?.nombre;
+  return `<tr>
+    <td class="mono">${indice + 1}</td>
+    <td>${nombre ? `<div class="td-strong">${esc(nombre)}</div>` : ''}
+        ${token(item.id_persona)}
+        <button class="btn btn-outline btn-sm" data-ficha="${indice}"
+                style="margin-top:.35rem">Ficha</button></td>
+    ${columnas.map((c) => `<td>${celdaDemografica(item, c)}</td>`).join('')}
+  </tr>`;
+}
+
+/* Las columnas por defecto vienen en el propio resultado; las elegidas, del
+   mismo `/resultados/atributos` que usa el ranking. */
+function celdaDemografica(item, clave) {
+  if (!columnasElegidas.length) {
+    return item[clave] ? esc(item[clave]) : '<span class="muted small">sin dato</span>';
+  }
+  return celdaDeColumna(item.id_persona, clave);
+}
+
+function avisoDemografica(resultado) {
+  return `<div class="alert alert-info">
+      Consulta puramente demográfica: se resolvió entera en la bóveda y no se
+      abrió conexión al store semántico. No hay puntaje ni evidencia: el orden
+      es el del listado. ${resultado.items.length ? 'Ver quiénes son, exportar'
+        + ' y crear un panel funcionan igual que con un resultado semántico.' : ''}
+    </div>`;
 }
 
 function filaItem(item, indice) {
@@ -504,7 +582,8 @@ function filaItem(item, indice) {
 /* ── R7.4 · Las columnas de la lista ───────────────────────────── */
 
 const etiquetaDeColumna = (clave) =>
-  (columnasOfrecidas.find((c) => c.clave === clave) || {}).etiqueta || clave;
+  (columnasOfrecidas.find((c) => c.clave === clave) || {}).etiqueta
+  || catalogo.etiquetaDe(catalogoDeAtributos, clave) || clave;
 
 /* «Sin dato» y no una celda vacía ni una categoría: que a alguien le falte
    el atributo es información, y confundirlo con un valor es peor que no
@@ -651,6 +730,9 @@ const valorDeAtributo = (a) =>
 
 function fichaHtml(ficha, item, estudios) {
   const resuelto = nombresResueltos[ficha.id_persona];
+  // SC2 — un resultado demográfico no tiene evidencia: la sección no se
+  // muestra en vez de quedar vacía o de decir que «no se pudo leer».
+  const conEvidencia = ultimoResultado?.tipo !== 'demografica';
   return `
     <p>${token(ficha.id_persona)}
        <span class="small muted">enrolada el ${esc(fechaCorta(ficha.enrolado_en))}</span></p>
@@ -665,8 +747,8 @@ function fichaHtml(ficha, item, estudios) {
       </div>
     </div>`}
 
-    <h4 class="ficha-titulo">Por qué aparece en este resultado</h4>
-    ${evidenciaHtml(ficha.evidencia, item)}
+    ${conEvidencia ? `<h4 class="ficha-titulo">Por qué aparece en este resultado</h4>
+    ${evidenciaHtml(ficha.evidencia, item)}` : ''}
 
     <h4 class="ficha-titulo">Atributos demográficos</h4>
     ${ficha.atributos.length ? `<div class="table-wrap"><table class="tabla">
@@ -688,6 +770,9 @@ function fichaHtml(ficha, item, estudios) {
     <p>${ficha.paneles.length
       ? ficha.paneles.map((p) => esc(p.nombre)).join(' · ')
       : '<span class="small muted">No integra ningún panel.</span>'}</p>
+
+    <h4 class="ficha-titulo">Origen</h4>
+    ${pintarOrigen(ficha.origen, { compacto: true })}
 
     <h4 class="ficha-titulo">Respuestas procesadas</h4>
     ${respuestas.seccionHtml(estudios, { prefijo: 'ficha-resp' })}`;
@@ -973,29 +1058,6 @@ async function verIntercambio(ejecucionId) {
       : `<div class="alert alert-info">${esc(salida.explicacion)}</div>`,
     acciones: [{ texto: 'Cerrar', clase: 'btn-outline', onClick: cerrarModal }],
   });
-}
-
-function pintarDemografica(resultado) {
-  return `<div class="alert alert-info">
-      Consulta puramente demográfica: se resolvió entera en la bóveda y no se
-      abrió conexión al store semántico.
-    </div>
-    <div class="card">
-      <div class="card-header">
-        <span class="card-header-title">${resultado.total} persona(s)</span>
-      </div>
-      <div class="card-body tight">
-        ${resultado.items.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>Persona</th><th>Sexo</th><th>Tramo</th><th>Localidad</th><th>Email</th></tr></thead>
-          <tbody>${resultado.items.map((p) => `<tr>
-            <td><div class="td-strong">${esc(p.nombre || '—')}</div>${token(p.id_persona)}</td>
-            <td>${esc(p.sexo || '—')}</td>
-            <td>${esc(p.tramo_etario || '—')}</td>
-            <td>${esc(p.localidad || '—')}</td>
-            <td class="small">${esc(p.email || '—')}</td>
-          </tr>`).join('')}</tbody></table></div>` : vacio('El segmento está vacío.', '🕳️')}
-      </div>
-    </div>`;
 }
 
 /* ── Reidentificación y exportación ─────────────────────────────── */

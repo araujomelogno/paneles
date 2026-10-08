@@ -72,7 +72,16 @@ def seudonima(conn_boveda, id_persona, momento=None):
         "atributos": atributos.valores_de(
             conn_boveda, str(id_persona), momento=momento),
         "paneles": [{"id": p["id"], "nombre": p["nombre"]} for p in paneles],
+        # R-ORG.5 — de qué estudios proviene. Son datos del estudio (nombre,
+        # fecha, público objetivo), no de la persona: no la identifican.
+        "origen": _origen(conn_boveda, id_persona),
     }
+
+
+def _origen(conn_boveda, id_persona):
+    from . import cargas
+
+    return cargas.origen_de(conn_boveda, id_persona)
 
 
 # Cuántas evidencias se aceptan por pedido. Un individuo del ranking trae una

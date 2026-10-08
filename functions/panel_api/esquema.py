@@ -149,6 +149,12 @@ MIGRACIONES_BOVEDA = (
     ("0022_celular_clave_de_dedup.sql", ("persona_celular_idx",)),
     # ── R-MAIL ──
     ("0023_envio_correo.sql", ("envio_correo", "v_envio_correo_por_dia")),
+    # ── R-ORG ── de qué carga viene cada persona, los datos del estudio y el
+    # objetivo de composición de «todos los panelistas».
+    ("0024_r_org_origen_y_ambitos.sql", (
+        "persona_carga", "v_carga_resumen", "carga.fecha_estudio",
+        "carga.publico_objetivo", "objetivo_composicion.ambito",
+    )),
 )
 
 MIGRACIONES_SEMANTICA = (

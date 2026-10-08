@@ -80,3 +80,21 @@ class EnvioFallido(ErrorApi):
 
     status = 503
     codigo = "envio_fallido"
+
+
+class ComprobacionNoDisponible(ErrorApi):
+    """PEDIDO R3 — la credencial **no se pudo comprobar**, que no es lo mismo
+    que «no entró».
+
+    Un 400 de Identity Toolkit es «no entró». Un 403, un 5xx, un timeout, una
+    caída de red o una API key inválida o sin cargar son «no se pudo
+    comprobar»: la contraseña podía ser correcta. Por eso esto no cuenta para
+    el límite de intentos fallidos —una caída del servicio no puede dejar a
+    nadie bloqueado una hora— y el mensaje habla de un problema técnico.
+
+    El mensaje que ve la persona es una constante del portal y es el mismo
+    exista o no el correo: lo único que revela es que el servicio falló.
+    """
+
+    status = 503
+    codigo = "comprobacion_no_disponible"

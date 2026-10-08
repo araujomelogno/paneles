@@ -63,13 +63,14 @@ SECRETOS = [
     # entre ambientes y no puede vivir en el código»: el enlace apunta acá, y
     # apuntarlo mal manda a los panelistas a otro lado.
     "PORTAL_URL",
-    # ── R6.1.a ──
-    # La *web API key* del proyecto. Es pública por diseño —va en la
-    # configuración del frontend— pero igual se declara acá, porque la
-    # función la necesita en el runtime para comprobar contraseñas contra
-    # Identity Toolkit, que es la única operación de Auth que el Admin SDK
-    # no hace. Sin ella no entra nadie al portal.
-    "FIREBASE_WEB_API_KEY",
+    # ── R6.1.a / PEDIDO R1 ──
+    # La *web API key* del proyecto **ya no está acá**. Es pública por
+    # diseño —va en la configuración del frontend— y guardarla en Secret
+    # Manager no agregaba seguridad y sí una vía de falla: con el nombre
+    # `FIREBASE_WEB_API_KEY` el valor real no se podía cargar nunca
+    # (`firebase-tools` rechaza el prefijo `FIREBASE_`), el placeholder quedó
+    # en el runtime y nadie entraba al portal. Ahora es `WEB_API_KEY`, una
+    # variable común de `functions/.env`, visible en un `describe`.
     # ── Ingesta diferida ──
     # A qué URL le pega Cloud Tasks para procesar un lote, y con qué cuenta
     # de servicio firma el token. No son confidenciales, pero cambian entre

@@ -33,9 +33,12 @@ NO_SON_SECRETOS = frozenset({
     "VERIFICACION_PROVEEDOR", "CLAUDE_MODELO",
     "PADRON_USUARIOS",
     # R6.1.a — el interruptor del doble de credenciales, igual que
-    # `PADRON_USUARIOS`: dice qué implementación usar, no qué clave. La
-    # clave de verdad es `FIREBASE_WEB_API_KEY`, que sí va declarada.
+    # `PADRON_USUARIOS`: dice qué implementación usar, no qué clave.
     "CREDENCIALES_PORTAL",
+    # PEDIDO R1 — la *web API key* del proyecto. Es pública por diseño (está
+    # en la configuración del frontend) y en Secret Manager solo agregaba una
+    # vía de falla: un placeholder que nadie podía ver en un `describe`.
+    "WEB_API_KEY",
     # ── Ingesta diferida ──
     # El interruptor del doble de la cola, mismo caso que los dos de arriba.
     "ENCOLADOR_TAREAS",
@@ -179,3 +182,35 @@ def test_la_copia_demo_tambien_resuelve_la_landing():
         encoding="utf-8")
     assert "inscribirse/index.html" in script, (
         "preparar_demo.sh ya no deja `/inscribirse` resoluble en la copia.")
+
+
+# ── PEDIDO R1 · Nombres que Firebase no deja cargar ──────────────────
+
+# Los prefijos que `firebase-tools` rechaza en una variable de entorno o un
+# secreto de una función (`functions/env.js`: RESERVED_PREFIXES). Con uno de
+# éstos, `firebase functions:secrets:set` falla y `firebase deploy` no
+# acepta el `.env`: el valor real no llega nunca.
+PREFIJOS_RESERVADOS = ("FIREBASE_", "X_GOOGLE_", "EXT_", "KIT_")
+
+
+def test_ninguna_variable_usa_un_prefijo_reservado_por_firebase():
+    """Pasó con `FIREBASE_WEB_API_KEY`: el `secrets:set` falló, en la función
+    quedó el placeholder `AIza...` y nadie pudo entrar al portal, con el
+    síntoma de «contraseña incorrecta». Un nombre así no se puede cargar
+    nunca, así que tiene que fallar acá, no en producción."""
+    reservadas = sorted(
+        v for v in (_variables_leidas() | _secretos_declarados())
+        if v.startswith(PREFIJOS_RESERVADOS))
+    assert not reservadas, (
+        f"{reservadas} empieza(n) con un prefijo que Firebase reserva "
+        f"({', '.join(PREFIJOS_RESERVADOS)}): ni `.env` ni Secret Manager lo "
+        f"aceptan. Cambiale el nombre.")
+
+
+def test_la_web_api_key_no_es_un_secreto_y_figura_en_el_env_de_ejemplo():
+    """PEDIDO R1 — es una variable común, visible, y el `.env.ejemplo` dice
+    cuál es: lo que no está en el ejemplo no lo configura nadie."""
+    assert "WEB_API_KEY" not in _secretos_declarados()
+    assert "FIREBASE_WEB_API_KEY" not in _secretos_declarados()
+    ejemplo = (RAIZ / "functions" / ".env.ejemplo").read_text(encoding="utf-8")
+    assert re.search(r"(?m)^WEB_API_KEY=", ejemplo)

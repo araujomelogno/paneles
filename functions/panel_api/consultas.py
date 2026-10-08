@@ -720,6 +720,11 @@ def _combinar(definicion, por_criterio, umbral):
 #  Punto de entrada
 # ════════════════════════════════════════════════════════════════════
 
+# SC2 — lo que `demografia.consultar` trae de la bóveda y no sale en el
+# resultado de una consulta. Se pide aparte, con «Ver quiénes son».
+CAMPOS_PII_DEL_SEGMENTO = frozenset({"nombre", "email", "documento", "celular"})
+
+
 def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None):
     """Corre una consulta y devuelve el ranking, la evidencia y el diagnóstico.
 
@@ -744,6 +749,16 @@ def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None):
             limite=definicion["limite"],
         )
         reloj.marca("consulta_demografica", desde, personas=resultado["total"])
+        # SC2 — el resultado demográfico es seudónimo, igual que el semántico.
+        # Hasta acá traía nombre y correo, y la pantalla los mostraba sin que
+        # quedara registrada ninguna reidentificación: el camino más
+        # transitado era justo el que no dejaba rastro. Ahora ver quiénes son
+        # es la misma acción —y el mismo registro— en los dos tipos.
+        resultado["items"] = [
+            {k: v for k, v in item.items() if k not in CAMPOS_PII_DEL_SEGMENTO}
+            for item in resultado["items"]
+        ]
+        resultado["seudonimo"] = True
         resultado["modo"] = definicion["modo"]
         resultado["puente"] = {
             "estrategia": None,
@@ -950,7 +965,11 @@ def a_csv(resultado):
             )
             texto = evidencia.get("valor_texto") or evidencia.get("texto_embebido") or ""
             partes.append(f"[{procedencia}] {texto}" if procedencia else texto)
-        escritor.writerow([item["id_persona"], item["puntaje"], " | ".join(partes)])
+        # SC2 — un resultado demográfico no tiene puntaje: la celda queda
+        # vacía y el contrato de tres columnas se mantiene. Un cero diría que
+        # la persona puntuó mal, que no es lo que pasó.
+        escritor.writerow([item["id_persona"], item.get("puntaje", ""),
+                           " | ".join(partes)])
     return salida.getvalue()
 
 

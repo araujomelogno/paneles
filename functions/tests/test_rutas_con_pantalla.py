@@ -30,12 +30,20 @@ JS = RAIZ / "web" / "public" / "js"
 # Las fases a las que se les exige pantalla. Las anteriores tienen rutas
 # operativas sin pantalla a propósito (diagnóstico, jobs) y se escribieron
 # antes de esta regla.
-FASES_CON_PANTALLA = ("R7.", "R8.")
+FASES_CON_PANTALLA = ("R7.", "R8.",
+                      # R-ORG — ámbitos de composición y datos del estudio.
+                      "R-ORG.")
 
 # Rutas de estas fases que **no** tienen pantalla, con el motivo. Vacío hoy;
 # si alguna vez hace falta, el motivo va escrito acá y no en la memoria de
 # nadie.
-SIN_PANTALLA = {}
+SIN_PANTALLA = {
+    # R-ORG.3 — leer el universo de «todos» suelto. La pantalla no lo
+    # necesita: la composición ya trae el objetivo de cada categoría. Existe
+    # por simetría con `GET /paneles/<id>/objetivo`, para integraciones.
+    ("GET", "/composicion/todos/objetivo"):
+        "la composición del ámbito ya devuelve el objetivo",
+}
 
 # `nombre: (args) => VERBO(` seguido del camino entre comillas o backticks.
 _LLAMADA = re.compile(
