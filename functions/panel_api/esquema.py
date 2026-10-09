@@ -155,6 +155,11 @@ MIGRACIONES_BOVEDA = (
         "persona_carga", "v_carga_resumen", "carga.fecha_estudio",
         "carga.publico_objetivo", "objetivo_composicion.ambito",
     )),
+    # ── R-CS · consultas semánticas: ejecuciones y alcance completo ──
+    ("0025_consulta_ejecucion.sql", (
+        "consulta_ejecucion", "consulta_lote", "estado_consulta_ejecucion",
+        "estado_lote_consulta", "v_consulta_progreso",
+    )),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -185,6 +190,9 @@ MIGRACIONES_SEMANTICA = (
     )),
     # ── R-VER.10 ──
     ("0008_captura_verificacion.sql", ("verificacion_captura",)),
+    # R-CS — el backfill de `hash_texto` no es detectable; lo que sí lo es
+    # son la vista de unidades y la tabla de veredictos.
+    ("0009_unidades_de_evidencia.sql", ("v_unidad_evidencia", "veredicto_unidad")),
 )
 
 STORES = {

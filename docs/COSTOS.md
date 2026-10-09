@@ -1,7 +1,7 @@
 # Costos del sistema de paneles
 
 **Proyecto GCP:** `gestion-paneles` · región `southamerica-east1` (São Paulo)
-**Última actualización:** 2026-09-24
+**Última actualización:** 2026-10-09
 
 > **Cómo leer esto.** Las cifras son estimaciones a partir de las tarifas
 > públicas de Google. La fuente de verdad es **Facturación → Informes** en la
@@ -305,9 +305,11 @@ No entran en la base fija y dependen de la actividad:
   (una vez por respuesta, salvo re-ingesta) y en **cada consulta** (una vez por
   criterio semántico). El `hash_texto` de Fase 2 evita re-embeber lo que no
   cambió.
-- **Verificación con Claude:** una llamada por consulta semántica, sobre el
-  top-k. **Es la etapa más cara del pipeline**: bajar `top_k` es la palanca
-  directa sobre este costo.
+- **Verificación con Claude:** lotes de 25 unidades de evidencia por
+  llamada, sobre el top-k. **Es la etapa más cara del pipeline**: bajar
+  `top_k` es la palanca directa sobre este costo. Desde R-CS las respuestas
+  repetidas se verifican una vez (unidades de evidencia), y cada consulta
+  registra su costo real (sección 5.1).
 - **Reranker:** una llamada por criterio semántico.
 - **WhatsApp (Meta):** por conversación iniciada por el negocio. Escala con el
   tamaño de las convocatorias.
@@ -316,6 +318,47 @@ No entran en la base fija y dependen de la actividad:
 > demográfico antes de consultar reduce el costo *y* mejora el resultado: los
 > filtros demográficos se resuelven en la bóveda, sin embeddings, sin reranker
 > y sin Claude.
+
+### 5.1 · La consulta completa (R-CS, addendum A2)
+
+La consulta de alcance **completo** verifica todas las unidades de evidencia
+elegibles en vez de las mejores 25 personas. El orden de magnitud, con la
+heurística de `costo_consulta.py` y las tarifas por omisión (Claude Sonnet 5
+US$ 2 / 10 por millón de tokens de entrada / salida; Voyage `rerank-2.5`
+US$ 0,05; `voyage-3.5` US$ 0,06):
+
+| | Exploratoria (`top_k` 25) | Completa, corpus actual |
+|---|---:|---:|
+| Corpus de referencia | — | 24.935 respuestas · 1.008 personas · 43 preguntas |
+| Unidades verificadas por criterio | ≤ 75 (en general bastantes menos) | del orden de miles |
+| Llamadas a Claude por criterio (lotes de 25) | 1 a 3 | ~120 (3.000 u.) a ~600 (15.000 u.) |
+| Tokens por unidad | ~61 de entrada · ~46 de salida | igual |
+| **Costo por criterio, con 25% de margen** | **≈ US$ 0,05** | **≈ US$ 2,20 (3.000 u.) · 5,90 (8.000) · 11 (15.000)** |
+
+- **La diferencia es de dos órdenes de magnitud**, y se multiplica por cada
+  criterio semántico y por cada ejecución. El 80% del costo es la **salida**
+  de Claude (una razón por veredicto): el reranking es despreciable.
+- **El número real del corpus se obtiene antes de habilitar nada** con
+  `scripts/diagnosticar_consulta.py estimar --criterio "…"` contra la base
+  (no escribe nada ni llama a Claude). Ese número es el que decide quién
+  puede lanzarla y cuántas veces.
+- **Controles en el producto:** estimación en pantalla antes de confirmar,
+  **presupuesto obligatorio** por ejecución que la frena sola, techo por
+  configuración (`CONSULTA_PRESUPUESTO_MAXIMO_USD`, US$ 25 por omisión),
+  permiso propio (`consulta_completa`: admin y operaciones) y costo real por
+  lote y por ejecución en `consulta_lote` / `v_consulta_progreso`. La
+  estimación se calibra sola con los tokens observados.
+- **Las tarifas son configuración** (`COSTO_CLAUDE_ENTRADA_USD_MTOK`,
+  `COSTO_CLAUDE_SALIDA_USD_MTOK`, `COSTO_RERANK_USD_MTOK`,
+  `COSTO_EMBEDDING_USD_MTOK` en `functions/.env`). Si cambia el modelo de
+  `CLAUDE_MODELO`, hay que cambiarlas también, o la estimación miente.
+
+> **Consecuencia de infraestructura.** La completa recorre todo el corpus de
+> las personas habilitadas a fuerza bruta (no por el índice HNSW, que sirve
+> para «los N más cercanos»). Con `paneles-semantica` en `db-f1-micro`
+> (0,6 GB) conviene medirlo en la prueba de carga del despliegue (sección 4);
+> si la etapa de elegibilidad o la memoria se disparan, la salida es
+> `db-g1-small` (~US$ 24/mes más), que es reversible (4.7).
 
 ---
 
@@ -326,6 +369,9 @@ No entran en la base fija y dependen de la actividad:
 - [ ] Revisar el informe por SKU una vez al mes.
 - [ ] Definir si el sistema necesita estar encendido 24/7 o puede apagarse
       entre usos.
-- [ ] Estimar el costo por consulta semántica una vez calibrado `top_k`.
+- [ ] Estimar el costo por consulta semántica una vez calibrado `top_k`
+      (el diagnóstico de cada consulta ya lo muestra; ver 5.1).
+- [ ] Fijar `CONSULTA_PRESUPUESTO_MAXIMO_USD` con el número real de
+      `diagnosticar_consulta.py estimar` antes de habilitar la consulta completa.
 - [ ] Alertas de memoria, CPU y conexiones configuradas (sección 4.6).
 - [ ] Línea de base anotada antes de cualquier cambio de tier (sección 4).

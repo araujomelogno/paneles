@@ -240,6 +240,47 @@ presupuesto de tiempo por consulta (60 s, para que COLOQUIO entre en sus
   agreguen «para depurar mejor». El diagnóstico de rutina (`[verificacion]`
   en el log) lleva números, nunca contenido.
 
+## Lo que se verifica son unidades, y «completo» tiene precio
+
+Desde R-CS (D70, `specs/ADDENDUM_solicitud_consultas_semanticas.md`) la
+consulta semántica rerankea y verifica **unidades de evidencia** —un texto
+distinto dentro de una pregunta, `(pregunta_id, hash_texto)`— y tiene dos
+alcances. Lo que no hay que deshacer:
+
+- **Una sola regla de agregación** (`consultas.hallazgo_de`), para la
+  exploratoria y la completa: `no_cumple` > `cumple` > `dudoso` >
+  `sin_verificar` > `irrelevante`, y un `cumple` con un `no_cumple` marca
+  `contradiccion`. No escriban una segunda en `consulta_completa`.
+- **`irrelevante` no es `no_cumple` ni `dudoso`**: es ausencia de evidencia.
+  En laxo, quien no tiene **ninguna** evidencia pertinente no aparece
+  (`sin_evidencia_pertinente`). Y corrige la interpretación, no el recall:
+  los lugares los recuperan las unidades.
+- **El catálogo de unidades es una vista** (`v_unidad_evidencia`), no una
+  tabla con texto ni con su propio embedding: una baja la achica sola. La
+  huella SQL de la `semantica/0009` y `semantica.hash_texto` tienen que
+  coincidir, y hay una prueba.
+- **La completa no corre en la request y no guarda el resultado.** Plan
+  congelado, lotes en Cloud Tasks (`procesarconsulta`), avance y **gasto**
+  derivados de los lotes (`v_consulta_progreso`), gate re-evaluado en cada
+  lote y **al leer**. Los veredictos van al store semántico
+  (`veredicto_unidad`, sin `id_persona`, 30 días). No agreguen un
+  acumulador de costo a `consulta_ejecucion`.
+- **El costo se muestra antes y el presupuesto es obligatorio.** La
+  estimación sale de la misma ruta que lanza (`solo_estimar`); el
+  presupuesto se controla antes de cada lote; lanzar es el permiso
+  `consulta_completa`. Una completa sin presupuesto o con uno por encima de
+  `CONSULTA_PRESUPUESTO_MAXIMO_USD` no se lanza.
+- **Cada ejecución deja su fila** en `consulta_ejecucion` (diagnóstico,
+  proveedores efectivos, `input_type`, costo), nunca personas ni evidencias.
+  Un reranker que contesta sin puntajes para todo es una **degradación
+  declarada**: no vuelvan a descartar los `None` en silencio.
+- **El criterio se embebe como `query`** y se vuelve atrás sin redesplegar
+  (`EMBEDDINGS_TIPO_CONSULTA=document`). Las respuestas siguen siendo
+  `document`.
+- **El contrato con COLOQUIO es `version_contrato: 2`**: `item.detalle` lleva
+  lo mismo que `item.criterios` (COLOQUIO lee `detalle`), y la ausencia de un
+  campo nuevo se lee como «no se sabe», nunca como favorable.
+
 ## De qué carga viene cada persona, y sobre quién se calcula la composición
 
 Desde R-ORG (D67) cada persona queda vinculada a las cargas de las que

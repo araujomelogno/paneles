@@ -215,33 +215,52 @@ def test_criterios_combinados_dan_un_ranking_unico_por_persona(ctx, corpus):
 def test_el_modo_estricto_excluye_y_el_laxo_incluye_penalizado(ctx, corpus):
     """DoD: «el modo estricto/laxo cambia el resultado como se espera».
 
-    Cora habla de whisky: es mujer (cumple el criterio duro) y no tiene
-    evidencia del criterio semántico. En estricto queda afuera; en laxo entra
-    con 0 en ese criterio y marcada como penalizada.
+    Dos criterios semánticos: Ana tiene evidencia del de fernet y no del de
+    calidad; Cora, al revés. En estricto, a cada una le falta uno y quedan
+    afuera; en laxo entran las dos, con 0 en el que no cumplen y marcadas
+    como penalizadas.
+
+    R-CS · cambio 4 — antes esta prueba usaba a Cora con un solo criterio:
+    su respuesta de whisky contaba como `dudoso` para «le gusta el fernet».
+    Ahora es `irrelevante` —no habla del criterio—, y una persona sin
+    ninguna evidencia pertinente no aparece ni en laxo (ver la prueba
+    siguiente).
     """
     definicion = {
-        "criterios": [CRITERIO_FERNET, {"dimension": "sexo", "valor": "F"}],
+        "criterios": [CRITERIO_FERNET, "gente que valora la calidad"],
     }
 
     estricto = consultas.ejecutar(ctx, {**definicion, "modo": "estricto"})
     laxo = consultas.ejecutar(ctx, {**definicion, "modo": "laxo"})
 
     assert "Cora Díaz" not in nombres(estricto, corpus)
-    assert "Cora Díaz" in nombres(laxo, corpus)
+    assert "Ana Pérez" not in nombres(estricto, corpus)
+    assert {"Ana Pérez", "Cora Díaz"} <= set(nombres(laxo, corpus))
     assert set(nombres(estricto, corpus)) <= set(nombres(laxo, corpus))
 
-    cora = next(
-        i for i in laxo["items"]
-        if i["id_persona"] == corpus["por_nombre"]["Cora Díaz"]
-    )
-    assert cora["penalizado"] is True
-    ana = next(
-        i for i in laxo["items"]
-        if i["id_persona"] == corpus["por_nombre"]["Ana Pérez"]
-    )
-    assert ana["puntaje"] > cora["puntaje"], (
-        "quien cumple los dos criterios tiene que ir por encima del penalizado"
-    )
+    for nombre in ("Ana Pérez", "Cora Díaz"):
+        item = next(i for i in laxo["items"]
+                    if i["id_persona"] == corpus["por_nombre"][nombre])
+        assert item["penalizado"] is True
+        assert item["estado"] == consultas.POSIBLE
+        assert {c["veredicto"] for c in item["criterios"]} == {
+            mod_verificacion.CUMPLE, mod_verificacion.IRRELEVANTE}
+
+
+def test_en_laxo_quien_solo_tiene_evidencia_irrelevante_no_aparece(ctx, corpus):
+    """R-CS · cambio 4 — Cora es mujer (cumple el demográfico) y su única
+    evidencia habla de whisky. Con el criterio «le gusta el fernet» eso es
+    `irrelevante`: no afirma ni contradice. Mostrarla penalizada en laxo es
+    el falso resultado que el estado existe para evitar; queda en excluidos
+    con su motivo."""
+    laxo = consultas.ejecutar(ctx, {
+        "criterios": [CRITERIO_FERNET, {"dimension": "sexo", "valor": "F"}],
+        "modo": "laxo",
+    })
+    assert "Cora Díaz" not in nombres(laxo, corpus)
+    assert nombres_excluidos(laxo, corpus)["Cora Díaz"] == \
+        consultas.SIN_EVIDENCIA_PERTINENTE
+    assert "Ana Pérez" in nombres(laxo, corpus)
 
 
 def test_el_modo_laxo_tampoco_incluye_a_quien_contradice(ctx, corpus):
@@ -279,11 +298,13 @@ def test_los_pesos_cambian_el_orden(ctx, corpus):
         ],
         "modo": "laxo",
     })
-    id_cora = corpus["por_nombre"]["Cora Díaz"]
-    de_liviano = next(i for i in liviano["items"] if i["id_persona"] == id_cora)
-    de_pesado = next(i for i in pesado["items"] if i["id_persona"] == id_cora)
-    # Cora solo aporta el criterio demográfico: si ese pesa menos, su
-    # combinado baja.
+    id_ana = corpus["por_nombre"]["Ana Pérez"]
+    de_liviano = next(i for i in liviano["items"] if i["id_persona"] == id_ana)
+    de_pesado = next(i for i in pesado["items"] if i["id_persona"] == id_ana)
+    # El demográfico de Ana vale 1; el semántico, menos que 1. Si el
+    # semántico pesa más, su combinado baja.
+    semantico = next(c for c in de_liviano["criterios"] if c["tipo"] == "semantico")
+    assert semantico["puntaje"] < 1
     assert de_pesado["puntaje"] < de_liviano["puntaje"]
 
 

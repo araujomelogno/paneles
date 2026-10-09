@@ -94,6 +94,14 @@ PERMISOS = {
     # pantalla de resultados. Solo admin, y con permiso propio: no es parte de
     # `consultar`.
     "depurar_verificacion": {"admin"},
+
+    # R-CS · A2 — lanzar una consulta de alcance completo. Verifica todas las
+    # unidades elegibles: cientos de llamadas a Claude por criterio y, sobre
+    # el corpus actual, dólares por ejecución. Quién puede gastar eso es una
+    # decisión de producto, y por eso no viene con `consultar`: el analista
+    # puede estimarla y leer sus resultados, pero la lanza quien responde
+    # por el presupuesto. Cambiar la lista es cambiar esa decisión.
+    "consulta_completa": {"admin", "operaciones"},
 }
 
 

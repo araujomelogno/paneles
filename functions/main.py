@@ -84,6 +84,13 @@ SECRETOS = [
     # SMTP de Google Workspace. Sin ella —o sin declararla acá— el portal y la
     # landing informan que el envío falló, y Cumplimiento → Contacto lo dice.
     "SMTP_PASSWORD",
+    # ── R-CS · consulta de alcance completo ──
+    # A qué URL le pega Cloud Tasks para verificar un lote de una consulta
+    # completa (la función `procesarconsulta`). Mismo motivo que
+    # `TAREAS_URL`: no es confidencial, cambia entre ambientes, y si falta no
+    # falla el deploy sino la primera consulta completa —con un aviso de
+    # lotes sin encolar—. La cuenta que firma es la misma `TAREAS_CUENTA`.
+    "TAREAS_CONSULTA_URL",
 ]
 
 PREFIJO = "/api"
@@ -286,3 +293,60 @@ def procesaringesta(req: https_fn.CallableRequest) -> dict:
         return diferida.procesar_lote(
             ctx.boveda, ctx.semantica, int(trabajo_id), int(indice),
             proveedor=ctx.embeddings)
+
+
+# ════════════════════════════════════════════════════════════════════
+#  R-CS · Consulta de alcance completo — la función que verifica un lote
+# ════════════════════════════════════════════════════════════════════
+#
+# La contraparte de `consulta_completa.lanzar()`. Mismo contrato que
+# `procesaringesta`: un error transitorio se propaga (5xx → Cloud Tasks
+# reintenta), uno de datos no. Mismo conector VPC y misma región.
+#
+# La concurrencia es **baja a propósito**: el control de presupuesto se hace
+# antes de cada lote sobre la suma de los anteriores, y con N tareas en
+# paralelo el desvío posible es de N lotes. Con 2 y lotes de 100 unidades es
+# del orden de centavos. Subirla acelera y agranda ese desvío.
+CONSULTA_TAREAS_EN_PARALELO = int(os.environ.get("CONSULTA_TAREAS_EN_PARALELO", "2"))
+
+
+@tasks_fn.on_task_dispatched(
+    region=REGION,
+    secrets=SECRETOS,
+    vpc_connector=VPC_CONNECTOR,
+    vpc_connector_egress_settings=(
+        options.VpcEgressSetting.PRIVATE_RANGES_ONLY if VPC_CONNECTOR else None
+    ),
+    retry_config=options.RetryConfig(
+        max_attempts=TAREAS_REINTENTOS,
+        min_backoff_seconds=30,
+        max_backoff_seconds=600,
+    ),
+    rate_limits=options.RateLimits(
+        max_concurrent_dispatches=CONSULTA_TAREAS_EN_PARALELO,
+    ),
+    memory=options.MemoryOption.GB_1,
+    timeout_sec=1800,
+)
+def procesarconsulta(req: https_fn.CallableRequest) -> dict:
+    from panel_api import consulta_completa
+
+    datos = req.data or {}
+    ejecucion_id = datos.get("trabajo_id")
+    indice = datos.get("indice")
+    if ejecucion_id is None or indice is None:
+        print(f"[tareas] tarea de consulta sin trabajo_id/indice: {datos!r}")
+        return {"estado": "descartada"}
+
+    cfg = config.cargar()
+    with contexto.abrir(cfg) as ctx:
+        salida = consulta_completa.procesar_lote(
+            ctx.boveda, ctx.semantica, str(ejecucion_id), int(indice),
+            reranker=ctx.reranker, verificador=ctx.verificador)
+        # Sin contenido: estado y números.
+        print("[consulta_completa] " + json.dumps(
+            {"ejecucion_id": str(ejecucion_id), "indice": indice,
+             "estado": salida.get("estado"),
+             "costo_usd": (salida.get("resultado") or {}).get("costo_usd")},
+            default=str))
+        return {"estado": salida.get("estado")}

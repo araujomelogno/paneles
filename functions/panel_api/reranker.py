@@ -44,6 +44,10 @@ class Reranker:
 
     nombre = "interfaz"
     disponible = True
+    # R-CS · A2 — tokens facturados por el proveedor desde que se creó la
+    # instancia. Se acumula para poder registrar el costo real de una
+    # ejecución; un proveedor sin costo lo deja en cero.
+    tokens = 0
 
     def reordenar(self, criterio, textos, top_k=None):
         raise NotImplementedError
@@ -85,7 +89,9 @@ class Voyage(Reranker):
                     f"Voyage rerank devolvió {respuesta.status_code}: "
                     f"{respuesta.text[:300]}"
                 )
-            for fila in respuesta.json().get("data", []):
+            datos = respuesta.json()
+            self.tokens += int((datos.get("usage") or {}).get("total_tokens") or 0)
+            for fila in datos.get("data", []):
                 puntajes[inicio + fila["index"]] = float(fila["relevance_score"])
 
         orden = sorted(puntajes.items(), key=lambda par: (-par[1], par[0]))

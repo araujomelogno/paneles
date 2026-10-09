@@ -32,12 +32,23 @@ let contexto = {};
 let definicion = {
   criterios: [],
   modo: 'estricto',
+  /* R-CS · cambio 2 — cuánto se verifica, aparte del modo. */
+  alcance: 'exploratorio',
   panel_id: null,
   top_n: 200,
   top_k: 25,
+  /* A6 — «Personas a mostrar». Antes no se mandaba y siempre era 50. */
+  limite: 50,
   umbral_distancia: 0.55,
   estrategia_puente: null,
+  /* A5 — null = lo que diga el entorno (por defecto `query`). */
+  tipo_embedding_criterio: null,
 };
+
+/* R-CS · cambio 5 — la ejecución completa que se está mirando, si hay. */
+let ejecucionAbierta = null;
+let sondeo = null;
+const TAM_LOTE_VERIFICACION = 25;
 
 let ultimoResultado = null;
 let nombresResueltos = {};   // id_persona → datos de contacto, si se pidieron
@@ -74,6 +85,22 @@ const VEREDICTOS = {
   /* No es un juicio: el verificador no llegó a leer la evidencia (un lote
      truncado, la API caída, el tiempo agotado). No excluye ni aprueba. */
   sin_verificar: { etiqueta: 'Sin verificar', clase: 'est-inactivo' },
+  /* R-CS · cambio 4 — se leyó y no habla del criterio: ni afirma ni
+     contradice. Cuenta como ausencia de evidencia. */
+  irrelevante: { etiqueta: 'Irrelevante', clase: 'est-inactivo' },
+  sin_evidencia_pertinente: { etiqueta: 'Sin evidencia pertinente', clase: 'est-inactivo' },
+};
+
+/* R-CS — el estado de una persona en el resultado. Si el backend no lo
+   manda (una versión vieja), se muestra «sin dato»: la ausencia del campo no
+   es «confirmada» (A4). */
+const ESTADOS = {
+  confirmada: { etiqueta: 'Confirmada', clase: 'est-vigente',
+    ayuda: 'Todos los criterios semánticos tienen evidencia que los cumple.' },
+  posible: { etiqueta: 'Posible', clase: 'est-pendiente',
+    ayuda: 'Entró por la tolerancia del modo laxo: duda o falta de evidencia en algún criterio.' },
+  pendiente: { etiqueta: 'Pendiente', clase: 'est-inactivo',
+    ayuda: 'Alguna de sus evidencias quedó sin verificar: no la des por validada.' },
 };
 
 /* Por qué una evidencia quedó sin verificar, en palabras. */
@@ -95,6 +122,7 @@ const ETAPAS = {
   recall: 'Recuperación (ANN)',
   gate_consentimiento: 'Gate de consentimiento',
   reranking: 'Reranking',
+  unidades: 'Unidades de evidencia',
   colapso: 'Colapso a individuo',
   verificacion: 'Verificación',
   combinacion: 'Combinación de criterios',
@@ -154,6 +182,14 @@ export async function render(main, ctx) {
               En los dos modos, quien dice lo contrario del criterio queda afuera.
             </div>
           </div>
+          <div class="form-group">
+            <label>Alcance</label>
+            <select class="fselect" id="alcance">
+              <option value="exploratorio">Exploratorio — verifica las mejores (en el momento)</option>
+              <option value="completo">Completo — verifica todo lo elegible (con presupuesto)</option>
+            </select>
+            <div class="field-hint" id="ayuda-alcance"></div>
+          </div>
         </div>
         <div class="toolbar">
           <button class="btn btn-orange" id="correr">Consultar</button>
@@ -166,12 +202,16 @@ export async function render(main, ctx) {
       </div>
     </div>
 
+    <div id="ejecuciones"></div>
     <div id="resultado"></div>`;
 
   $('#panel').value = definicion.panel_id || '';
   $('#modo').value = definicion.modo;
+  $('#alcance').value = definicion.alcance;
   $('#panel').onchange = (e) => { definicion.panel_id = e.target.value ? Number(e.target.value) : null; };
   $('#modo').onchange = (e) => { definicion.modo = e.target.value; };
+  $('#alcance').onchange = (e) => { definicion.alcance = e.target.value; ayudaAlcance(); };
+  ayudaAlcance();
   $('#agregar-semantico').onclick = () => abrirCriterioSemantico();
   $('#agregar-demografico').onclick = () => abrirCriterioDemografico();
   $('#parametros').onclick = abrirParametros;
@@ -180,7 +220,26 @@ export async function render(main, ctx) {
   if ($('#cargar-guardada')) $('#cargar-guardada').onchange = cargarGuardada;
 
   pintarCriterios();
+  pintarEjecuciones();
   if (ultimoResultado) pintarResultado(ultimoResultado);
+  else if (ejecucionAbierta) seguirEjecucion(ejecucionAbierta);
+}
+
+/* R-CS · cambio 2 — qué implica cada alcance, en la pantalla. */
+function ayudaAlcance() {
+  const caja = $('#ayuda-alcance');
+  const boton = $('#correr');
+  if (!caja) return;
+  if (definicion.alcance === 'completo') {
+    caja.innerHTML = 'Verifica <strong>todas</strong> las respuestas elegibles, en '
+      + 'segundo plano. Antes de lanzarla se muestra el costo estimado y se fija un '
+      + 'presupuesto que la frena sola.';
+    if (boton) boton.textContent = 'Estimar costo…';
+  } else {
+    caja.innerHTML = `Verifica las ${definicion.top_k} personas mejor rankeadas. Rápido y `
+      + 'barato; no garantiza encontrar a todas.';
+    if (boton) boton.textContent = 'Consultar';
+  }
 }
 
 function pintarCriterios() {
@@ -322,10 +381,16 @@ function abrirCriterioDemografico() {
   actualizarValores(dimension$.value);
 }
 
+/* A6 — los cuatro parámetros, nombrados por lo que hacen. `limite` estaba
+   en la API y no en el formulario: subir `top_k` verificaba (y pagaba) más
+   personas y la pantalla seguía mostrando 50, así que parecía que el
+   parámetro no hacía nada. */
+const llamadasPorCriterio = (topK) => Math.max(1, Math.ceil(topK / TAM_LOTE_VERIFICACION));
+
 function abrirParametros() {
   modal({
     titulo: 'Parámetros de la consulta',
-    ancho: '620px',
+    ancho: '680px',
     cuerpo: `
       <div class="form-row">
         <div class="form-group"><label>Pool de recuperación (top_n)</label>
@@ -337,10 +402,22 @@ function abrirParametros() {
         <div class="form-group"><label>A verificar (top_k)</label>
           <input type="number" name="top_k" value="${definicion.top_k}" min="1" max="200" />
           <div class="field-hint">
-            Cuántas personas se mandan a verificar. Es el parámetro caro.
+            Cuántas personas se mandan a verificar. <strong>Es la palanca
+            directa sobre el gasto</strong>: la verificación es la etapa más
+            cara. De 25 a 200 la multiplica por ocho; con lotes de
+            ${TAM_LOTE_VERIFICACION}, pasa de una llamada a Claude a ocho
+            <em>por criterio</em>.
+            <div id="costo-top-k" class="small" style="margin-top:.25rem"></div>
           </div></div>
       </div>
       <div class="form-row">
+        <div class="form-group"><label>Personas a mostrar (limite)</label>
+          <input type="number" name="limite" value="${definicion.limite}" min="1" max="200" />
+          <div class="field-hint">
+            Cuántas personas del ranking se muestran. En el alcance completo es
+            el tamaño de página.
+            <div id="aviso-limite" class="small" style="margin-top:.25rem;color:var(--warn,#b45309)"></div>
+          </div></div>
         <div class="form-group"><label>Umbral de confianza (distancia)</label>
           <input type="number" name="umbral_distancia" step="0.05" min="0" max="2"
                  value="${definicion.umbral_distancia}" />
@@ -348,6 +425,8 @@ function abrirParametros() {
             Por encima de esta distancia el resultado se marca de confianza
             baja. No excluye a nadie: lo señala.
           </div></div>
+      </div>
+      <div class="form-row">
         <div class="form-group"><label>Estrategia de puente</label>
           <select class="fselect" name="estrategia_puente">
             <option value="">Automática (por selectividad)</option>
@@ -358,23 +437,59 @@ function abrirParametros() {
             Cuál de los dos stores filtra primero. En automático lo decide el
             tamaño del segmento.
           </div></div>
+        <div class="form-group"><label>Embedding del criterio</label>
+          <select class="fselect" name="tipo_embedding_criterio">
+            <option value="">Según la configuración (por defecto: consulta)</option>
+            <option value="query">Como consulta (query)</option>
+            <option value="document">Como documento (comportamiento anterior)</option>
+          </select>
+          <div class="field-hint">
+            Cómo se vectoriza la frase del criterio. Para comparar con cómo
+            daba antes; el diagnóstico dice cuál se usó.
+          </div></div>
       </div>`,
     acciones: [
       { texto: 'Cerrar', clase: 'btn-outline', onClick: cerrarModal },
       { texto: 'Guardar', clase: 'btn-dark', onClick: (caja) => {
           const datos = leerFormulario(caja);
+          const topK = Number(datos.top_k) || 25;
+          const limite = Number(datos.limite) || 50;
+          if (definicion.alcance !== 'completo' && limite > topK) {
+            toast(`No se pueden mostrar ${limite} personas si se verifican ${topK}: `
+              + 'bajá «Personas a mostrar» o subí «A verificar».', 'err');
+            return;
+          }
           definicion.top_n = Number(datos.top_n) || 200;
-          definicion.top_k = Number(datos.top_k) || 25;
+          definicion.top_k = topK;
+          definicion.limite = limite;
           definicion.umbral_distancia = datos.umbral_distancia === null
             ? 0.55 : Number(datos.umbral_distancia);
           definicion.estrategia_puente = datos.estrategia_puente || null;
+          definicion.tipo_embedding_criterio = datos.tipo_embedding_criterio || null;
           cerrarModal();
+          ayudaAlcance();
           toast('Parámetros actualizados.', 'ok');
         } },
     ],
   });
   const caja = $('.modal-box');
   $('[name="estrategia_puente"]', caja).value = definicion.estrategia_puente || '';
+  $('[name="tipo_embedding_criterio"]', caja).value = definicion.tipo_embedding_criterio || '';
+  /* A6 — el aviso va en el formulario, mientras se escribe, y no al recibir
+     un resultado con menos personas de las pedidas. */
+  const revisar = () => {
+    const topK = Number($('[name="top_k"]', caja).value) || 0;
+    const limite = Number($('[name="limite"]', caja).value) || 0;
+    const llamadas = llamadasPorCriterio(topK);
+    $('#costo-top-k', caja).textContent = topK
+      ? `≈ ${llamadas} llamada(s) a Claude por criterio (hasta ${llamadas * 3} si cada `
+        + 'persona aporta tres evidencias distintas).' : '';
+    $('#aviso-limite', caja).textContent = definicion.alcance !== 'completo' && limite > topK
+      ? `Se verifican ${topK} personas: como mucho vas a ver ${topK}. Pedir ${limite} `
+        + 'no trae más gente, la recorta igual.' : '';
+  };
+  ['top_k', 'limite'].forEach((n) => { $(`[name="${n}"]`, caja).oninput = revisar; });
+  revisar();
 }
 
 /* ── Correr ─────────────────────────────────────────────────────── */
@@ -384,11 +499,17 @@ async function correr() {
     toast('Agregá al menos un criterio.', 'err');
     return;
   }
+  if (definicion.alcance === 'completo') {
+    await abrirEstimacionCompleta();
+    return;
+  }
   const boton = $('#correr');
   boton.disabled = true;
   boton.textContent = 'Consultando…';
   $('#resultado').innerHTML = cargando();
   nombresResueltos = {};
+  detenerSondeo();
+  ejecucionAbierta = null;
   try {
     ultimoResultado = await api.consultas.correr(definicion);
     // R7.4 — los atributos de las columnas elegidas se resuelven sobre el
@@ -399,8 +520,217 @@ async function correr() {
     $('#resultado').innerHTML = alerta(error.message);
   } finally {
     boton.disabled = false;
-    boton.textContent = 'Consultar';
+    ayudaAlcance();
   }
+}
+
+/* ── R-CS · cambio 5 · La consulta completa ─────────────────────── */
+
+const fmtUsd = (n) => (n == null ? '—' : `US$ ${Number(n).toFixed(n < 1 ? 4 : 2)}`);
+const puedeLanzarCompleta = () => ['admin', 'operaciones'].includes(contexto.actor?.rol);
+
+/* A2 — el costo **en la pantalla, antes de confirmar**. La estimación sale
+   de la misma ruta que lanza, con `solo_estimar`. */
+async function abrirEstimacionCompleta() {
+  const caja = modal({
+    titulo: 'Consulta completa — costo estimado',
+    ancho: '720px',
+    cuerpo: cargando('16vh'),
+    acciones: [{ texto: 'Cerrar', clase: 'btn-outline', onClick: cerrarModal }],
+  });
+  let e;
+  try {
+    e = await api.consultas.estimar({ ...definicion, alcance: 'completo' });
+  } catch (error) {
+    $('.modal-body', caja).innerHTML = alerta(error.message);
+    return;
+  }
+  const est = e.estimacion;
+  const veces = e.exploratoria.usd ? Math.round(est.usd / e.exploratoria.usd) : null;
+  $('.modal-body', caja).innerHTML = `
+    <p>Se van a verificar <strong>${est.unidades.toLocaleString('es-UY')}</strong>
+      unidad(es) de evidencia (textos distintos) de
+      <strong>${e.personas_habilitadas.toLocaleString('es-UY')}</strong> persona(s)
+      habilitadas, en ${e.lotes} lote(s) y ~${est.llamadas} llamada(s) a Claude.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Criterio</th><th>Unidades</th><th>Llamadas</th><th>Estimado</th></tr></thead>
+      <tbody>${est.por_criterio.map((c) => `<tr>
+        <td class="small">${esc(c.criterio)}</td><td class="mono">${c.unidades}</td>
+        <td class="mono">${c.llamadas}</td><td class="mono">${fmtUsd(c.usd)}</td></tr>`).join('')}
+      </tbody></table></div>
+    <dl class="kv" style="margin-top:.75rem">
+      <dt>Costo estimado</dt><dd><strong>${fmtUsd(est.usd)}</strong>
+        <span class="small muted">(incluye ${Math.round((est.margen - 1) * 100)}% de margen
+        por reintentos y subdivisiones)</span></dd>
+      <dt>La exploratoria</dt><dd>${fmtUsd(e.exploratoria.usd)} como mucho${veces && veces > 1
+        ? ` · la completa cuesta ~${veces} veces más` : ''}</dd>
+      <dt>Supuestos</dt><dd class="small muted">${esc(est.supuestos)}</dd>
+    </dl>
+    ${e.excede_el_maximo ? `<div class="alert alert-error">La estimación supera el
+      máximo por ejecución (${fmtUsd(e.presupuesto_maximo_usd)}). Acotá la consulta
+      —panel, criterios demográficos— o usá la exploratoria.</div>` : ''}
+    ${puedeLanzarCompleta() ? `
+      <div class="form-row" style="margin-top:.5rem">
+        <div class="form-group"><label>Presupuesto (US$)</label>
+          <input type="number" name="presupuesto" step="0.01" min="0.01"
+                 max="${e.presupuesto_maximo_usd}" value="${e.presupuesto_sugerido_usd}" />
+          <div class="field-hint">Obligatorio. Si se alcanza, la ejecución se
+            detiene sola y lo verificado se conserva. Máximo
+            ${fmtUsd(e.presupuesto_maximo_usd)}.</div></div>
+      </div>
+      <label class="finalidad"><input type="checkbox" name="confirmo" />
+        <span><span class="f-titulo">Entiendo el costo y quiero lanzarla.</span></span></label>`
+    : `<div class="alert alert-info">Lanzar una consulta completa lo hace un
+        responsable de operaciones o un admin: es un gasto que alguien tiene que
+        aprobar. Podés pasarle esta estimación.</div>`}`;
+  if (!puedeLanzarCompleta() || e.excede_el_maximo) return;
+  const pie = $('.modal-foot', caja) || $('.modal-body', caja);
+  const lanzar = document.createElement('button');
+  lanzar.className = 'btn btn-orange';
+  lanzar.textContent = 'Lanzar la consulta completa';
+  lanzar.onclick = async () => {
+    const presupuesto = Number($('[name="presupuesto"]', caja).value);
+    if (!$('[name="confirmo"]', caja).checked) { toast('Confirmá el costo.', 'err'); return; }
+    if (!(presupuesto > 0)) { toast('Fijá un presupuesto.', 'err'); return; }
+    lanzar.disabled = true;
+    try {
+      const estado = await api.consultas.lanzarCompleta(definicion, presupuesto);
+      cerrarModal();
+      toast('Consulta completa encolada. Podés cerrar la pantalla: sigue sola.', 'ok');
+      ultimoResultado = null;
+      seguirEjecucion(estado.ejecucion_id);
+      pintarEjecuciones();
+    } catch (error) {
+      lanzar.disabled = false;
+      toast(error.message, 'err');
+    }
+  };
+  pie.appendChild(lanzar);
+}
+
+function detenerSondeo() {
+  if (sondeo) clearTimeout(sondeo);
+  sondeo = null;
+}
+
+/* El avance sale de la base: sobrevive a recargar y a cambiar de pestaña. */
+async function seguirEjecucion(id) {
+  detenerSondeo();
+  ejecucionAbierta = id;
+  let estado;
+  try {
+    estado = await api.consultas.ejecucion(id, { solo_estado: 1 });
+  } catch (error) {
+    $('#resultado').innerHTML = alerta(error.message);
+    return;
+  }
+  if (ejecucionAbierta !== id || !$('#resultado')) return;
+  $('#resultado').innerHTML = progresoHtml(estado);
+  engancharProgreso(estado);
+  if (!estado.terminal) {
+    sondeo = setTimeout(() => seguirEjecucion(id), 4000);
+  } else {
+    await abrirResultadoCompleto(id, 1, estado);
+  }
+}
+
+function progresoHtml(e) {
+  const gastado = e.presupuesto_usd
+    ? Math.min(100, Math.round(100 * (e.costo_real_usd || 0) / e.presupuesto_usd)) : 0;
+  return `<div class="card" id="progreso-completa"><div class="card-body">
+    <div class="fila-criterio">
+      <div><strong>Consulta completa</strong> <span class="small muted">${esc((e.criterios || []).join(' · '))}</span></div>
+      <span class="est ${e.terminal ? (e.estado === 'terminada' ? 'est-vigente' : 'est-pendiente') : 'est-inactivo'}">${esc(e.estado_etiqueta)}</span>
+    </div>
+    <div class="small" style="margin:.5rem 0 .2rem">Avance: ${e.lotes_ok + e.lotes_fallidos + e.lotes_omitidos}
+      de ${e.lotes_total} lote(s) · ${e.unidades_verificadas} de ${e.unidades_total} unidad(es)
+      ${e.segundos_restantes != null ? ` · faltan ~${Math.ceil(e.segundos_restantes / 60)} min` : ''}</div>
+    <div class="barra"><span style="width:${e.porcentaje}%"></span></div>
+    <div class="small" style="margin:.5rem 0 .2rem">Gasto: ${fmtUsd(e.costo_real_usd)} de
+      ${fmtUsd(e.presupuesto_usd)} (estimado ${fmtUsd(e.costo_estimado?.usd)})</div>
+    <div class="barra ${gastado >= 90 ? '' : 'ok'}"><span style="width:${gastado}%"></span></div>
+    ${e.problemas?.length ? `<div class="alert alert-warn" style="margin-top:.6rem">
+      ${e.problemas.length} lote(s) con problemas: ${esc(e.problemas.slice(0, 3)
+        .map((p) => `#${p.indice} ${p.estado}${p.error ? ` — ${p.error}` : ''}`).join(' · '))}</div>` : ''}
+    <div class="toolbar" style="margin-top:.6rem">
+      ${!e.terminal ? '<button class="btn btn-outline btn-sm" id="ver-parcial">Ver lo verificado hasta ahora</button>' : ''}
+      ${!e.terminal && puedeLanzarCompleta() ? '<button class="btn btn-outline btn-sm" id="cancelar-completa">Cancelar</button>' : ''}
+      ${e.terminal && puedeLanzarCompleta() && (e.lotes_fallidos || e.lotes_omitidos) ? `
+        <button class="btn btn-outline btn-sm" id="reintentar-completa">${e.estado === 'detenida_por_presupuesto'
+          ? 'Ampliar presupuesto y seguir' : 'Reintentar lotes fallidos'}</button>` : ''}
+    </div>
+  </div></div>`;
+}
+
+function engancharProgreso(e) {
+  const parcial = $('#ver-parcial');
+  if (parcial) parcial.onclick = () => abrirResultadoCompleto(e.ejecucion_id, 1, e);
+  const cancelar = $('#cancelar-completa');
+  if (cancelar) {
+    cancelar.onclick = async () => {
+      if (!window.confirm('¿Cancelar? Lo verificado se conserva; los lotes que no empezaron no se procesan.')) return;
+      try { await api.consultas.cancelarEjecucion(e.ejecucion_id); seguirEjecucion(e.ejecucion_id); }
+      catch (error) { toast(error.message, 'err'); }
+    };
+  }
+  const reintentar = $('#reintentar-completa');
+  if (reintentar) {
+    reintentar.onclick = async () => {
+      let presupuesto = null;
+      if (e.estado === 'detenida_por_presupuesto') {
+        const texto = window.prompt(`Nuevo presupuesto en US$ (hoy ${fmtUsd(e.presupuesto_usd)}):`);
+        if (!texto) return;
+        presupuesto = Number(texto.replace(',', '.'));
+      }
+      try {
+        await api.consultas.reintentarEjecucion(e.ejecucion_id, presupuesto);
+        toast('Lotes reencolados.', 'ok');
+        seguirEjecucion(e.ejecucion_id);
+      } catch (error) { toast(error.message, 'err'); }
+    };
+  }
+}
+
+async function abrirResultadoCompleto(id, pagina, estado) {
+  detenerSondeo();
+  ejecucionAbierta = id;
+  try {
+    ultimoResultado = await api.consultas.ejecucion(id, { pagina, por_pagina: definicion.limite });
+    await resolverColumnas(ultimoResultado);
+    pintarResultado(ultimoResultado);
+    if (estado && !estado.terminal) {
+      $('#resultado').insertAdjacentHTML('afterbegin', progresoHtml(estado));
+      engancharProgreso(estado);
+      sondeo = setTimeout(() => seguirEjecucion(id), 8000);
+    }
+  } catch (error) {
+    $('#resultado').innerHTML = alerta(error.message);
+  }
+}
+
+/* Las completas recientes: volver a la de ayer sin tener que guardar nada. */
+async function pintarEjecuciones() {
+  const caja = $('#ejecuciones');
+  if (!caja) return;
+  let items = [];
+  try { ({ items } = await api.consultas.ejecuciones()); } catch { items = []; }
+  if (!items.length) { caja.innerHTML = ''; return; }
+  caja.innerHTML = `<div class="card">
+    <div class="card-header"><span class="card-header-title">Consultas completas recientes</span>
+      <span class="small muted">Corren en segundo plano; el resultado se arma al abrirlas, con el consentimiento de hoy.</span></div>
+    <div class="card-body tight"><div class="table-wrap"><table>
+      <thead><tr><th>Criterios</th><th>Estado</th><th>Avance</th><th>Gasto</th><th>Lanzada</th><th></th></tr></thead>
+      <tbody>${items.slice(0, 8).map((e) => `<tr>
+        <td class="small">${esc((e.criterios || []).join(' · '))}</td>
+        <td><span class="est ${e.estado === 'terminada' ? 'est-vigente' : e.terminal ? 'est-pendiente' : 'est-inactivo'}">${esc(e.estado_etiqueta)}</span></td>
+        <td class="mono">${e.porcentaje}%</td>
+        <td class="mono small">${fmtUsd(e.costo_real_usd)} / ${fmtUsd(e.presupuesto_usd)}</td>
+        <td class="small">${esc(fechaCorta(e.creado_en))}</td>
+        <td><button class="btn btn-outline btn-sm" data-ejecucion="${esc(e.ejecucion_id)}">Abrir</button></td>
+      </tr>`).join('')}</tbody></table></div></div></div>`;
+  $$('[data-ejecucion]', caja).forEach((b) => {
+    b.onclick = () => { ultimoResultado = null; seguirEjecucion(b.dataset.ejecucion); };
+  });
 }
 
 /* ── Resultado ──────────────────────────────────────────────────── */
@@ -415,28 +745,86 @@ function pintarResultado(resultado) {
      transitado. Ahora los dos tipos pasan por la misma barra
      (`barraDeAcciones` + `engancharAcciones`); lo que cambia es la tabla. */
   const esDemografica = resultado.tipo === 'demografica';
+  const esCompleta = resultado.alcance === 'completo';
 
   caja.innerHTML = `
     ${esDemografica ? avisoDemografica(resultado) : `
       ${pintarVerificacionIncompleta(resultado)}
       ${pintarDegradaciones(resultado)}
-      ${pintarPuente(resultado)}`}
+      ${esCompleta ? pintarResumenCompleta(resultado) : pintarPuente(resultado)}`}
     <div class="card">
       <div class="card-header">
         <span class="card-header-title">${esDemografica
           ? `${resultado.total} persona(s)${resultado.items.length < resultado.total
             ? ` <span class="small muted">· se muestran ${resultado.items.length}</span>` : ''}`
-          : `Ranking — ${resultado.total} persona(s)`}</span>
+          : `Ranking — ${resultado.total} persona(s)${pintarRecorte(resultado)}`}</span>
         ${barraDeAcciones(resultado)}
       </div>
       <div class="card-body tight">
         ${esDemografica ? tablaDemografica(resultado) : tablaRanking(resultado)}
+        ${esCompleta ? paginacionHtml(resultado) : ''}
       </div>
     </div>
-    ${esDemografica ? '' : `${pintarExcluidos(resultado)}${pintarDiagnostico(resultado)}`}`;
+    ${esDemografica ? '' : `${pintarExcluidos(resultado)}${esCompleta ? '' : pintarDiagnostico(resultado)}`}`;
 
   activarTokens(caja);
   engancharAcciones(caja, resultado);
+  $$('[data-pagina-resultado]', caja).forEach((b) => {
+    b.onclick = () => abrirResultadoCompleto(resultado.ejecucion.ejecucion_id,
+      Number(b.dataset.paginaResultado), resultado.ejecucion);
+  });
+}
+
+/* A6 — el recorte, a la vista: cuántas personas se verificaron frente a
+   cuántas se muestran. Sin esto, «50 resultados» con `top_k` 150 se lee como
+   «no hay más gente que cumpla». */
+function pintarRecorte(resultado) {
+  const r = resultado.recorte;
+  if (!r) return '';
+  const partes = [`se revisaron ${r.personas_verificadas}`
+    + (r.personas_pertinentes != null && r.personas_pertinentes < r.personas_verificadas
+      ? ` (${r.personas_pertinentes} con evidencia pertinente)` : '')];
+  if (r.recortado) partes.push(`se muestran ${r.mostradas} (Personas a mostrar = ${r.limite})`);
+  return ` <span class="small muted">· ${partes.join(' · ')}</span>`;
+}
+
+function paginacionHtml(resultado) {
+  const p = resultado.paginacion;
+  if (!p || p.paginas <= 1) return '';
+  // Primera, última y las vecinas de la actual: con 137 personas y páginas
+  // chicas serían treinta botones.
+  const visibles = [...new Set([1, p.pagina - 1, p.pagina, p.pagina + 1, p.paginas])]
+    .filter((i) => i >= 1 && i <= p.paginas).sort((x, y) => x - y);
+  const botones = [];
+  visibles.forEach((i, k) => {
+    if (k && i - visibles[k - 1] > 1) botones.push('<span class="muted">…</span>');
+    botones.push(`<button class="btn btn-sm ${i === p.pagina ? 'btn-dark' : 'btn-outline'}"
+      data-pagina-resultado="${i}">${i}</button>`);
+  });
+  return `<div class="toolbar" style="padding:.75rem 1.5rem">
+      <span class="small muted">Página ${p.pagina} de ${p.paginas} · ${p.total} persona(s)
+        · ${p.por_pagina} por página</span>
+      <span class="toolbar-spacer"></span>${botones.join('')}</div>`;
+}
+
+/* R-CS · cambio 5 — qué se verificó en una completa, por criterio, y cuánto
+   costó. Ocupa el lugar del puente: en la completa no hay pool ni top-k. */
+function pintarResumenCompleta(resultado) {
+  const v = resultado.verificacion || {};
+  const c = resultado.costo || {};
+  return `<div class="card"><div class="card-body">
+    <dl class="kv">
+      <dt>Alcance</dt><dd><strong>Completo</strong> — ${esc(resultado.ejecucion?.estado_etiqueta || '')}
+        <div class="small muted" style="font-weight:500">Las personas se arman al abrir el
+          resultado, con el consentimiento de hoy: quien retiró el uso semántico ya no está.</div></dd>
+      <dt>Verificación</dt><dd>${(v.por_criterio || []).map((x) => `<div class="small">
+        <strong>${esc(x.criterio)}</strong>: ${x.verificadas} de ${x.unidades} unidad(es)
+        verificadas · ${x.irrelevantes} irrelevante(s)${x.sin_verificar
+          ? ` · <span style="color:var(--warn,#b45309)">${x.sin_verificar} sin verificar</span>` : ''}</div>`).join('')}</dd>
+      <dt>Costo</dt><dd>${fmtUsd(c.usd)} de ${fmtUsd(c.presupuesto_usd)} presupuestados
+        <span class="small muted">(estimado ${fmtUsd(c.estimado?.usd)})</span></dd>
+    </dl>
+  </div></div>`;
 }
 
 /* SC3 — la barra de acciones, una sola vez para los dos tipos de
@@ -547,6 +935,13 @@ function avisoDemografica(resultado) {
     </div>`;
 }
 
+/* R-CS · A4 — sin `estado` (un backend viejo) no se asume nada favorable. */
+function estadoHtml(item) {
+  const e = ESTADOS[item.estado];
+  if (!e) return '<div class="small muted" title="El servidor no informó el estado.">estado sin dato</div>';
+  return `<div style="margin-bottom:.25rem"><span class="est ${e.clase}" title="${esc(e.ayuda)}">${esc(e.etiqueta)}</span></div>`;
+}
+
 function filaItem(item, indice) {
   const nombre = nombresResueltos[item.id_persona]?.nombre;
   const mejor = item.evidencias[0];
@@ -560,7 +955,8 @@ function filaItem(item, indice) {
     <td><div class="barra ${item.puntaje >= 0.7 ? 'ok' : ''}">
           <span style="width:${Math.round(item.puntaje * 100)}%"></span></div>
         <div class="small mono">${item.puntaje.toFixed(3)}</div></td>
-    <td><span class="est est-${item.confianza === 'alta' ? 'vigente' : 'pendiente'}">
+    <td>${estadoHtml(item)}
+        <span class="est est-${item.confianza === 'alta' ? 'vigente' : 'pendiente'}">
           ${item.confianza === 'alta' ? 'alta' : 'baja'}</span>
         ${item.penalizado ? '<div class="small muted">penalizado</div>' : ''}
         ${item.verificacion_incompleta
@@ -841,6 +1237,7 @@ function abrirDetalle(item) {
     cuerpo: `
       <dl class="kv">
         <dt>Identificador</dt><dd>${token(item.id_persona)}</dd>
+        <dt>Estado</dt><dd>${estadoHtml(item)}</dd>
         <dt>Puntaje combinado</dt><dd class="mono">${item.puntaje.toFixed(4)}</dd>
         <dt>Confianza</dt><dd>${item.confianza}${item.mejor_distancia != null
           ? ` <span class="small muted">(mejor distancia ${item.mejor_distancia})</span>` : ''}</dd>
@@ -855,6 +1252,13 @@ function abrirDetalle(item) {
             <span class="est ${v.clase}">${esc(v.etiqueta)}</span>
           </div>
           <div class="small muted" style="margin:.4rem 0 .2rem">${esc(c.razon || '')}</div>
+          ${(c.evidencias_evaluadas || []).length > 1 || c.contradiccion ? `<div class="small" style="margin:.2rem 0">
+            ${(c.evidencias_evaluadas || []).map((ev) => {
+              const vv = VEREDICTOS[ev.veredicto] || { etiqueta: ev.veredicto, clase: '' };
+              return `<div><span class="est ${vv.clase}">${esc(vv.etiqueta)}</span>
+                ${esc((ev.valor_texto || '').slice(0, 80))}${ev.repeticiones > 1
+                  ? ` <span class="muted">(el mismo texto en ${ev.repeticiones} respuestas: se verificó una vez)</span>` : ''}</div>`;
+            }).join('')}</div>` : ''}
           <div class="small mono muted">puntaje ${c.puntaje} · peso ${c.peso}${
             c.distancia != null ? ` · distancia ${c.distancia}` : ''}${
             c.relevancia != null ? ` · relevancia ${c.relevancia}` : ''}</div>
@@ -922,22 +1326,33 @@ function pintarVerificacionIncompleta(resultado) {
 
 function pintarExcluidos(resultado) {
   if (!resultado.excluidos?.length) return '';
+  /* R-CS — quien solo tenía evidencia irrelevante no fue juzgado contra el
+     criterio: no habló del tema. Listarlos uno por uno tapa a los que sí
+     importan (los que contradicen), así que van en una línea. */
+  const sinPertinente = resultado.excluidos.filter((e) => e.motivo === 'sin_evidencia_pertinente');
+  const resto = resultado.excluidos.filter((e) => e.motivo !== 'sin_evidencia_pertinente');
   return `<div class="card">
     <div class="card-header">
       <span class="card-header-title">Excluidos — ${resultado.excluidos.length}</span>
       <span class="small muted">Por qué no están en el ranking</span>
     </div>
-    <div class="card-body tight"><div class="table-wrap"><table>
+    <div class="card-body tight">
+    ${sinPertinente.length ? `<p class="small" style="padding:.75rem 1.5rem 0">
+      <span class="est est-inactivo">Sin evidencia pertinente</span>
+      ${sinPertinente.length} persona(s): sus respuestas se revisaron y no hablan del
+      criterio. No contradicen nada; simplemente no aportan.</p>` : ''}
+    ${resto.length ? `<div class="table-wrap"><table>
       <thead><tr><th>Persona</th><th>Motivo</th><th>Criterio</th><th>Evidencia</th></tr></thead>
-      <tbody>${resultado.excluidos.map((e) => {
+      <tbody>${resto.map((e) => {
         const v = VEREDICTOS[e.motivo] || { etiqueta: e.motivo, clase: '' };
         return `<tr>
           <td>${token(e.id_persona)}</td>
-          <td><span class="est ${v.clase}">${esc(v.etiqueta)}</span></td>
+          <td><span class="est ${v.clase}">${esc(v.etiqueta)}</span>${e.contradiccion
+            ? '<div class="small" style="color:var(--warn,#b45309)" title="Tiene evidencia que cumple y evidencia que contradice: manda la contradicción.">se contradice</div>' : ''}</td>
           <td class="small">${esc(e.criterio || '')}</td>
           <td class="small">${esc(e.evidencia || '—')}</td>
         </tr>`;
-      }).join('')}</tbody></table></div></div>
+      }).join('')}</tbody></table></div>` : ''}</div>
   </div>`;
 }
 
@@ -952,7 +1367,10 @@ function pintarDiagnostico(resultado) {
       <div class="small muted" style="padding:0 0 .5rem">
         Reranker: <code>${esc(d.reranker || '—')}</code> ·
         Verificador: <code>${esc(d.verificador || '—')}</code> ·
+        Criterio embebido como <code>${esc(d.tipo_embedding_criterio || '—')}</code> ·
         Store semántico abierto: ${d.abrio_semantica ? 'sí' : 'no'}
+        ${resultado.costo ? ` · Costo de esta consulta: <strong>${fmtUsd(resultado.costo.usd)}</strong>` : ''}
+        ${d.ejecucion_id ? ` · Ejecución <code>${esc(d.ejecucion_id)}</code>` : ''}
       </div>
       <div class="table-wrap"><table>
         <thead><tr><th>Etapa</th><th>ms</th><th>Detalle</th></tr></thead>
@@ -977,7 +1395,7 @@ function pintarDiagnosticoVerificacion(d) {
   return `<div style="padding:.75rem 0 0">
       <div class="small td-strong" style="margin-bottom:.35rem">Verificación por lotes</div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Criterio</th><th>Evidencias</th><th>Sin verificar</th>
+        <thead><tr><th>Criterio</th><th>Unidades</th><th>Sin verificar</th>
           <th>Lotes</th><th>Llamadas</th><th>Subdivisiones</th><th>Tokens</th><th>ms</th></tr></thead>
         <tbody>${informes.map((i) => `<tr>
           <td class="small">${esc(i.criterio || '—')}</td>
@@ -1088,7 +1506,11 @@ async function verNombres() {
 
 async function bajarCsv() {
   try {
-    const salida = await api.consultas.csv(definicion);
+    // La completa no se vuelve a correr para exportar: el CSV sale de la
+    // ejecución, con el ranking entero y no solo la página en pantalla.
+    const salida = ultimoResultado?.alcance === 'completo'
+      ? await api.consultas.ejecucion(ultimoResultado.ejecucion.ejecucion_id, { formato: 'csv' })
+      : await api.consultas.csv(definicion);
     const blob = new Blob([salida.csv], { type: 'text/csv;charset=utf-8' });
     const enlace = document.createElement('a');
     enlace.href = URL.createObjectURL(blob);

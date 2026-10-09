@@ -20,7 +20,9 @@ from . import (
     cargas,
     composicion,
     consentimiento,
+    consulta_completa,
     consultas,
+    costo_consulta,
     correo,
     db,
     encuestas,
@@ -590,7 +592,7 @@ def auditoria_pii(ctx, actor, params, cuerpo, consulta):
 # ════════════════════════════════════════════════════════════════════
 
 @ruta("POST", "/consultas", "consultar",
-      requisito="R2.4, R2.5, R2.7, R2.8, R2.9, R2.10, R2.11")
+      requisito="R2.4, R2.5, R2.7, R2.8, R2.9, R2.10, R2.11, R-CS.2, R-CS.5")
 def correr_consulta(ctx, actor, params, cuerpo, consulta):
     """Corre una consulta. El resultado identifica por `id_persona`: no sale
     PII de acá.
@@ -600,8 +602,36 @@ def correr_consulta(ctx, actor, params, cuerpo, consulta):
     Es a propósito: así el contrato de la API sigue siendo «JSON siempre», el
     router sigue devolviendo dicts y se puede probar sin HTTP. El navegador
     arma la descarga con eso.
+
+    R-CS — la misma ruta atiende los dos alcances y la estimación. Con
+    `solo_estimar` no corre nada: devuelve lo que costaría (A2), y es lo que
+    la pantalla muestra antes de confirmar. Con `alcance: completo` (y
+    `presupuesto_usd` y `confirmar_costo`) encola la ejecución y responde
+    202 con su estado: los resultados se leen en `/consultas/ejecuciones/<id>`.
+    Una ruta aparte para estimar empezaría igual y divergiría, y lo que
+    divergiría es el número que se muestra antes de gastar.
     """
-    resultado = consultas.ejecutar(ctx, cuerpo)
+    alcance = (cuerpo.get("alcance") or consultas.EXPLORATORIO).strip().lower()
+    if alcance == consultas.COMPLETO:
+        if cuerpo.get("solo_estimar"):
+            return 200, consulta_completa.estimar(ctx, cuerpo)
+        # Quién puede lanzar una ejecución que cuesta dólares es una
+        # decisión de producto, no de quien tiene `consultar` (A2).
+        actor.exigir("consulta_completa")
+        return 202, consulta_completa.lanzar(ctx, cuerpo, actor=actor.uid)
+    if cuerpo.get("solo_estimar"):
+        definicion = consultas.normalizar_definicion(cuerpo, ctx.boveda)
+        textos = [c["texto"] for c in definicion["criterios"] if c["tipo"] == "semantico"]
+        return 200, {
+            "alcance": consultas.EXPLORATORIO,
+            "solo_estimar": True,
+            "estimacion": costo_consulta.estimar_exploratoria(
+                textos, definicion["top_k"], consultas.MAX_EVIDENCIAS_POR_INDIVIDUO,
+                getattr(ctx.verificador, "tam_lote", None)
+                or mod_verificacion.TAM_LOTE_POR_DEFECTO),
+        }
+
+    resultado = consultas.ejecutar(ctx, cuerpo, actor=actor.uid)
     formato = (cuerpo.get("formato") or consulta.get("formato") or "json").lower()
     if formato == "csv":
         return 200, {
@@ -614,6 +644,52 @@ def correr_consulta(ctx, actor, params, cuerpo, consulta):
             "diagnostico": resultado["diagnostico"],
         }
     return 200, resultado
+
+
+@ruta("GET", "/consultas/ejecuciones", "consultar", requisito="R-CS.5")
+def listar_ejecuciones_completas(ctx, actor, params, cuerpo, consulta):
+    """Las consultas completas recientes, con su avance y su gasto. Es lo
+    que deja volver a la pantalla y encontrar la de ayer."""
+    return 200, {"items": consulta_completa.listar(
+        ctx.boveda, _entero(consulta.get("limite"), 20))}
+
+
+@ruta("GET", "/consultas/ejecuciones/<ejecucion_id>", "consultar", requisito="R-CS.5")
+def ver_ejecucion_completa(ctx, actor, params, cuerpo, consulta):
+    """El resultado de una completa, paginado, armado al leer con el gate de
+    hoy. Se puede pedir en curso: lo que falta figura «sin verificar»."""
+    ejecucion_id = _uuid(params.get("ejecucion_id"))
+    if consulta.get("solo_estado"):
+        return 200, consulta_completa.estado(ctx.boveda, ejecucion_id)
+    if (consulta.get("formato") or "").lower() == "csv":
+        resultado = consulta_completa.resultado(ctx, ejecucion_id, todas=True)
+        return 200, {"formato": "csv", "nombre_archivo": "consulta-completa.csv",
+                     "filas": resultado["total"], "csv": consultas.a_csv(resultado)}
+    return 200, consulta_completa.resultado(
+        ctx, ejecucion_id, pagina=_entero(consulta.get("pagina"), 1),
+        por_pagina=_entero(consulta.get("por_pagina")))
+
+
+@ruta("POST", "/consultas/ejecuciones/<ejecucion_id>/reintentar", "consulta_completa",
+      requisito="R-CS.5")
+def reintentar_ejecucion_completa(ctx, actor, params, cuerpo, consulta):
+    """Reencola los lotes fallidos; con `presupuesto_usd` mayor, también los
+    omitidos por presupuesto."""
+    return 200, consulta_completa.reintentar(
+        ctx.boveda, _uuid(params.get("ejecucion_id")), cuerpo.get("presupuesto_usd"))
+
+
+@ruta("POST", "/consultas/ejecuciones/<ejecucion_id>/cancelar", "consulta_completa",
+      requisito="R-CS.5")
+def cancelar_ejecucion_completa(ctx, actor, params, cuerpo, consulta):
+    return 200, consulta_completa.cancelar(ctx.boveda, _uuid(params.get("ejecucion_id")))
+
+
+def _uuid(valor):
+    valor = (valor or "").strip()
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", valor):
+        raise DatosInvalidos("No es un identificador de ejecución.")
+    return valor
 
 
 @ruta("GET", "/consultas/guardadas", "consultar", requisito="P1")

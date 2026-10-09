@@ -103,7 +103,7 @@ class EncoladorCloudTasks(Encolador):
     """
 
     def __init__(self, proyecto=None, region=None, cola=None, url=None,
-                 cuenta=None, cliente=None):
+                 cuenta=None, cliente=None, prefijo="ingesta"):
         self.proyecto = proyecto or os.environ.get("GCLOUD_PROJECT") or \
             os.environ.get("GOOGLE_CLOUD_PROJECT", "")
         self.region = region or os.environ.get("TAREAS_REGION", "southamerica-east1")
@@ -111,6 +111,9 @@ class EncoladorCloudTasks(Encolador):
         self.url = url or os.environ.get("TAREAS_URL", "")
         self.cuenta = cuenta or os.environ.get("TAREAS_CUENTA", "")
         self._cliente = cliente
+        # R-CS — la ejecución completa de consultas usa esta misma clase con
+        # su propia cola y su propio prefijo de nombre de tarea.
+        self.prefijo = prefijo
 
     @property
     def cliente(self):
@@ -150,7 +153,7 @@ class EncoladorCloudTasks(Encolador):
             # que se quiere.
             "name": self.cliente.task_path(
                 self.proyecto, self.region, self.cola,
-                f"ingesta-{trabajo_id}-{indice}-{intento}"),
+                f"{self.prefijo}-{trabajo_id}-{indice}-{intento}"),
         }
         padre = self.cliente.queue_path(self.proyecto, self.region, self.cola)
         return self.cliente.create_task(request={"parent": padre, "task": tarea})

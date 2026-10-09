@@ -259,6 +259,22 @@ export const consultas = {
      y lo que volvió, por lote. Solo admin, y solo si el modo de depuración
      estaba encendido cuando corrió. */
   capturas: (ejecucionId) => GET(`/consultas/capturas/${ejecucionId}`),
+  /* R-CS · A2 — lo que costaría, sin correr nada. La misma ruta que
+     ejecuta, con la bandera: el número que se muestra antes de gastar sale
+     del mismo plan que después se lanza. */
+  estimar: (definicion) => POST('/consultas', { ...definicion, solo_estimar: true }),
+  /* R-CS · cambio 5 — la completa no responde con el ranking: encola y
+     devuelve el estado de la ejecución (202). */
+  lanzarCompleta: (definicion, presupuestoUsd) => POST('/consultas', {
+    ...definicion, alcance: 'completo', presupuesto_usd: presupuestoUsd,
+    confirmar_costo: true,
+  }),
+  ejecuciones: () => GET('/consultas/ejecuciones'),
+  ejecucion: (id, consulta = {}) => GET(`/consultas/ejecuciones/${id}`, consulta),
+  reintentarEjecucion: (id, presupuestoUsd) =>
+    POST(`/consultas/ejecuciones/${id}/reintentar`,
+      presupuestoUsd ? { presupuesto_usd: presupuestoUsd } : {}),
+  cancelarEjecucion: (id) => POST(`/consultas/ejecuciones/${id}/cancelar`, {}),
 };
 
 /* Traducir id_persona → datos de contacto. Es la única llamada de la Fase 2
