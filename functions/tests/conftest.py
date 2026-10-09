@@ -50,6 +50,8 @@ TABLAS_BOVEDA = [
     # R-MAIL — el registro de envíos; sin truncarlo, una prueba vería los
     # correos de las anteriores.
     "envio_correo",
+    # R-CS — las ejecuciones de consulta; `consulta_lote` cascadea.
+    "consulta_ejecucion",
 ]
 
 # R3.14 — el catálogo de atributos **no** se trunca: `sexo`, `localidad`,
@@ -59,7 +61,9 @@ TABLAS_BOVEDA = [
 CLAVES_DEL_NUCLEO = ("sexo", "localidad", "tramo_etario", "edad")
 TABLAS_SEMANTICA = ["respuesta", "pregunta", "individuo", "cuestionario",
                     # R-VER.10 — las capturas del modo de depuración.
-                    "verificacion_captura"]
+                    "verificacion_captura",
+                    # R-CS — los veredictos de las ejecuciones completas.
+                    "veredicto_unidad"]
 
 VERSION_TEXTO = "consentimiento-2026-01"
 

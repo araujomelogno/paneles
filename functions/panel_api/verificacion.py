@@ -71,7 +71,14 @@ VERSION_API = "2023-06-01"
 MODELO_POR_DEFECTO = "claude-sonnet-5"
 
 CUMPLE, NO_CUMPLE, DUDOSO = "cumple", "no_cumple", "dudoso"
-VEREDICTOS = (CUMPLE, NO_CUMPLE, DUDOSO)
+IRRELEVANTE = "irrelevante"
+"""R-CS · cambio 4 — la respuesta no habla del criterio: no sirve para
+afirmarlo ni para negarlo. No es `no_cumple` (no contradice nada) ni `dudoso`
+(no «habla del tema sin alcanzar»): es como si no estuviera en el pool. Que
+25 respuestas sobre la titularidad del contrato se juzguen irrelevantes para
+«usa Xiaomi» evita el falso resultado; **no** recupera los lugares que esas
+25 ocuparon —eso lo hacen las unidades de evidencia (cambio 3)—."""
+VEREDICTOS = (CUMPLE, NO_CUMPLE, DUDOSO, IRRELEVANTE)
 """Lo que el modelo puede decir. Son juicios: alguien leyó la evidencia."""
 
 SIN_VERIFICAR = "sin_verificar"
@@ -138,11 +145,16 @@ Para cada candidato decidí:
   cumple    — la respuesta muestra que la persona satisface el criterio.
   no_cumple — la respuesta muestra lo contrario del criterio, o lo niega.
   dudoso    — la respuesta habla del tema pero no alcanza para decidir.
+  irrelevante — la respuesta no habla del criterio: no sirve ni para \
+afirmarlo ni para negarlo.
 
 Reglas:
 * Juzgá SOLO por el texto del candidato. No supongas nada que no diga.
 * Una respuesta que menciona el tema no cumple por eso: «no me gusta el \
 fernet» habla de fernet y NO cumple el criterio «le gusta el fernet».
+* `no_cumple` es para lo que contradice el criterio. Una respuesta sobre \
+otra cosa —quién es el titular del contrato, cuando el criterio es la marca \
+del celular— es `irrelevante`, no `no_cumple` ni `dudoso`.
 * No escribas la respuesta del candidato: referenciala por su número. La \
 cita se arma del registro original.
 * Devolvé un veredicto por cada candidato, ninguno de más.
@@ -763,6 +775,7 @@ class Lexico(Verificador):
     Decide así:
       * polaridad opuesta al criterio            → no_cumple
       * comparte suficientes palabras del tema   → cumple
+      * no comparte ninguna                      → irrelevante
       * el resto                                 → dudoso
     """
 
@@ -805,6 +818,12 @@ class Lexico(Verificador):
                     "n": indice,
                     "veredicto": CUMPLE,
                     "razon": "La respuesta afirma el tema que pide el criterio.",
+                })
+            elif not solapamiento:
+                crudos.append({
+                    "n": indice,
+                    "veredicto": IRRELEVANTE,
+                    "razon": "La respuesta no habla del tema del criterio.",
                 })
             else:
                 crudos.append({

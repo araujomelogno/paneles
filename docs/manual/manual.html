@@ -1774,7 +1774,12 @@
     una entrevista, mejor funciona: «gente a la que le encanta el fernet» da
     mejores resultados que «fernet» a secas, porque esa palabra sola también
     trae a quienes dijeron que no lo toman.</li>
-    <li>Ejecutar con <strong>Consultar</strong>.</li>
+    <li>Elegir el <strong>Alcance</strong>: <em>Exploratorio</em> (lo habitual:
+    verifica las mejores y responde en el momento) o <em>Completo</em> (verifica
+    todo lo que puede aportar evidencia, en segundo plano y con presupuesto; ver
+    6.11).</li>
+    <li>Ejecutar con <strong>Consultar</strong> (en el alcance completo el botón
+    dice <strong>Estimar costo…</strong>).</li>
   </ol>
 
   <figure>
@@ -1803,6 +1808,15 @@
     puntaje.</figcaption>
   </figure>
 
+  <figure>
+    <img class="recorte" src="capturas/89-ranking-recorte.jpg" alt="Ranking con el estado de cada persona y el recorte" />
+    <figcaption><b>Estado y recorte.</b> El encabezado dice cuántas personas se
+    revisaron, cuántas tenían algo que decir sobre el criterio y cuántas se
+    muestran: «se revisaron 31 (6 con evidencia pertinente) · se muestran 4».
+    Si el ranking es corto porque se pidió mostrar pocas, se ve acá y no se
+    confunde con «no hay más gente que cumpla».</figcaption>
+  </figure>
+
   <table>
     <thead><tr><th>Columna</th><th>Qué informa</th></tr></thead>
     <tr><td class="destacado">Persona</td>
@@ -1813,8 +1827,14 @@
       <td>Un valor entre 0 y 1. Sirve para <strong>comparar entre sí</strong> a
       las personas de una misma consulta, no para comparar resultados de
       consultas distintas.</td></tr>
-    <tr><td class="destacado">Confianza</td>
-      <td>Indica si la evidencia que sostiene esa posición es sólida. La marca
+    <tr><td class="destacado">Estado y confianza</td>
+      <td>Arriba, el <strong>estado</strong> de la persona en el resultado:
+      <span class="badge">Confirmada</span> si todos los criterios semánticos
+      tienen una respuesta que los cumple; <span class="badge">Posible</span> si
+      entró por la tolerancia del modo laxo (duda o falta de evidencia en algún
+      criterio); <span class="badge">Pendiente</span> si alguna de sus
+      respuestas quedó sin verificar. Debajo, la confianza, que indica si la
+      evidencia que sostiene esa posición es sólida. La marca
       <span class="badge off">baja</span> señala que la mejor respuesta
       encontrada ya no se aproxima demasiado al criterio, o que falta evidencia
       de alguno de los criterios. No excluye a la persona: la señala. Debajo
@@ -1823,8 +1843,8 @@
       incompleta», más abajo).</td></tr>
     <tr><td class="destacado">Criterios</td>
       <td>El veredicto para cada criterio: <strong>Cumple</strong>,
-      <strong>Dudoso</strong>, <strong>Sin evidencia</strong> o
-      <strong>Sin verificar</strong>.</td></tr>
+      <strong>Dudoso</strong>, <strong>Irrelevante</strong>, <strong>Sin
+      evidencia</strong> o <strong>Sin verificar</strong>.</td></tr>
     <tr><td class="destacado">Evidencia</td>
       <td>La respuesta concreta que sostiene esa posición, con el estudio y la
       pregunta de los que proviene.</td></tr>
@@ -1867,7 +1887,52 @@
     <tr><td class="destacado">Sin evidencia</td>
       <td>No tiene ninguna respuesta próxima a ese criterio. Se comporta igual
       que el caso anterior.</td></tr>
+    <tr><td class="destacado">Irrelevante</td>
+      <td>Su respuesta se leyó y <strong>no habla del criterio</strong>: no lo
+      afirma ni lo niega. «Soy el titular del contrato» frente a «usa un celular
+      Xiaomi». Cuenta como falta de evidencia: queda fuera en estricto y entra
+      penalizada en laxo si otro criterio la sostiene.</td></tr>
+    <tr><td class="destacado">Sin evidencia pertinente</td>
+      <td>Ninguna de sus respuestas habla de ninguno de los criterios. No aparece
+      ni siquiera en modo laxo. La tabla no la lista persona por persona: lo
+      resume en una línea, para que no tape a quienes sí importan.</td></tr>
   </table>
+
+  <figure>
+    <img class="recorte" src="capturas/90-excluidos-irrelevante.jpg" alt="Excluidos: sin evidencia pertinente y una contradicción" />
+    <figcaption><b>Irrelevante no es «no cumple».</b> Las 25 personas que solo
+    dijeron quién es el titular del contrato no contradicen el criterio: se
+    resumen en una línea. La que sí lo contradice queda en la tabla, con la
+    marca <i>se contradice</i> si además tenía otra respuesta que lo cumplía:
+    manda la contradicción.</figcaption>
+  </figure>
+
+  <h4>Las respuestas repetidas se verifican una sola vez</h4>
+
+  <p>Cuando muchas personas dieron <strong>exactamente la misma
+  respuesta</strong> a la misma pregunta —típico de una opción cerrada o de
+  un texto que el campo copió en todas las filas—, el sistema la trata como
+  una sola <strong>unidad de evidencia</strong>: la ordena y la verifica una
+  vez, y el veredicto vale para todos los que la dieron. Eso tiene dos
+  efectos que se notan:</p>
+  <ul class="puntos">
+    <li><strong>Cuesta menos.</strong> 25 copias del mismo texto son una lectura,
+    no 25.</li>
+    <li><strong>No se comen los lugares.</strong> Si las primeras personas del
+    ranking resultan tener solo respuestas irrelevantes, el sistema va a buscar a
+    las siguientes —hasta tres veces y sin pasar del tope de lecturas de
+    siempre—. Es lo que permite que aparezca quien mencionó la marca aunque
+    estuviera más abajo que 25 respuestas sobre otra cosa.</li>
+  </ul>
+  <p>En el detalle (<strong>Ver</strong>) de una persona, cada respuesta
+  revisada dice su veredicto y, si el mismo texto lo dieron otros, «el mismo
+  texto en N respuestas: se verificó una vez».</p>
+
+  <figure>
+    <img class="recorte" src="capturas/92-detalle-estado.jpg" alt="Detalle de una persona con su estado" />
+    <figcaption><b>El detalle</b> suma el estado de la persona en el
+    resultado.</figcaption>
+  </figure>
 
   <p><strong>Sin verificar</strong> no figura entre los motivos de exclusión,
   y no por olvido: no es un juicio. Significa que el verificador no llegó a
@@ -2080,7 +2145,17 @@
 
   <p>Hay una regla que no cambia entre modos: quien afirma lo contrario del
   criterio queda fuera en ambos. Lo que el modo laxo tolera es la duda y la
-  ausencia de evidencia, no la contradicción.</p>
+  ausencia de evidencia, no la contradicción. Tampoco incluye a quien no tiene
+  <strong>ninguna</strong> respuesta que hable del tema: si todo lo suyo es
+  irrelevante, no es una coincidencia dudosa, es que no hay coincidencia.</p>
+
+  <div class="aviso info">
+    <div class="t">Modo y alcance son dos cosas distintas</div>
+    <p>El <strong>modo</strong> dice qué hacer con lo que no se pudo afirmar. El
+    <strong>alcance</strong> dice <strong>cuánto se revisa</strong>: las mejores
+    candidatas (exploratorio) o todo lo que puede aportar evidencia (completo).
+    Se combinan libremente: una consulta completa puede ser laxa.</p>
+  </div>
 
   <h3><span class="n">6.7</span> Sumar un filtro demográfico</h3>
 
@@ -2149,9 +2224,17 @@
 
   <h3><span class="n">6.9</span> Parámetros y diagnóstico</h3>
 
-  <p>La opción <strong>Parámetros</strong> expone tres ajustes. Los valores por
+  <p>La opción <strong>Parámetros</strong> expone cinco ajustes. Los valores por
   defecto son adecuados para el uso habitual; se modifican cuando una consulta
   devuelve poco o cuando demora más de lo tolerable.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/88-parametros-limite.jpg" alt="Parámetros con Personas a mostrar" />
+    <figcaption><b>Personas a mostrar.</b> Si se pide mostrar más personas de
+    las que se verifican, el formulario lo avisa mientras se escribe y no deja
+    guardarlo: con <i>A verificar</i> en 6, pedir 50 no trae más gente. Debajo
+    de <i>A verificar</i>, cuántas llamadas al verificador implica.</figcaption>
+  </figure>
 
   <figure>
     <img class="recorte" src="capturas/32-consulta-parametros.jpg" alt="Parámetros de la consulta" />
@@ -2166,9 +2249,20 @@
       aparecer.</td>
       <td>—</td></tr>
     <tr><td class="destacado">A verificar</td>
-      <td>Se necesita un ranking más extenso.</td>
-      <td>La consulta demora demasiado: es el parámetro que más incide en el
-      tiempo de respuesta.</td></tr>
+      <td>Se necesita un ranking más extenso. Subirlo sin subir <i>Personas a
+      mostrar</i> verifica gente que después no se ve.</td>
+      <td>La consulta demora demasiado o cuesta de más: es la palanca directa
+      sobre el gasto. De 25 a 200 multiplica por ocho la verificación —de una
+      llamada al verificador a ocho por criterio—.</td></tr>
+    <tr><td class="destacado">Personas a mostrar</td>
+      <td>Se quiere ver el ranking entero que se verificó (hasta 200). En el
+      alcance completo es el tamaño de cada página.</td>
+      <td>Solo interesa el principio de la lista.</td></tr>
+    <tr><td class="destacado">Embedding del criterio</td>
+      <td colspan="2">Cómo se vectoriza la frase: <i>como consulta</i> (el
+      valor por defecto desde esta versión) o <i>como documento</i> (como se hacía
+      antes). Sirve para comparar una consulta concreta con cómo daba antes; el
+      diagnóstico dice cuál se usó.</td></tr>
     <tr><td class="destacado">Umbral de confianza</td>
       <td>Casi todo el ranking sale marcado con confianza baja aunque los
       resultados sean correctos.</td>
@@ -2177,7 +2271,18 @@
 
   <p>Al pie de cada resultado aparece el <strong>diagnóstico</strong>: cuánto
   demoró cada etapa y cuántos candidatos pasaron por ella. Es la herramienta
-  para entender por qué una consulta devolvió lo que devolvió.</p>
+  para entender por qué una consulta devolvió lo que devolvió. Arriba dice qué
+  ordenador y qué verificador corrieron de verdad, cómo se vectorizó el
+  criterio, <strong>cuánto costó esta consulta</strong> y el número de
+  ejecución: cada consulta queda registrada con ese número (sin la lista de
+  personas), para poder averiguar después si alguna etapa falló.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/91-diagnostico-unidades.jpg" alt="Diagnóstico con la etapa de unidades de evidencia" />
+    <figcaption><b>Unidades de evidencia.</b> 145 respuestas en el pool eran
+    solo 10 textos distintos (135 repetidas); se verificaron 4 unidades en dos
+    rondas, que cubrían 110 respuestas.</figcaption>
+  </figure>
 
   <p>Debajo de las etapas, la tabla <strong>Verificación por lotes</strong>
   muestra, para cada criterio, cuántas respuestas se verificaron, cuántas
@@ -2225,8 +2330,9 @@
   <div class="aviso">
     <div class="t">Si aparece un aviso en ámbar sobre el ranking</div>
     <p>Significa que una de las etapas de la consulta no pudo ejecutarse
-    —habitualmente porque venció la clave de un servicio externo— y el sistema
-    continuó sin ella en lugar de interrumpir la operación. El resultado
+    —habitualmente porque venció la clave de un servicio externo, o porque el
+    servicio de ordenamiento contestó sin puntajes para todas las respuestas— y
+    el sistema continuó sin ella en lugar de interrumpir la operación. El resultado
     <strong>se puede utilizar igualmente</strong>, aunque su ordenamiento es
     menos preciso que de costumbre. Conviene informarlo a quien administra el
     sistema.</p>
@@ -2297,6 +2403,99 @@
     registrada muestra «sin dato» en <i>Estudio de origen</i>.</figcaption>
   </figure>
 
+
+  <h3><span class="n">6.11</span> Consulta completa: verificar todo, con presupuesto</h3>
+
+  <p>La consulta habitual —<strong>exploratoria</strong>— verifica las mejores
+  candidatas y responde en el momento. Es rápida y barata, pero no garantiza
+  encontrar a <em>todas</em> las personas que cumplen: verifica las primeras
+  25 (o las que diga <i>A verificar</i>). Cuando hace falta la lista completa
+  —por ejemplo, todas las personas que mencionaron una marca, para convocarlas
+  a un estudio— existe el alcance <strong>completo</strong>: revisa
+  <strong>todas</strong> las respuestas de las personas habilitadas, en segundo
+  plano.</p>
+
+  <div class="aviso grave">
+    <div class="t">La completa cuesta bastante más que la exploratoria</div>
+    <p>Sobre el padrón actual, la diferencia no es de grado sino de unas cien
+    veces: una exploratoria hace una o dos llamadas al verificador por
+    criterio; una completa, cientos. Por eso pide confirmar el costo, exige un
+    presupuesto que la frena sola y la lanza solo un responsable de
+    operaciones o un administrador. Un analista puede estimarla y leer sus
+    resultados.</p>
+  </div>
+
+  <ol class="pasos">
+    <li>Armar la consulta como siempre y elegir <strong>Alcance: Completo</strong>.
+    Conviene acotarla antes con el panel o con criterios demográficos: cuanto
+    menos gente habilitada, menos cuesta.</li>
+    <li>Presionar <strong>Estimar costo…</strong>. No se ejecuta nada todavía: el
+    sistema cuenta cuántas respuestas distintas habría que verificar y calcula
+    cuánto costaría, al lado de lo que cuesta la exploratoria.</li>
+    <li>Fijar el <strong>presupuesto</strong> (viene sugerido un 20% por encima
+    de la estimación), marcar <strong>Entiendo el costo y quiero lanzarla</strong>
+    y presionar <strong>Lanzar la consulta completa</strong>. Si la estimación
+    supera el presupuesto, no se lanza.</li>
+    <li>La pantalla muestra el avance y el gasto. Se puede cerrar: la consulta
+    sigue sola, y aparece en <strong>Consultas completas recientes</strong> para
+    volver a abrirla.</li>
+  </ol>
+
+  <figure>
+    <img class="recorte" src="capturas/93-completa-estimacion.jpg" alt="Estimación de costo de una consulta completa" />
+    <figcaption><b>Antes de gastar.</b> Cuántas respuestas distintas se
+    verifican, en cuántas llamadas, cuánto se estima (con un margen para
+    reintentos) y cuánto costaría la exploratoria. Los supuestos de la
+    estimación están a la vista: se ajusta sola con lo que costaron las
+    completas anteriores.</figcaption>
+  </figure>
+
+  <figure>
+    <img class="recorte" src="capturas/94-completa-progreso.jpg" alt="Avance y gasto de una consulta completa" />
+    <figcaption><b>Mientras corre.</b> Lotes y respuestas verificadas, y el
+    gasto contra el presupuesto. <i>Ver lo verificado hasta ahora</i> arma el
+    resultado parcial: lo que falta figura «sin verificar».</figcaption>
+  </figure>
+
+  <h4>Si se termina el presupuesto</h4>
+
+  <p>Antes de cada lote el sistema mira cuánto se gastó; si el siguiente no
+  entra, no lo procesa. La consulta termina <strong>Detenida por
+  presupuesto</strong>: lo verificado vale y lo que faltó figura como
+  <strong>Sin verificar</strong> —no excluye a nadie ni cuenta como que
+  cumple—. Para seguir, <strong>Ampliar presupuesto y seguir</strong> pide un
+  monto mayor (nunca por encima del máximo configurado) y retoma desde donde
+  quedó, sin volver a pagar lo ya verificado. Un lote que falló por un problema
+  técnico se reintenta solo; si aun así queda fallido, <strong>Reintentar
+  lotes fallidos</strong>. <strong>Cancelar</strong> deja de procesar lo que no
+  empezó.</p>
+
+  <h4>Leer el resultado</h4>
+
+  <figure>
+    <img class="recorte" src="capturas/95-completa-resultado.jpg" alt="Resultado paginado de una consulta completa" />
+    <figcaption><b>Resultado completo, paginado.</b> Arriba, qué se verificó
+    por criterio y cuánto costó; el ranking se recorre por páginas
+    (<i>Personas a mostrar</i> es el tamaño de página).</figcaption>
+  </figure>
+
+  <ul class="puntos">
+    <li><strong>Se arma al abrirlo, con el consentimiento de hoy.</strong> El
+    sistema guarda lo que el verificador dijo de cada respuesta, no la lista de
+    personas: quien retiró el uso semántico después de lanzada la consulta ya no
+    aparece.</li>
+    <li>La barra de acciones es la de siempre. <strong>Descargar CSV</strong>
+    trae el ranking entero, no solo la página; <strong>Ver quiénes son</strong>
+    y <strong>Crear panel</strong> trabajan sobre la página en pantalla.</li>
+    <li>Lo que el verificador dijo se conserva 30 días. Después, para volver a
+    ver el resultado, hay que lanzarla otra vez.</li>
+  </ul>
+
+  <figure>
+    <img class="recorte" src="capturas/96-completas-recientes.jpg" alt="Consultas completas recientes" />
+    <figcaption><b>Las completas recientes</b>, con su estado y su gasto.
+    <i>Abrir</i> vuelve al avance o al resultado.</figcaption>
+  </figure>
 </section>
 
 <!-- ════════════════ 7 ════════════════ -->
@@ -3514,6 +3713,24 @@
     <p>Situaciones habituales y su explicación.</p>
   </div>
 
+  <h4>Subí «A verificar» y el ranking sigue mostrando 50</h4>
+  <p>Lo que se muestra lo decide <strong>Personas a mostrar</strong>, que es
+  otro parámetro (6.9). El encabezado del ranking dice cuántas personas se
+  revisaron y cuántas se muestran; si no coinciden, es el recorte, no que no
+  haya más gente.</p>
+
+  <h4>Una persona aparecía en la consulta y ahora figura «sin evidencia pertinente»</h4>
+  <p>Su respuesta habla de otra cosa —por ejemplo, quién es el titular de la
+  línea cuando el criterio es la marca del celular—. Antes eso se juzgaba como
+  «dudoso» y en modo laxo entraba penalizada; ahora el verificador la marca
+  <strong>irrelevante</strong> y no cuenta como coincidencia (6.4).</p>
+
+  <h4>¿Cuándo conviene la consulta completa?</h4>
+  <p>Cuando hace falta la lista entera y no las mejores candidatas, y el costo
+  se justifica. Para explorar, ajustar un criterio o ver si hay gente, la
+  exploratoria alcanza y cuesta unas cien veces menos. La estimación de 6.11
+  dice el número antes de gastar.</p>
+
   <h4>Hice una consulta solo demográfica y ya no veo los nombres</h4>
   <p>Es a propósito: el resultado demográfico es seudónimo, igual que el
   semántico. <strong>Ver quiénes son</strong> los muestra y deja registrado
@@ -3711,6 +3928,19 @@
     <tr><td class="destacado">Ámbito de composición</td>
       <td>Sobre quién se calcula la composición: todos los panelistas, un panel
       o una carga.</td></tr>
+    <tr><td class="destacado">Unidad de evidencia</td>
+      <td>Un texto distinto dentro de una pregunta. Si muchas personas dieron
+      la misma respuesta, es una sola unidad: se verifica una vez y vale para
+      todas.</td></tr>
+    <tr><td class="destacado">Irrelevante</td>
+      <td>Veredicto de una respuesta que no habla del criterio: no lo afirma ni
+      lo niega. Cuenta como falta de evidencia, no como «no cumple».</td></tr>
+    <tr><td class="destacado">Alcance (exploratorio / completo)</td>
+      <td>Cuánto revisa una consulta: las mejores candidatas en el momento, o
+      todas las respuestas habilitadas en segundo plano y con presupuesto.</td></tr>
+    <tr><td class="destacado">Estado (confirmada / posible / pendiente)</td>
+      <td>Cómo quedó una persona en el resultado: todo cumplido, entrada por la
+      tolerancia del modo laxo, o con alguna respuesta sin verificar.</td></tr>
     <tr><td class="destacado">Membresía</td>
       <td>La pertenencia de una persona a un panel. Una persona puede tener
       varias, y darse de baja de una no afecta a las demás.</td></tr>

@@ -32,7 +32,10 @@ JS = RAIZ / "web" / "public" / "js"
 # antes de esta regla.
 FASES_CON_PANTALLA = ("R7.", "R8.",
                       # R-ORG — ámbitos de composición y datos del estudio.
-                      "R-ORG.")
+                      "R-ORG.",
+                      # R-CS — recuperación y verificación de consultas
+                      # semánticas: alcance completo y su ejecución.
+                      "R-CS.")
 
 # Rutas de estas fases que **no** tienen pantalla, con el motivo. Vacío hoy;
 # si alguna vez hace falta, el motivo va escrito acá y no en la memoria de

@@ -72,6 +72,15 @@ NO_SON_SECRETOS = frozenset({
     "VERIFICACION_LOTE", "VERIFICACION_CONCURRENCIA",
     "VERIFICACION_PRESUPUESTO_S", "VERIFICACION_PROFUNDIDAD_MAX",
     "VERIFICACION_DEPURACION", "VERIFICACION_DEPURACION_DIAS",
+    # ── R-CS ── el `input_type` del criterio (se cambia sin redesplegar, A5),
+    # las tarifas con que se estima y se registra el costo, y las perillas
+    # de la consulta completa. Ninguna es una credencial; la que cambia
+    # entre ambientes y va declarada es `TAREAS_CONSULTA_URL`.
+    "EMBEDDINGS_TIPO_CONSULTA",
+    "COSTO_CLAUDE_ENTRADA_USD_MTOK", "COSTO_CLAUDE_SALIDA_USD_MTOK",
+    "COSTO_RERANK_USD_MTOK", "COSTO_EMBEDDING_USD_MTOK",
+    "CONSULTA_UNIDADES_POR_LOTE", "CONSULTA_PRESUPUESTO_MAXIMO_USD",
+    "TAREAS_CONSULTA_COLA",
 })
 
 

@@ -307,11 +307,16 @@ def recuperar(conn, vector, top_n, ids_persona=None):
     filas = db.todas(
         conn,
         """
-        select respuesta_id, id_persona, ref_estudio, estudio, fecha_campo,
-               pregunta_codigo, pregunta_texto, pregunta_tipo,
-               valor_texto, texto_embebido
-          from v_respuesta_estudio
-         where respuesta_id = any(%s::bigint[])
+        select v.respuesta_id, v.id_persona, v.ref_estudio, v.estudio,
+               v.fecha_campo, v.pregunta_codigo, v.pregunta_texto,
+               v.pregunta_tipo, v.valor_texto, v.texto_embebido,
+               r.pregunta_id,
+               coalesce(r.hash_texto,
+                        encode(sha256(convert_to(r.texto_embebido, 'UTF8')), 'hex'))
+                 as hash_texto
+          from v_respuesta_estudio v
+          join respuesta r on r.id = v.respuesta_id
+         where v.respuesta_id = any(%s::bigint[])
         """,
         (list(distancia_por_id),),
     )
@@ -329,6 +334,9 @@ def recuperar(conn, vector, top_n, ids_persona=None):
             "valor_texto": f["valor_texto"],
             "texto_embebido": f["texto_embebido"],
             "distancia": distancia_por_id[f["respuesta_id"]],
+            # R-CS · cambio 3 — la unidad de evidencia de esta respuesta.
+            "pregunta_id": f["pregunta_id"],
+            "hash_texto": f["hash_texto"],
         }
         for f in filas
     ]
@@ -358,6 +366,8 @@ def borrar_persona(conn, id_persona):
         select r.id from respuesta r join individuo i on i.id = r.individuo_id
          where i.id_persona = %s""", (str(id_persona),))
     n = db.ejecutar(conn, "delete from individuo where id_persona = %s", (str(id_persona),))
+    # R-CS — los veredictos de unidades que se quedaron sin respuestas.
+    borrar_veredictos_huerfanos(conn)
     return {"id_persona": str(id_persona), "individuos_borrados": n}
 
 
@@ -383,6 +393,7 @@ def borrar_respuestas_de_estudio(conn, id_persona, ref_estudio):
         """,
         (str(id_persona), str(ref_estudio)),
     )
+    borrar_veredictos_huerfanos(conn)
     return {"respuestas_borradas": n}
 
 
@@ -445,3 +456,179 @@ def resumen_de_estudio(conn, ref_estudio):
         "respuestas": fila["respuestas"],
         "individuos": fila["individuos"],
     }
+
+
+# ════════════════════════════════════════════════════════════════════
+#  R-CS · cambio 3 y 5 — unidades de evidencia y veredictos persistidos
+# ════════════════════════════════════════════════════════════════════
+#
+# Una unidad es un texto distinto dentro de una pregunta:
+# `(pregunta_id, hash_texto)`. Estas funciones son de la ejecución completa,
+# que exige la semantica/0009 (sin `veredicto_unidad` no hay dónde guardar
+# nada), y la 0009 completa `hash_texto` en todas las filas: por eso agrupan
+# por la columna, que es la que tiene índice. La exploratoria, que tiene que
+# funcionar también sin la 0009, calcula la huella con `coalesce` en
+# `recuperar`.
+
+def _ids_individuo(conn, ids_persona):
+    filas = db.todas(
+        conn, "select id from individuo where id_persona = any(%s::uuid[])",
+        ([str(i) for i in ids_persona],))
+    return [f["id"] for f in filas]
+
+
+def unidades_elegibles(conn, vector, ids_persona, distancia_maxima=None):
+    """Todas las unidades con al menos una respuesta de una persona habilitada,
+    con su mejor distancia al criterio. Es el universo de una ejecución
+    completa.
+
+    Recorre el corpus de esas personas a fuerza bruta y no con el índice
+    HNSW: el índice sirve para «los N más cercanos», y acá se quieren todos.
+    Es el cambio de patrón de acceso que el addendum (A2) pide medir en la
+    prueba de carga antes de producción.
+    """
+    if not ids_persona:
+        return []
+    individuos = _ids_individuo(conn, ids_persona)
+    if not individuos:
+        return []
+    filas = db.todas(
+        conn,
+        f"""
+        select r.pregunta_id, r.hash_texto as hash_texto,
+               min(r.embedding <=> %s::vector) as distancia,
+               max(length(r.texto_embebido)) as largo,
+               count(*) as respuestas
+          from respuesta r
+         where r.individuo_id = any(%s::bigint[])
+         group by 1, 2
+        having (%s::float8 is null or min(r.embedding <=> %s::vector) <= %s::float8)
+         order by 3, 1, 2
+        """,
+        (_vector(vector), individuos, distancia_maxima, _vector(vector),
+         distancia_maxima))
+    return [{"pregunta_id": f["pregunta_id"], "hash_texto": f["hash_texto"],
+             "distancia": float(f["distancia"]), "largo": int(f["largo"] or 0),
+             "respuestas": int(f["respuestas"])} for f in filas]
+
+
+def _claves(unidades):
+    return ([int(u[0]) for u in unidades], [str(u[1]) for u in unidades])
+
+
+def respuestas_de_unidades(conn, unidades, ids_persona, solo_representante=False):
+    """Las respuestas de esas unidades que son de personas habilitadas **hoy**.
+
+    `unidades`: `[(pregunta_id, hash_texto), …]`. Con `solo_representante`
+    devuelve una por unidad (la de menor id): es lo que se le muestra al
+    verificador. Sin él, todas: es a quién alcanza cada veredicto.
+    """
+    if not unidades or not ids_persona:
+        return []
+    individuos = _ids_individuo(conn, ids_persona)
+    if not individuos:
+        return []
+    preguntas, huellas = _claves(unidades)
+    distinto = "distinct on (r.pregunta_id, hash_texto)" if solo_representante else ""
+    filas = db.todas(
+        conn,
+        f"""
+        with claves as (
+          select * from unnest(%s::bigint[], %s::text[]) as k(pregunta_id, hash_texto)
+        )
+        select {distinto}
+               r.id as respuesta_id, r.pregunta_id, r.hash_texto as hash_texto,
+               v.id_persona, v.ref_estudio, v.estudio, v.fecha_campo,
+               v.pregunta_codigo, v.pregunta_texto, v.pregunta_tipo,
+               v.valor_texto, v.texto_embebido
+          from respuesta r
+          join claves k on k.pregunta_id = r.pregunta_id
+                       and k.hash_texto = r.hash_texto
+          join v_respuesta_estudio v on v.respuesta_id = r.id
+         where r.individuo_id = any(%s::bigint[])
+         order by r.pregunta_id, hash_texto, r.id
+        """,
+        (preguntas, huellas, individuos))
+    return [
+        {
+            "respuesta_id": f["respuesta_id"],
+            "pregunta_id": f["pregunta_id"],
+            "hash_texto": f["hash_texto"],
+            "id_persona": str(f["id_persona"]),
+            "ref_estudio": str(f["ref_estudio"]) if f["ref_estudio"] else None,
+            "estudio": f["estudio"],
+            "fecha_campo": f["fecha_campo"].isoformat() if f["fecha_campo"] else None,
+            "pregunta_codigo": f["pregunta_codigo"],
+            "pregunta_texto": f["pregunta_texto"],
+            "pregunta_tipo": f["pregunta_tipo"],
+            "valor_texto": f["valor_texto"],
+            "texto_embebido": f["texto_embebido"],
+        }
+        for f in filas
+    ]
+
+
+def guardar_veredictos(conn, ejecucion_id, criterio_orden, veredictos):
+    """Upsert por (ejecución, criterio, unidad): reprocesar un lote no
+    duplica y deja el último juicio."""
+    for v in veredictos:
+        db.ejecutar(
+            conn,
+            """insert into veredicto_unidad
+                      (ejecucion_id, criterio_orden, pregunta_id, hash_texto,
+                       veredicto, razon, fallo, aviso_polaridad, relevancia,
+                       distancia)
+               values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               on conflict (ejecucion_id, criterio_orden, pregunta_id, hash_texto)
+               do update set veredicto = excluded.veredicto,
+                             razon = excluded.razon,
+                             fallo = excluded.fallo,
+                             aviso_polaridad = excluded.aviso_polaridad,
+                             relevancia = excluded.relevancia,
+                             distancia = excluded.distancia,
+                             creado_en = now()""",
+            (str(ejecucion_id), criterio_orden, v["pregunta_id"], v["hash_texto"],
+             v["veredicto"], v.get("razon"), v.get("fallo"),
+             bool(v.get("aviso_polaridad")), v.get("relevancia"), v.get("distancia")))
+    return len(veredictos)
+
+
+def veredictos_de(conn, ejecucion_id):
+    """`{criterio_orden: {(pregunta_id, hash): veredicto}}` de una ejecución."""
+    purgar_veredictos(conn)
+    filas = db.todas(
+        conn,
+        """select criterio_orden, pregunta_id, hash_texto, veredicto, razon,
+                  fallo, aviso_polaridad, relevancia, distancia
+             from veredicto_unidad where ejecucion_id = %s""",
+        (str(ejecucion_id),))
+    salida = {}
+    for f in filas:
+        salida.setdefault(f["criterio_orden"], {})[(f["pregunta_id"], f["hash_texto"])] = f
+    return salida
+
+
+def purgar_veredictos(conn):
+    """Los veredictos vencidos (30 días). Si la 0009 no está, no hay nada."""
+    if not db.una(conn, "select to_regclass('veredicto_unidad') as t")["t"]:
+        return 0
+    return db.ejecutar(conn, "delete from veredicto_unidad where vence_en <= now()")
+
+
+def borrar_veredictos_huerfanos(conn):
+    """El alcance de una baja sobre los veredictos: el de una unidad que se
+    quedó sin respuestas habla de un texto que ya no está, y se va.
+
+    Los de unidades que siguen teniendo respuestas de otras personas se
+    quedan: no son de nadie en particular, y la razón describe un texto que
+    sigue en el store.
+    """
+    if not db.una(conn, "select to_regclass('veredicto_unidad') as t")["t"]:
+        return 0
+    return db.ejecutar(
+        conn,
+        f"""delete from veredicto_unidad v
+             where not exists (
+                   select 1 from respuesta r
+                    where r.pregunta_id = v.pregunta_id
+                      and r.hash_texto = v.hash_texto)""")

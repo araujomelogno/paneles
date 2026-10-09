@@ -14,6 +14,26 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Recuperación y verificación de consultas semánticas · 2026-10-09.** La
+> 6.2 suma el desplegable **Alcance**; la 6.3, el **estado** de cada persona
+> (confirmada, posible, pendiente) y el **recorte** («se revisaron N · se
+> muestran M»); la 6.4, los motivos **Irrelevante** y **Sin evidencia
+> pertinente**, la marca *se contradice* y «Las respuestas repetidas se
+> verifican una sola vez»; la 6.6 separa modo de alcance; la 6.9, los
+> parámetros **Personas a mostrar** y **Embedding del criterio**, la señal de
+> costo de *A verificar* y el costo de cada consulta en el diagnóstico. La
+> **6.11, Consulta completa**, es nueva: estimación, presupuesto, avance,
+> ampliar presupuesto, resultado paginado. Tres preguntas frecuentes y cuatro
+> términos de glosario nuevos.
+>
+> **Capturas nuevas, de la 88 a la 96**, con el método de la 62: servidor
+> mínimo contra `ruteo.despachar` y un Postgres de pruebas sembrado con el caso
+> del addendum (25 personas con la misma respuesta sobre el titular del
+> contrato, 118 con la marca y una que se contradice), un reranker y un
+> verificador dobles con reglas a la vista, y Firebase Auth simulado en
+> Playwright. La ejecución completa corre con un encolador que procesa cada
+> lote en un hilo, para que se vea el avance.
+
 > **Ámbitos de composición, origen de cada persona, consultas demográficas
 > y acceso al portal · 2026-10-08.** La 3.5 suma la tarjeta **Origen** (de
 > qué estudios proviene la persona, creada o reutilizada, y qué significa
@@ -234,7 +254,7 @@ node docs/manual/generar_pdf.mjs
 | `portada.html` | Portada, a sangre |
 | `manual.html` | Índice y las catorce secciones |
 | `estilo.css` | Estilos, compartidos por los dos |
-| `capturas/` | Las capturas, de la 01 a la 87 |
+| `capturas/` | Las capturas, de la 01 a la 96 |
 | `tipografia/` | Montserrat local, para que el PDF salga igual sin red |
 | `preparar_demo.sh` | Arma y sirve la copia en modo demo |
 | `capturar.mjs` | Toma las capturas |

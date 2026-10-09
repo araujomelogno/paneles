@@ -224,6 +224,8 @@ def test_detecta_una_vista_que_falta(conn_semantica):
 
 def test_detecta_una_columna_que_falta(conn_semantica):
     with conn_semantica.cursor() as cur:
+        # R-CS — `v_unidad_evidencia` (semantica/0009) depende de la columna.
+        cur.execute("drop view if exists v_unidad_evidencia")
         cur.execute("alter table respuesta drop column hash_texto")
     try:
         estado = esquema.verificar(conn_semantica, esquema.MIGRACIONES_SEMANTICA)
@@ -354,6 +356,7 @@ def test_la_consulta_sql_dice_lo_mismo_que_la_verificacion_en_python(
 def test_la_consulta_sql_encuentra_lo_mismo_cuando_falta_algo(conn_semantica):
     with conn_semantica.cursor() as cur:
         cur.execute("drop view if exists v_respuesta_estudio")
+        cur.execute("drop view if exists v_unidad_evidencia")
         cur.execute("alter table respuesta drop column hash_texto")
     try:
         por_sql = {f["objeto"] for f in db.todas(conn_semantica, _consulta_sql("semantica"))}
@@ -361,7 +364,8 @@ def test_la_consulta_sql_encuentra_lo_mismo_cuando_falta_algo(conn_semantica):
             f["objeto"]
             for f in esquema.verificar(conn_semantica, esquema.MIGRACIONES_SEMANTICA)["faltantes"]
         }
-        assert por_sql == por_python == {"v_respuesta_estudio", "respuesta.hash_texto"}
+        assert por_sql == por_python == {"v_respuesta_estudio", "respuesta.hash_texto",
+                                         "v_unidad_evidencia"}
     finally:
         conn_semantica.rollback()
 

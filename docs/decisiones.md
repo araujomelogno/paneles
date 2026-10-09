@@ -3829,3 +3829,106 @@ fallar o inventar un cero. Las diferencias legítimas se conservan: sin
 puntaje, evidencia, veredicto, degradaciones ni diagnóstico del puente, y el
 orden es el del listado. Los endpoints ya aceptaban cualquier conjunto de
 `id_persona`; no hizo falta tocarlos.
+
+---
+
+## D70 · Lo que se verifica son unidades de evidencia, «irrelevante» no es «no cumple», y «completo» tiene precio y presupuesto
+
+**El problema.** Una consulta por «usa un celular Xiaomi» devolvió como
+resultado a personas cuya única evidencia era «soy el titular del
+contrato»: 25 personas con la misma respuesta ocuparon los 25 lugares de
+`top_k`, Claude leyó 25 veces el mismo texto, y la respuesta que importaba
+—la marca, mal escrita— nunca llegó a verificarse. La solicitud de cambio
+proponía cinco cambios; el addendum
+(`specs/ADDENDUM_solicitud_consultas_semanticas.md`) pidió antes medir (A1),
+cuantificar el costo (A2), no duplicar contratos existentes (A3), arreglar
+el desajuste con COLOQUIO (A4) y exponer `limite` (A6).
+
+**La decisión.**
+
+- **Cambio 1 · el criterio se embebe como consulta** (`input_type=query`);
+  las respuestas siguen como documento y no se re-embebe nada. No es neutral
+  (A5): se vuelve atrás sin redesplegar con `EMBEDDINGS_TIPO_CONSULTA=document`
+  (una revisión nueva de la función, no un deploy) o por consulta con
+  `tipo_embedding_criterio`, y el tipo efectivo queda en el diagnóstico.
+  `scripts/diagnosticar_consulta.py input-type` mide antes y después.
+- **Cambio 2 · `alcance` es otro eje que `modo`.** `exploratorio` (las
+  `top_k` mejores, en la request) o `completo` (todas las unidades
+  elegibles, en diferido). Una completa puede ser laxa.
+- **Cambio 3 · unidades de evidencia.** Una unidad es un texto distinto
+  dentro de una pregunta, `(pregunta_id, hash_texto)`. Se rerankea y se
+  verifica **una vez** y el veredicto vale para todas las respuestas que la
+  comparten. La exploratoria **rellena**: si las personas verificadas solo
+  tienen evidencia irrelevante, va a buscar a las siguientes (hasta 3 rondas
+  que llamen al verificador, sin pasar de `top_k × 3` unidades, el mismo tope
+  de evidencias que había). Las tandas cuyas unidades ya se juzgaron son
+  gratis y no cuentan como ronda. El catálogo es una **vista**
+  (`v_unidad_evidencia`, semantica/0009), no una tabla con texto: una baja
+  la achica sola. La 0009 completa `hash_texto` con el mismo sha256 que
+  Python, y una prueba los compara.
+- **Cambio 4 · `irrelevante`.** Un veredicto nuevo del verificador: la
+  respuesta no habla del criterio. Para la combinación es ausencia de
+  evidencia (afuera en estricto o duro, penalizada en laxo), y en laxo una
+  persona **sin ninguna** evidencia pertinente no aparece
+  (`sin_evidencia_pertinente`): antes no podía pasar —sin hallazgo no se
+  entraba al universo— y mostrarla sería el falso resultado. Irrelevante
+  **corrige la interpretación, no el recall**: los lugares los recupera el
+  cambio 3.
+- **R4.2 · una sola regla de agregación** (`consultas.hallazgo_de`), que
+  usan la exploratoria y la completa: `no_cumple` > `cumple` > `dudoso` >
+  `sin_verificar` > `irrelevante`. Un `cumple` y un `no_cumple` de la misma
+  persona: manda el `no_cumple` y se marca `contradiccion` (A5).
+- **Estado por persona** (`confirmada`, `posible`, `pendiente`;
+  `descartada` en excluidos) y `version_contrato: 2`. **A4**: `item.detalle`
+  va con el mismo contenido que `item.criterios`, porque COLOQUIO lee
+  `detalle`; y un cliente que no encuentre un campo nuevo lo lee como «no se
+  sabe», nunca como un valor favorable.
+- **Cambio 5 · la completa reutiliza la ingesta diferida** (A3): plan
+  congelado al confirmar, lotes en Cloud Tasks (`procesarconsulta`), avance
+  derivado de los lotes (`v_consulta_progreso`), reintento idempotente
+  (upsert por ejecución, criterio y unidad), gate re-evaluado en cada lote
+  **y al leer**. El resultado no se guarda: se arma al leer, paginado.
+  Los veredictos viven en el store semántico (`veredicto_unidad`, 30 días),
+  porque la razón describe contenido; una baja borra los de las unidades
+  que se quedan sin respuestas.
+- **A2 · el costo es requisito, no detalle.** Estimación en la pantalla
+  antes de confirmar (misma ruta, `solo_estimar`), **presupuesto
+  obligatorio** con techo por configuración (`CONSULTA_PRESUPUESTO_MAXIMO_USD`),
+  control antes de cada lote sobre la suma de los lotes (no un acumulador),
+  y costo real registrado por lote y por ejecución. La estimación se calibra
+  sola con los tokens observados. Lanzar una completa es un permiso aparte,
+  `consulta_completa` (admin y operaciones): quién gasta es una decisión de
+  producto.
+- **A1.3 · cada ejecución deja su fila** en `consulta_ejecucion`
+  (bóveda/0025): degradaciones, reranker y verificador efectivos,
+  `input_type`, etapas y costo; nunca personas ni evidencias. Y un reranker
+  que contesta sin puntajes (o con puntajes para una parte) ahora es una
+  **degradación declarada**: antes se descartaban los `None` en silencio.
+- **A6 · `limite` en Parámetros** («Personas a mostrar»), validado contra
+  `top_k` en el formulario, y `recorte` en el resultado: cuántas se
+  verificaron frente a cuántas se muestran.
+
+**Lo que se descartó.**
+
+- *Una tabla de unidades con su propio embedding e índice.* Duplicaba los
+  vectores (la instancia es chica, D54) y obligaba a sincronizar bajas. La
+  vista sobre `respuesta` alcanza: el recall sigue con el índice HNSW y el
+  colapso a unidades es en memoria.
+- *Guardar el resultado de la completa.* Persistiría una lista de personas
+  sin volver a pasar por el gate (P1).
+- *Un endpoint aparte para estimar.* Divergiría del que lanza, y lo que
+  divergiría es el número que se muestra antes de gastar.
+- *Esperar a A1 para implementar.* El addendum lo recomienda para decidir el
+  alcance; acá se pidió la solicitud completa. A1 queda como **paso
+  obligatorio del despliegue**, antes de habilitar la completa, y con el
+  script para correrlo.
+
+**Dónde vive.** `functions/panel_api/consultas.py` (`_resolver_criterio_semantico`,
+`hallazgo_de`, `_combinar`, `registrar_ejecucion`),
+`functions/panel_api/consulta_completa.py`, `functions/panel_api/costo_consulta.py`,
+`functions/panel_api/embeddings.py` (`tipo_de_criterio`, `embeber_criterio`),
+`functions/panel_api/verificacion.py` (`IRRELEVANTE`),
+`functions/panel_api/semantica.py` (unidades y veredictos),
+`db/boveda/0025_consulta_ejecucion.sql`, `db/semantica/0009_unidades_de_evidencia.sql`,
+`functions/main.py` (`procesarconsulta`), `web/public/js/paginas/consultas.js`,
+`scripts/diagnosticar_consulta.py`, `functions/tests/test_r_cs_consultas.py`.

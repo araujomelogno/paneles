@@ -73,8 +73,10 @@ import uuid
 
 from . import (
     consentimiento,
+    costo_consulta,
     demografia,
     db,
+    embeddings as mod_embeddings,
     semantica,
     verificacion as mod_verificacion,
 )
@@ -120,6 +122,45 @@ Por encima, pasar la lista sale más caro que filtrar después."""
 
 ESTRICTO, LAXO = "estricto", "laxo"
 MODOS = (ESTRICTO, LAXO)
+
+# R-CS · cambio 2 — el alcance es otro eje que el modo. El modo dice cómo se
+# interpreta lo que no se pudo afirmar (estricto deja afuera, laxo incluye
+# penalizado); el alcance dice **cuánto se verifica**: las mejores `top_k`
+# personas (exploratorio, en la request) o todas las unidades elegibles
+# (completo, en lotes diferidos y con presupuesto; ver `consulta_completa`).
+EXPLORATORIO, COMPLETO = "exploratorio", "completo"
+ALCANCES = (EXPLORATORIO, COMPLETO)
+
+RONDAS_MAXIMAS = 3
+"""R-CS · cambio 3 — cuántas veces la exploratoria va a buscar más personas
+cuando las que verificó resultaron irrelevantes. La primera ronda es la de
+siempre (las `top_k` mejores); las siguientes reemplazan a las que no
+aportaron evidencia pertinente, sin pasar del presupuesto de unidades."""
+
+SIN_EVIDENCIA_PERTINENTE = "sin_evidencia_pertinente"
+"""Laxo: ninguno de los criterios semánticos tiene evidencia que hable del
+tema. Antes no podía pasar —sin hallazgo no se entraba al universo—; con
+`irrelevante` sí, y mostrarla penalizada sería el falso resultado que el
+estado nuevo existe para evitar."""
+
+# R-CS · el estado de una persona frente a un criterio, y en el resultado.
+# Es lo que COLOQUIO y la pantalla leen sin tener que reinterpretar la
+# combinación de veredictos (R4.2 de la solicitud).
+CONFIRMADA, POSIBLE, DESCARTADA, PENDIENTE = (
+    "confirmada", "posible", "descartada", "pendiente")
+ESTADO_POR_VEREDICTO = {
+    mod_verificacion.CUMPLE: CONFIRMADA,
+    mod_verificacion.DUDOSO: POSIBLE,
+    mod_verificacion.NO_CUMPLE: DESCARTADA,
+    mod_verificacion.SIN_VERIFICAR: PENDIENTE,
+    mod_verificacion.IRRELEVANTE: mod_verificacion.IRRELEVANTE,
+}
+
+VERSION_CONTRATO = 2
+"""R-CS · A4 — la forma de la respuesta. 2 trae `estado`, `irrelevante`,
+`alcance`, `recorte` y `costo`. Un cliente que no encuentre un campo de la
+versión 2 tiene que leerlo como «no se sabe», nunca como un valor favorable:
+una persona sin `estado` no está «confirmada»."""
 
 DEMOGRAFICO_PRIMERO = "demografico_primero"
 SEMANTICO_PRIMERO = "semantico_primero"
@@ -261,15 +302,60 @@ def normalizar_definicion(cruda, conn=None):
     except (TypeError, ValueError):
         umbral = UMBRAL_DISTANCIA
 
+    alcance = (cruda.get("alcance") or EXPLORATORIO).strip().lower()
+    if alcance not in ALCANCES:
+        raise DatosInvalidos(
+            f"Alcance desconocido: {alcance!r}.", {"alcances_validos": list(ALCANCES)})
+
+    # R-CS · A5 — `input_type` del criterio, por consulta. Solo se guarda si
+    # se pidió: sin él manda el entorno, y una consulta guardada sigue al
+    # entorno en vez de congelar el valor de hoy.
+    tipo_criterio = cruda.get("tipo_embedding_criterio")
+    if tipo_criterio not in (None, ""):
+        tipo_criterio = str(tipo_criterio).strip().lower()
+        if tipo_criterio not in mod_embeddings.TIPOS_DE_CRITERIO:
+            raise DatosInvalidos(
+                f"`tipo_embedding_criterio` desconocido: {tipo_criterio!r}.",
+                {"validos": list(mod_embeddings.TIPOS_DE_CRITERIO)})
+    else:
+        tipo_criterio = None
+
+    presupuesto = cruda.get("presupuesto_usd")
+    if presupuesto not in (None, ""):
+        try:
+            presupuesto = round(float(presupuesto), 4)
+        except (TypeError, ValueError):
+            raise DatosInvalidos(f"`presupuesto_usd` inválido: {presupuesto!r}.")
+        if presupuesto <= 0:
+            raise DatosInvalidos("El presupuesto tiene que ser mayor que cero.")
+    else:
+        presupuesto = None
+
+    distancia_maxima = cruda.get("distancia_maxima")
+    if distancia_maxima not in (None, ""):
+        try:
+            distancia_maxima = float(distancia_maxima)
+        except (TypeError, ValueError):
+            raise DatosInvalidos(f"`distancia_maxima` inválida: {distancia_maxima!r}.")
+    else:
+        distancia_maxima = None
+
     return {
         "criterios": criterios,
         "modo": modo,
+        "alcance": alcance,
         "panel_id": panel_id,
         "top_n": _entero(cruda.get("top_n"), TOP_N_POR_DEFECTO, TOP_N_MAXIMO),
         "top_k": _entero(cruda.get("top_k"), TOP_K_POR_DEFECTO, TOP_K_MAXIMO),
+        # A6 — «Personas a mostrar». En la exploratoria recorta el ranking;
+        # en la completa es el tamaño de página, que no tiene nada que ver
+        # con cuánto se verifica.
         "limite": _entero(cruda.get("limite"), LIMITE_POR_DEFECTO, TOP_K_MAXIMO),
         "estrategia_puente": estrategia,
         "umbral_distancia": umbral,
+        "tipo_embedding_criterio": tipo_criterio,
+        "presupuesto_usd": presupuesto,
+        "distancia_maxima": distancia_maxima,
     }
 
 
@@ -380,17 +466,150 @@ def _elegir_evidencia(evidencias, juicios):
     El orden de preferencia no es el del score: primero se busca una
     contradicción. Si la hay, esa es la evidencia que importa —es la que
     explica por qué la persona no entra— aunque su score sea peor que el de
-    otra respuesta suya. Después un `cumple`, después un `dudoso`, y recién
-    si ninguna se juzgó, una `sin_verificar`: un juicio emitido siempre le
-    gana a la falta de juicio.
+    otra respuesta suya. Después un `cumple`, después un `dudoso`, después
+    una `sin_verificar`: un juicio emitido siempre le gana a la falta de
+    juicio, y la falta de juicio le gana a `irrelevante` —una evidencia que
+    nadie leyó todavía puede ser pertinente; una irrelevante, no—. Recién si
+    todas son irrelevantes, la persona queda representada por una de ellas.
     """
     pares = list(zip(evidencias, juicios))
     for veredicto in (mod_verificacion.NO_CUMPLE, mod_verificacion.CUMPLE,
-                      mod_verificacion.DUDOSO):
+                      mod_verificacion.DUDOSO, mod_verificacion.SIN_VERIFICAR):
         for candidato, juicio in pares:
             if juicio["veredicto"] == veredicto:
                 return candidato, juicio
     return pares[0]
+
+
+def clave_unidad(candidato):
+    """R-CS · cambio 3 — la unidad de evidencia de una respuesta: un texto
+    distinto dentro de una pregunta. La huella viene del store; si no viene
+    (un doble de pruebas), se calcula con el mismo algoritmo."""
+    huella = candidato.get("hash_texto") or semantica.hash_texto(
+        candidato.get("texto_embebido") or "")
+    return (candidato.get("pregunta_id"), huella)
+
+
+def _agrupar_en_unidades(pool):
+    """El pool (respuestas, por distancia) → unidades, en el orden de su mejor
+    respuesta. `miembros` son los índices del pool que comparten el texto."""
+    unidades, por_clave = [], {}
+    for indice, candidato in enumerate(pool):
+        clave = clave_unidad(candidato)
+        unidad = por_clave.get(clave)
+        if unidad is None:
+            unidad = {"clave": clave, "representante": candidato, "miembros": []}
+            por_clave[clave] = unidad
+            unidades.append(unidad)
+        unidad["miembros"].append(indice)
+    return unidades
+
+
+def _rerankear_unidades(criterio, etiqueta, unidades, reranker, degradaciones):
+    """`{indice_de_unidad: relevancia}`, o vacío si no se aplicó.
+
+    Se rerankea **una vez por unidad**, no por respuesta: 25 copias del mismo
+    texto son un solo documento para el cross-encoder.
+
+    Un proveedor que contesta sin puntajes, o con puntajes para una parte, es
+    una degradación y se dice (A1.3). Antes se descartaban los `None` en
+    silencio: la consulta seguía con el orden de la distancia y nadie se
+    enteraba de que el reranker no había corrido. Y una cobertura parcial no
+    se usa: mezclar relevancias con distancias da un orden sin escala común.
+    """
+    if not reranker.disponible or not unidades:
+        return {}
+    textos = [u["representante"]["texto_embebido"] or u["representante"]["valor_texto"] or ""
+              for u in unidades]
+    try:
+        crudas = reranker.reordenar(criterio, textos)
+    except Exception as error:  # noqa: BLE001 — degradar, no romper
+        degradaciones.append({
+            "etapa": "reranking",
+            "proveedor": reranker.nombre,
+            "criterio": etiqueta,
+            "motivo": f"El proveedor falló: {error}",
+            "consecuencia": "Se sigue con el orden del recall (distancia).",
+        })
+        return {}
+    relevancias = {
+        indice: max(0.0, min(1.0, float(puntaje)))
+        for indice, puntaje in crudas if puntaje is not None
+    }
+    if len(relevancias) != len(unidades):
+        degradaciones.append({
+            "etapa": "reranking",
+            "proveedor": reranker.nombre,
+            "criterio": etiqueta,
+            "motivo": (f"El proveedor devolvió puntaje para {len(relevancias)} "
+                       f"de {len(unidades)} unidades."),
+            "consecuencia": ("Se sigue con el orden del recall (distancia): "
+                             "mezclar puntajes de dos escalas daría un orden "
+                             "sin sentido."),
+        })
+        return {}
+    return relevancias
+
+
+def _sumar_informes(informes, evidencias=None):
+    """Los informes de varias rondas de verificación, como uno solo."""
+    total = mod_verificacion.nuevo_informe(
+        evidencias if evidencias is not None else sum(i["evidencias"] for i in informes))
+    for informe in informes:
+        for clave in ("verificadas", "sin_verificar", "lotes_iniciales", "llamadas",
+                      "subdivisiones", "reintentos", "duracion_ms"):
+            total[clave] += informe.get(clave) or 0
+        for clave, valor in (informe.get("veredictos") or {}).items():
+            total["veredictos"][clave] = total["veredictos"].get(clave, 0) + valor
+        for clave, valor in (informe.get("por_fallo") or {}).items():
+            total["por_fallo"][clave] = total["por_fallo"].get(clave, 0) + valor
+        for clave, valor in (informe.get("stop_reasons") or {}).items():
+            total["stop_reasons"][clave] = total["stop_reasons"].get(clave, 0) + valor
+        for clave, valor in (informe.get("anomalias") or {}).items():
+            total["anomalias"][clave] = total["anomalias"].get(clave, 0) + valor
+        total["tokens"]["entrada"] += informe["tokens"]["entrada"]
+        total["tokens"]["salida"] += informe["tokens"]["salida"]
+        total["tam_lote"] = total["tam_lote"] or informe.get("tam_lote")
+        total["concurrencia"] = total["concurrencia"] or informe.get("concurrencia")
+        total["presupuesto_s"] = total["presupuesto_s"] or informe.get("presupuesto_s")
+        total["presupuesto_agotado"] = (
+            total["presupuesto_agotado"] or informe.get("presupuesto_agotado", False))
+        total["lotes"].extend(informe.get("lotes") or [])
+    return total
+
+
+def _verificar_unidades(ctx_verificacion, criterio, etiqueta, representantes,
+                        verificador, degradaciones):
+    """Verifica una tanda de unidades. Devuelve `(juicios, informe)` en el
+    orden de `representantes`, y nunca levanta: un proveedor que explota deja
+    la tanda «sin verificar» y lo dice."""
+    if not representantes:
+        return [], mod_verificacion.nuevo_informe(0)
+    # El presupuesto de tiempo es **de la consulta**, no de cada criterio ni
+    # de cada ronda: arranca con la primera verificación y lo comparten las
+    # siguientes. Si fuera por criterio, tres criterios triplicarían la
+    # espera de COLOQUIO.
+    if ctx_verificacion.get("limite") is None and getattr(verificador, "presupuesto_s", None):
+        ctx_verificacion["limite"] = time.monotonic() + verificador.presupuesto_s
+    try:
+        return verificador.verificar_con_informe(
+            criterio, representantes, limite=ctx_verificacion.get("limite"),
+            captura=ctx_verificacion.get("captura"), etiqueta=etiqueta)
+    except Exception as error:  # noqa: BLE001 — degradar, no romper
+        if not any(d.get("etapa") == "verificacion" and d.get("criterio") == etiqueta
+                   and not d.get("parcial") for d in degradaciones):
+            degradaciones.append({
+                "etapa": "verificacion",
+                "proveedor": verificador.nombre,
+                "criterio": etiqueta,
+                "motivo": f"El proveedor falló: {error}",
+                "consecuencia": (
+                    "Ningún candidato se excluye por veredicto: no se puede excluir "
+                    "por un juicio que no se emitió."
+                ),
+            })
+        return mod_verificacion.NoDisponible(str(error)).verificar_con_informe(
+            criterio, representantes)
 
 
 def _resolver_criterio_semantico(ctx, criterio, definicion, ids_permitidos,
@@ -400,14 +619,28 @@ def _resolver_criterio_semantico(ctx, criterio, definicion, ids_permitidos,
 
     Devuelve `{id_persona: hallazgo}`, donde el hallazgo trae el puntaje, la
     evidencia con su procedencia y el veredicto.
+
+    R-CS · cambio 3 — lo que se rerankea y se verifica son **unidades de
+    evidencia** (un texto distinto dentro de una pregunta), no respuestas.
+    Y la selección rellena: si las personas verificadas resultan tener solo
+    evidencia irrelevante, se va a buscar a las siguientes del ranking —hasta
+    `RONDAS_MAXIMAS` y sin pasar de `top_k × MAX_EVIDENCIAS_POR_INDIVIDUO`
+    unidades, que es el mismo tope de evidencias que había antes—. Con eso,
+    25 personas que dieron la misma respuesta sobre la titularidad del
+    contrato cuestan **una** unidad verificada y liberan sus 25 lugares.
     """
     etiqueta = criterio["etiqueta"]
+    verificacion = verificacion if verificacion is not None else {}
 
     # 1. Embedding del criterio. Mismo proveedor, modelo y dimensión que la
-    #    ingesta: si no fueran los mismos, las distancias no significarían nada.
+    #    ingesta; con `input_type` de consulta (R-CS · cambio 1), salvo que
+    #    el entorno o la consulta pidan otro.
     desde = time.perf_counter()
-    vector = ctx.embeddings.embeber([criterio["texto"]])[0]
-    reloj.marca("embedding", desde, criterio=etiqueta, dims=len(vector))
+    tipo = mod_embeddings.tipo_de_criterio(pedido=definicion.get("tipo_embedding_criterio"))
+    vector = ctx.embeddings.embeber_criterio([criterio["texto"]], tipo=tipo)[0]
+    verificacion.setdefault("tokens_embedding", 0)
+    verificacion["tokens_embedding"] += costo_consulta.tokens_de(criterio["texto"])
+    reloj.marca("embedding", desde, criterio=etiqueta, dims=len(vector), input_type=tipo)
 
     # 2. Recall.
     desde = time.perf_counter()
@@ -434,144 +667,189 @@ def _resolver_criterio_semantico(ctx, criterio, definicion, ids_permitidos,
 
     pool = crudos[: definicion["top_n"]]
     if not pool:
+        verificacion.setdefault("informes", []).append(
+            {"criterio": etiqueta, **mod_verificacion.nuevo_informe(0)})
         return {}
 
-    # 4. Reranking sobre el pool, antes del colapso (ver el docstring del
-    #    módulo).
+    # 4. Unidades de evidencia (R-CS · cambio 3) y reranking por unidad,
+    #    antes del colapso a individuo (ver el docstring del módulo).
     desde = time.perf_counter()
-    relevancias = {}
-    if reranker.disponible:
-        textos = [c["texto_embebido"] or c["valor_texto"] or "" for c in pool]
-        try:
-            relevancias = {
-                indice: (max(0.0, min(1.0, puntaje)) if puntaje is not None else None)
-                for indice, puntaje in reranker.reordenar(criterio["texto"], textos)
-            }
-            relevancias = {i: p for i, p in relevancias.items() if p is not None}
-        except Exception as error:  # noqa: BLE001 — degradar, no romper
-            relevancias = {}
-            degradaciones.append({
-                "etapa": "reranking",
-                "proveedor": reranker.nombre,
-                "motivo": f"El proveedor falló: {error}",
-                "consecuencia": "Se sigue con el orden del recall (distancia).",
-            })
+    unidades = _agrupar_en_unidades(pool)
+    reloj.marca("unidades", desde, criterio=etiqueta, respuestas=len(pool),
+                unidades=len(unidades), repetidas=len(pool) - len(unidades))
+
+    desde = time.perf_counter()
+    por_unidad = _rerankear_unidades(criterio["texto"], etiqueta, unidades,
+                                     reranker, degradaciones)
+    relevancias = {
+        miembro: por_unidad[i]
+        for i, unidad in enumerate(unidades) if i in por_unidad
+        for miembro in unidad["miembros"]
+    }
     reloj.marca(
         "reranking", desde, criterio=etiqueta, aplicado=bool(relevancias),
-        proveedor=reranker.nombre, entrada=len(pool),
+        proveedor=reranker.nombre, entrada=len(unidades),
     )
 
-    # 5. Agrupación por individuo y 6. top-k.
+    # 5. Agrupación por individuo.
     desde = time.perf_counter()
     grupos = _agrupar_por_individuo(pool, relevancias)
-    top_k = grupos[: definicion["top_k"]]
-    reloj.marca(
-        "colapso", desde, criterio=etiqueta,
-        individuos=len(grupos), top_k=len(top_k),
-        evidencias_a_verificar=sum(len(g["evidencias"]) for g in top_k),
-    )
+    reloj.marca("colapso", desde, criterio=etiqueta, individuos=len(grupos))
 
-    # 7. Verificación. Todas las evidencias del top-k, de todas las personas:
-    #    la contradicción puede estar en cualquiera. El verificador las parte
-    #    en lotes y las devuelve en el mismo orden (ver verificacion.py).
-    verificacion = verificacion if verificacion is not None else {}
+    # 6 y 7. Top-k y verificación, por rondas. Todas las evidencias de cada
+    #    persona, no solo la mejor: la contradicción puede estar en
+    #    cualquiera. Cada unidad se verifica una sola vez.
     desde = time.perf_counter()
-    planas = [evidencia for grupo in top_k for evidencia in grupo["evidencias"]]
-    # El presupuesto de tiempo es **de la consulta**, no de cada criterio:
-    # arranca con la primera verificación y lo comparten las siguientes. Si
-    # fuera por criterio, tres criterios triplicarían la espera de COLOQUIO.
-    if verificacion.get("limite") is None and getattr(verificador, "presupuesto_s", None):
-        verificacion["limite"] = time.monotonic() + verificador.presupuesto_s
-    try:
-        juicios, informe = verificador.verificar_con_informe(
-            criterio["texto"], planas, limite=verificacion.get("limite"),
-            captura=verificacion.get("captura"), etiqueta=etiqueta)
-    except Exception as error:  # noqa: BLE001 — degradar, no romper
-        juicios, informe = mod_verificacion.NoDisponible(str(error)).verificar_con_informe(
-            criterio["texto"], planas
-        )
+    representantes = {u["clave"]: u["representante"] for u in unidades}
+    miembros = {u["clave"]: len(u["miembros"]) for u in unidades}
+    top_k = definicion["top_k"]
+    tope_unidades = top_k * MAX_EVIDENCIAS_POR_INDIVIDUO
+    veredictos, informes, seleccionados = {}, [], []
+    cursor, pertinentes, rondas, tope_alcanzado = 0, 0, 0, False
+    while pertinentes < top_k and cursor < len(grupos):
+        tanda, nuevas = [], []
+        while cursor < len(grupos) and len(tanda) < top_k - pertinentes:
+            grupo = grupos[cursor]
+            propias = [clave_unidad(e) for e in grupo["evidencias"]]
+            faltan = [c for c in dict.fromkeys(propias)
+                      if c not in veredictos and c not in nuevas]
+            if len(veredictos) + len(nuevas) + len(faltan) > tope_unidades:
+                tope_alcanzado = True
+                break
+            nuevas.extend(faltan)
+            tanda.append(grupo)
+            cursor += 1
+        if not tanda:
+            break
+        # Una tanda cuyas unidades ya se juzgaron no cuesta nada y no cuenta
+        # como ronda: es justo el caso de las 25 respuestas repetidas, que
+        # se resuelven sin volver a llamar al verificador.
+        if nuevas and rondas >= RONDAS_MAXIMAS:
+            break
+        if nuevas:
+            rondas += 1
+            juicios, informe = _verificar_unidades(
+                verificacion, criterio["texto"], etiqueta,
+                [representantes[c] for c in nuevas], verificador, degradaciones)
+            informes.append(informe)
+            veredictos.update(zip(nuevas, juicios))
+        for grupo in tanda:
+            seleccionados.append(grupo)
+            if any(veredictos[clave_unidad(e)]["veredicto"] != mod_verificacion.IRRELEVANTE
+                   for e in grupo["evidencias"]):
+                pertinentes += 1
+        if tope_alcanzado:
+            break
+
+    informe = _sumar_informes(informes, evidencias=len(veredictos))
+    if verificador.disponible and informe["sin_verificar"]:
+        # R-VER.6 — falla parcial: los lotes buenos se conservan y la
+        # consulta lo dice, en vez de presentar un ranking que parece
+        # normal y está a medio verificar.
+        detalle = ", ".join(
+            f"{fallo}: {n}" for fallo, n in sorted(informe["por_fallo"].items()))
         degradaciones.append({
             "etapa": "verificacion",
             "proveedor": verificador.nombre,
-            "motivo": f"El proveedor falló: {error}",
+            "parcial": True,
+            "criterio": etiqueta,
+            "motivo": (
+                f"{informe['sin_verificar']} de {informe['evidencias']} "
+                f"unidad(es) de evidencia quedaron sin verificar ({detalle})."
+            ),
             "consecuencia": (
-                "Ningún candidato se excluye por veredicto: no se puede excluir "
-                "por un juicio que no se emitió."
+                "Esas evidencias no excluyen ni cuentan como cumplimiento; "
+                "las personas afectadas quedan marcadas «verificación "
+                "incompleta». Los veredictos emitidos se aplican igual."
             ),
         })
-    else:
-        if verificador.disponible and informe["sin_verificar"]:
-            # R-VER.6 — falla parcial: los lotes buenos se conservan y la
-            # consulta lo dice, en vez de presentar un ranking que parece
-            # normal y está a medio verificar.
-            detalle = ", ".join(
-                f"{fallo}: {n}" for fallo, n in sorted(informe["por_fallo"].items()))
-            degradaciones.append({
-                "etapa": "verificacion",
-                "proveedor": verificador.nombre,
-                "parcial": True,
-                "criterio": etiqueta,
-                "motivo": (
-                    f"{informe['sin_verificar']} de {informe['evidencias']} "
-                    f"evidencia(s) quedaron sin verificar ({detalle})."
-                ),
-                "consecuencia": (
-                    "Esas evidencias no excluyen ni cuentan como cumplimiento; "
-                    "las personas afectadas quedan marcadas «verificación "
-                    "incompleta». Los veredictos emitidos se aplican igual."
-                ),
-            })
-    verificacion.setdefault("informes", []).append({"criterio": etiqueta, **informe})
+    respuestas_cubiertas = sum(miembros[c] for c in veredictos)
+    verificacion.setdefault("informes", []).append({
+        "criterio": etiqueta, **informe,
+        "unidades": len(veredictos),
+        "respuestas_cubiertas": respuestas_cubiertas,
+        "rondas": rondas,
+        "irrelevantes": informe["veredictos"].get(mod_verificacion.IRRELEVANTE, 0),
+    })
+    verificacion.setdefault("personas_verificadas", set()).update(
+        g["id_persona"] for g in seleccionados)
+    verificacion.setdefault("personas_pertinentes", set()).update(
+        g["id_persona"] for g in seleccionados
+        if any(veredictos[clave_unidad(e)]["veredicto"] != mod_verificacion.IRRELEVANTE
+               for e in g["evidencias"]))
     reloj.marca(
         "verificacion", desde, criterio=etiqueta,
         aplicada=verificador.disponible, proveedor=verificador.nombre,
         evidencias_verificadas=informe["verificadas"],
+        respuestas_cubiertas=respuestas_cubiertas,
         sin_verificar=informe["sin_verificar"],
-        individuos=len(top_k),
+        individuos=len(seleccionados), pertinentes=pertinentes, rondas=rondas,
+        tope_de_unidades=tope_alcanzado,
         lotes=informe["lotes_iniciales"], llamadas=informe["llamadas"],
         subdivisiones=informe["subdivisiones"],
-        cumple=sum(1 for j in juicios if j["veredicto"] == mod_verificacion.CUMPLE),
-        no_cumple=sum(1 for j in juicios if j["veredicto"] == mod_verificacion.NO_CUMPLE),
-        dudoso=sum(1 for j in juicios if j["veredicto"] == mod_verificacion.DUDOSO),
+        cumple=informe["veredictos"].get(mod_verificacion.CUMPLE, 0),
+        no_cumple=informe["veredictos"].get(mod_verificacion.NO_CUMPLE, 0),
+        dudoso=informe["veredictos"].get(mod_verificacion.DUDOSO, 0),
+        irrelevante=informe["veredictos"].get(mod_verificacion.IRRELEVANTE, 0),
     )
 
-    hallazgos, cursor = {}, 0
-    for grupo in top_k:
-        cuantas = len(grupo["evidencias"])
-        del_grupo = juicios[cursor : cursor + cuantas]
-        cursor += cuantas
-        candidato, juicio = _elegir_evidencia(grupo["evidencias"], del_grupo)
-        relevancia = candidato.get("relevancia")
-        pendientes = sum(
-            1 for j in del_grupo if j["veredicto"] == mod_verificacion.SIN_VERIFICAR)
-        hallazgos[grupo["id_persona"]] = {
-            "criterio": etiqueta,
-            "orden": criterio["orden"],
-            "puntaje": round(
-                relevancia if relevancia is not None
-                else _similitud(candidato["distancia"]),
-                4,
-            ),
-            "distancia": round(candidato["distancia"], 4),
-            "relevancia": None if relevancia is None else round(relevancia, 4),
-            "veredicto": juicio["veredicto"],
-            "razon": juicio["razon"],
-            "fallo": juicio.get("fallo"),
-            "aviso_polaridad": juicio["aviso_polaridad"],
-            # Cuántas de sus evidencias quedaron sin juzgar. Con una sola,
-            # la persona no está «validada» aunque otra diga `cumple`: la
-            # contradicción podía estar justo en la que faltó.
-            "pendientes_de_verificar": pendientes,
-            "evidencia": _evidencia(candidato),
-            # Todas las respuestas suyas que se miraron, con su veredicto:
-            # es lo que deja auditar por qué quedó adentro o afuera.
-            "evidencias_evaluadas": [
-                {**_evidencia(otro), "veredicto": otro_juicio["veredicto"],
-                 "razon": otro_juicio["razon"], "fallo": otro_juicio.get("fallo")}
-                for otro, otro_juicio in zip(grupo["evidencias"], del_grupo)
-            ],
-        }
-    return hallazgos
+    return {
+        grupo["id_persona"]: hallazgo_de(
+            criterio, grupo["evidencias"],
+            [veredictos[clave_unidad(e)] for e in grupo["evidencias"]],
+            repeticiones=miembros)
+        for grupo in seleccionados
+    }
+
+
+def hallazgo_de(criterio, evidencias, juicios, repeticiones=None):
+    """Lo que una persona aporta a un criterio, a partir de sus evidencias y
+    los juicios de cada una. Lo usan la exploratoria y la completa: la regla
+    de agregación (R4.2) es una sola."""
+    candidato, juicio = _elegir_evidencia(evidencias, juicios)
+    relevancia = candidato.get("relevancia")
+    distancia = candidato.get("distancia")
+    pendientes = sum(
+        1 for j in juicios if j["veredicto"] == mod_verificacion.SIN_VERIFICAR)
+    vistos = {j["veredicto"] for j in juicios}
+    if relevancia is not None:
+        puntaje = relevancia
+    elif distancia is not None:
+        puntaje = _similitud(distancia)
+    else:
+        puntaje = 0.0
+    repeticiones = repeticiones or {}
+    return {
+        "criterio": criterio["etiqueta"],
+        "orden": criterio["orden"],
+        "puntaje": round(puntaje, 4),
+        "distancia": None if distancia is None else round(distancia, 4),
+        "relevancia": None if relevancia is None else round(relevancia, 4),
+        "veredicto": juicio["veredicto"],
+        "estado": ESTADO_POR_VEREDICTO.get(juicio["veredicto"]),
+        "razon": juicio["razon"],
+        "fallo": juicio.get("fallo"),
+        "aviso_polaridad": juicio.get("aviso_polaridad", False),
+        # Cuántas de sus evidencias quedaron sin juzgar. Con una sola,
+        # la persona no está «validada» aunque otra diga `cumple`: la
+        # contradicción podía estar justo en la que faltó.
+        "pendientes_de_verificar": pendientes,
+        # R-CS · A5 — un `cumple` y un `no_cumple` de la misma persona. Manda
+        # el `no_cumple` (ver el docstring del módulo), y se marca para que
+        # no quede escondido detrás de un conteo que no lo delata.
+        "contradiccion": (mod_verificacion.CUMPLE in vistos
+                          and mod_verificacion.NO_CUMPLE in vistos),
+        "evidencia": _evidencia(candidato),
+        # Todas las respuestas suyas que se miraron, con su veredicto:
+        # es lo que deja auditar por qué quedó adentro o afuera.
+        "evidencias_evaluadas": [
+            {**_evidencia(otro), "veredicto": otro_juicio["veredicto"],
+             "razon": otro_juicio["razon"], "fallo": otro_juicio.get("fallo"),
+             # Cuántas respuestas del pool comparten este mismo texto.
+             "repeticiones": repeticiones.get(clave_unidad(otro), 1)}
+            for otro, otro_juicio in zip(evidencias, juicios)
+        ],
+    }
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -590,6 +868,18 @@ def _combinar(definicion, por_criterio, umbral):
       sin_verificar                    → adentro en los dos modos, con su
                                          puntaje de recall/reranking, y
                                          marcada «verificación incompleta».
+      irrelevante (R-CS · cambio 4)    → como sin evidencia: no habla del
+                                         criterio, así que ni afirma ni
+                                         contradice. Afuera en estricto o
+                                         duro; penalizada en laxo.
+      laxo sin ninguna evidencia       → afuera (`sin_evidencia_pertinente`).
+      pertinente en ningún criterio      Antes no podía pasar; con
+                                         `irrelevante` sí, y mostrarla sería
+                                         el falso resultado.
+
+    «Irrelevante» corrige la interpretación, **no** el recall: los lugares
+    que ocuparon las respuestas irrelevantes ya se gastaron. Lo que los
+    recupera es la selección por unidades (cambio 3), no esta función.
 
     `sin_verificar` tiene su propia rama a propósito (R-VER.7). Antes, una
     verificación caída dejaba todo en `dudoso` y había que apagar la regla
@@ -641,6 +931,31 @@ def _combinar(definicion, por_criterio, umbral):
                     }
                 continue
 
+            if hallazgo["veredicto"] == mod_verificacion.IRRELEVANTE:
+                # Se miró y no habla del criterio: para la combinación es
+                # ausencia de evidencia, con su propio rótulo para que se
+                # vea por qué.
+                detalle.append({
+                    "criterio": criterio["etiqueta"],
+                    "tipo": "semantico",
+                    "puntaje": 0.0,
+                    "peso": criterio["peso"],
+                    "veredicto": mod_verificacion.IRRELEVANTE,
+                    "estado": mod_verificacion.IRRELEVANTE,
+                    "razon": hallazgo["razon"],
+                    "distancia": hallazgo["distancia"],
+                    "relevancia": hallazgo["relevancia"],
+                    "evidencia": None,
+                    "evidencias_evaluadas": hallazgo.get("evidencias_evaluadas", []),
+                })
+                if criterio["duro"] or estricto:
+                    excluir = excluir or {
+                        "criterio": criterio["etiqueta"],
+                        "motivo": mod_verificacion.IRRELEVANTE,
+                        "evidencia": hallazgo["evidencia"]["valor_texto"],
+                    }
+                continue
+
             veredicto = hallazgo["veredicto"]
             puntaje = hallazgo["puntaje"]
             if veredicto == mod_verificacion.NO_CUMPLE:
@@ -651,6 +966,7 @@ def _combinar(definicion, por_criterio, umbral):
                     "criterio": criterio["etiqueta"],
                     "motivo": mod_verificacion.NO_CUMPLE,
                     "evidencia": hallazgo["evidencia"]["valor_texto"],
+                    "contradiccion": hallazgo.get("contradiccion", False),
                 }
             elif veredicto == mod_verificacion.DUDOSO:
                 if criterio["duro"] or estricto:
@@ -668,17 +984,29 @@ def _combinar(definicion, por_criterio, umbral):
                 "puntaje": round(puntaje, 4),
                 "peso": criterio["peso"],
                 "veredicto": veredicto,
+                "estado": hallazgo.get("estado") or ESTADO_POR_VEREDICTO.get(veredicto),
                 "razon": hallazgo["razon"],
+                "contradiccion": hallazgo.get("contradiccion", False),
                 "distancia": hallazgo["distancia"],
                 "relevancia": hallazgo["relevancia"],
                 "aviso_polaridad": hallazgo["aviso_polaridad"],
                 "fallo": hallazgo.get("fallo"),
                 "pendientes_de_verificar": hallazgo.get("pendientes_de_verificar", 0),
                 "evidencia": hallazgo["evidencia"],
+                # Todas las que se miraron, con su veredicto: la contradicción
+                # y las repeticiones se ven acá.
+                "evidencias_evaluadas": hallazgo.get("evidencias_evaluadas", []),
             })
 
+        if not excluir and semanticos and not any(
+                d["tipo"] == "semantico" and d["veredicto"] not in (
+                    SIN_EVIDENCIA, mod_verificacion.IRRELEVANTE)
+                for d in detalle):
+            excluir = {"criterio": semanticos[0]["etiqueta"],
+                       "motivo": SIN_EVIDENCIA_PERTINENTE}
+
         if excluir:
-            excluidos.append({"id_persona": id_persona, **excluir})
+            excluidos.append({"id_persona": id_persona, "estado": DESCARTADA, **excluir})
             continue
 
         pesos = sum(d["peso"] for d in detalle) or 1.0
@@ -687,7 +1015,8 @@ def _combinar(definicion, por_criterio, umbral):
         mejor_distancia = min(distancias) if distancias else None
         penalizado = any(
             d["tipo"] == "semantico"
-            and d["veredicto"] in (SIN_EVIDENCIA, mod_verificacion.DUDOSO)
+            and d["veredicto"] in (SIN_EVIDENCIA, mod_verificacion.DUDOSO,
+                                   mod_verificacion.IRRELEVANTE)
             for d in detalle
         )
         incompleta = any(
@@ -698,8 +1027,14 @@ def _combinar(definicion, por_criterio, umbral):
             mejor_distancia is not None and mejor_distancia > umbral
         )
 
+        criterios_ordenados = sorted(detalle, key=lambda d: (d["tipo"], d["criterio"]))
         items.append({
             "id_persona": id_persona,
+            # R-CS — el estado de la persona en el resultado: `pendiente` si
+            # algo quedó sin verificar, `confirmada` si todos los semánticos
+            # se confirmaron, `posible` si entró por la tolerancia del laxo.
+            "estado": (PENDIENTE if incompleta
+                       else POSIBLE if penalizado else CONFIRMADA),
             "puntaje": round(combinado, 4),
             "confianza": "baja" if confianza_baja else "alta",
             "mejor_distancia": mejor_distancia,
@@ -707,7 +1042,12 @@ def _combinar(definicion, por_criterio, umbral):
             # R-VER.7 — alguna de sus evidencias quedó sin verificar. No es un
             # resultado completo, y el ranking lo dice persona por persona.
             "verificacion_incompleta": incompleta,
-            "criterios": sorted(detalle, key=lambda d: (d["tipo"], d["criterio"])),
+            "criterios": criterios_ordenados,
+            # R-CS · A4 — COLOQUIO (`motor._evidencias()`) lee `detalle` y
+            # paneles siempre lo llamó `criterios`: por eso los veredictos
+            # nunca se veían del otro lado. Mismo contenido, los dos
+            # nombres, hasta que COLOQUIO lea `criterios`.
+            "detalle": criterios_ordenados,
             "evidencias": [d["evidencia"] for d in detalle if d.get("evidencia")],
         })
 
@@ -725,7 +1065,7 @@ def _combinar(definicion, por_criterio, umbral):
 CAMPOS_PII_DEL_SEGMENTO = frozenset({"nombre", "email", "documento", "celular"})
 
 
-def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None):
+def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None, actor=None):
     """Corre una consulta y devuelve el ranking, la evidencia y el diagnóstico.
 
     `ctx` es el `Contexto` de la request. La conexión al store semántico es
@@ -733,6 +1073,15 @@ def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None):
     toca, y esa es exactamente la garantía de R2.4.
     """
     definicion = normalizar_definicion(definicion_cruda, ctx.boveda)
+    if definicion["alcance"] == COMPLETO:
+        # La completa no corre en la request: se estima, se confirma con
+        # presupuesto y se encola (ver `consulta_completa`). Llegar acá con
+        # alcance completo es un error de quien llama, no una degradación.
+        raise DatosInvalidos(
+            "Una consulta de alcance completo no se ejecuta en el momento: "
+            "se estima su costo y se lanza con presupuesto "
+            "(POST /consultas con `alcance: completo`).")
+    ejecucion_id = str(uuid.uuid4())
     reloj = _Reloj()
     degradaciones = []
 
@@ -768,11 +1117,17 @@ def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None):
             ),
         }
         resultado["degradaciones"] = []
+        resultado["alcance"] = EXPLORATORIO
+        resultado["version_contrato"] = VERSION_CONTRATO
+        resultado["costo"] = {"usd": 0.0, "tokens": {}}
         resultado["diagnostico"] = {
             "ms_total": reloj.ms_total,
             "etapas": reloj.etapas,
             "abrio_semantica": False,
+            "ejecucion_id": ejecucion_id,
         }
+        registrar_ejecucion(ctx.boveda, ejecucion_id, definicion, resultado,
+                            actor=actor)
         return resultado
 
     # ── R2.5: hay parte semántica. Se elige la estrategia de puente ──
@@ -799,8 +1154,9 @@ def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None):
     # R-VER.10 — el identificador de esta ejecución. Va al diagnóstico, y con
     # el modo de depuración encendido agrupa las capturas del intercambio
     # con Claude. Sin el modo, `captura` es None y no se guarda nada.
-    ejecucion_id = str(uuid.uuid4())
+    # R-CS — es también la clave de su fila en `consulta_ejecucion`.
     verificacion = {"limite": None, "captura": mod_verificacion.nueva_captura(ejecucion_id)}
+    tokens_rerank_al_empezar = getattr(reranker, "tokens", 0) or 0
 
     desde = time.perf_counter()
     personas_en_segmento = demografia.contar_segmento(
@@ -857,15 +1213,30 @@ def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None):
         candidatos=len(items) + len(excluidos), excluidos=len(excluidos),
     )
 
-    return {
+    informes = verificacion.get("informes", [])
+    tokens = {
+        "verificacion_entrada": sum(i["tokens"]["entrada"] for i in informes),
+        "verificacion_salida": sum(i["tokens"]["salida"] for i in informes),
+        "rerank": (getattr(reranker, "tokens", 0) or 0) - tokens_rerank_al_empezar,
+        "embedding": verificacion.get("tokens_embedding", 0),
+    }
+    tarifas = costo_consulta.Tarifas.desde_entorno()
+    personas_verificadas = len(verificacion.get("personas_verificadas", ()))
+    mostradas = items[: definicion["limite"]]
+    resultado = {
         "tipo": "mixta" if demograficos else "semantica",
+        "version_contrato": VERSION_CONTRATO,
+        "alcance": EXPLORATORIO,
         "modo": definicion["modo"],
         "panel_id": definicion["panel_id"],
         "criterios": definicion["criterios"],
         "parametros": {
             "top_n": definicion["top_n"],
             "top_k": definicion["top_k"],
+            "limite": definicion["limite"],
             "umbral_distancia": definicion["umbral_distancia"],
+            "tipo_embedding_criterio": mod_embeddings.tipo_de_criterio(
+                pedido=definicion.get("tipo_embedding_criterio")),
         },
         "puente": {
             "estrategia": estrategia,
@@ -874,10 +1245,30 @@ def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None):
             "gate": consentimiento.SEMANTICO,
         },
         "total": len(items),
-        "items": items[: definicion["limite"]],
+        "items": mostradas,
         "excluidos": excluidos,
+        # A6 — que el recorte se vea. Subir `top_k` sin subir `limite`
+        # verificaba (y pagaba) personas que nadie veía, y desde la pantalla
+        # parecía que el parámetro no hacía nada.
+        "recorte": {
+            "personas_verificadas": personas_verificadas,
+            # De esas, cuántas tenían algo que decir sobre el criterio.
+            "personas_pertinentes": len(verificacion.get("personas_pertinentes", ())),
+            "en_ranking": len(items),
+            "mostradas": len(mostradas),
+            "recortado": len(mostradas) < len(items),
+            "limite": definicion["limite"],
+            "top_k": definicion["top_k"],
+        },
         "degradaciones": degradaciones,
-        "verificacion": _resumen_verificacion(verificacion.get("informes", []), items, excluidos),
+        "verificacion": _resumen_verificacion(informes, items, excluidos),
+        "costo": {
+            "usd": costo_consulta.costo(
+                tarifas, tokens["verificacion_entrada"], tokens["verificacion_salida"],
+                tokens["rerank"], tokens["embedding"]),
+            "tokens": tokens,
+            "tarifas": tarifas.como_dict(),
+        },
         "diagnostico": {
             "ms_total": reloj.ms_total,
             "etapas": reloj.etapas,
@@ -885,6 +1276,8 @@ def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None):
             "reranker": reranker.nombre,
             "verificador": verificador.nombre,
             "ejecucion_id": ejecucion_id,
+            "tipo_embedding_criterio": mod_embeddings.tipo_de_criterio(
+                pedido=definicion.get("tipo_embedding_criterio")),
             # Si el modo de depuración estaba encendido en ESTA ejecución.
             # La pantalla lo usa para decir «estaba apagado» en vez de
             # mostrar un intercambio vacío.
@@ -892,10 +1285,54 @@ def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None):
             "verificacion": [
                 {k: v for k, v in informe.items() if k != "lotes"} | {
                     "lotes_detalle": informe.get("lotes", [])}
-                for informe in verificacion.get("informes", [])
+                for informe in informes
             ],
         },
     }
+    registrar_ejecucion(ctx.boveda, ejecucion_id, definicion, resultado,
+                        actor=actor)
+    return resultado
+
+
+def registrar_ejecucion(conn, ejecucion_id, definicion, resultado, actor=None):
+    """R-CS · A1.3 — deja la fila de una ejecución exploratoria.
+
+    Guarda la definición, el diagnóstico (degradaciones, proveedores
+    efectivos, `input_type`, etapas) y el costo. **No** guarda el resultado:
+    ni personas ni evidencias. Si la bóveda/0025 no está aplicada, la
+    consulta sigue igual —registrar no puede tumbar lo que registra— y queda
+    una línea en el log.
+    """
+    diagnostico = {
+        "degradaciones": resultado.get("degradaciones", []),
+        "reranker": resultado.get("diagnostico", {}).get("reranker"),
+        "verificador": resultado.get("diagnostico", {}).get("verificador"),
+        "tipo_embedding_criterio": resultado.get("diagnostico", {}).get(
+            "tipo_embedding_criterio"),
+        "etapas": resultado.get("diagnostico", {}).get("etapas", []),
+        "verificacion": resultado.get("verificacion"),
+        "recorte": resultado.get("recorte"),
+        "costo": resultado.get("costo"),
+        "puente": {k: v for k, v in (resultado.get("puente") or {}).items()
+                   if k != "motivo"},
+        "total": resultado.get("total"),
+        "excluidos": len(resultado.get("excluidos") or []),
+    }
+    try:
+        db.ejecutar(
+            conn,
+            """insert into consulta_ejecucion
+                      (id, alcance, modo, tipo, definicion, estado, costo_real_usd,
+                       diagnostico, creado_por, terminado_en)
+               values (%s, %s, %s, %s, %s::jsonb, 'terminada', %s, %s::jsonb, %s, now())""",
+            (ejecucion_id, EXPLORATORIO, definicion["modo"], resultado.get("tipo"),
+             json.dumps(definicion, ensure_ascii=False, default=str),
+             (resultado.get("costo") or {}).get("usd"),
+             json.dumps(diagnostico, ensure_ascii=False, default=str), actor))
+        conn.commit()
+    except Exception as error:  # noqa: BLE001
+        conn.rollback()
+        print(f"[consultas] no se pudo registrar la ejecución: {type(error).__name__}")
 
 
 def _persistir_captura(ctx, captura):
@@ -933,6 +1370,10 @@ def _resumen_verificacion(informes, items, excluidos):
         "personas_con_pendientes": sum(
             1 for i in items if i.get("verificacion_incompleta")),
         "presupuesto_agotado": any(i["presupuesto_agotado"] for i in informes),
+        # R-CS — lo que se verificó son unidades; cuántas respuestas cubrían
+        # y cuántas resultaron no hablar del criterio.
+        "respuestas_cubiertas": sum(i.get("respuestas_cubiertas", 0) for i in informes),
+        "irrelevantes": sum(i.get("irrelevantes", 0) for i in informes),
     }
 
 

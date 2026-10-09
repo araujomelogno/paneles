@@ -39,6 +39,42 @@ LOTE_MAXIMO = 128
 DIMS_VALIDAS = (256, 512, 1024, 2048)
 DIMS_POR_DEFECTO = 512
 
+# ── R-CS · cambio 1 · `input_type` del criterio ──────────────────────
+#
+# Voyage entrena sus modelos con dos lados: el **documento** que se indexa y
+# la **consulta** que lo busca. Con `input_type="query"` le antepone al texto
+# un prefijo de recuperación («Represent the query for retrieving supporting
+# documents: »), y un criterio —«gente que usa Xiaomi»— es una consulta, no
+# un documento. Hasta R-CS el criterio se embebía como documento.
+#
+# No es neutral (addendum A5): los vectores de los criterios caen en otro
+# lugar del espacio y **todas** las consultas cambian. Por eso:
+#   · se puede volver atrás sin tocar código: `EMBEDDINGS_TIPO_CONSULTA=document`
+#     en el entorno de la función (una revisión nueva, no un deploy), o
+#     `tipo_embedding_criterio` en una consulta puntual;
+#   · el tipo efectivo queda en el diagnóstico de cada ejecución;
+#   · `scripts/diagnosticar_consulta.py input-type` mide un juego de consultas
+#     conocidas con los dos tipos, antes y después.
+# Las respuestas ingestadas siguen siendo `document`: no se re-embebe nada.
+TIPO_DOCUMENTO, TIPO_CONSULTA = "document", "query"
+TIPOS_DE_CRITERIO = (TIPO_CONSULTA, TIPO_DOCUMENTO)
+TIPO_CRITERIO_POR_DEFECTO = TIPO_CONSULTA
+
+
+def tipo_de_criterio(entorno=None, pedido=None):
+    """El `input_type` con el que se embebe un criterio.
+
+    `pedido` (el de la consulta) manda sobre el entorno, y el entorno sobre el
+    default. Un valor que no existe no se adivina: se usa el default, y el
+    diagnóstico dice cuál corrió.
+    """
+    entorno = os.environ if entorno is None else entorno
+    for candidato in (pedido, entorno.get("EMBEDDINGS_TIPO_CONSULTA", "")):
+        valor = (candidato or "").strip().lower()
+        if valor in TIPOS_DE_CRITERIO:
+            return valor
+    return TIPO_CRITERIO_POR_DEFECTO
+
 
 class ErrorEmbeddings(RuntimeError):
     pass
@@ -49,6 +85,11 @@ class ProveedorEmbeddings:
 
     def embeber(self, textos):
         raise NotImplementedError
+
+    def embeber_criterio(self, textos, tipo=TIPO_CRITERIO_POR_DEFECTO):
+        """Embebe criterios de consulta. Los proveedores que no distinguen
+        lados (el de pruebas) lo resuelven igual que un documento."""
+        return self.embeber(textos)
 
     def _controlar_largo(self, vectores):
         """Que lo que vuelve tenga la dimensión que este proveedor promete.
@@ -107,6 +148,13 @@ class Voyage(ProveedorEmbeddings):
         self.dims = dims
 
     def embeber(self, textos):
+        return self._embeber(textos, TIPO_DOCUMENTO)
+
+    def embeber_criterio(self, textos, tipo=TIPO_CRITERIO_POR_DEFECTO):
+        return self._embeber(textos, tipo if tipo in TIPOS_DE_CRITERIO
+                             else TIPO_CRITERIO_POR_DEFECTO)
+
+    def _embeber(self, textos, tipo):
         import requests  # import diferido: solo hace falta con el proveedor real
 
         respuesta = requests.post(
@@ -118,7 +166,7 @@ class Voyage(ProveedorEmbeddings):
             json={
                 "input": list(textos),
                 "model": self.modelo,
-                "input_type": "document",
+                "input_type": tipo,
                 # Sin esto la API devuelve su default (1024) pase lo que
                 # pase, y `EMBEDDINGS_DIMS` no haría nada. El nombre del
                 # parámetro está verificado contra la documentación de
