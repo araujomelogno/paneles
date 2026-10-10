@@ -645,10 +645,14 @@ def _resolver_criterio_semantico(ctx, criterio, definicion, ids_permitidos,
     # 2. Recall.
     desde = time.perf_counter()
     pedido = definicion["top_n"] * (FACTOR_SOBREPEDIDO if filtro_posterior else 1)
-    crudos = semantica.recuperar(ctx.semantica, vector, pedido, ids_permitidos)
+    plan = {}
+    crudos = semantica.recuperar(ctx.semantica, vector, pedido, ids_permitidos, plan)
+    # `plan` dice si el recall salió del índice o de un recorrido exacto, y
+    # si el índice se quedó corto: que `crudos` sea menor que `pedidos` tiene
+    # que poder leerse como «no había más» y no como «el índice recortó».
     reloj.marca(
         "recall", desde, criterio=etiqueta, pedidos=pedido, crudos=len(crudos),
-        filtrado_en_la_base=ids_permitidos is not None,
+        filtrado_en_la_base=ids_permitidos is not None, **plan,
     )
 
     # 3. Gate de consentimiento (R2.11) y segmento, cuando el recall corrió

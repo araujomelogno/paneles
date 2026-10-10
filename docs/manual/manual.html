@@ -2203,6 +2203,13 @@
     consentimiento.</p>
   </div>
 
+  <p>Cuando el sistema filtra primero por demografía, busca entre las
+  respuestas de <strong>todas</strong> las personas que pasaron el filtro, no
+  entre las más parecidas del corpus entero. Hasta esta versión no era así, y
+  una consulta mixta podía traer muchas menos personas de las que
+  correspondían, sin ningún aviso. Con la misma consulta, ahora puede aparecer
+  gente que antes no aparecía: es el arreglo.</p>
+
   <h3><span class="n">6.8</span> Guardar una consulta</h3>
 
   <p>Una consulta que se va a repetir se guarda con <strong>Guardar
@@ -2246,7 +2253,9 @@
     <thead><tr><th>Parámetro</th><th>Conviene aumentarlo si…</th><th>Conviene reducirlo si…</th></tr></thead>
     <tr><td class="destacado">Pool de recuperación</td>
       <td>Hay motivos para pensar que se está perdiendo gente que debería
-      aparecer.</td>
+      aparecer. Desde esta versión el pool trae <strong>lo que se pide</strong>:
+      hasta ahora, por cómo funciona el índice de búsqueda, un pool de 200
+      traía en la práctica unas 40 respuestas, y subirlo no cambiaba nada.</td>
       <td>—</td></tr>
     <tr><td class="destacado">A verificar</td>
       <td>Se necesita un ranking más extenso. Subirlo sin subir <i>Personas a
@@ -2276,6 +2285,27 @@
   criterio, <strong>cuánto costó esta consulta</strong> y el número de
   ejecución: cada consulta queda registrada con ese número (sin la lista de
   personas), para poder averiguar después si alguna etapa falló.</p>
+
+  <p>La etapa <strong>Recuperación (ANN)</strong> dice cuántas respuestas se pidieron
+  (<code>pedidos</code>), cuántas volvieron (<code>crudos</code>) y
+  <strong>cómo</strong> se buscaron (<code>plan</code>):</p>
+
+  <ul class="pasos">
+    <li><code>plan=indice</code>: la búsqueda rápida sobre todo el corpus. Es
+    lo habitual cuando la consulta no tiene un filtro demográfico.</li>
+    <li><code>plan=exacto</code>: se recorrieron una por una las respuestas de
+    las personas habilitadas. Es lo que pasa cuando el sistema filtró primero
+    por demografía (6.7): así ninguna persona habilitada queda afuera por
+    estar lejos de las demás.</li>
+    <li><code>indice_corto=N</code>: la búsqueda rápida devolvió solo N
+    respuestas habiendo más, y el sistema la repitió completa. El resultado
+    es correcto; si aparece seguido, conviene avisar a quien administra el
+    sistema.</li>
+  </ul>
+
+  <p>Si <code>crudos</code> es menor que <code>pedidos</code>, <strong>no
+  había más respuestas</strong> para esas personas: ya no puede deberse a la
+  búsqueda.</p>
 
   <figure>
     <img class="recorte" src="capturas/91-diagnostico-unidades.jpg" alt="Diagnóstico con la etapa de unidades de evidencia" />
@@ -3719,6 +3749,20 @@
   revisaron y cuántas se muestran; si no coinciden, es el recorte, no que no
   haya más gente.</p>
 
+  <h4>Con un filtro demográfico, la consulta ahora trae más gente que antes</h4>
+  <p>Es lo correcto. Hasta esta versión, la búsqueda tomaba las respuestas más
+  parecidas de <strong>todo</strong> el corpus y recién después descartaba a
+  quien no cumplía el filtro, así que muchas personas habilitadas nunca
+  llegaban a ser candidatas. Ahora se busca entre las respuestas de quienes
+  cumplen el filtro. El diagnóstico lo muestra como <code>plan=exacto</code>
+  en la etapa <i>Recuperación (ANN)</i> (6.9).</p>
+
+  <h4>Subí el «Pool de recuperación» y antes no cambiaba nada</h4>
+  <p>Por el mismo motivo: la búsqueda rápida devolvía como mucho unas 40
+  respuestas, pidiera uno 200 o 1.000. Desde esta versión trae las que se
+  piden; un pool más grande vuelve a significar más candidatos (y una
+  consulta algo más lenta).</p>
+
   <h4>Una persona aparecía en la consulta y ahora figura «sin evidencia pertinente»</h4>
   <p>Su respuesta habla de otra cosa —por ejemplo, quién es el titular de la
   línea cuando el criterio es la marca del celular—. Antes eso se juzgaba como
@@ -3935,6 +3979,11 @@
     <tr><td class="destacado">Irrelevante</td>
       <td>Veredicto de una respuesta que no habla del criterio: no lo afirma ni
       lo niega. Cuenta como falta de evidencia, no como «no cumple».</td></tr>
+    <tr><td class="destacado">Plan de recuperación (índice / exacto)</td>
+      <td>Cómo se buscaron las respuestas más parecidas al criterio: con el
+      índice, rápido, sobre todo el corpus; o recorriendo una por una las de
+      las personas habilitadas, cuando hay un filtro. Lo dice el
+      diagnóstico.</td></tr>
     <tr><td class="destacado">Alcance (exploratorio / completo)</td>
       <td>Cuánto revisa una consulta: las mejores candidatas en el momento, o
       todas las respuestas habilitadas en segundo plano y con presupuesto.</td></tr>

@@ -281,6 +281,25 @@ alcances. Lo que no hay que deshacer:
   lo mismo que `item.criterios` (COLOQUIO lee `detalle`), y la ausencia de un
   campo nuevo se lee como «no se sabe», nunca como favorable.
 
+## El índice vectorial no sabe de filtros
+
+Desde el bug de A1.2 (D71): con un `order by <=> … limit`, Postgres resuelve
+por el índice HNSW, que devuelve como mucho `hnsw.ef_search` vecinos (40 por
+defecto) **de todo el corpus**, y el `where` se aplica después. Un filtro
+selectivo da vacío y un `top_n` mayor que `ef_search` da 40, **sin error**.
+
+- **El recall pasa por `semantica._vecinos`**: con filtro por personas (el
+  gate) es exacto; sin filtro, índice con `ef_search` subido a `top_n`. Un
+  recall corto se registra (`[recall]`) y se recalcula. No escriban otro
+  `order by <=> … limit` con un `where` al lado.
+- **Medir filas conocidas no usa el índice**: el filtro en una CTE
+  `materialized` y la distancia sobre ese conjunto
+  (`diagnosticar_consulta._distancias`). Una prueba falla si el script vuelve
+  a combinar `where`, `order by <=>` y `limit` sin materializar.
+- **Vacío no es ausencia.** Si una consulta devuelve vacío o un valor por
+  defecto, el código distingue y registra si es un resultado o algo que no
+  se pudo hacer (`a1-distancia`: `AUSENTE` sale con 1, `NO_MEDIDO` con 2).
+
 ## De qué carga viene cada persona, y sobre quién se calcula la composición
 
 Desde R-ORG (D67) cada persona queda vinculada a las cargas de las que

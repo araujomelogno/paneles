@@ -100,6 +100,7 @@ restricción real del sistema.
 | [D64](#d64) | El celular es clave de dedup, pero más cauta que el correo | 1 (dedup) |
 | [D65](#d65) | El correo sale por Workspace, y sin proveedor no hay atajo | 6 (portal), 4 (landing) |
 | [D66](#d66) | La verificación va por lotes, y lo que no se juzgó queda «sin verificar» | 2 (consultas) |
+| [D71](#d71) | Un `where` y un `order by <=> … limit` no van juntos sin decidir el plan | 2 (consultas, bug) |
 
 ---
 
@@ -3932,3 +3933,77 @@ el desajuste con COLOQUIO (A4) y exponer `limite` (A6).
 `db/boveda/0025_consulta_ejecucion.sql`, `db/semantica/0009_unidades_de_evidencia.sql`,
 `functions/main.py` (`procesarconsulta`), `web/public/js/paginas/consultas.js`,
 `scripts/diagnosticar_consulta.py`, `functions/tests/test_r_cs_consultas.py`.
+
+<a id="d71"></a>
+## D71 · Un `where` y un `order by <=> … limit` no van juntos sin decidir el plan
+
+**El problema.** Corriendo A1 del despliegue R-CS, `a1-texto` encontró 50
+respuestas con «xiaomi» y `a1-distancia`, con el mismo corpus, dijo que no
+había ninguna (`specs/BUG_diagnostico_a1_distancia_y_hallazgo.md`). Con un
+`order by` de distancia y un `limit`, Postgres resuelve por el índice HNSW:
+el índice devuelve sus vecinos de **todo el corpus** —como mucho
+`hnsw.ef_search`, 40 por defecto— y **después** se aplica el `where`. Si
+ninguno de esos vecinos cumple el filtro, el resultado es vacío, sin error.
+
+Y no era solo el diagnóstico. `semantica.recuperar` tenía las dos variantes
+de la misma trampa en la consulta real:
+
+- con el gate por personas (`ids_persona`, «demográfico primero») el `where`
+  se aplicaba sobre los vecinos del corpus entero: con la mitad del corpus
+  habilitada, un `top_n` de 200 devolvía 22;
+- sin filtro, `top_n = 200` con `ef_search = 40` devolvía 40. El «pool de
+  recuperación» era un quinto de lo que decía la pantalla.
+
+**La decisión.**
+
+- **Medir filas conocidas no usa el índice.** En el script, el filtro va en
+  una CTE `materialized` y la distancia se ordena sobre ese conjunto. El
+  conteo de «cuántas están más cerca» no cambia: es una pregunta sobre el
+  corpus entero y ya era exacta (pgvector no usa el índice para un `where`
+  sobre la distancia, solo para `order by … limit`).
+- **El recall con filtro por personas es exacto** (`_vecinos_exactos`), por
+  el mismo motivo: el gate de consentimiento no puede depender de qué
+  vecinos tenga el grafo cerca. El recall **sin** filtro sigue por el
+  índice, con `hnsw.ef_search` subido a `top_n` en la transacción; por
+  encima de 1000 (el tope de pgvector) va exacto.
+- **Un recall corto se registra y se recalcula.** Si el índice devuelve
+  menos de lo pedido habiendo más en el corpus, se escribe `[recall]` en el
+  log y se recalcula exacto. La etapa `recall` del diagnóstico dice qué
+  plan se usó (`plan=indice|exacto`, `indice_corto=N`), y queda en
+  `consulta_ejecucion`.
+- **Vacío no es ausencia.** `a1-distancia` distingue «el patrón no está en
+  el corpus» (sale con 1, es ingesta) de «el patrón está y la medición no lo
+  encontró» (sale con 2, `FALLO DE MEDICIÓN`). Es el criterio general de la
+  §7 del bug: cuando una función devuelve vacío o un valor por defecto, el
+  código distingue —y registra— si es un resultado o algo que no se pudo
+  hacer. Es el tercer incidente con la misma forma (D68, D66).
+
+**Lo que cuesta.** El recall con gate recorre los vectores de las personas
+habilitadas. Con el corpus actual (21.340 respuestas, 512 dims) son
+milisegundos; es el mismo patrón de acceso que ya usa la consulta completa
+(`unidades_elegibles`). Si el corpus crece dos órdenes de magnitud, la
+alternativa es `hnsw.iterative_scan` (pgvector 0.8+), que sigue recorriendo
+el grafo hasta juntar `top_n` filas que cumplan el filtro: no se adoptó
+ahora porque depende de la versión de pgvector de la instancia y el
+recorrido exacto es correcto en cualquiera.
+
+**Lo que se descartó.**
+
+- *`set enable_indexscan = off` en la transacción.* Arregla esa consulta y
+  degrada todas las que vienen después en la misma transacción (el join con
+  `v_respuesta_estudio` incluido). La CTE materializada acota el efecto a
+  la consulta que lo necesita.
+- *Solo subir `ef_search`.* Con filtro sigue sin garantizar nada: el grafo
+  devuelve más vecinos, pero siguen siendo del corpus entero.
+
+**Lo que confirma sobre R-CS.** La evidencia existía, con la etiqueta
+resuelta: la hipótesis de ingesta queda cerrada. Lo que dejó afuera a la
+respuesta de marca fue el recorte del pool —respuestas repetidas ocupando
+los lugares—, que es lo que resuelve el cambio 3 (unidades de evidencia), y
+un pool que además era de 40 y no de 200. A1.3 (si el reranker corrió) sigue
+pendiente y se corre en el despliegue.
+
+**Dónde vive.** `scripts/diagnosticar_consulta.py` (`medir`, `_distancias`,
+`_delante`), `functions/panel_api/semantica.py` (`_vecinos`,
+`_vecinos_exactos`, `recuperar`), `functions/panel_api/consultas.py` (etapa
+`recall`), `functions/tests/test_bug_diagnostico_a1.py`.

@@ -510,6 +510,9 @@ def test_el_diagnostico_informa_tamanos_y_tiempos_de_cada_etapa(ctx, corpus):
 
     recall = next(e for e in diagnostico["etapas"] if e["etapa"] == "recall")
     assert recall["crudos"] > 0
+    # BUG A1.2 — qué plan resolvió el recall: «crudos < pedidos» se tiene que
+    # poder leer como «no había más» y no como «el índice recortó».
+    assert recall["plan"] in ("indice", "exacto")
     verificacion = next(
         e for e in diagnostico["etapas"] if e["etapa"] == "verificacion"
     )

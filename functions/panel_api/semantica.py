@@ -256,7 +256,87 @@ def upsert_respuestas(conn, respuestas):
 #  R2.7 — Recuperación semántica (recall por vecino aproximado)
 # ════════════════════════════════════════════════════════════════════
 
-def recuperar(conn, vector, top_n, ids_persona=None):
+EF_SEARCH_MINIMO = 40
+"""El `hnsw.ef_search` por defecto de pgvector."""
+
+EF_SEARCH_MAXIMO = 1000
+"""El tope que acepta pgvector. Un pedido más grande no cabe en el índice."""
+
+
+def _vecinos_exactos(conn, literal, top_n, ids_individuo):
+    """Las `top_n` más cercanas recorriendo el conjunto entero, sin índice.
+
+    El `materialized` es lo que lo garantiza: sin él, el planificador junta
+    el filtro con el `order by <=> … limit` y vuelve a elegir el índice HNSW.
+    """
+    return db.todas(
+        conn,
+        """
+        with candidatas as materialized (
+            select r.id, r.embedding <=> %s::vector as distancia
+              from respuesta r
+             where (%s::bigint[] is null or r.individuo_id = any(%s::bigint[]))
+        )
+        select id, distancia from candidatas order by distancia, id limit %s
+        """,
+        (literal, ids_individuo, ids_individuo, top_n),
+    )
+
+
+def _vecinos(conn, literal, top_n, ids_individuo=None, informe=None):
+    """Las `top_n` respuestas más cercanas, con el plan que corresponde.
+
+    El índice HNSW es aproximado y **no sabe de filtros**: devuelve como
+    mucho `hnsw.ef_search` vecinos (40 por defecto) de todo el corpus, y el
+    `where` se aplica después. Eso deja dos trampas que no fallan, devuelven
+    menos (`specs/BUG_diagnostico_a1_distancia_y_hallazgo.md`):
+
+    * con un filtro por personas (el gate de consentimiento), los vecinos
+      del corpus entero pueden no ser de nadie habilitado, y el recall de las
+      personas habilitadas sale corto o vacío. Con filtro se recorre el
+      conjunto filtrado, exacto;
+    * sin filtro, un `top_n` mayor que `ef_search` recibe `ef_search` filas.
+      Se sube `ef_search` a `top_n` para esta transacción; si no cabe en el
+      índice, exacto.
+
+    Y si aun así el índice devuelve menos de lo pedido habiendo más en el
+    corpus, se registra (`[recall]`) y se recalcula exacto: un recall corto
+    se vería como «no hay más evidencia», que es un resultado de negocio, y
+    no lo es.
+
+    `informe`, si viene, se completa con el plan que se usó (`indice` o
+    `exacto`) y si el índice se quedó corto: va al diagnóstico de la etapa.
+    """
+    informe = informe if informe is not None else {}
+    if ids_individuo is not None or top_n > EF_SEARCH_MAXIMO:
+        informe["plan"] = "exacto"
+        return _vecinos_exactos(conn, literal, top_n, ids_individuo)
+
+    informe["plan"] = "indice"
+
+    db.una(conn, "select set_config('hnsw.ef_search', %s, true)",
+           (str(max(top_n, EF_SEARCH_MINIMO)),))
+    cercanas = db.todas(
+        conn,
+        """
+        select r.id, r.embedding <=> %s::vector as distancia
+          from respuesta r
+         order by r.embedding <=> %s::vector
+         limit %s
+        """,
+        (literal, literal, top_n),
+    )
+    if len(cercanas) < top_n:
+        corpus = db.una(conn, "select count(*) as n from respuesta")["n"]
+        if corpus > len(cercanas):
+            print(f"[recall] el índice devolvió {len(cercanas)} de {top_n} pedidas con "
+                  f"{corpus} en el corpus; se recalcula sin índice")
+            informe.update(plan="exacto", indice_corto=len(cercanas))
+            return _vecinos_exactos(conn, literal, top_n, None)
+    return cercanas
+
+
+def recuperar(conn, vector, top_n, ids_persona=None, informe=None):
     """Las `top_n` respuestas más cercanas al vector del criterio.
 
     Cada candidato vuelve con lo que el PRD pide para poder mostrarlo y
@@ -273,6 +353,11 @@ def recuperar(conn, vector, top_n, ids_persona=None):
     después la procedencia, con un join sobre las pocas filas que volvieron.
     Poner el join arriba del ORDER BY del operador de distancia le complica
     al planificador usar el índice, y el corpus es la parte grande.
+
+    Cuándo se usa el índice y cuándo no lo decide `_vecinos` (ver ahí): con
+    un filtro por personas el índice devolvería vecinos de todo el corpus
+    **antes** del filtro, y el recall saldría corto sin ningún error.
+    `informe` (opcional) vuelve con el plan que se usó.
     """
     if ids_persona is not None and not ids_persona:
         return []
@@ -289,17 +374,7 @@ def recuperar(conn, vector, top_n, ids_persona=None):
         if not ids_individuo:
             return []
 
-    cercanas = db.todas(
-        conn,
-        """
-        select r.id, r.embedding <=> %s::vector as distancia
-          from respuesta r
-         where (%s::bigint[] is null or r.individuo_id = any(%s::bigint[]))
-         order by r.embedding <=> %s::vector
-         limit %s
-        """,
-        (literal, ids_individuo, ids_individuo, literal, top_n),
-    )
+    cercanas = _vecinos(conn, literal, top_n, ids_individuo, informe)
     if not cercanas:
         return []
 

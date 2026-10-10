@@ -14,6 +14,17 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **El pool de recuperación trae lo que se pide · 2026-10-10.** Corrección
+> del bug del diagnóstico A1.2 (D71), que también afectaba a la consulta: la
+> búsqueda por índice devolvía como mucho ~40 respuestas, y con un filtro
+> demográfico descartaba a personas habilitadas. La 6.7 explica que, al
+> filtrar primero por demografía, se busca entre **todas** las personas que
+> pasaron el filtro; la 6.9 aclara el *Pool de recuperación* y explica la
+> etapa *Recuperación (ANN)* del diagnóstico (`pedidos`, `crudos`, `plan`,
+> `indice_corto`). Dos preguntas frecuentes y un término de glosario nuevos.
+> **Sin capturas nuevas**: la pantalla no cambió, solo lo que dice el
+> diagnóstico en una etapa.
+
 > **Recuperación y verificación de consultas semánticas · 2026-10-09.** La
 > 6.2 suma el desplegable **Alcance**; la 6.3, el **estado** de cada persona
 > (confirmada, posible, pendiente) y el **recorte** («se revisaron N · se

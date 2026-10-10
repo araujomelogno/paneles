@@ -4,7 +4,7 @@
 **Severidad:** Alta para el diagnóstico — **da un falso negativo** que haría
 descartar la hipótesis correcta
 **Detectado:** 2026-10-09, corriendo A1 del despliegue R-CS
-**Estado:** Para corregir
+**Estado:** Corregido (D71) · despliegue en `docs/DESPLIEGUE - bug A1.2 distancia e índice vectorial.md`
 
 ---
 
@@ -83,18 +83,18 @@ set enable_bitmapscan = off;
 
 ## 4. Qué hay que corregir en el script
 
-- [ ] En `_distancias`, **forzar el recorrido secuencial** sobre el conjunto
+- [x] En `_distancias`, **forzar el recorrido secuencial** sobre el conjunto
       filtrado: materializar el filtro primero (una CTE `materialized` con el
       `ilike`) y **recién sobre ese conjunto** calcular y ordenar por distancia.
       El objetivo de A1.2 es medir la distancia de **filas conocidas**, no
       buscar vecinos: el índice no corresponde acá.
-- [ ] El conteo de «cuántas están más cerca» (`delante`) **sí** debe usar el
+- [x] El conteo de «cuántas están más cerca» (`delante`) **sí** debe usar el
       índice: ahí la pregunta es sobre el corpus entero. Conviene que el
       comentario lo diga, porque son dos consultas con intenciones opuestas.
-- [ ] Si el conjunto filtrado viene **vacío de verdad**, el mensaje debe
+- [x] Si el conjunto filtrado viene **vacío de verdad**, el mensaje debe
       distinguirlo de «el patrón no está en el corpus»: hoy dice lo segundo
       cuando pasa lo primero.
-- [ ] Revisar el resto de `diagnosticar_consulta.py` por el mismo patrón:
+- [x] Revisar el resto de `diagnosticar_consulta.py` por el mismo patrón:
       cualquier consulta que combine `where` selectivo con `order by <=>` y
       `limit` tiene el mismo problema.
 
@@ -125,13 +125,13 @@ se los llevan respuestas repetidas sobre titularidad del contrato, las de marca
 
 ## 6. Definition of Done
 
-- [ ] `a1-distancia` con `--patron xiaomi` devuelve la distancia de esas
+- [x] `a1-distancia` con `--patron xiaomi` devuelve la distancia de esas
       respuestas (test con el corpus real).
-- [ ] El conteo de «cuántas están más cerca» sigue usando el índice y da el
+- [x] El conteo de «cuántas están más cerca» sigue usando el índice y da el
       mismo número que antes (test de no regresión).
-- [ ] Un patrón que **de verdad** no existe en el corpus da un mensaje distinto
+- [x] Un patrón que **de verdad** no existe en el corpus da un mensaje distinto
       del de un conjunto filtrado vacío (test).
-- [ ] Ninguna otra consulta del script combina filtro selectivo con `order by
+- [x] Ninguna otra consulta del script combina filtro selectivo con `order by
       <=>` y `limit` sin materializar primero.
 
 ## 7. Nota de método
@@ -143,6 +143,28 @@ presentándose como un resultado de negocio**. La API key sin cargar se veía co
 
 Las tres veces, el costo fue descartar hipótesis a mano durante horas.
 
-- [ ] Como criterio general: cuando una función devuelve **vacío o un valor por
+- [x] Como criterio general: cuando una función devuelve **vacío o un valor por
       defecto**, que el código distinga —y registre— si eso es un resultado
       legítimo o la consecuencia de algo que no se pudo hacer.
+
+---
+
+## 8. Resolución (2026-10-10)
+
+- **Script.** `_distancias` materializa el filtro; `_delante` no cambió (es un
+  conteo con la distancia en el `where`, que pgvector ya resolvía recorriendo
+  el corpus entero: exacto, sin índice); `medir()` distingue `AUSENTE` (sale
+  1) de `NO_MEDIDO` (sale 2); `--contra` cuenta exacto y sin tope; y
+  `a1-distancia` dice si la respuesta entra en el recall real.
+- **El mismo patrón en la consulta real.** `semantica.recuperar` tenía las dos
+  variantes: con el gate por personas, el índice devolvía vecinos de todo el
+  corpus antes del filtro (22 de 200 en la prueba); sin filtro, `top_n = 200`
+  con `ef_search = 40` devolvía 40. Ahora: con filtro, exacto; sin filtro,
+  índice con `ef_search = top_n`; un recall corto se registra (`[recall]`) y se
+  recalcula, y la etapa `recall` del diagnóstico dice `plan=indice|exacto`.
+- **DoD.** `functions/tests/test_bug_diagnostico_a1.py`, sobre un corpus que
+  reproduce la trampa (11 de 12 fallan con el código anterior). El «test con
+  el corpus real» del DoD 1 es un paso del despliegue (§5.1), porque la base
+  real no está al alcance de las pruebas.
+- **A1.3** sigue pendiente: es el paso 9.1 del despliegue.
+- Decisión: `docs/decisiones.md`, **D71**.
