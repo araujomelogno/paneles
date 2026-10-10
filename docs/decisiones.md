@@ -101,6 +101,7 @@ restricción real del sistema.
 | [D65](#d65) | El correo sale por Workspace, y sin proveedor no hay atajo | 6 (portal), 4 (landing) |
 | [D66](#d66) | La verificación va por lotes, y lo que no se juzgó queda «sin verificar» | 2 (consultas) |
 | [D71](#d71) | Un `where` y un `order by <=> … limit` no van juntos sin decidir el plan | 2 (consultas, bug) |
+| [D72](#d72) | Completo no es correcto: el recall sin filtro es exacto mientras el corpus lo permita | 2 (consultas, bug) |
 
 ---
 
@@ -3996,7 +3997,9 @@ recorrido exacto es correcto en cualquiera.
 - *Solo subir `ef_search`.* Con filtro sigue sin garantizar nada: el grafo
   devuelve más vecinos, pero siguen siendo del corpus entero.
 
-**Lo que confirma sobre R-CS.** La evidencia existía, con la etiqueta
+**Lo que confirma sobre R-CS.** *(Corregido por D72: para el caso Xiaomi
+la evidencia ni siquiera entraba al recall, así que el recorte no era la
+causa demostrada.)* La evidencia existía, con la etiqueta
 resuelta: la hipótesis de ingesta queda cerrada. Lo que dejó afuera a la
 respuesta de marca fue el recorte del pool —respuestas repetidas ocupando
 los lugares—, que es lo que resuelve el cambio 3 (unidades de evidencia), y
@@ -4007,3 +4010,85 @@ pendiente y se corre en el despliegue.
 `_delante`), `functions/panel_api/semantica.py` (`_vecinos`,
 `_vecinos_exactos`, `recuperar`), `functions/panel_api/consultas.py` (etapa
 `recall`), `functions/tests/test_bug_diagnostico_a1.py`.
+
+<a id="d72"></a>
+## D72 · Completo no es correcto: el recall sin filtro es exacto mientras el corpus lo permita
+
+**El problema.** Desplegando D71, con el script ya corregido, el criterio
+«gente que usa un celular xiaomi» dio, con los dos `input_type`: la mejor
+respuesta de Xiaomi está a 0,37 (`query`) o 0,14 (`document`), **ninguna**
+respuesta del corpus está más cerca, y el recall de 200 **no la trae**
+(`specs/BUG_recall_hnsw_completo_no_correcto.md`). El control de D71 solo
+miraba si el índice devolvía **menos** filas de las pedidas; este devolvió
+200 de 200, y no eran las 200 más cercanas. HNSW es aproximado: con
+`ef_search` igual a `top_n` el grafo explora lo justo y el vecino de verdad
+puede quedar afuera. Ninguna cuenta lo detecta.
+
+Solo pasa en el plan `indice`: consultas **semánticas puras**, sin filtro de
+personas. Es el caso más simple y el primero que prueba un analista.
+
+**La decisión.**
+
+- **Sin filtro, exacto mientras el corpus no pase de `RECALL_EXACTO_HASTA`**
+  (variable de entorno, 200 mil por defecto). Con 21.340 respuestas de 512
+  dimensiones el recorrido exacto midió **~115 ms** en local (el bug estimaba
+  decenas de ms; en la instancia de producción hay que medirlo, y puede ser
+  varias veces eso en un tier chico), frente a segundos de verificación con
+  Claude: el índice no ahorra nada perceptible y sí introduce resultados
+  equivocados. Cerca de las 200 mil, el recorrido ronda el segundo: el
+  umbral es un default a revisar con la latencia medida, no un número
+  calibrado. El tamaño sale del catálogo
+  (`pg_class.reltuples`), no de un `count(*)`: decidir el plan no puede
+  costar el recorrido que el índice evita.
+- **Por encima del umbral, índice con margen**: `ef_search = 2 × top_n`
+  (`MARGEN_EF_SEARCH`), con el tope de pgvector (1000): entre 500 y 999 el
+  margen se achica, y desde 1000 no hay ninguno y va exacto. El `informe` dice el plan, el motivo
+  (`filtro_por_personas`, `corpus_bajo_umbral`, `corpus_sobre_umbral`,
+  `top_n_sin_margen_en_el_indice`) y el `ef_search`.
+- **Una salvaguarda que mira el contenido, no la cantidad**:
+  `semantica.comparar_recall` y `diagnosticar_consulta.py recall-indice`
+  comparan, para un juego de criterios, lo que trae el índice contra el
+  exacto y dicen cuáles de las `top_n` exactas faltan y en qué puesto. Es la
+  única forma de ver este defecto. Informan también `m` y `ef_construction`
+  del índice.
+- **Las conclusiones del diagnóstico son excluyentes.** `a1-distancia`
+  imprimía a la vez «FALLO DE MEDICIÓN del recall» y «fue el RECORTE». Si la
+  evidencia no entró al recall, no se concluye nada sobre el recorte (que
+  pasa después), y la etiqueta dice lo que es: **«EL RECALL NO LA TRAJO
+  (plan=…)»**, el comportamiento del sistema y no una falla de la medición.
+  El script lista además qué textos se repiten en el pool.
+
+**Lo que corrige de D71.** D71 concluyó que la causa del caso Xiaomi era el
+recorte por repetición (cambio 3 de R-CS). Para ese caso no se sostiene: la
+evidencia no entraba al recall, que es antes del recorte. Y `--contra
+titular` encontró **una** respuesta, no 25. El cambio 3 puede valer por otras
+razones, pero este caso no lo demuestra; el despliegue pide revisar qué eran
+las repetidas con la lista de textos repetidos del pool.
+
+**El índice.** La `semantica/0006` lo recreó sobre una tabla de una fila, con
+los parámetros por defecto (`m = 16`, `ef_construction = 64`). HNSW se
+construye por inserción, así que el grafo no queda peor por eso; pero como
+bajo el umbral no se usa, reconstruirlo no cambia ninguna consulta hoy. El
+despliegue lo mide con `recall-indice` y deja la reconstrucción como paso
+opcional, a decidir con ese número.
+
+**Lo que cuesta.** US$ 0. Más latencia en el recall (~115 ms medidos en
+local con el corpus actual) y CPU en lugar de memoria del índice
+(`docs/COSTOS.md` 4.4). Embeddings y Claude, sin cambios.
+
+**Lo que se descartó.**
+
+- *Solo subir `ef_search`.* Mejora la probabilidad, no la garantiza, y el
+  defecto seguiría sin verse en ninguna cuenta.
+- *Un umbral fijo en el código.* Es una decisión de operación (cuánta
+  latencia se acepta por exactitud), y tiene que poder moverse sin
+  redesplegar código.
+- *Controlar el recall del índice en cada consulta contra el exacto.*
+  Costaría el recorrido exacto cada vez, que es lo que el índice evita: si
+  se paga, se usa el exacto directamente.
+
+**Dónde vive.** `functions/panel_api/semantica.py` (`_vecinos`,
+`_vecinos_indice`, `umbral_recall_exacto`, `ef_search_para`,
+`tamano_corpus`, `comparar_recall`), `scripts/diagnosticar_consulta.py`
+(`conclusiones`, `recall_indice`), `functions/.env.ejemplo`,
+`functions/tests/test_bug_recall_hnsw.py`.

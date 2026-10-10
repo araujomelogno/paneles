@@ -243,6 +243,14 @@ error de «too many connections», no lentitud.**
 
 ### 4.4 · Que el índice vectorial no entre en RAM (solo `paneles-semantica`)
 
+> **Desde D72 el índice no se usa mientras el corpus no pase de
+> `RECALL_EXACTO_HASTA` (200 mil respuestas).** El recall sin filtro recorre
+> la tabla exacto, porque el índice podía devolver las 200 pedidas sin la más
+> cercana. Lo que pesa entonces es la **tabla** (≈ 2 KB por respuesta a 512
+> dimensiones, ~45 MB con el corpus actual), no el grafo: el índice sigue
+> existiendo y mantenido, para cuando se cruce el umbral. La señal a mirar
+> pasa a ser el `ms` de la etapa de recall (4.5), con `plan=exacto`.
+
 El índice HNSW de pgvector rinde cuando entra en memoria. Cada vector son
 1024 dimensiones × 4 bytes ≈ **4 KB**, más el grafo del índice.
 

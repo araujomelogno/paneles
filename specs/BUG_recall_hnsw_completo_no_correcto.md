@@ -5,7 +5,7 @@
 evidencia del corpus**, sin ningún aviso
 **Detectado:** 2026-10-10, desplegando el arreglo de A1.2
 **Antecedente:** `specs/BUG_diagnostico_a1_distancia_y_hallazgo.md`
-**Estado:** Para corregir
+**Estado:** Corregido (D72) · despliegue en `docs/DESPLIEGUE - bug recall HNSW completo no correcto.md`
 
 ---
 
@@ -86,12 +86,12 @@ orden de diez millones de operaciones en coma flotante: **decenas de
 milisegundos** en Postgres. A esa escala, HNSW no ahorra nada perceptible y sí
 introduce resultados equivocados.
 
-- [ ] En `_vecinos`, usar el **camino exacto también sin filtro** mientras el
+- [x] En `_vecinos`, usar el **camino exacto también sin filtro** mientras el
       corpus esté por debajo de un umbral configurable.
-- [ ] El umbral, por variable de entorno, con un valor inicial alto (sugerido:
+- [x] El umbral, por variable de entorno, con un valor inicial alto (sugerido:
       **200.000 respuestas**), y documentado.
-- [ ] Por encima del umbral, volver al índice — ver la segunda parte.
-- [ ] El `informe` sigue indicando qué plan se usó, como hoy.
+- [x] Por encima del umbral, volver al índice — ver la segunda parte.
+- [x] El `informe` sigue indicando qué plan se usó, como hoy.
 
 > **El umbral no es arbitrario.** Por debajo de unos cientos de miles de filas,
 > el recorrido exacto es rápido y da recall perfecto. El índice existe para
@@ -100,17 +100,17 @@ introduce resultados equivocados.
 
 ### Para cuando el corpus crezca: el índice, con más margen
 
-- [ ] Por encima del umbral, subir `ef_search` **por encima de `top_n`**, no
+- [x] Por encima del umbral, subir `ef_search` **por encima de `top_n`**, no
       igualarlo: un `ef_search` igual a `top_n` deja muy poco margen para que el
       vecino real entre. Sugerido: **`2 × top_n`**, con un tope.
-- [ ] Verificar los parámetros con que se construyó el índice (`m`,
+- [x] Verificar los parámetros con que se construyó el índice (`m`,
       `ef_construction`). La migración `0006` lo recreó sobre una tabla con una
       sola fila; vale confirmar que no conviene reconstruirlo ahora que el
       corpus tiene volumen real.
 
 ### Una salvaguarda contra la recaída
 
-- [ ] Agregar al script de diagnóstico, o a la suite, un **chequeo de recall
+- [x] Agregar al script de diagnóstico, o a la suite, un **chequeo de recall
       real**: para un conjunto de criterios de prueba, comparar el resultado del
       plan con índice contra el exacto y reportar cuántos de los primeros N del
       exacto faltan en el índice. Es la única forma de detectar este defecto,
@@ -136,9 +136,9 @@ El propio script reporta las dos cosas a la vez y se contradice:
 La primera es la correcta. La segunda es una regla condicional que **no aplica
 cuando la evidencia no entró al recall**.
 
-- [ ] Corregir el script para que **no emita la conclusión del recorte cuando
+- [x] Corregir el script para que **no emita la conclusión del recorte cuando
       la evidencia no entró al recall**: son excluyentes, y hoy saca las dos.
-- [ ] Ajustar la etiqueta «FALLO DE MEDICIÓN»: si el recall de producción usa el
+- [x] Ajustar la etiqueta «FALLO DE MEDICIÓN»: si el recall de producción usa el
       mismo plan, **no es solo una falla de la medición, es el comportamiento
       real del sistema** para las consultas sin filtro.
 
@@ -155,18 +155,18 @@ titularidad del contrato ocupaban el top. Ese patrón no las encuentra.
 
 ## 6. Pruebas de aceptación
 
-- [ ] *«gente que usa un celular xiaomi»*, sin filtro: la mejor respuesta de
+- [x] *«gente que usa un celular xiaomi»*, sin filtro: la mejor respuesta de
       Xiaomi **entra en el recall** (test con el corpus real o con un fixture
       que reproduzca el caso).
-- [ ] Con el corpus por debajo del umbral, el plan es `exacto` y el recall
+- [x] Con el corpus por debajo del umbral, el plan es `exacto` y el recall
       coincide con el de una búsqueda exhaustiva (test).
-- [ ] Por encima del umbral, el plan es `indice` con `ef_search > top_n`
+- [x] Por encima del umbral, el plan es `indice` con `ef_search > top_n`
       (test).
-- [ ] El chequeo de recall real reporta las filas que el índice omite frente
+- [x] El chequeo de recall real reporta las filas que el índice omite frente
       al exacto (test).
-- [ ] El script no emite la conclusión del recorte cuando la evidencia no entró
+- [x] El script no emite la conclusión del recorte cuando la evidencia no entró
       al recall (test).
-- [ ] Las consultas con filtro siguen por el camino exacto, sin cambios (test de
+- [x] Las consultas con filtro siguen por el camino exacto, sin cambios (test de
       no regresión).
 
 ## 7. Costos
@@ -192,3 +192,30 @@ un recall completo pero equivocado como un resultado normal.
 La salvaguarda que más rinde contra este tipo de defecto no es revisar el
 código: es **comparar contra una referencia conocida**. Por eso el chequeo de
 recall real de §4 no es un detalle.
+
+---
+
+## 9. Resolución (2026-10-10)
+
+- **Plan.** `_vecinos`: con filtro, exacto (sin cambios); sin filtro, exacto
+  mientras el corpus (`pg_class.reltuples`) no pase de `RECALL_EXACTO_HASTA`
+  (200.000 por defecto, en `functions/.env.ejemplo`); por encima, índice con
+  `ef_search = 2 × top_n` (tope 1000; sin margen posible, exacto). El
+  `informe` suma `motivo_plan` y `ef_search`.
+- **Índice.** `recall-indice` informa `m` y `ef_construction` y mide el
+  recall real. Bajo el umbral el índice no se usa, así que reconstruirlo no
+  cambia ninguna consulta hoy: queda como paso opcional del despliegue,
+  decidido con esa medición.
+- **Salvaguarda.** `semantica.comparar_recall` y `diagnosticar_consulta.py
+  recall-indice`: índice contra exacto, cuántas de las `top_n` faltan y en
+  qué puesto. Sale con 1 si falta alguna.
+- **Script.** Las conclusiones son excluyentes (`conclusiones()`): si la
+  evidencia no entró al recall, no se concluye «recorte», y la etiqueta es
+  «EL RECALL NO LA TRAJO (plan=…)». Lista los textos repetidos del pool.
+- **Comparación «viejo vs. nuevo» del despliegue de D71:** ahora toma el
+  script de `e7c0eba` (antes de D71). La copia `scripts/_diagnosticar_viejo.py`
+  que había quedado commiteada se borró y se ignora.
+- **Pendiente (no es código):** revisar qué eran las respuestas repetidas
+  del resultado original. El despliegue (paso 7) lo hace con la lista de
+  textos repetidos del pool, y la conclusión va a la tabla de R-CS §2.5.
+- Pruebas: `functions/tests/test_bug_recall_hnsw.py`. Decisión: **D72**.

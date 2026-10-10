@@ -289,9 +289,15 @@ defecto) **de todo el corpus**, y el `where` se aplica después. Un filtro
 selectivo da vacío y un `top_n` mayor que `ef_search` da 40, **sin error**.
 
 - **El recall pasa por `semantica._vecinos`**: con filtro por personas (el
-  gate) es exacto; sin filtro, índice con `ef_search` subido a `top_n`. Un
-  recall corto se registra (`[recall]`) y se recalcula. No escriban otro
-  `order by <=> … limit` con un `where` al lado.
+  gate) es exacto; sin filtro, **también exacto** mientras el corpus no pase
+  de `RECALL_EXACTO_HASTA` (200 mil, D72), y por encima índice con
+  `ef_search = 2 × top_n`. Un recall corto se registra (`[recall]`) y se
+  recalcula. No escriban otro `order by <=> … limit` con un `where` al lado.
+- **Completo no es correcto** (D72): el índice puede devolver las 200 pedidas
+  sin la más cercana, y ninguna cuenta lo ve. No agreguen un control que mire
+  solo cuántas filas volvieron; lo que mide el índice es
+  `semantica.comparar_recall` (`diagnosticar_consulta.py recall-indice`),
+  contra el exacto. Correrlo antes de bajar el umbral o al cruzarlo.
 - **Medir filas conocidas no usa el índice**: el filtro en una CTE
   `materialized` y la distancia sobre ese conjunto
   (`diagnosticar_consulta._distancias`). Una prueba falla si el script vuelve
@@ -299,6 +305,9 @@ selectivo da vacío y un `top_n` mayor que `ef_search` da 40, **sin error**.
 - **Vacío no es ausencia.** Si una consulta devuelve vacío o un valor por
   defecto, el código distingue y registra si es un resultado o algo que no
   se pudo hacer (`a1-distancia`: `AUSENTE` sale con 1, `NO_MEDIDO` con 2).
+  Y las conclusiones del diagnóstico son excluyentes: si la evidencia no
+  entró al recall, no se concluye nada sobre lo que pasa después (el
+  recorte).
 
 ## De qué carga viene cada persona, y sobre quién se calcula la composición
 

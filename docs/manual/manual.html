@@ -2253,9 +2253,10 @@
     <thead><tr><th>Parámetro</th><th>Conviene aumentarlo si…</th><th>Conviene reducirlo si…</th></tr></thead>
     <tr><td class="destacado">Pool de recuperación</td>
       <td>Hay motivos para pensar que se está perdiendo gente que debería
-      aparecer. Desde esta versión el pool trae <strong>lo que se pide</strong>:
-      hasta ahora, por cómo funciona el índice de búsqueda, un pool de 200
-      traía en la práctica unas 40 respuestas, y subirlo no cambiaba nada.</td>
+      aparecer. El pool trae <strong>lo que se pide</strong>, y desde esta
+      versión trae además <strong>las más parecidas de verdad</strong>: antes
+      la búsqueda rápida podía devolver las 200 pedidas dejando afuera a la
+      mejor respuesta del corpus.</td>
       <td>—</td></tr>
     <tr><td class="destacado">A verificar</td>
       <td>Se necesita un ranking más extenso. Subirlo sin subir <i>Personas a
@@ -2291,12 +2292,16 @@
   <strong>cómo</strong> se buscaron (<code>plan</code>):</p>
 
   <ul class="pasos">
-    <li><code>plan=indice</code>: la búsqueda rápida sobre todo el corpus. Es
-    lo habitual cuando la consulta no tiene un filtro demográfico.</li>
-    <li><code>plan=exacto</code>: se recorrieron una por una las respuestas de
-    las personas habilitadas. Es lo que pasa cuando el sistema filtró primero
-    por demografía (6.7): así ninguna persona habilitada queda afuera por
-    estar lejos de las demás.</li>
+    <li><code>plan=exacto</code>: se compararon <strong>todas</strong> las
+    respuestas con el criterio, una por una, y vuelven las más parecidas sin
+    aproximación. Es lo habitual: con un filtro demográfico (6.7) se recorren
+    las de las personas habilitadas, y sin filtro, las de todo el corpus
+    mientras no pase de cierto tamaño (200 mil respuestas, hoy es diez veces
+    menos). <code>motivo_plan</code> dice cuál de los dos casos fue.</li>
+    <li><code>plan=indice</code>: la búsqueda rápida y aproximada, que se usa
+    solo cuando el corpus es muy grande para recorrerlo entero. Junto al plan
+    aparece <code>ef_search</code>: cuánto margen se le dio a la búsqueda
+    (el doble de lo pedido).</li>
     <li><code>indice_corto=N</code>: la búsqueda rápida devolvió solo N
     respuestas habiendo más, y el sistema la repitió completa. El resultado
     es correcto; si aparece seguido, conviene avisar a quien administra el
@@ -2305,6 +2310,9 @@
 
   <p>Si <code>crudos</code> es menor que <code>pedidos</code>, <strong>no
   había más respuestas</strong> para esas personas: ya no puede deberse a la
+  búsqueda. Y con <code>plan=exacto</code>, las que volvieron son
+  exactamente las más parecidas: si una respuesta que se esperaba no está,
+  la causa está en el criterio o en cómo quedó escrita la respuesta, no en la
   búsqueda.</p>
 
   <figure>
@@ -3763,6 +3771,15 @@
   piden; un pool más grande vuelve a significar más candidatos (y una
   consulta algo más lenta).</p>
 
+  <h4>Una consulta sin filtros ahora trae a alguien que antes no aparecía</h4>
+  <p>Es lo correcto. La búsqueda rápida es aproximada: podía devolver las 200
+  respuestas pedidas dejando afuera a la más parecida de todo el corpus, sin
+  ningún aviso. Era el caso de la consulta por celulares Xiaomi: la mejor
+  respuesta no llegaba a ser candidata. Desde esta versión, mientras el corpus
+  no sea muy grande, la búsqueda compara todas las respuestas y trae las más
+  parecidas de verdad. El diagnóstico lo muestra como <code>plan=exacto</code>
+  (6.9).</p>
+
   <h4>Una persona aparecía en la consulta y ahora figura «sin evidencia pertinente»</h4>
   <p>Su respuesta habla de otra cosa —por ejemplo, quién es el titular de la
   línea cuando el criterio es la marca del celular—. Antes eso se juzgaba como
@@ -3980,9 +3997,9 @@
       <td>Veredicto de una respuesta que no habla del criterio: no lo afirma ni
       lo niega. Cuenta como falta de evidencia, no como «no cumple».</td></tr>
     <tr><td class="destacado">Plan de recuperación (índice / exacto)</td>
-      <td>Cómo se buscaron las respuestas más parecidas al criterio: con el
-      índice, rápido, sobre todo el corpus; o recorriendo una por una las de
-      las personas habilitadas, cuando hay un filtro. Lo dice el
+      <td>Cómo se buscaron las respuestas más parecidas al criterio:
+      recorriéndolas una por una (exacto, lo habitual) o con el índice,
+      rápido y aproximado, solo cuando el corpus es muy grande. Lo dice el
       diagnóstico.</td></tr>
     <tr><td class="destacado">Alcance (exploratorio / completo)</td>
       <td>Cuánto revisa una consulta: las mejores candidatas en el momento, o

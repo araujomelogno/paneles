@@ -81,6 +81,9 @@ NO_SON_SECRETOS = frozenset({
     "COSTO_RERANK_USD_MTOK", "COSTO_EMBEDDING_USD_MTOK",
     "CONSULTA_UNIDADES_POR_LOTE", "CONSULTA_PRESUPUESTO_MAXIMO_USD",
     "TAREAS_CONSULTA_COLA",
+    # D72 — hasta cuántas respuestas el recall sin filtro es exacto. Es una
+    # decisión de operación (latencia contra exactitud), no una credencial.
+    "RECALL_EXACTO_HASTA",
 })
 
 
