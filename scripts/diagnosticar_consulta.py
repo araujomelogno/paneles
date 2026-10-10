@@ -28,7 +28,14 @@ Qué contesta cada uno:
   con las respuestas que sí entraron (por ejemplo las del contrato)? Si está
   más lejos, el problema es la calidad del embedding y las unidades de
   evidencia no lo resuelven; si está más cerca y no llegó, era el recorte.
-  Lo mide con los dos `input_type`, porque el cambio 1 mueve los criterios.
+  Lo mide con los dos `input_type`, porque el cambio 1 mueve los criterios,
+  y dice si la respuesta entra en el recall real (`top_n`).
+  Mide filas **conocidas**: el filtro se materializa antes de ordenar por
+  distancia, porque con el índice HNSW de por medio un `where` selectivo
+  devolvía vacío sin error (`specs/BUG_diagnostico_a1_distancia_y_hallazgo.md`).
+  Sale con 0 si midió, con 1 si el patrón no está en el corpus (ingesta) y
+  con 2 si el patrón está pero la medición no lo encontró: eso es un fallo
+  del diagnóstico, no un resultado, y lo dice con ese nombre.
 * **a1-reranker** (A1.3) — ¿el reranker corrió? Lee `consulta_ejecucion`
   (bóveda/0025). Las ejecuciones anteriores a la 0025 no dejaron registro:
   para ellas hay que volver a correr la consulta, y el script lo dice.
@@ -115,47 +122,154 @@ def a1_texto(args):
 
 
 # ── A1.2 ─────────────────────────────────────────────────────────────
+#
+# Dos consultas con intenciones opuestas, y cada una necesita su plan:
+#
+# * «¿a qué distancia quedaron ESTAS filas?» (`_distancias`) mide filas
+#   conocidas. Es un `where` selectivo y después un orden, y el índice HNSW
+#   no corresponde: con `order by <=> … limit` Postgres resuelve por el
+#   índice, que devuelve sus vecinos de **todo el corpus** (del orden de
+#   `hnsw.ef_search`) y recién después aplica el `ilike`. Si ninguno de esos
+#   vecinos tiene el patrón, el resultado es vacío, sin error
+#   (`specs/BUG_diagnostico_a1_distancia_y_hallazgo.md`). Por eso el filtro
+#   se materializa primero y la distancia se ordena sobre ese conjunto.
+#
+# * «¿cuántas del corpus están más cerca?» (`_delante`) es una pregunta
+#   sobre el corpus entero. Es un conteo con la distancia en el `where`, sin
+#   `order by … limit`: Postgres la resuelve recorriendo el corpus completo y
+#   el número es exacto. No se toca: es lo que se compara con `top_n`.
+
+AUSENTE = "ausente"
+"""El patrón no está en ninguna respuesta del corpus: es ingesta."""
+
+NO_MEDIDO = "no_medido"
+"""El patrón está, pero la consulta de distancia no devolvió esas filas: es
+un fallo de la medición (plan, índice), no la ausencia de la respuesta."""
+
+MEDIDO = "medido"
+
+MENSAJE_AUSENTE = (
+    "ninguna respuesta del corpus contiene «{patron}»: la evidencia NUNCA "
+    "ENTRÓ (problema de ingesta; a1-texto da el detalle).")
+MENSAJE_NO_MEDIDO = (
+    "FALLO DE MEDICIÓN: {coincidencias} respuesta(s) contienen «{patron}», "
+    "pero la consulta de distancia no devolvió ninguna. No es ausencia: "
+    "no interpretar como resultado.")
+
+_FILTRO_PATRON = "r.valor_texto ilike %s or r.texto_embebido ilike %s"
+
+
+def _coincidencias(conn, patron):
+    """Cuántas respuestas contienen el patrón, sin vector ni índice de por
+    medio: es la referencia contra la que se controla la medición."""
+    return semantica.db.una(
+        conn, f"select count(*) as n from respuesta r where {_FILTRO_PATRON}",
+        (f"%{patron}%", f"%{patron}%"))["n"]
+
 
 def _distancias(conn, vector, patron, limite):
+    """Las `limite` respuestas con el patrón más cercanas al vector, con su
+    distancia exacta. El `materialized` impide que el planificador vuelva a
+    juntar el filtro con el orden y elija el índice HNSW."""
     return semantica.db.todas(
         conn,
-        """select r.id, r.valor_texto, r.embedding <=> %s::vector as distancia
-             from respuesta r
-            where r.valor_texto ilike %s or r.texto_embebido ilike %s
-            order by 3 limit %s""",
+        f"""with filtradas as materialized (
+                 select r.id, r.valor_texto, r.embedding <=> %s::vector as distancia
+                   from respuesta r
+                  where {_FILTRO_PATRON}
+             )
+             select id, valor_texto, distancia
+               from filtradas
+              order by distancia, id
+              limit %s""",
         (semantica._vector(vector), f"%{patron}%", f"%{patron}%", limite))
+
+
+def _delante(conn, vector, distancia):
+    """Cuántas respuestas del corpus entero están más cerca que `distancia`."""
+    return semantica.db.una(
+        conn, "select count(*) as n from respuesta r where r.embedding <=> %s::vector < %s",
+        (semantica._vector(vector), distancia))["n"]
+
+
+def _mas_cerca_con_patron(conn, vector, patron, distancia):
+    """De las respuestas con el patrón, cuántas están más cerca que
+    `distancia`. Conteo exacto, sin tope: antes salía de las primeras 1000
+    filas de `_distancias`."""
+    return semantica.db.una(
+        conn,
+        f"""select count(*) as total,
+                   count(*) filter (where r.embedding <=> %s::vector < %s) as mas_cerca
+              from respuesta r
+             where {_FILTRO_PATRON}""",
+        (semantica._vector(vector), distancia, f"%{patron}%", f"%{patron}%"))
+
+
+def medir(conn, vector, patron, limite=5):
+    """La medición de A1.2 para un vector, sin imprimir nada.
+
+    Devuelve `estado` (`MEDIDO`, `AUSENTE` o `NO_MEDIDO`), cuántas respuestas
+    contienen el patrón y, si se pudo medir, las más cercanas con su
+    distancia. Que el resultado venga vacío se explica siempre: o el patrón
+    no está, o la medición falló, y son dos mensajes distintos.
+    """
+    coincidencias = _coincidencias(conn, patron)
+    if not coincidencias:
+        return {"estado": AUSENTE, "coincidencias": 0, "filas": []}
+    filas = _distancias(conn, vector, patron, limite)
+    if not filas:
+        return {"estado": NO_MEDIDO, "coincidencias": coincidencias, "filas": []}
+    return {"estado": MEDIDO, "coincidencias": coincidencias, "filas": filas}
 
 
 def a1_distancia(args):
     conn = _conectar("DSN_SEMANTICA")
     proveedor = embeddings.crear()
+    top_n = consultas.TOP_N_POR_DEFECTO
     print(f"A1.2 · criterio «{args.criterio}»")
+    salida = 0
     for tipo in embeddings.TIPOS_DE_CRITERIO:
         vector = proveedor.embeber_criterio([args.criterio], tipo=tipo)[0]
-        objetivo = _distancias(conn, vector, args.patron, 5)
-        if not objetivo:
-            print(f"  [{tipo}] no hay respuestas con «{args.patron}»: correr a1-texto.")
+        medicion = medir(conn, vector, args.patron)
+        if medicion["estado"] == AUSENTE:
+            print(f"  [{tipo}] " + MENSAJE_AUSENTE.format(patron=args.patron))
+            salida = max(salida, 1)
             continue
+        if medicion["estado"] == NO_MEDIDO:
+            print(f"  [{tipo}] " + MENSAJE_NO_MEDIDO.format(
+                patron=args.patron, coincidencias=medicion["coincidencias"]))
+            salida = 2
+            continue
+        objetivo = medicion["filas"]
         mejor = float(objetivo[0]["distancia"])
-        delante = semantica.db.una(
-            conn, "select count(*) as n from respuesta r where r.embedding <=> %s::vector < %s",
-            (semantica._vector(vector), mejor))["n"]
-        print(f"  [{tipo}] la mejor respuesta con «{args.patron}» (#{objetivo[0]['id']}, "
-              f"{objetivo[0]['valor_texto']!r}) está a {mejor:.4f};")
+        delante = _delante(conn, vector, mejor)
+        print(f"  [{tipo}] {medicion['coincidencias']} respuesta(s) con «{args.patron}»; "
+              f"la mejor (#{objetivo[0]['id']}, {objetivo[0]['valor_texto']!r}) "
+              f"está a {mejor:.4f};")
         print(f"          {delante} respuesta(s) del corpus están más cerca del criterio "
-              f"(top_n por defecto: {consultas.TOP_N_POR_DEFECTO}).")
+              f"(top_n por defecto: {top_n}).")
+        # Lo que de verdad trae el recall de la consulta, con el mismo
+        # `semantica.recuperar`. Si por el conteo tendría que entrar y no
+        # entró, el que recortó fue el índice, no la distancia.
+        recall = {c["respuesta_id"] for c in semantica.recuperar(conn, vector, top_n)}
+        entran = [f["id"] for f in objetivo if f["id"] in recall]
+        print(f"          recall real (top_n={top_n}): {len(recall)} respuesta(s); "
+              f"{'entra' if entran else 'NO entra'} la mejor con «{args.patron}».")
+        if delante < top_n and not entran:
+            print("          → FALLO DE MEDICIÓN del recall: por distancia tendría que "
+                  "entrar y el recall no la trajo (índice). No es un resultado.")
+            salida = 2
         if args.contra:
-            contra = _distancias(conn, vector, args.contra, 1000)
-            mas_cerca = [c for c in contra if float(c["distancia"]) < mejor]
-            print(f"          «{args.contra}»: {len(contra)} respuesta(s), {len(mas_cerca)} "
-                  f"más cerca que la buscada.")
-            if len(mas_cerca) >= 25:
+            contra = _mas_cerca_con_patron(conn, vector, args.contra, mejor)
+            print(f"          «{args.contra}»: {contra['total']} respuesta(s), "
+                  f"{contra['mas_cerca']} más cerca que la buscada.")
+            if contra["mas_cerca"] >= 25:
                 print("          → Más lejos que 25 repeticiones de la otra respuesta: es "
                       "CALIDAD DEL EMBEDDING; las unidades de evidencia no lo resuelven.")
             else:
                 print("          → Más cerca que las repeticiones: si no llegó, fue el RECORTE "
                       "(cambio 3 justificado).")
-    return 0
+    return salida
 
 
 # ── A1.3 ─────────────────────────────────────────────────────────────
