@@ -177,80 +177,170 @@ def hash_texto(texto):
     return hashlib.sha256(str(texto).encode("utf-8")).hexdigest()
 
 
-def hashes_de_estudio(conn, ref_estudio):
-    """`{(individuo_id, pregunta_id): hash_texto}` de lo ya ingestado.
+# ════════════════════════════════════════════════════════════════════
+#  R-UE — Unidades de evidencia: un vector por texto distinto
+# ════════════════════════════════════════════════════════════════════
+#
+# El vector vive en `unidad_evidencia` (semantica/0010), una vez por texto
+# embebido distinto; cada respuesta la referencia por `unidad_id`. Medido
+# sobre el corpus real, 21.340 respuestas eran 861 textos: el 96 % del
+# corpus eran copias, y las copias rompían el índice HNSW (bloques de puntos
+# idénticos que la búsqueda no alcanza) y gastaban la verificación en la
+# misma idea repetida. Ver `specs/SPEC_unidades_de_evidencia.md` y D73.
+#
+# **Una sola forma de escribir respuestas**: `escribir_respuestas`, que usan
+# la ingesta y el reproceso. Resuelve las unidades que ya existen, embebe
+# **solo los textos nuevos** —una vez cada uno, aunque lleguen mil copias en
+# la misma carga— y después escribe las respuestas apuntando a su unidad.
 
-    Se consulta antes de embeber: lo que venga con el mismo texto no se
-    manda al proveedor.
-    """
+def unidades_por_hash(conn, huellas):
+    """`{hash_texto: unidad_id}` de las huellas que ya tienen unidad."""
+    huellas = list(dict.fromkeys(str(h) for h in huellas))
+    if not huellas:
+        return {}
     filas = db.todas(
         conn,
-        """
-        select r.individuo_id, r.pregunta_id, r.hash_texto
-          from respuesta r
-          join pregunta p     on p.id = r.pregunta_id
-          join cuestionario c on c.id = p.cuestionario_id
-         where c.ref_estudio = %s and r.hash_texto is not null
-        """,
-        (str(ref_estudio),),
-    )
-    return {(f["individuo_id"], f["pregunta_id"]): f["hash_texto"] for f in filas}
+        "select id, hash_texto from unidad_evidencia where hash_texto = any(%s::text[])",
+        (huellas,))
+    return {f["hash_texto"]: f["id"] for f in filas}
+
+
+def crear_unidades(conn, unidades):
+    """`unidades`: `[{hash_texto, texto_embebido, embedding}]`. Idempotente
+    por huella: si otra tarea ya creó la unidad, se conserva la que estaba
+    (el mismo texto con el mismo modelo da el mismo vector)."""
+    if not unidades:
+        return 0
+    pii.validar_sin_pii(
+        [{k: v for k, v in u.items() if k != "embedding"} for u in unidades],
+        contexto="unidad_evidencia")
+    with conn.cursor() as cur:
+        cur.executemany(
+            """insert into unidad_evidencia (hash_texto, texto_embebido, embedding)
+               values (%s, %s, %s::vector)
+               on conflict (hash_texto) do nothing""",
+            [(u["hash_texto"], u["texto_embebido"], _vector(u["embedding"]))
+             for u in unidades])
+    return len(unidades)
+
+
+class SinUnidad(RuntimeError):
+    """Se intentó escribir una respuesta cuyo texto nunca se embebió. Es un
+    error de programación: `escribir_respuestas` crea las unidades antes."""
 
 
 def upsert_respuestas(conn, respuestas):
     """`respuestas`: [{individuo_id, pregunta_id, valor_texto, texto_embebido,
-    embedding}]. Idempotente por (individuo, pregunta): re-ingestar no duplica.
+    hash_texto?, embedding?}]. Idempotente por (individuo, pregunta):
+    re-ingestar no duplica.
 
-    `embedding` puede venir en None cuando la ingesta salteó el embedding
-    porque el texto no cambió: en ese caso se actualiza todo menos el vector,
-    que sigue siendo el correcto.
+    Cada respuesta apunta a la unidad de su texto. Si la fila trae
+    `embedding`, la unidad se crea con ese vector cuando falta; si no lo
+    trae, la unidad **tiene** que existir (`SinUnidad`): una respuesta sin
+    vector sería invisible para la búsqueda y contaría en los totales.
+
+    `respuesta.embedding` no se escribe: mientras exista (hasta la
+    semantica/0011), lo completa el trigger de la 0010 desde la unidad.
     """
     pii.validar_sin_pii(
         [{k: v for k, v in r.items() if k != "embedding"} for r in respuestas],
         contexto="respuesta",
     )
+    for r in respuestas:
+        r["hash_texto"] = r.get("hash_texto") or hash_texto(r["texto_embebido"])
+    crear_unidades(conn, [
+        {"hash_texto": r["hash_texto"], "texto_embebido": r["texto_embebido"],
+         "embedding": r["embedding"]}
+        for r in respuestas if r.get("embedding") is not None])
+    unidad_de = unidades_por_hash(conn, (r["hash_texto"] for r in respuestas))
+    faltan = {r["hash_texto"] for r in respuestas} - set(unidad_de)
+    if faltan:
+        raise SinUnidad(
+            f"{len(faltan)} texto(s) sin unidad de evidencia: hay que embeberlos "
+            f"antes de escribir sus respuestas (semantica.escribir_respuestas).")
+
     escritas = 0
     for r in respuestas:
-        huella = r.get("hash_texto") or hash_texto(r["texto_embebido"])
-        if r.get("embedding") is None:
-            # Sin vector nuevo: solo puede ser un UPDATE de una fila que ya
-            # existe (si no existiera, no habría con qué comparar el hash).
-            escritas += db.ejecutar(
-                conn,
-                """
-                update respuesta
-                   set valor_texto = %s, texto_embebido = %s, hash_texto = %s
-                 where individuo_id = %s and pregunta_id = %s
-                """,
-                (
-                    r.get("valor_texto"), r["texto_embebido"], huella,
-                    r["individuo_id"], r["pregunta_id"],
-                ),
-            )
-            continue
         escritas += db.ejecutar(
             conn,
             """
             insert into respuesta
                    (individuo_id, pregunta_id, valor_texto, texto_embebido,
-                    embedding, hash_texto)
-                 values (%s, %s, %s, %s, %s::vector, %s)
+                    hash_texto, unidad_id)
+                 values (%s, %s, %s, %s, %s, %s)
             on conflict (individuo_id, pregunta_id) do update
                     set valor_texto = excluded.valor_texto,
                         texto_embebido = excluded.texto_embebido,
-                        embedding = excluded.embedding,
-                        hash_texto = excluded.hash_texto
+                        hash_texto = excluded.hash_texto,
+                        unidad_id = excluded.unidad_id
             """,
             (
                 r["individuo_id"],
                 r["pregunta_id"],
                 r.get("valor_texto"),
                 r["texto_embebido"],
-                _vector(r["embedding"]),
-                huella,
+                r["hash_texto"],
+                unidad_de[r["hash_texto"]],
             ),
         )
     return escritas
+
+
+def escribir_respuestas(conn, respuestas, proveedor):
+    """El camino único de escritura de la ingesta y el reproceso (R-UE.4).
+
+    1. Calcula la huella de cada respuesta.
+    2. Las huellas que ya tienen unidad se reutilizan **sin embeber**.
+    3. Los textos nuevos se embeben **una vez cada uno**, sub-lote a
+       sub-lote, y cada sub-lote se guarda como unidades y se suelta antes
+       de pedir el siguiente (R-ASYNC.2.b: nunca hay más de un sub-lote de
+       vectores vivo).
+    4. Se escriben las respuestas, apuntando a su unidad.
+
+    Antes de mandar nada al proveedor se compara su dimensión con la de
+    `unidad_evidencia.embedding`: un desajuste haría pagar el lote para que
+    el insert lo rechace después.
+
+    Devuelve `{escritas, textos_embebidos, respuestas_reutilizadas}`:
+    cuántas respuestas se escribieron, cuántos textos se mandaron a embeber
+    y cuántas respuestas apuntaron a una unidad que ya existía.
+    """
+    from . import esquema
+    from .errores import DatosInvalidos
+
+    for r in respuestas:
+        r["hash_texto"] = r.get("hash_texto") or hash_texto(r["texto_embebido"])
+        r["embedding"] = None
+    existentes = unidades_por_hash(conn, (r["hash_texto"] for r in respuestas))
+    nuevos = {}
+    for r in respuestas:
+        if r["hash_texto"] not in existentes:
+            nuevos.setdefault(r["hash_texto"], r["texto_embebido"])
+
+    if nuevos:
+        desajuste = esquema.desajuste_de_dimension(conn, getattr(proveedor, "dims", None))
+        if desajuste:
+            raise DatosInvalidos(desajuste, {"motivo": "dimension_de_embeddings"})
+        # La guarda de PII va antes de embeber: el texto de una columna
+        # identificatoria no tiene que llegar ni al proveedor.
+        pii.validar_sin_pii(
+            [{k: v for k, v in r.items() if k != "embedding"} for r in respuestas],
+            contexto="respuesta")
+        pendientes = list(nuevos.items())
+        for inicio, vectores in proveedor.embeber_por_lotes([t for _, t in pendientes]):
+            sublote = pendientes[inicio:inicio + len(vectores)]
+            crear_unidades(conn, [
+                {"hash_texto": h, "texto_embebido": t, "embedding": v}
+                for (h, t), v in zip(sublote, vectores)])
+            del vectores
+
+    escritas = upsert_respuestas(conn, respuestas) if respuestas else 0
+    return {
+        "escritas": escritas,
+        "textos_embebidos": len(nuevos),
+        "respuestas_reutilizadas": sum(
+            1 for r in respuestas if r["hash_texto"] in existentes),
+    }
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -269,10 +359,11 @@ igual a `top_n` el grafo explora apenas lo justo, y el vecino de verdad
 puede quedar afuera aunque vuelvan las `top_n` filas pedidas (D72)."""
 
 RECALL_EXACTO_HASTA_POR_DEFECTO = 200_000
-"""Hasta cuántas respuestas el recall sin filtro es exacto (D72). Medido en
-local, recorrer 21.340 vectores de 512 dimensiones son ~115 ms, así que 200
-mil rondan el segundo: todavía poco frente a los segundos de la verificación
-con Claude. El índice existe para cuando deja de serlo."""
+"""Hasta cuántas **unidades de evidencia** el recall sin filtro es exacto
+(D72, D73). Medido en local, recorrer 21.340 vectores de 512 dimensiones son
+~115 ms, así que 200 mil rondan el segundo: todavía poco frente a los
+segundos de la verificación con Claude. Desde R-UE se cuentan unidades (861
+con el corpus de hoy), no respuestas: el umbral queda mucho más lejos."""
 
 
 def umbral_recall_exacto(entorno=None):
@@ -303,7 +394,8 @@ def ef_search_para(top_n):
 
 
 def tamano_corpus(conn):
-    """Cuántas respuestas hay, para decidir el plan.
+    """Cuántas unidades de evidencia hay (R-UE: el recall busca entre
+    unidades, no entre respuestas), para decidir el plan.
 
     La estimación del catálogo (`reltuples`) y no un `count(*)`: decidir el
     plan no puede costar un recorrido de la tabla, que es justo lo que el
@@ -311,16 +403,18 @@ def tamano_corpus(conn):
     (`reltuples` = -1), se cuenta.
     """
     fila = db.una(conn, "select reltuples::bigint as n from pg_class "
-                        "where oid = 'respuesta'::regclass")
+                        "where oid = 'unidad_evidencia'::regclass")
     if fila and fila["n"] is not None and fila["n"] >= 0:
         estimado = int(fila["n"])
         if estimado > 0:
             return estimado
-    return int(db.una(conn, "select count(*) as n from respuesta")["n"])
+    return int(db.una(conn, "select count(*) as n from unidad_evidencia")["n"])
 
 
 def _vecinos_exactos(conn, literal, top_n, ids_individuo):
-    """Las `top_n` más cercanas recorriendo el conjunto entero, sin índice.
+    """Las `top_n` **unidades** más cercanas recorriendo el conjunto entero,
+    sin índice. Con `ids_individuo`, solo las unidades que tienen al menos
+    una respuesta de esas personas.
 
     El `materialized` es lo que lo garantiza: sin él, el planificador junta
     el filtro con el `order by <=> … limit` y vuelve a elegir el índice HNSW.
@@ -329,9 +423,11 @@ def _vecinos_exactos(conn, literal, top_n, ids_individuo):
         conn,
         """
         with candidatas as materialized (
-            select r.id, r.embedding <=> %s::vector as distancia
-              from respuesta r
-             where (%s::bigint[] is null or r.individuo_id = any(%s::bigint[]))
+            select u.id, u.embedding <=> %s::vector as distancia
+              from unidad_evidencia u
+             where (%s::bigint[] is null
+                    or u.id in (select r.unidad_id from respuesta r
+                                 where r.individuo_id = any(%s::bigint[])))
         )
         select id, distancia from candidatas order by distancia, id limit %s
         """,
@@ -340,15 +436,15 @@ def _vecinos_exactos(conn, literal, top_n, ids_individuo):
 
 
 def _vecinos_indice(conn, literal, top_n, ef_search):
-    """Las `top_n` que devuelve el índice HNSW con ese `ef_search`. Sin
-    filtro: con un `where` el índice no corresponde (D71)."""
+    """Las `top_n` unidades que devuelve el índice HNSW con ese `ef_search`.
+    Sin filtro: con un `where` el índice no corresponde (D71)."""
     db.una(conn, "select set_config('hnsw.ef_search', %s, true)", (str(ef_search),))
     return db.todas(
         conn,
         """
-        select r.id, r.embedding <=> %s::vector as distancia
-          from respuesta r
-         order by r.embedding <=> %s::vector
+        select u.id, u.embedding <=> %s::vector as distancia
+          from unidad_evidencia u
+         order by u.embedding <=> %s::vector
          limit %s
         """,
         (literal, literal, top_n),
@@ -356,7 +452,13 @@ def _vecinos_indice(conn, literal, top_n, ef_search):
 
 
 def _vecinos(conn, literal, top_n, ids_individuo=None, informe=None, entorno=None):
-    """Las `top_n` respuestas más cercanas, con el plan que corresponde.
+    """Las `top_n` unidades de evidencia más cercanas, con el plan que
+    corresponde. Devuelve `[{id, distancia}]`, con `id` de la unidad.
+
+    R-UE — se busca entre **unidades** y no entre respuestas: con cientos de
+    respuestas idénticas, el índice veía bloques de vectores iguales que no
+    alcanzaba desde afuera (0 % de recall para «celular xiaomi» con
+    `ef_search = 200`). Entre textos distintos ese bloque no existe.
 
     El índice HNSW es **aproximado** y **no sabe de filtros**. Eso deja tres
     trampas, y ninguna falla: devuelven algo plausible.
@@ -400,7 +502,7 @@ def _vecinos(conn, literal, top_n, ids_individuo=None, informe=None, entorno=Non
     informe.update(plan="indice", motivo_plan="corpus_sobre_umbral", ef_search=ef_search)
     cercanas = _vecinos_indice(conn, literal, top_n, ef_search)
     if len(cercanas) < top_n and corpus > len(cercanas):
-        print(f"[recall] el índice devolvió {len(cercanas)} de {top_n} pedidas con "
+        print(f"[recall] el índice devolvió {len(cercanas)} de {top_n} unidades pedidas con "
               f"~{corpus} en el corpus; se recalcula sin índice")
         informe.update(plan="exacto", indice_corto=len(cercanas))
         return _vecinos_exactos(conn, literal, top_n, None)
@@ -415,12 +517,14 @@ def comparar_recall(conn, vector, top_n, ef_search=None):
     correctas. Devuelve cuántas de las `top_n` exactas faltan en lo que trae
     el índice (con el `ef_search` que usaría producción, o el que se pida),
     cuáles, y en qué puesto del exacto estaban. Solo lee.
+
+    Desde R-UE compara **unidades** (`unidad_id`): es lo que busca el recall.
     """
     literal = _vector(vector)
     ef = ef_search if ef_search is not None else ef_search_para(top_n)
     exactas = _vecinos_exactos(conn, literal, top_n, None)
     del_indice = {f["id"] for f in _vecinos_indice(conn, literal, top_n, ef)}
-    faltan = [{"puesto": i + 1, "respuesta_id": f["id"], "distancia": float(f["distancia"])}
+    faltan = [{"puesto": i + 1, "unidad_id": f["id"], "distancia": float(f["distancia"])}
               for i, f in enumerate(exactas) if f["id"] not in del_indice]
     return {
         "top_n": top_n,
@@ -433,29 +537,38 @@ def comparar_recall(conn, vector, top_n, ef_search=None):
 
 
 def recuperar(conn, vector, top_n, ids_persona=None, informe=None):
-    """Las `top_n` respuestas más cercanas al vector del criterio.
+    """Las `top_n` **unidades de evidencia** más cercanas al vector del
+    criterio, resueltas a sus respuestas (R-UE.2).
 
-    Cada candidato vuelve con lo que el PRD pide para poder mostrarlo y
-    auditarlo: `id_persona`, la respuesta, su procedencia (estudio y
-    pregunta) y la distancia.
+    Devuelve una fila por **respuesta**: todas las de cada unidad
+    recuperada (de las personas habilitadas, si hay filtro), con la
+    distancia de su unidad. Cada candidato vuelve con lo que el PRD pide para
+    poder mostrarlo y auditarlo: `id_persona`, la respuesta, su procedencia
+    (estudio y pregunta), la distancia, y su `unidad_id` / `hash_texto`.
+
+    `top_n` cuenta unidades: «→ Xiaomi», elegida por 400 personas, es **una**
+    de las `top_n` y vuelve con sus 400 respuestas. Antes ocupaba 400 lugares
+    del pool (o ninguno, si el índice no alcanzaba el bloque).
 
     `ids_persona` restringe la búsqueda a un conjunto de personas: es el lado
     semántico del puente entre stores, y el vehículo del gate de
     consentimiento cuando la estrategia es «demográfico primero». Lista vacía
-    = nadie habilitado, y entonces no hay nada que buscar.
+    = nadie habilitado, y entonces no hay nada que buscar. Con filtro, se
+    buscan las unidades que tienen alguna respuesta de esas personas, y de
+    cada una vuelven **solo** las respuestas de esas personas: una unidad
+    puede estar en el recall aunque alguna de sus personas no tenga
+    `uso_semantico` vigente; esa persona simplemente no aparece.
 
     La búsqueda se hace en dos pasos a propósito. Primero el vecino más
-    cercano sobre `respuesta` sola, que es la tabla con el índice HNSW;
-    después la procedencia, con un join sobre las pocas filas que volvieron.
-    Poner el join arriba del ORDER BY del operador de distancia le complica
-    al planificador usar el índice, y el corpus es la parte grande.
+    cercano sobre `unidad_evidencia` sola, que es la tabla con el índice
+    HNSW; después las respuestas y su procedencia, con un join sobre las
+    unidades que volvieron.
 
-    Cuándo se usa el índice y cuándo no lo decide `_vecinos` (ver ahí). Con
-    un filtro por personas, siempre exacto (D71); sin filtro, exacto
-    mientras el corpus no pase de `RECALL_EXACTO_HASTA`, porque el índice
-    puede devolver la cantidad pedida sin las filas correctas (D72).
-    `informe` (opcional) vuelve con el plan que se usó.
+    Cuándo se usa el índice y cuándo no lo decide `_vecinos` (ver ahí).
+    `informe` (opcional) vuelve con el plan que se usó y cuántas unidades y
+    respuestas trajo.
     """
+    informe = informe if informe is not None else {}
     if ids_persona is not None and not ids_persona:
         return []
 
@@ -472,25 +585,25 @@ def recuperar(conn, vector, top_n, ids_persona=None, informe=None):
             return []
 
     cercanas = _vecinos(conn, literal, top_n, ids_individuo, informe)
+    informe["unidades"] = len(cercanas)
     if not cercanas:
+        informe["respuestas"] = 0
         return []
 
-    distancia_por_id = {f["id"]: float(f["distancia"]) for f in cercanas}
+    distancia_por_unidad = {f["id"]: float(f["distancia"]) for f in cercanas}
     filas = db.todas(
         conn,
         """
         select v.respuesta_id, v.id_persona, v.ref_estudio, v.estudio,
                v.fecha_campo, v.pregunta_codigo, v.pregunta_texto,
                v.pregunta_tipo, v.valor_texto, v.texto_embebido,
-               r.pregunta_id,
-               coalesce(r.hash_texto,
-                        encode(sha256(convert_to(r.texto_embebido, 'UTF8')), 'hex'))
-                 as hash_texto
-          from v_respuesta_estudio v
-          join respuesta r on r.id = v.respuesta_id
-         where v.respuesta_id = any(%s::bigint[])
+               r.pregunta_id, r.hash_texto, r.unidad_id
+          from respuesta r
+          join v_respuesta_estudio v on v.respuesta_id = r.id
+         where r.unidad_id = any(%s::bigint[])
+           and (%s::bigint[] is null or r.individuo_id = any(%s::bigint[]))
         """,
-        (list(distancia_por_id),),
+        (list(distancia_por_unidad), ids_individuo, ids_individuo),
     )
 
     candidatos = [
@@ -505,14 +618,16 @@ def recuperar(conn, vector, top_n, ids_persona=None, informe=None):
             "pregunta_tipo": f["pregunta_tipo"],
             "valor_texto": f["valor_texto"],
             "texto_embebido": f["texto_embebido"],
-            "distancia": distancia_por_id[f["respuesta_id"]],
-            # R-CS · cambio 3 — la unidad de evidencia de esta respuesta.
+            "distancia": distancia_por_unidad[f["unidad_id"]],
+            # R-UE — la unidad de evidencia de esta respuesta.
+            "unidad_id": f["unidad_id"],
             "pregunta_id": f["pregunta_id"],
             "hash_texto": f["hash_texto"],
         }
         for f in filas
     ]
-    candidatos.sort(key=lambda c: (c["distancia"], c["respuesta_id"]))
+    candidatos.sort(key=lambda c: (c["distancia"], c["unidad_id"], c["respuesta_id"]))
+    informe["respuestas"] = len(candidatos)
     return candidatos
 
 
@@ -530,7 +645,11 @@ def _borrar_capturas(conn, consulta_ids, parametros):
 def borrar_persona(conn, id_persona):
     """Borra el individuo y, en cascada, todas sus respuestas y embeddings.
 
-    Es el lado semántico de la cascada de retiro de consentimiento. Se lleva
+    Es el lado semántico de la cascada de retiro de consentimiento. Desde
+    R-UE el vector vive en la unidad de evidencia y no en la respuesta: las
+    unidades que se quedan sin respuestas las borra el trigger de la
+    semantica/0010 en el mismo `delete`, así que si la persona era la única
+    que dio un texto, el texto y su vector se van con ella. Se lleva
     también las capturas de depuración de la verificación que incluyeron
     alguna de sus respuestas (R-VER.10): son copias de ese mismo contenido.
     """
@@ -634,13 +753,12 @@ def resumen_de_estudio(conn, ref_estudio):
 #  R-CS · cambio 3 y 5 — unidades de evidencia y veredictos persistidos
 # ════════════════════════════════════════════════════════════════════
 #
-# Una unidad es un texto distinto dentro de una pregunta:
-# `(pregunta_id, hash_texto)`. Estas funciones son de la ejecución completa,
-# que exige la semantica/0009 (sin `veredicto_unidad` no hay dónde guardar
-# nada), y la 0009 completa `hash_texto` en todas las filas: por eso agrupan
-# por la columna, que es la que tiene índice. La exploratoria, que tiene que
-# funcionar también sin la 0009, calcula la huella con `coalesce` en
-# `recuperar`.
+# Desde R-UE (D73) una unidad es un **texto embebido distinto**, una fila de
+# `unidad_evidencia`, y su clave es `hash_texto`. Antes era
+# `(pregunta_id, hash_texto)`; como el texto embebido ya incluye la pregunta,
+# la diferencia es solo la misma pregunta con el mismo texto en dos olas,
+# que el verificador leería dos veces idéntica. Estas funciones son de la
+# ejecución completa.
 
 def _ids_individuo(conn, ids_persona):
     filas = db.todas(
@@ -651,13 +769,13 @@ def _ids_individuo(conn, ids_persona):
 
 def unidades_elegibles(conn, vector, ids_persona, distancia_maxima=None):
     """Todas las unidades con al menos una respuesta de una persona habilitada,
-    con su mejor distancia al criterio. Es el universo de una ejecución
-    completa.
+    con su distancia al criterio. Es el universo de una ejecución completa.
 
-    Recorre el corpus de esas personas a fuerza bruta y no con el índice
-    HNSW: el índice sirve para «los N más cercanos», y acá se quieren todos.
-    Es el cambio de patrón de acceso que el addendum (A2) pide medir en la
-    prueba de carga antes de producción.
+    Recorre las unidades de esas personas a fuerza bruta y no con el índice
+    HNSW: el índice sirve para «los N más cercanos», y acá se quieren todas.
+    Con unidades el universo es de textos distintos (861 con el corpus de
+    hoy, no 21.340 respuestas). `pregunta_id` es el de una de sus respuestas
+    y es informativo: la unidad es la huella.
     """
     if not ids_persona:
         return []
@@ -666,64 +784,62 @@ def unidades_elegibles(conn, vector, ids_persona, distancia_maxima=None):
         return []
     filas = db.todas(
         conn,
-        f"""
-        select r.pregunta_id, r.hash_texto as hash_texto,
-               min(r.embedding <=> %s::vector) as distancia,
-               max(length(r.texto_embebido)) as largo,
-               count(*) as respuestas
-          from respuesta r
-         where r.individuo_id = any(%s::bigint[])
-         group by 1, 2
-        having (%s::float8 is null or min(r.embedding <=> %s::vector) <= %s::float8)
-         order by 3, 1, 2
+        """
+        with habilitadas as materialized (
+            select r.unidad_id, min(r.pregunta_id) as pregunta_id, count(*) as respuestas
+              from respuesta r
+             where r.individuo_id = any(%s::bigint[])
+             group by r.unidad_id
+        )
+        select u.id as unidad_id, u.hash_texto, h.pregunta_id, h.respuestas,
+               u.embedding <=> %s::vector as distancia,
+               length(u.texto_embebido) as largo
+          from habilitadas h
+          join unidad_evidencia u on u.id = h.unidad_id
+         where (%s::float8 is null or u.embedding <=> %s::vector <= %s::float8)
+         order by distancia, u.id
         """,
-        (_vector(vector), individuos, distancia_maxima, _vector(vector),
+        (individuos, _vector(vector), distancia_maxima, _vector(vector),
          distancia_maxima))
-    return [{"pregunta_id": f["pregunta_id"], "hash_texto": f["hash_texto"],
-             "distancia": float(f["distancia"]), "largo": int(f["largo"] or 0),
-             "respuestas": int(f["respuestas"])} for f in filas]
+    return [{"unidad_id": f["unidad_id"], "pregunta_id": f["pregunta_id"],
+             "hash_texto": f["hash_texto"], "distancia": float(f["distancia"]),
+             "largo": int(f["largo"] or 0), "respuestas": int(f["respuestas"])}
+            for f in filas]
 
 
-def _claves(unidades):
-    return ([int(u[0]) for u in unidades], [str(u[1]) for u in unidades])
-
-
-def respuestas_de_unidades(conn, unidades, ids_persona, solo_representante=False):
+def respuestas_de_unidades(conn, huellas, ids_persona, solo_representante=False):
     """Las respuestas de esas unidades que son de personas habilitadas **hoy**.
 
-    `unidades`: `[(pregunta_id, hash_texto), …]`. Con `solo_representante`
-    devuelve una por unidad (la de menor id): es lo que se le muestra al
-    verificador. Sin él, todas: es a quién alcanza cada veredicto.
+    `huellas`: `[hash_texto, …]`. Con `solo_representante` devuelve una por
+    unidad (la de menor id): es lo que se le muestra al verificador. Sin él,
+    todas: es a quién alcanza cada veredicto.
     """
-    if not unidades or not ids_persona:
+    huellas = list(dict.fromkeys(str(h) for h in huellas))
+    if not huellas or not ids_persona:
         return []
     individuos = _ids_individuo(conn, ids_persona)
     if not individuos:
         return []
-    preguntas, huellas = _claves(unidades)
-    distinto = "distinct on (r.pregunta_id, hash_texto)" if solo_representante else ""
+    distinto = "distinct on (r.hash_texto)" if solo_representante else ""
     filas = db.todas(
         conn,
         f"""
-        with claves as (
-          select * from unnest(%s::bigint[], %s::text[]) as k(pregunta_id, hash_texto)
-        )
         select {distinto}
-               r.id as respuesta_id, r.pregunta_id, r.hash_texto as hash_texto,
+               r.id as respuesta_id, r.pregunta_id, r.hash_texto, r.unidad_id,
                v.id_persona, v.ref_estudio, v.estudio, v.fecha_campo,
                v.pregunta_codigo, v.pregunta_texto, v.pregunta_tipo,
                v.valor_texto, v.texto_embebido
           from respuesta r
-          join claves k on k.pregunta_id = r.pregunta_id
-                       and k.hash_texto = r.hash_texto
           join v_respuesta_estudio v on v.respuesta_id = r.id
-         where r.individuo_id = any(%s::bigint[])
-         order by r.pregunta_id, hash_texto, r.id
+         where r.hash_texto = any(%s::text[])
+           and r.individuo_id = any(%s::bigint[])
+         order by r.hash_texto, r.id
         """,
-        (preguntas, huellas, individuos))
+        (huellas, individuos))
     return [
         {
             "respuesta_id": f["respuesta_id"],
+            "unidad_id": f["unidad_id"],
             "pregunta_id": f["pregunta_id"],
             "hash_texto": f["hash_texto"],
             "id_persona": str(f["id_persona"]),
@@ -742,7 +858,7 @@ def respuestas_de_unidades(conn, unidades, ids_persona, solo_representante=False
 
 def guardar_veredictos(conn, ejecucion_id, criterio_orden, veredictos):
     """Upsert por (ejecución, criterio, unidad): reprocesar un lote no
-    duplica y deja el último juicio."""
+    duplica y deja el último juicio. `pregunta_id` es informativo."""
     for v in veredictos:
         db.ejecutar(
             conn,
@@ -751,22 +867,23 @@ def guardar_veredictos(conn, ejecucion_id, criterio_orden, veredictos):
                        veredicto, razon, fallo, aviso_polaridad, relevancia,
                        distancia)
                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-               on conflict (ejecucion_id, criterio_orden, pregunta_id, hash_texto)
+               on conflict (ejecucion_id, criterio_orden, hash_texto)
                do update set veredicto = excluded.veredicto,
+                             pregunta_id = excluded.pregunta_id,
                              razon = excluded.razon,
                              fallo = excluded.fallo,
                              aviso_polaridad = excluded.aviso_polaridad,
                              relevancia = excluded.relevancia,
                              distancia = excluded.distancia,
                              creado_en = now()""",
-            (str(ejecucion_id), criterio_orden, v["pregunta_id"], v["hash_texto"],
+            (str(ejecucion_id), criterio_orden, v.get("pregunta_id"), v["hash_texto"],
              v["veredicto"], v.get("razon"), v.get("fallo"),
              bool(v.get("aviso_polaridad")), v.get("relevancia"), v.get("distancia")))
     return len(veredictos)
 
 
 def veredictos_de(conn, ejecucion_id):
-    """`{criterio_orden: {(pregunta_id, hash): veredicto}}` de una ejecución."""
+    """`{criterio_orden: {hash_texto: veredicto}}` de una ejecución."""
     purgar_veredictos(conn)
     filas = db.todas(
         conn,
@@ -776,7 +893,7 @@ def veredictos_de(conn, ejecucion_id):
         (str(ejecucion_id),))
     salida = {}
     for f in filas:
-        salida.setdefault(f["criterio_orden"], {})[(f["pregunta_id"], f["hash_texto"])] = f
+        salida.setdefault(f["criterio_orden"], {})[f["hash_texto"]] = f
     return salida
 
 
@@ -789,7 +906,8 @@ def purgar_veredictos(conn):
 
 def borrar_veredictos_huerfanos(conn):
     """El alcance de una baja sobre los veredictos: el de una unidad que se
-    quedó sin respuestas habla de un texto que ya no está, y se va.
+    quedó sin respuestas —y que por eso ya no existe: la borra el trigger de
+    la semantica/0010— habla de un texto que ya no está, y se va.
 
     Los de unidades que siguen teniendo respuestas de otras personas se
     quedan: no son de nadie en particular, y la razón describe un texto que
@@ -799,8 +917,7 @@ def borrar_veredictos_huerfanos(conn):
         return 0
     return db.ejecutar(
         conn,
-        f"""delete from veredicto_unidad v
-             where not exists (
-                   select 1 from respuesta r
-                    where r.pregunta_id = v.pregunta_id
-                      and r.hash_texto = v.hash_texto)""")
+        """delete from veredicto_unidad v
+            where not exists (
+                  select 1 from unidad_evidencia u
+                   where u.hash_texto = v.hash_texto)""")

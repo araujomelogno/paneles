@@ -1257,7 +1257,9 @@ function abrirDetalle(item) {
               const vv = VEREDICTOS[ev.veredicto] || { etiqueta: ev.veredicto, clase: '' };
               return `<div><span class="est ${vv.clase}">${esc(vv.etiqueta)}</span>
                 ${esc((ev.valor_texto || '').slice(0, 80))}${ev.repeticiones > 1
-                  ? ` <span class="muted">(el mismo texto en ${ev.repeticiones} respuestas: se verificó una vez)</span>` : ''}</div>`;
+                  ? ` <span class="muted">(el mismo texto en ${ev.repeticiones} respuestas${
+                    ev.personas_en_la_unidad > 1 ? ` de ${ev.personas_en_la_unidad} personas` : ''
+                  }: se verificó una vez)</span>` : ''}</div>`;
             }).join('')}</div>` : ''}
           <div class="small mono muted">puntaje ${c.puntaje} · peso ${c.peso}${
             c.distancia != null ? ` · distancia ${c.distancia}` : ''}${

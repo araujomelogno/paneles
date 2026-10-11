@@ -356,6 +356,8 @@ SUMABLES = (
     "descartadas_no_marcadas", "descartadas_no_respuesta",
     # Fase 8 — el reproceso (R8.9).
     "reembebidas", "sin_cambios", "borradas", "sin_consentimiento_reproceso",
+    # R-UE — cuántos textos distintos se mandaron a embeber en el reproceso.
+    "textos_embebidos",
 )
 CONCATENABLES = (
     "sin_mapear", "sin_mapear_detalle", "sin_consentimiento",
@@ -425,7 +427,7 @@ def _ingestar_el_lote(conn_boveda, conn_semantica, trabajo, filas, proveedor):
     # ids de respuestas ya ingestadas. Tampoco es una segunda ingesta: no
     # resuelve identidades, no crea individuos ni toca la bóveda; recompone
     # el texto con `ingesta.respuesta_de` —la misma de siempre— y escribe por
-    # `semantica.upsert_respuestas`, con el guardia de PII y el gate de
+    # `semantica.escribir_respuestas` (R-UE), con el guardia de PII y el gate de
     # consentimiento re-evaluado en cada lote.
     if plan.get("operacion") == reproceso.OPERACION:
         return reproceso.procesar_lote(conn_boveda, conn_semantica, plan,

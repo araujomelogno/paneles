@@ -19,7 +19,7 @@ de encuesta en español rioplatense, y por eso el cambio no se da por bueno
 sin la validación con corpus propio que documenta
 `docs/DESPLIEGUE - 512 dimensiones.md`.
 
-**La dimensión es un contrato con la base.** `respuesta.embedding` es
+**La dimensión es un contrato con la base.** `unidad_evidencia.embedding` (R-UE; antes `respuesta.embedding`) es
 `vector(512)`: si el proveedor devolviera otra cosa, el insert falla. Por eso
 `embeber()` comprueba el largo de lo que vuelve, y la ingesta compara contra
 la columna antes de mandar nada a embeber (ver `esquema.desajuste_de_dimension`).

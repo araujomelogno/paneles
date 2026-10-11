@@ -157,26 +157,46 @@ def corpus(conn_semantica):
 
 
 def salud_del_corpus(conn_semantica):
-    """Tamaño de la tabla y del índice vectorial, y la dimensión en uso.
+    """Tamaño de las tablas y del índice vectorial, y la dimensión en uso.
 
     El tamaño del índice comparado con la memoria de la instancia es lo que
     dice cuándo conviene subir de tier (`COSTOS.md` §4). Es el número que
     nadie mira hasta que las consultas se ponen lentas.
+
+    R-UE (D73) — el vector vive en `unidad_evidencia`, una vez por texto
+    distinto: el índice que usa el recall es el de esa tabla. Mientras
+    `respuesta.embedding` exista (hasta la semantica/0011), su índice HNSW
+    también ocupa y se suma. `indice_bytes` son los índices **vectoriales**
+    (HNSW) de las dos tablas; `unidades_de_evidencia`, cuántos textos
+    distintos hay.
     """
     tamanos = db.una(
         conn_semantica,
-        """select pg_total_relation_size('respuesta')          as tabla_bytes,
-                  coalesce(sum(pg_relation_size(indexrelid)), 0) as indice_bytes
-             from pg_index
-            where indrelid = 'respuesta'::regclass""")
+        """select pg_total_relation_size('respuesta')
+                    + coalesce(pg_total_relation_size(to_regclass('unidad_evidencia')), 0)
+                    as tabla_bytes,
+                  (select coalesce(sum(pg_relation_size(i.indexrelid)), 0)
+                     from pg_index i
+                     join pg_class c on c.oid = i.indexrelid
+                     join pg_am a on a.oid = c.relam
+                    where a.amname = 'hnsw'
+                      and i.indrelid in ('respuesta'::regclass,
+                                         coalesce(to_regclass('unidad_evidencia'),
+                                                  'respuesta'::regclass)))
+                    as indice_bytes""")
     dimension = db.una(
         conn_semantica,
         """select atttypmod as dimension from pg_attribute
-            where attrelid = 'respuesta'::regclass and attname = 'embedding'""")
+            where attrelid = coalesce(to_regclass('unidad_evidencia'), 'respuesta'::regclass)
+              and attname = 'embedding'""")
+    unidades = {"n": None}
+    if db.una(conn_semantica, "select to_regclass('unidad_evidencia') as t")["t"]:
+        unidades = db.una(conn_semantica, "select count(*) as n from unidad_evidencia")
     return {
         "tabla_bytes": int(tamanos["tabla_bytes"]),
         "indice_bytes": int(tamanos["indice_bytes"]),
         "dimension_embeddings": (dimension or {}).get("dimension"),
+        "unidades_de_evidencia": (None if unidades["n"] is None else int(unidades["n"])),
     }
 
 

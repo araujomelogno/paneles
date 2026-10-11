@@ -20,11 +20,12 @@ De ahí salen los tres casos que el spec pide, y los tres pasan por acá:
 El oleoducto semántico, en orden:
 
     1. embedding del criterio      mismo proveedor y modelo que la ingesta
-    2. recall (ANN)                top_n respuestas más cercanas
+    2. recall (ANN)                top_n unidades de evidencia más cercanas
+                                   (R-UE), resueltas a sus respuestas
     3. gate de consentimiento      R2.11, antes de que exista el pool
     4. reranking                   cross-encoder, reordena el pool
     5. colapso a individuo         una entrada por persona, la de mejor score
-    6. top-k                       lo que se manda a verificar
+    6. top-k                       las unidades que se mandan a verificar
     7. verificación con Claude     cumple / no cumple / dudoso, con evidencia
     8. combinación de criterios    R2.10, puntaje por criterio y combinado
 
@@ -85,13 +86,16 @@ from .errores import DatosInvalidos, NoEncontrado
 # ── Parámetros, todos configurables por consulta ─────────────────────
 
 TOP_N_POR_DEFECTO = 200
-"""Tamaño del pool de recall, en RESPUESTAS (no en personas). Después del
-colapso hay como mucho `top_n` individuos, y en general bastantes menos:
-una persona suele aportar varias respuestas cercanas al mismo criterio."""
+"""Tamaño del pool de recall, en UNIDADES DE EVIDENCIA —textos distintos—,
+no en respuestas ni en personas (R-UE, D73). Cada unidad vuelve con todas
+sus respuestas: «→ Xiaomi», elegida por 400 personas, es una de las 200 y
+trae a las 400."""
 
 TOP_K_POR_DEFECTO = 25
-"""Cuántos individuos se mandan a verificar. Es el parámetro caro: cada uno
-es texto que va a la API de Claude."""
+"""Cuántas UNIDADES DE EVIDENCIA se mandan a verificar (R-UE.3): 25 unidades
+son 25 ideas distintas, y el veredicto de cada una llega a todas las
+personas que la dieron. Es el parámetro caro: cada unidad es texto que va a
+la API de Claude."""
 
 TOP_N_MAXIMO = 2000
 TOP_K_MAXIMO = 200
@@ -114,7 +118,9 @@ MAX_EVIDENCIAS_POR_INDIVIDUO = 3
 detectar la contradicción: con una sola evidencia por persona, quien se
 contradice entra al ranking con la que le conviene. Tres alcanza para el
 caso real (una respuesta cerrada más una o dos abiertas sobre el mismo tema)
-y mantiene acotado el texto que va a la API."""
+y mantiene acotado el texto que va a la API. El tope total de unidades
+verificadas por criterio es `top_k × MAX_EVIDENCIAS_POR_INDIVIDUO`: `top_k`
+principales y el resto para las otras evidencias de sus personas."""
 
 UMBRAL_SEGMENTO = 5000
 """Hasta cuántas personas conviene mandarle al store semántico como filtro.
@@ -132,10 +138,17 @@ EXPLORATORIO, COMPLETO = "exploratorio", "completo"
 ALCANCES = (EXPLORATORIO, COMPLETO)
 
 RONDAS_MAXIMAS = 3
-"""R-CS · cambio 3 — cuántas veces la exploratoria va a buscar más personas
+"""R-CS · cambio 3 — cuántas veces la exploratoria va a buscar más unidades
 cuando las que verificó resultaron irrelevantes. La primera ronda es la de
 siempre (las `top_k` mejores); las siguientes reemplazan a las que no
 aportaron evidencia pertinente, sin pasar del presupuesto de unidades."""
+
+SIN_VERIFICAR_POR_TOPE = "tope_de_unidades"
+"""R-UE.3 — el `fallo` de una evidencia que no se verificó porque el tope de
+unidades del criterio se agotó. La persona está en el resultado porque otra
+de sus evidencias se verificó (el veredicto de una unidad llega a todas sus
+personas), pero la contradicción podía estar en ésta: queda `sin_verificar`
+—«verificación incompleta»—, nunca `dudoso`."""
 
 SIN_EVIDENCIA_PERTINENTE = "sin_evidencia_pertinente"
 """Laxo: ninguno de los criterios semánticos tiene evidencia que hable del
@@ -482,27 +495,42 @@ def _elegir_evidencia(evidencias, juicios):
 
 
 def clave_unidad(candidato):
-    """R-CS · cambio 3 — la unidad de evidencia de una respuesta: un texto
-    distinto dentro de una pregunta. La huella viene del store; si no viene
-    (un doble de pruebas), se calcula con el mismo algoritmo."""
-    huella = candidato.get("hash_texto") or semantica.hash_texto(
+    """R-UE — la unidad de evidencia de una respuesta: su texto embebido
+    distinto, identificado por la huella (`hash_texto`, la clave de
+    `unidad_evidencia`). El texto embebido incluye la pregunta, así que «→
+    Xiaomi» en dos preguntas son dos unidades. La huella viene del store; si
+    no viene (un doble de pruebas), se calcula con el mismo algoritmo."""
+    return candidato.get("hash_texto") or semantica.hash_texto(
         candidato.get("texto_embebido") or "")
-    return (candidato.get("pregunta_id"), huella)
 
 
 def _agrupar_en_unidades(pool):
     """El pool (respuestas, por distancia) → unidades, en el orden de su mejor
-    respuesta. `miembros` son los índices del pool que comparten el texto."""
+    respuesta. `miembros` son los índices del pool que comparten el texto, y
+    `personas` las personas distintas que lo dieron (R-UE: una unidad que
+    representa a 200 personas no pesa lo mismo que una de una)."""
     unidades, por_clave = [], {}
     for indice, candidato in enumerate(pool):
         clave = clave_unidad(candidato)
         unidad = por_clave.get(clave)
         if unidad is None:
-            unidad = {"clave": clave, "representante": candidato, "miembros": []}
+            unidad = {"clave": clave, "representante": candidato, "miembros": [],
+                      "personas": set()}
             por_clave[clave] = unidad
             unidades.append(unidad)
         unidad["miembros"].append(indice)
+        unidad["personas"].add(candidato["id_persona"])
     return unidades
+
+
+def _resumen_personas_por_unidad(unidades):
+    """Cuántas personas hay detrás de cada unidad, en números (R-UE ·
+    pregunta abierta de producto). Va al diagnóstico, que se registra en la
+    bóveda: solo cuentas, nunca textos ni personas."""
+    cuentas = sorted(len(u["personas"]) for u in unidades) or [0]
+    return {"personas_por_unidad_max": cuentas[-1],
+            "personas_por_unidad_mediana": cuentas[len(cuentas) // 2],
+            "unidades_de_una_persona": sum(1 for c in cuentas if c == 1)}
 
 
 def _rerankear_unidades(criterio, etiqueta, unidades, reranker, degradaciones):
@@ -620,14 +648,17 @@ def _resolver_criterio_semantico(ctx, criterio, definicion, ids_permitidos,
     Devuelve `{id_persona: hallazgo}`, donde el hallazgo trae el puntaje, la
     evidencia con su procedencia y el veredicto.
 
-    R-CS · cambio 3 — lo que se rerankea y se verifica son **unidades de
-    evidencia** (un texto distinto dentro de una pregunta), no respuestas.
-    Y la selección rellena: si las personas verificadas resultan tener solo
-    evidencia irrelevante, se va a buscar a las siguientes del ranking —hasta
+    R-CS · cambio 3 y R-UE — lo que se recupera, se rerankea y se verifica
+    son **unidades de evidencia** (un texto embebido distinto), no
+    respuestas. El recall trae las `top_n` unidades más cercanas con todas
+    sus respuestas; `top_k` cuenta unidades distintas, y el veredicto de cada
+    una llega a **todas** las personas que la dieron (ver
+    `_seleccionar_y_verificar`). Si las unidades verificadas resultan
+    irrelevantes, se va a buscar a las siguientes del ranking —hasta
     `RONDAS_MAXIMAS` y sin pasar de `top_k × MAX_EVIDENCIAS_POR_INDIVIDUO`
-    unidades, que es el mismo tope de evidencias que había antes—. Con eso,
-    25 personas que dieron la misma respuesta sobre la titularidad del
-    contrato cuestan **una** unidad verificada y liberan sus 25 lugares.
+    unidades—. Con eso, 25 personas que dieron la misma respuesta sobre la
+    titularidad del contrato cuestan **una** unidad verificada, y «→ Xiaomi»
+    elegida por 400 personas se verifica una vez y alcanza a las 400.
     """
     etiqueta = criterio["etiqueta"]
     verificacion = verificacion if verificacion is not None else {}
@@ -642,22 +673,27 @@ def _resolver_criterio_semantico(ctx, criterio, definicion, ids_permitidos,
     verificacion["tokens_embedding"] += costo_consulta.tokens_de(criterio["texto"])
     reloj.marca("embedding", desde, criterio=etiqueta, dims=len(vector), input_type=tipo)
 
-    # 2. Recall.
+    # 2. Recall (R-UE.2): las unidades de evidencia más cercanas, resueltas
+    #    a sus respuestas. `pedidos` y `crudos` cuentan unidades.
     desde = time.perf_counter()
     pedido = definicion["top_n"] * (FACTOR_SOBREPEDIDO if filtro_posterior else 1)
     plan = {}
     crudos = semantica.recuperar(ctx.semantica, vector, pedido, ids_permitidos, plan)
+    unidades_recuperadas = plan.pop("unidades", len({clave_unidad(c) for c in crudos}))
+    plan.pop("respuestas", None)
     # `plan` dice si el recall salió del índice o de un recorrido exacto, y
     # si el índice se quedó corto: que `crudos` sea menor que `pedidos` tiene
     # que poder leerse como «no había más» y no como «el índice recortó».
     reloj.marca(
-        "recall", desde, criterio=etiqueta, pedidos=pedido, crudos=len(crudos),
-        filtrado_en_la_base=ids_permitidos is not None, **plan,
+        "recall", desde, criterio=etiqueta, pedidos=pedido, crudos=unidades_recuperadas,
+        respuestas=len(crudos), filtrado_en_la_base=ids_permitidos is not None, **plan,
     )
 
     # 3. Gate de consentimiento (R2.11) y segmento, cuando el recall corrió
     #    sin filtro. Pasa ANTES de que exista el pool: quien no tiene
-    #    `uso_semantico` vigente no llega a ser candidato.
+    #    `uso_semantico` vigente no llega a ser candidato. Se aplica al
+    #    resolver personas (R-UE.2): una unidad sigue en el recall aunque
+    #    alguna de sus personas no esté habilitada; esa persona no aparece.
     if filtro_posterior:
         desde = time.perf_counter()
         del_recall = list(dict.fromkeys(c["id_persona"] for c in crudos))
@@ -669,18 +705,22 @@ def _resolver_criterio_semantico(ctx, criterio, definicion, ids_permitidos,
             personas_evaluadas=len(del_recall), personas_descartadas=descartados,
         )
 
-    pool = crudos[: definicion["top_n"]]
+    # El pool: las respuestas de las primeras `top_n` unidades que quedaron
+    # con alguna persona habilitada.
+    dentro = set(list(dict.fromkeys(clave_unidad(c) for c in crudos))[: definicion["top_n"]])
+    pool = [c for c in crudos if clave_unidad(c) in dentro]
     if not pool:
         verificacion.setdefault("informes", []).append(
             {"criterio": etiqueta, **mod_verificacion.nuevo_informe(0)})
         return {}
 
-    # 4. Unidades de evidencia (R-CS · cambio 3) y reranking por unidad,
-    #    antes del colapso a individuo (ver el docstring del módulo).
+    # 4. Unidades de evidencia y reranking por unidad, antes del colapso a
+    #    individuo (ver el docstring del módulo).
     desde = time.perf_counter()
     unidades = _agrupar_en_unidades(pool)
     reloj.marca("unidades", desde, criterio=etiqueta, respuestas=len(pool),
-                unidades=len(unidades), repetidas=len(pool) - len(unidades))
+                unidades=len(unidades), repetidas=len(pool) - len(unidades),
+                **_resumen_personas_por_unidad(unidades))
 
     desde = time.perf_counter()
     por_unidad = _rerankear_unidades(criterio["texto"], etiqueta, unidades,
@@ -700,50 +740,14 @@ def _resolver_criterio_semantico(ctx, criterio, definicion, ids_permitidos,
     grupos = _agrupar_por_individuo(pool, relevancias)
     reloj.marca("colapso", desde, criterio=etiqueta, individuos=len(grupos))
 
-    # 6 y 7. Top-k y verificación, por rondas. Todas las evidencias de cada
-    #    persona, no solo la mejor: la contradicción puede estar en
-    #    cualquiera. Cada unidad se verifica una sola vez.
+    # 6 y 7. Top-k y verificación, por rondas y **por unidades** (R-UE.3).
     desde = time.perf_counter()
-    representantes = {u["clave"]: u["representante"] for u in unidades}
+    (veredictos, informes, seleccionados, principales, pertinentes, rondas,
+     tope_alcanzado) = _seleccionar_y_verificar(
+        unidades, por_unidad, grupos, definicion["top_k"], verificacion,
+        criterio["texto"], etiqueta, verificador, degradaciones)
     miembros = {u["clave"]: len(u["miembros"]) for u in unidades}
-    top_k = definicion["top_k"]
-    tope_unidades = top_k * MAX_EVIDENCIAS_POR_INDIVIDUO
-    veredictos, informes, seleccionados = {}, [], []
-    cursor, pertinentes, rondas, tope_alcanzado = 0, 0, 0, False
-    while pertinentes < top_k and cursor < len(grupos):
-        tanda, nuevas = [], []
-        while cursor < len(grupos) and len(tanda) < top_k - pertinentes:
-            grupo = grupos[cursor]
-            propias = [clave_unidad(e) for e in grupo["evidencias"]]
-            faltan = [c for c in dict.fromkeys(propias)
-                      if c not in veredictos and c not in nuevas]
-            if len(veredictos) + len(nuevas) + len(faltan) > tope_unidades:
-                tope_alcanzado = True
-                break
-            nuevas.extend(faltan)
-            tanda.append(grupo)
-            cursor += 1
-        if not tanda:
-            break
-        # Una tanda cuyas unidades ya se juzgaron no cuesta nada y no cuenta
-        # como ronda: es justo el caso de las 25 respuestas repetidas, que
-        # se resuelven sin volver a llamar al verificador.
-        if nuevas and rondas >= RONDAS_MAXIMAS:
-            break
-        if nuevas:
-            rondas += 1
-            juicios, informe = _verificar_unidades(
-                verificacion, criterio["texto"], etiqueta,
-                [representantes[c] for c in nuevas], verificador, degradaciones)
-            informes.append(informe)
-            veredictos.update(zip(nuevas, juicios))
-        for grupo in tanda:
-            seleccionados.append(grupo)
-            if any(veredictos[clave_unidad(e)]["veredicto"] != mod_verificacion.IRRELEVANTE
-                   for e in grupo["evidencias"]):
-                pertinentes += 1
-        if tope_alcanzado:
-            break
+    personas_de = {u["clave"]: len(u["personas"]) for u in unidades}
 
     informe = _sumar_informes(informes, evidencias=len(veredictos))
     if verificador.disponible and informe["sin_verificar"]:
@@ -767,11 +771,34 @@ def _resolver_criterio_semantico(ctx, criterio, definicion, ids_permitidos,
                 "incompleta». Los veredictos emitidos se aplican igual."
             ),
         })
+
+    # Las evidencias de las personas alcanzadas que el tope dejó sin leer.
+    por_tope = {clave_unidad(e) for g in seleccionados for e in g["evidencias"]
+                if clave_unidad(e) not in veredictos}
+    if por_tope:
+        degradaciones.append({
+            "etapa": "verificacion",
+            "proveedor": verificador.nombre,
+            "parcial": True,
+            "criterio": etiqueta,
+            "motivo": (
+                f"{len(por_tope)} unidad(es) de evidencia de personas del resultado "
+                f"no se verificaron: el tope de {definicion['top_k']} × "
+                f"{MAX_EVIDENCIAS_POR_INDIVIDUO} unidades se agotó."),
+            "consecuencia": (
+                "Las personas que las tienen están en el resultado por otra de "
+                "sus respuestas y quedan marcadas «verificación incompleta»: "
+                "la contradicción podía estar en la que no se leyó."),
+        })
+
     respuestas_cubiertas = sum(miembros[c] for c in veredictos)
     verificacion.setdefault("informes", []).append({
         "criterio": etiqueta, **informe,
         "unidades": len(veredictos),
+        "unidades_principales": len(principales),
+        "personas_alcanzadas": len(seleccionados),
         "respuestas_cubiertas": respuestas_cubiertas,
+        "sin_verificar_por_tope": len(por_tope),
         "rondas": rondas,
         "irrelevantes": informe["veredictos"].get(mod_verificacion.IRRELEVANTE, 0),
     })
@@ -779,14 +806,17 @@ def _resolver_criterio_semantico(ctx, criterio, definicion, ids_permitidos,
         g["id_persona"] for g in seleccionados)
     verificacion.setdefault("personas_pertinentes", set()).update(
         g["id_persona"] for g in seleccionados
-        if any(veredictos[clave_unidad(e)]["veredicto"] != mod_verificacion.IRRELEVANTE
+        if any((veredictos.get(clave_unidad(e)) or {}).get("veredicto")
+               not in (None, mod_verificacion.IRRELEVANTE)
                for e in g["evidencias"]))
     reloj.marca(
         "verificacion", desde, criterio=etiqueta,
         aplicada=verificador.disponible, proveedor=verificador.nombre,
         evidencias_verificadas=informe["verificadas"],
+        unidades_principales=len(principales),
         respuestas_cubiertas=respuestas_cubiertas,
         sin_verificar=informe["sin_verificar"],
+        sin_verificar_por_tope=len(por_tope),
         individuos=len(seleccionados), pertinentes=pertinentes, rondas=rondas,
         tope_de_unidades=tope_alcanzado,
         lotes=informe["lotes_iniciales"], llamadas=informe["llamadas"],
@@ -800,13 +830,122 @@ def _resolver_criterio_semantico(ctx, criterio, definicion, ids_permitidos,
     return {
         grupo["id_persona"]: hallazgo_de(
             criterio, grupo["evidencias"],
-            [veredictos[clave_unidad(e)] for e in grupo["evidencias"]],
-            repeticiones=miembros)
+            [veredictos.get(clave_unidad(e)) or _sin_verificar_por_tope(e)
+             for e in grupo["evidencias"]],
+            repeticiones=miembros, personas_por_unidad=personas_de)
         for grupo in seleccionados
     }
 
 
-def hallazgo_de(criterio, evidencias, juicios, repeticiones=None):
+def _sin_verificar_por_tope(evidencia):
+    return mod_verificacion.sin_verificar(
+        evidencia, SIN_VERIFICAR_POR_TOPE,
+        "No se verificó: el tope de unidades del criterio se agotó antes de "
+        "llegar a esta respuesta.")
+
+
+def _seleccionar_y_verificar(unidades, por_unidad, grupos, top_k, verificacion,
+                             criterio, etiqueta, verificador, degradaciones):
+    """R-UE.3 — qué se verifica y a quién alcanza.
+
+    `top_k` cuenta **unidades distintas**: en cada ronda se toman las
+    siguientes unidades del ranking (por relevancia si hubo reranking, por
+    distancia si no) hasta completar las `top_k` pertinentes. Son las
+    **principales**. Una unidad ya juzgada no cuesta nada: es justo el caso de
+    las respuestas repetidas.
+
+    El veredicto de una unidad **llega a todas sus personas**: cada persona
+    que tiene una unidad principal entre sus evidencias queda en el
+    resultado. Y como la contradicción puede estar en otra de sus respuestas
+    (`MAX_EVIDENCIAS_POR_INDIVIDUO`), se verifican también esas otras
+    unidades —las **secundarias**—, primero las que comparten más personas
+    alcanzadas, dentro del tope de `top_k × MAX_EVIDENCIAS_POR_INDIVIDUO`
+    unidades. La que no entre queda `sin_verificar` (`SIN_VERIFICAR_POR_TOPE`)
+    para esa persona, nunca `dudoso`.
+
+    Si las principales resultan irrelevantes, la ronda siguiente va a buscar
+    más, hasta `RONDAS_MAXIMAS` rondas que llamen al verificador.
+
+    La mejor evidencia de cada persona alcanzada siempre está verificada: las
+    principales se toman en el orden del ranking, y la mejor evidencia de una
+    persona está, por definición, antes que cualquier otra suya.
+    """
+    if por_unidad:
+        rango = sorted(range(len(unidades)), key=lambda i: (-por_unidad[i], i))
+    else:
+        rango = list(range(len(unidades)))
+    orden = [unidades[i]["clave"] for i in rango]
+    puesto = {clave: p for p, clave in enumerate(orden)}
+    representantes = {u["clave"]: u["representante"] for u in unidades}
+
+    grupos_de = {}
+    claves_de = {}
+    for grupo in grupos:
+        claves = list(dict.fromkeys(clave_unidad(e) for e in grupo["evidencias"]))
+        claves_de[grupo["id_persona"]] = claves
+        for clave in claves:
+            grupos_de.setdefault(clave, []).append(grupo)
+
+    tope = top_k * MAX_EVIDENCIAS_POR_INDIVIDUO
+    veredictos, informes, principales = {}, [], []
+    seleccionados = {}
+    cursor = pertinentes = rondas = 0
+    tope_alcanzado = False
+    while pertinentes < top_k and cursor < len(orden):
+        lugar = tope - len(veredictos)
+        ronda, nuevas = [], []
+        while (cursor < len(orden) and len(ronda) < top_k - pertinentes
+               and (orden[cursor] in veredictos or len(nuevas) < lugar)):
+            clave = orden[cursor]
+            cursor += 1
+            ronda.append(clave)
+            if clave not in veredictos:
+                nuevas.append(clave)
+        if not ronda:
+            tope_alcanzado = True
+            break
+
+        alcanzados = {}
+        for clave in ronda:
+            for grupo in grupos_de.get(clave, []):
+                if grupo["id_persona"] not in seleccionados:
+                    alcanzados.setdefault(grupo["id_persona"], grupo)
+        cobertura = {}
+        for id_persona in alcanzados:
+            for clave in claves_de[id_persona]:
+                if clave not in veredictos and clave not in nuevas:
+                    cobertura[clave] = cobertura.get(clave, 0) + 1
+        lugar_secundarias = max(0, tope - len(veredictos) - len(nuevas))
+        secundarias = sorted(cobertura, key=lambda c: (-cobertura[c], puesto[c]))
+        if len(secundarias) > lugar_secundarias:
+            tope_alcanzado = True
+            secundarias = secundarias[:lugar_secundarias]
+
+        a_verificar = nuevas + secundarias
+        # Una ronda cuyas unidades ya se juzgaron no cuesta nada y no cuenta.
+        if a_verificar and rondas >= RONDAS_MAXIMAS:
+            break
+        if a_verificar:
+            rondas += 1
+            juicios, informe = _verificar_unidades(
+                verificacion, criterio, etiqueta,
+                [representantes[c] for c in a_verificar], verificador, degradaciones)
+            informes.append(informe)
+            veredictos.update(zip(a_verificar, juicios))
+        principales.extend(ronda)
+        seleccionados.update(alcanzados)
+        pertinentes += sum(
+            1 for c in ronda
+            if veredictos[c]["veredicto"] != mod_verificacion.IRRELEVANTE)
+        if tope_alcanzado:
+            break
+
+    return (veredictos, informes, list(seleccionados.values()), principales,
+            pertinentes, rondas, tope_alcanzado)
+
+
+def hallazgo_de(criterio, evidencias, juicios, repeticiones=None,
+                personas_por_unidad=None):
     """Lo que una persona aporta a un criterio, a partir de sus evidencias y
     los juicios de cada una. Lo usan la exploratoria y la completa: la regla
     de agregación (R4.2) es una sola."""
@@ -823,6 +962,7 @@ def hallazgo_de(criterio, evidencias, juicios, repeticiones=None):
     else:
         puntaje = 0.0
     repeticiones = repeticiones or {}
+    personas_por_unidad = personas_por_unidad or {}
     return {
         "criterio": criterio["etiqueta"],
         "orden": criterio["orden"],
@@ -849,8 +989,10 @@ def hallazgo_de(criterio, evidencias, juicios, repeticiones=None):
         "evidencias_evaluadas": [
             {**_evidencia(otro), "veredicto": otro_juicio["veredicto"],
              "razon": otro_juicio["razon"], "fallo": otro_juicio.get("fallo"),
-             # Cuántas respuestas del pool comparten este mismo texto.
-             "repeticiones": repeticiones.get(clave_unidad(otro), 1)}
+             # Cuántas respuestas del pool comparten este mismo texto, y de
+             # cuántas personas (R-UE): el veredicto les llega a todas.
+             "repeticiones": repeticiones.get(clave_unidad(otro), 1),
+             "personas_en_la_unidad": personas_por_unidad.get(clave_unidad(otro), 1)}
             for otro, otro_juicio in zip(evidencias, juicios)
         ],
     }

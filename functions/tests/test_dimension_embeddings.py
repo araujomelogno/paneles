@@ -185,7 +185,10 @@ def test_la_columna_quedo_en_512(conn_semantica):
     filas = {f["columna"]: f["dimension"] for f in db.todas(
         conn_semantica, "select columna, dimension from v_dimension_embeddings")}
 
-    assert filas == {"respuesta.embedding": 512,
+    # R-UE — el vector de cada texto vive en `unidad_evidencia`;
+    # `respuesta.embedding` sigue hasta la semantica/0011.
+    assert filas == {"unidad_evidencia.embedding": 512,
+                     "respuesta.embedding": 512,
                      "pregunta.embedding_texto": 512}
 
 

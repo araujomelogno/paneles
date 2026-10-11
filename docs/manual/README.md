@@ -14,6 +14,25 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Un candidato por respuesta distinta · 2026-10-11.** Unidades de
+> evidencia (D73): de ~21 mil respuestas, solo 861 son textos distintos, y
+> desde esta versión la búsqueda y la verificación trabajan sobre esos textos.
+> La 6.4 reescribe «Las respuestas repetidas se verifican una sola vez»: se
+> busca entre textos distintos, **A verificar** cuenta respuestas distintas y
+> el veredicto llega a todas las personas que dieron esa respuesta (por eso
+> el ranking puede traer muchas más personas con el mismo costo), y qué
+> significa «sin verificar» por el tope. La 6.9 corrige *Pool de
+> recuperación* y *A verificar*, la etapa *Recuperación (ANN)* (`pedidos` y
+> `crudos` cuentan unidades, `respuestas` nuevo) y explica cuántas personas
+> hay detrás de cada unidad en las etapas *Unidades* y *Verificación*. La
+> 6.11 corrige el costo de la completa (~35 llamadas por criterio sobre el
+> corpus actual, no cientos). La 14.2 suma cuántas respuestas distintas hay
+> y aclara que el índice crece con ellas. Dos preguntas frecuentes nuevas y los términos
+> **Unidad de evidencia** y **Plan de recuperación** corregidos. El detalle
+> de una persona dice «el mismo texto en N respuestas de M personas». **Sin
+> capturas nuevas**: la 91 sigue siendo válida en forma; sus números son de
+> antes del cambio.
+
 > **El pool trae las más parecidas de verdad · 2026-10-10.** Corrección del
 > bug del recall por índice (D72): la búsqueda rápida podía devolver las 200
 > respuestas pedidas sin la más parecida del corpus. Ahora, sin filtro, se

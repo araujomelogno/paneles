@@ -4092,3 +4092,121 @@ local con el corpus actual) y CPU en lugar de memoria del índice
 `tamano_corpus`, `comparar_recall`), `scripts/diagnosticar_consulta.py`
 (`conclusiones`, `recall_indice`), `functions/.env.ejemplo`,
 `functions/tests/test_bug_recall_hnsw.py`.
+
+## D73 · Un vector por texto distinto: la unidad de evidencia es física, y `top_k` cuenta unidades
+
+**El problema.** Medido sobre el corpus real (2026-10-11): 21.340 respuestas,
+**861 textos distintos**. El 96 % del corpus son copias: en una pregunta
+cerrada, todas las personas que eligen la misma opción producen el mismo
+`texto_embebido` y, por lo tanto, el mismo vector
+(`specs/SPEC_unidades_de_evidencia.md`). Eso tenía dos síntomas con una sola
+causa:
+
+1. **El índice no encontraba el bloque.** `recall-indice` con
+   `ef_search = 200` dio **0 %** para «celular xiaomi» y para «fernet»
+   (`query`): cientos de puntos idénticos forman un bloque que HNSW no
+   alcanza desde afuera. No es un ajuste; los duplicados crecen con el
+   corpus. Corrige lo que D72 dejaba como plan para cuando el corpus
+   superara el umbral («volver al índice con más `ef_search`»): con
+   duplicados eso no funciona.
+2. **La verificación se gastaba en copias.** Aun con recall correcto, los
+   primeros puestos eran copias del mismo texto, y `top_k = 25` personas
+   podía ser 25 veces la misma idea. R-CS (D70) ya verificaba una vez cada
+   texto, pero seguía contando **personas**: el contrato repetido ocupaba los
+   lugares hasta la segunda ronda.
+
+**La decisión.**
+
+- **La unidad de evidencia es una tabla** (`unidad_evidencia`, semantica/0010):
+  `hash_texto` único, `texto_embebido` y `embedding vector(512)`. Cada
+  respuesta la referencia (`respuesta.unidad_id`) con una **FK compuesta**
+  `(unidad_id, hash_texto)`: la base no deja que una respuesta apunte a una
+  unidad con otro texto. El índice HNSW pasa a esa tabla.
+- **La clave es la huella del texto embebido completo**, que ya incluye la
+  pregunta: «→ Xiaomi» en dos preguntas son dos unidades; la misma pregunta
+  con el mismo texto en dos olas es **una**, porque el verificador leería
+  exactamente lo mismo. Cambia la unidad de R-CS, que era
+  `(pregunta_id, hash_texto)`: `veredicto_unidad` pasa a ser único por
+  `(ejecución, criterio, hash_texto)` y su `pregunta_id` queda informativo.
+  Los planes congelados de la completa conservan su forma
+  (`[pregunta_id, hash_texto, distancia]`) y se leen por la huella, así que
+  una ejecución lanzada antes del despliegue se sigue pudiendo leer.
+- **El recall busca unidades** (`semantica.recuperar`): `top_n` cuenta
+  unidades y cada una vuelve con **todas** sus respuestas. El gate se aplica
+  al resolver personas: con filtro, se buscan las unidades que tienen alguna
+  respuesta de una persona habilitada y de cada una vuelven solo las de
+  habilitados; sin filtro, el gate descarta personas después, como siempre.
+  `RECALL_EXACTO_HASTA` (D72) cuenta unidades.
+- **`top_k` cuenta unidades distintas, y el veredicto llega a todas sus
+  personas** (`consultas._seleccionar_y_verificar`). Las **principales** son
+  las `top_k` mejores del ranking; quien tiene una principal queda en el
+  resultado. Sus otras evidencias (la contradicción puede estar ahí) son las
+  **secundarias**, que se verifican dentro del tope de siempre
+  (`top_k × MAX_EVIDENCIAS_POR_INDIVIDUO`), primero las que comparten más
+  personas. La que no entra queda `sin_verificar` con
+  `fallo = tope_de_unidades` —«verificación incompleta», nunca `dudoso`— y
+  la consulta lo dice en `degradaciones`. La mejor evidencia de una persona
+  alcanzada siempre está verificada (se toma en orden de ranking).
+- **Una sola forma de escribir respuestas** (`semantica.escribir_respuestas`),
+  que usan la ingesta y el reproceso: reutiliza las unidades existentes,
+  embebe **una vez por texto nuevo** (sub-lote a sub-lote, R-ASYNC.2.b),
+  comprueba la dimensión contra `unidad_evidencia.embedding` antes de pagar,
+  y escribe las respuestas. `embebidas` cuenta textos; `reutilizadas`,
+  respuestas que apuntaron a una unidad existente.
+- **La baja se lleva el vector en la base, no en Python.** Un trigger de
+  sentencia (`borrar_unidades_huerfanas()`) borra la unidad que se queda sin
+  respuestas, sea por baja, retiro por estudio, reproceso o `on delete
+  cascade`. Si la persona era la única que dio un texto, el texto y su
+  vector se van con ella. Misma razón que el gate como vista: un camino que
+  se olvidara dejaría el dato vivo.
+- **La migración no re-embebe (US$ 0) y no esconde.** Toma el vector de la
+  respuesta de menor id de cada texto, pero **antes comprueba** que todas las
+  respuestas del mismo texto tengan el mismo vector; si no, se detiene y
+  dice cómo verlos, y solo sigue con `paneles.unidades_inconsistentes =
+  'tomar_la_primera'`. `diagnosticar_consulta.py unidades` hace el mismo
+  chequeo antes y después.
+- **`respuesta.embedding` se conserva hasta verificar** (R-UE.5). Un trigger
+  de transición (`respuesta_asegurar_unidad()`) lo completa desde la unidad,
+  así que el código nuevo no lo escribe, y si el que inserta es el código
+  anterior, resuelve o crea la unidad con el vector que trae: **volver atrás
+  el código no exige volver atrás la base**. La columna la quita la 0011,
+  que vive en `db/semantica/posteriores/` para que nada la aplique solo.
+- **El diagnóstico muestra cuántas personas hay detrás de cada unidad**
+  (pregunta abierta del spec): la etapa *Unidades* lleva
+  `personas_por_unidad_max`, `_mediana` y `unidades_de_una_persona`, y cada
+  evidencia en el detalle, `personas_en_la_unidad`. Solo números: el
+  diagnóstico se registra en la bóveda.
+
+**Lo que no cambia.** La ficha (R7.6), la reidentificación y la exportación
+trabajan por respuesta y por persona, y ninguna leía el vector. La regla de
+agregación (`hallazgo_de`) es la misma. El criterio sigue embebiéndose como
+`query`.
+
+**Lo que cuesta.** La migración, US$ 0. Después: el índice vectorial pasa de
+~12 MB a ~0,5 MB (861 vectores); una carga nueva embebe un vector por texto
+nuevo, no por respuesta; y la evaluación completa de un criterio sobre todo
+el corpus son ~35 llamadas a Claude en lotes de 25, no «cientos» (corrige la
+estimación del addendum A2). El ahorro grande es en verificación.
+
+**Lo que se descartó.**
+
+- *Deduplicar solo al verificar* (lo que hacía R-CS). No arregla el índice:
+  el bloque de vectores idénticos sigue en el grafo.
+- *Subir `ef_search` o `m`.* Con `ef_search = 200` ya daba 0 %.
+- *Una unidad por `(pregunta_id, hash_texto)`.* Verificaría dos veces el
+  mismo texto en dos olas de una serie, y el spec fija la clave en el texto.
+- *Mantener la unidad como vista* (la `v_unidad_evidencia` de R-CS). Una
+  vista no tiene su propio vector ni su propio índice, que es justo lo que
+  hace falta. La vista se conserva, ahora sobre la tabla, con cuántas
+  respuestas, personas y preguntas tiene cada unidad.
+- *Borrar las unidades huérfanas en `semantica.borrar_persona`.* Las
+  respuestas se borran por cinco caminos; el trigger los cubre a todos.
+
+**Dónde vive.** `db/semantica/0010_unidad_evidencia_vector.sql`,
+`db/semantica/posteriores/0011_quitar_embedding_de_respuesta.sql`,
+`functions/panel_api/semantica.py` (`escribir_respuestas`, `upsert_respuestas`,
+`crear_unidades`, `recuperar`, `_vecinos*`, `unidades_elegibles`,
+`respuestas_de_unidades`, `veredictos_de`), `functions/panel_api/consultas.py`
+(`clave_unidad`, `_seleccionar_y_verificar`), `consulta_completa.py`,
+`ingesta.py`, `reproceso.py`, `esquema.py`, `scripts/diagnosticar_consulta.py`
+(`unidades`), `functions/tests/test_unidades_de_evidencia.py`.

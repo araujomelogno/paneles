@@ -236,7 +236,11 @@ def test_las_respuestas_repetidas_se_verifican_una_vez_y_liberan_sus_lugares(
     assert unidades["repetidas"] >= 24
     informe = resultado["diagnostico"]["verificacion"][0]
     assert informe["irrelevantes"] >= 1
-    assert informe["rondas"] >= 2
+    # R-UE — `top_k` cuenta unidades: el texto del contrato ocupa **un**
+    # lugar de los 3, y la marca entra en la misma ronda. Antes hacían falta
+    # dos (las 25 personas del contrato ocupaban los 3 lugares de personas).
+    assert informe["rondas"] == 1
+    assert informe["unidades_principales"] <= 3
     assert informe["respuestas_cubiertas"] >= 25
 
 

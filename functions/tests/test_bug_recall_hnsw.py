@@ -76,7 +76,11 @@ def corpus(conn_semantica):
                 (cuestionario, codigo, texto))
             preguntas[codigo] = cur.fetchone()["id"]
 
+        # R-UE — cada respuesta con su propio texto embebido, y por eso su
+        # propia unidad: lo que se prueba es el recall sobre muchos vectores
+        # distintos. Con el mismo texto, las 1.500 serían una sola unidad.
         def alta(pregunta, valor, embebido, vector):
+            embebido = f"{embebido} #{len(vectores)}"
             id_persona = str(uuid.uuid4())
             cur.execute("insert into individuo (id_persona) values (%s) returning id",
                         (id_persona,))
@@ -100,6 +104,18 @@ def corpus(conn_semantica):
     conn.commit()
     return {"conn": conn, "criterio": criterio, "xiaomi": xiaomi,
             "vectores": vectores, "personas": personas}
+
+
+def _plan(informe):
+    """El plan del recall, sin las cuentas que R-UE le sumó."""
+    return {k: v for k, v in informe.items() if k not in ("unidades", "respuestas")}
+
+
+def _unidad(corpus, respuesta_id):
+    """R-UE — el recall y su chequeo hablan de unidades; cada respuesta de
+    este corpus tiene la suya."""
+    return semantica.db.una(corpus["conn"], "select unidad_id from respuesta where id = %s",
+                            (respuesta_id,))["unidad_id"]
 
 
 @pytest.fixture
@@ -140,7 +156,7 @@ def test_sin_filtro_la_mejor_respuesta_entra_aunque_el_indice_se_equivoque(
     candidatos = semantica.recuperar(corpus["conn"], corpus["criterio"], TOP_N, informe=plan)
 
     assert candidatos[0]["respuesta_id"] == corpus["xiaomi"]
-    assert plan == {"plan": "exacto", "motivo_plan": "corpus_bajo_umbral"}
+    assert _plan(plan) == {"plan": "exacto", "motivo_plan": "corpus_bajo_umbral"}
     assert indice_equivocado == []
 
 
@@ -207,7 +223,7 @@ def test_sin_margen_posible_en_el_indice_va_exacto(corpus, monkeypatch, indice_e
     monkeypatch.setenv("RECALL_EXACTO_HASTA", "0")
     plan = {}
     candidatos = semantica.recuperar(corpus["conn"], corpus["criterio"], 1000, informe=plan)
-    assert plan == {"plan": "exacto", "motivo_plan": "top_n_sin_margen_en_el_indice"}
+    assert _plan(plan) == {"plan": "exacto", "motivo_plan": "top_n_sin_margen_en_el_indice"}
     assert candidatos[0]["respuesta_id"] == corpus["xiaomi"]
     assert indice_equivocado == []
 
@@ -218,7 +234,7 @@ def test_el_chequeo_de_recall_real_reporta_lo_que_el_indice_omite(corpus, indice
     r = semantica.comparar_recall(corpus["conn"], corpus["criterio"], TOP_N)
 
     assert r["exactas"] == TOP_N and r["del_indice"] == TOP_N
-    assert [f["respuesta_id"] for f in r["faltan"]] == [corpus["xiaomi"]]
+    assert [f["unidad_id"] for f in r["faltan"]] == [_unidad(corpus, corpus["xiaomi"])]
     assert r["faltan"][0]["puesto"] == 1
     assert r["recall"] == pytest.approx(1 - 1 / TOP_N)
     assert r["ef_search"] == 2 * TOP_N
@@ -256,7 +272,7 @@ def test_recall_indice_del_script_sale_con_1_si_faltan(corpus, indice_equivocado
     assert "producción usa EXACTO sin filtro" in impreso
     assert "m=16 (default), ef_construction=64 (default)" in impreso
     assert f"faltan 1 de {TOP_N}" in impreso
-    assert f"puesto 1 del exacto: #{corpus['xiaomi']}" in impreso
+    assert f"puesto 1 del exacto: unidad #{_unidad(corpus, corpus['xiaomi'])}" in impreso
 
 
 # ── §6.5 — el script no concluye «recorte» si no entró al recall ────
@@ -301,7 +317,7 @@ def test_a1_distancia_con_el_indice_equivocado_no_dice_recorte(
 
     impreso = capsys.readouterr().out
     assert salida == 2
-    assert "0 respuesta(s) del corpus están más cerca" in impreso
+    assert "0 unidad(es) de evidencia del corpus están más cerca" in impreso
     assert "NO entra" in impreso
     assert "EL RECALL NO LA TRAJO (plan=indice)" in impreso
     assert "La conclusión del recorte NO APLICA" in impreso
@@ -317,8 +333,8 @@ def test_a1_distancia_con_el_plan_de_produccion_la_trae(
     assert salida == 0
     assert "plan=exacto, corpus_bajo_umbral" in impreso
     assert "entra la mejor con «xiaomi»" in impreso
-    # Qué ocupa el pool: la otra respuesta, repetida.
-    assert f"{TOP_N - 1}× [var270]" in impreso
+    # R-UE — el pool cuenta unidades: 200 textos distintos.
+    assert f"{TOP_N} unidad(es), {TOP_N} respuesta(s)" in impreso
 
 
 # ── §6.6 — con filtro, sin cambios ──────────────────────────────────
@@ -330,6 +346,6 @@ def test_con_filtro_sigue_el_camino_exacto(corpus, indice_equivocado, monkeypatc
     candidatos = semantica.recuperar(corpus["conn"], corpus["criterio"], TOP_N,
                                      habilitados, plan)
 
-    assert plan == {"plan": "exacto", "motivo_plan": "filtro_por_personas"}
+    assert _plan(plan) == {"plan": "exacto", "motivo_plan": "filtro_por_personas"}
     assert candidatos[0]["respuesta_id"] == corpus["xiaomi"]
     assert indice_equivocado == []

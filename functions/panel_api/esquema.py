@@ -193,6 +193,14 @@ MIGRACIONES_SEMANTICA = (
     # R-CS — el backfill de `hash_texto` no es detectable; lo que sí lo es
     # son la vista de unidades y la tabla de veredictos.
     ("0009_unidades_de_evidencia.sql", ("v_unidad_evidencia", "veredicto_unidad")),
+    # ── R-UE · un vector por texto distinto (D73) ──
+    # La 0011 (quitar `respuesta.embedding`) no está acá: vive en
+    # `db/semantica/posteriores/` y se aplica a mano, recién después de
+    # verificar la 0010 en producción.
+    ("0010_unidad_evidencia_vector.sql", (
+        "unidad_evidencia", "respuesta.unidad_id", "borrar_unidades_huerfanas()",
+        "respuesta_asegurar_unidad()",
+    )),
 )
 
 STORES = {
@@ -204,6 +212,10 @@ STORES = {
 # que el aviso diga qué dejó de funcionar y no solo qué falta.
 PARA_QUE = {
     "v_respuesta_estudio": "la procedencia de las respuestas en las consultas semánticas",
+    "unidad_evidencia": "el vector de cada texto distinto; sin ella no hay recall ni ingesta (R-UE)",
+    "respuesta.unidad_id": "a qué unidad de evidencia (y a qué vector) apunta cada respuesta",
+    "borrar_unidades_huerfanas()": "que una baja se lleve el vector de un texto que solo esa persona dio",
+    "respuesta_asegurar_unidad()": "que cada respuesta quede apuntando a la unidad de su texto",
     "respuesta.hash_texto": "saltear el re-embedding cuando una re-ingesta trae el mismo texto",
     "consulta_guardada": "guardar consultas para reutilizarlas",
     "envio_correo": "registrar y contar los correos que envía el sistema (R-MAIL)",
@@ -388,7 +400,7 @@ def verificar(conn, migraciones):
 
 # ── La dimensión de los embeddings ──────────────────────────────────
 
-def dimension_de_la_columna(conn_semantica, columna="respuesta.embedding"):
+def dimension_de_la_columna(conn_semantica, columna="unidad_evidencia.embedding"):
     """En cuántas dimensiones está esa columna vectorial, o `None`.
 
     `None` cuando la vista no existe todavía —la migración `0006` no se
@@ -425,7 +437,7 @@ def dimension_de_la_columna(conn_semantica, columna="respuesta.embedding"):
 
 
 def desajuste_de_dimension(conn_semantica, dims_proveedor,
-                           columna="respuesta.embedding"):
+                           columna="unidad_evidencia.embedding"):
     """El mensaje a mostrar si el proveedor y la base no están de acuerdo.
 
     Devuelve `None` cuando está todo bien o cuando no se puede saber.

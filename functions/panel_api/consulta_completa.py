@@ -222,6 +222,10 @@ def lanzar(ctx, definicion_cruda, actor=None, encolador=None, verificador=None):
     ejecucion_id = str(uuid.uuid4())
     lotes = []
     for parte in plan:
+        # `[pregunta_id, hash_texto, distancia]`. Desde R-UE la unidad es la
+        # huella (posición 1); la pregunta (la de una de sus respuestas) queda
+        # informativa, y con la misma forma los planes congelados antes del
+        # despliegue se siguen leyendo igual.
         unidades = [[u["pregunta_id"], u["hash_texto"], round(u["distancia"], 6)]
                     for u in parte["unidades"]]
         for inicio in range(0, len(unidades), UNIDADES_POR_LOTE):
@@ -397,7 +401,11 @@ def _verificar_lote(conn_boveda, conn_semantica, ejecucion, lote, criterio,
     from . import reranker as mod_reranker
 
     reranker = reranker or mod_reranker.crear()
-    distancia = {(u[0], u[1]): u[2] for u in lote["unidades"]}
+    # R-UE — la unidad es la huella; un plan anterior con la misma huella en
+    # dos preguntas se juzga una vez.
+    distancia = {}
+    for u in lote["unidades"]:
+        distancia.setdefault(u[1], u[2])
     # El gate, re-evaluado en cada lote.
     ids = _ids_habilitados(conn_boveda, ejecucion["definicion"])
     representantes = semantica.respuestas_de_unidades(
@@ -425,7 +433,7 @@ def _verificar_lote(conn_boveda, conn_semantica, ejecucion, lote, criterio,
             "fallo": juicio.get("fallo"),
             "aviso_polaridad": juicio.get("aviso_polaridad"),
             "relevancia": relevancias.get(i),
-            "distancia": distancia.get((rep["pregunta_id"], rep["hash_texto"])),
+            "distancia": distancia.get(rep["hash_texto"]),
         })
     semantica.guardar_veredictos(conn_semantica, ejecucion["id"], criterio["orden"], filas)
     conn_semantica.commit()
@@ -570,8 +578,8 @@ def resultado(ctx, ejecucion_id, pagina=1, por_pagina=None, todas=False):
                          "select criterio_orden, unidades, estado from consulta_lote "
                          "where ejecucion_id = %s", (str(ejecucion_id),)):
         for u in fila["unidades"]:
-            planificadas.setdefault(fila["criterio_orden"], {})[(u[0], u[1])] = (
-                u[2], fila["estado"])
+            planificadas.setdefault(fila["criterio_orden"], {}).setdefault(
+                u[1], (u[2], fila["estado"]))
     juzgadas = semantica.veredictos_de(ctx.semantica, ejecucion_id)
 
     por_criterio, resumen = {}, []
@@ -586,7 +594,7 @@ def resultado(ctx, ejecucion_id, pagina=1, por_pagina=None, todas=False):
         respuestas = semantica.respuestas_de_unidades(ctx.semantica, utiles, ids)
         por_persona = {}
         for r in respuestas:
-            clave = (r["pregunta_id"], r["hash_texto"])
+            clave = r["hash_texto"]
             v = veredictos.get(clave)
             distancia, estado_lote = plan.get(clave, (None, None))
             juicio = ({"veredicto": v["veredicto"], "razon": v["razon"], "fallo": v["fallo"],
