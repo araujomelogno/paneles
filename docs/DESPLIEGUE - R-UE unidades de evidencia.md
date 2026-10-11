@@ -217,7 +217,7 @@ D72 ya mergeado, y que no apila commits sobre historia mergeada:
 git log --oneline origin/main..claude/magical-franklin-e5yx9o
 ```
 
-Tiene que listar **solo** el commit de R-UE.
+Tiene que listar **solo** los commits de R-UE (el cambio y el ajuste del despliegue).
 
 ### 1.3 · Nada en curso del lado semántico
 
@@ -814,7 +814,7 @@ La `0010` queda; el código anterior funciona con ella:
   para eso.
 
 ```bash
-git checkout 99c8326        # main con D72, antes de R-UE
+git checkout 8dd3a22        # main con D72 (y el spec), antes de R-UE
 firebase deploy --only functions,hosting --project="$PROYECTO"
 ```
 
@@ -917,7 +917,7 @@ Texto sugerido para los analistas:
 ## Checklist
 
 - [ ] Paso 1.1: D72 estable (`motivo_plan` presente, sin `[recall]`).
-- [ ] Paso 1.2: la rama solo trae el commit de R-UE sobre `main`.
+- [ ] Paso 1.2: la rama solo trae los commits de R-UE sobre `main`.
 - [ ] Paso 1.3: sin ingestas, reprocesos ni completas en curso; analistas avisados.
 - [ ] §2.1: respuestas ____ · textos distintos ____ · índice de `respuesta` ____ MB.
 - [ ] §2.2: textos con más de un vector ____ · decisión: ______________.
