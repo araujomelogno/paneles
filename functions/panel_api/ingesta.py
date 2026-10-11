@@ -20,7 +20,7 @@ el `id_persona`. La PII se queda de este lado.
 
 import re
 
-from . import consentimiento, db, embeddings as mod_embeddings, esquema, semantica
+from . import consentimiento, db, embeddings as mod_embeddings, semantica
 from .errores import DatosInvalidos
 
 
@@ -396,81 +396,30 @@ def ingestar(
     ids_persona = [mapa[r[0]] for r in largo]
     individuo_por_persona = semantica.asegurar_individuos(conn_semantica, ids_persona)
 
-    # ── Qué hace falta embeber (P1: saltear lo que no cambió) ──
-    # Re-ingestar una ola es normal (una corrección de campo, una pregunta
-    # que faltaba). Lo que llega con el mismo texto ya tiene su vector, y el
-    # mismo texto con el mismo modelo da el mismo vector: se saltea. Es la
-    # parte cara del pipeline.
-    ya_ingestado = semantica.hashes_de_estudio(conn_semantica, ref_estudio)
-
-    respuestas, a_embeber = [], []
-    for id_origen, codigo, etiqueta, texto in largo:
-        clave = (individuo_por_persona[mapa[id_origen]], id_por_codigo[codigo])
-        huella = semantica.hash_texto(texto)
-        fila = {
-            "individuo_id": clave[0],
-            "pregunta_id": clave[1],
+    # ── Qué hace falta embeber (R-UE.4: un vector por texto distinto) ──
+    # El vector vive en la unidad de evidencia de cada texto. Lo que ya
+    # tiene unidad —en esta ola, en otra, o porque otra persona dio la misma
+    # respuesta— no se manda al proveedor; lo nuevo se embebe **una vez por
+    # texto**, aunque lleguen mil copias en la misma carga. Re-ingestar una
+    # ola sin cambios no embebe nada, como antes (P1).
+    #
+    # Y sub-lote a sub-lote (R-ASYNC.2.b): `escribir_respuestas` embebe un
+    # sub-lote de textos nuevos, lo guarda como unidades y lo suelta antes de
+    # pedir el siguiente. Con 200.000 respuestas, embeber todo antes de
+    # escribir eran varios GB contra el 1 GiB de la función. La comprobación
+    # de la dimensión también va ahí, antes de mandar nada a pagar.
+    respuestas = [
+        {
+            "individuo_id": individuo_por_persona[mapa[id_origen]],
+            "pregunta_id": id_por_codigo[codigo],
             "valor_texto": etiqueta,
             "texto_embebido": texto,
-            "hash_texto": huella,
-            "embedding": None,
+            "hash_texto": semantica.hash_texto(texto),
         }
-        respuestas.append(fila)
-        if ya_ingestado.get(clave) != huella:
-            a_embeber.append(fila)
-
-    # ── Escribir ──
-    #
-    # R-ASYNC.2.b — **embeber un sub-lote, guardarlo y soltarlo**, antes de
-    # pedir el siguiente. En ningún momento hay más de un sub-lote de
-    # vectores vivo.
-    #
-    # Antes esto era: embeber todo, después escribir todo. Con 200.000
-    # respuestas eso son varios GB de números contra el 1 GiB de la función,
-    # y el síntoma es un error genérico difícil de atribuir. Partir la
-    # ingesta en tareas (R-ASYNC.1) **no alcanza** para arreglarlo: con lotes
-    # de 2.000 el problema no aparece, pero por el tamaño elegido y no porque
-    # el patrón esté bien. El día que alguien suba el lote buscando
-    # velocidad, vuelve.
-    escritas = 0
-
-    if a_embeber:
-        # Antes de mandar nada al proveedor, y antes de escribir nada: que la
-        # dimensión que va a devolver sea la que la columna acepta. Es una
-        # consulta, y lo que evita es pagar el embedding de todo el lote para
-        # que después el insert lo rechace. Con 200.000 respuestas esa
-        # factura no es teórica.
-        desajuste = esquema.desajuste_de_dimension(
-            conn_semantica, getattr(proveedor, "dims", None))
-        if desajuste:
-            raise DatosInvalidos(desajuste, {"motivo": "dimension_de_embeddings"})
-
-    # Primero lo que no hay que embeber: filas cuyo texto no cambió desde la
-    # última ingesta. Son un `update` sin vector y no cuestan nada.
-    #
-    # La comparación es por **identidad** y no por valor: `a_embeber` guarda
-    # los mismos objetos que `respuestas`, y un `f not in a_embeber` sería
-    # cuadrático —con 200.000 filas, cuarenta mil millones de comparaciones
-    # de diccionarios— además de comparar por contenido algo que ya se sabe
-    # por referencia.
-    hay_que_embeber = {id(f) for f in a_embeber}
-    sin_vector = [f for f in respuestas if id(f) not in hay_que_embeber]
-    if sin_vector:
-        escritas += semantica.upsert_respuestas(conn_semantica, sin_vector)
-
-    if a_embeber:
-        textos = [f["texto_embebido"] for f in a_embeber]
-        for inicio, vectores in proveedor.embeber_por_lotes(textos):
-            sublote = a_embeber[inicio : inicio + len(vectores)]
-            for fila, vector in zip(sublote, vectores):
-                fila["embedding"] = vector
-            escritas += semantica.upsert_respuestas(conn_semantica, sublote)
-            # Y se sueltan. El upsert ya los escribió; conservarlos solo
-            # haría que el pico de memoria creciera con el tamaño del lote,
-            # que es exactamente lo que este requisito evita.
-            for fila in sublote:
-                fila["embedding"] = None
-            del vectores
+        for id_origen, codigo, etiqueta, texto in largo
+    ]
+    escritura = semantica.escribir_respuestas(conn_semantica, respuestas, proveedor)
+    escritas = escritura["escritas"]
 
     return {
         **_descartadas(descartes),
@@ -478,8 +427,11 @@ def ingestar(
         "respuestas_escritas": escritas,
         "personas": len(individuo_por_persona),
         "preguntas": len(id_por_codigo),
-        "embebidas": len(a_embeber),
-        "reutilizadas": len(respuestas) - len(a_embeber),
+        # R-UE — `embebidas` cuenta **textos** mandados al proveedor (una
+        # unidad nueva cada uno); `reutilizadas`, respuestas que apuntaron a
+        # una unidad que ya existía y no costaron nada.
+        "embebidas": escritura["textos_embebidos"],
+        "reutilizadas": escritura["respuestas_reutilizadas"],
         "sin_mapear": sin_mapear,
         "sin_mapear_detalle": detalle_sin_mapear,
         "sin_consentimiento": bloqueadas,

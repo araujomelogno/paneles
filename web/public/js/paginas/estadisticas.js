@@ -109,14 +109,17 @@ function pintar(main, d) {
   <div class="card">
     <h3>Tamaño y salud del corpus</h3>
     <div class="grid-datos">
-      ${dato('Tabla de respuestas', tamano(salud.tabla_bytes))}
+      ${dato('Tablas de respuestas', tamano(salud.tabla_bytes))}
       ${dato('Índice vectorial', tamano(salud.indice_bytes))}
       ${tarjeta('Dimensión', salud.dimension_embeddings)}
+      ${salud.unidades_de_evidencia != null
+        ? tarjeta('Respuestas distintas', salud.unidades_de_evidencia) : ''}
     </div>
     <p class="small" style="margin-top:0.6rem">
-      El índice tiene que entrar en la memoria de la instancia. Cuando se
-      acerque, conviene subir de tier: el umbral está en
-      <code>docs/COSTOS.md</code> §4.
+      El índice tiene que entrar en la memoria de la instancia. Crece con las
+      <strong>respuestas distintas</strong> (cada texto se guarda una vez),
+      no con las respuestas. Cuando se acerque, conviene subir de tier: el
+      umbral está en <code>docs/COSTOS.md</code> §4.
     </p>
   </div>
 

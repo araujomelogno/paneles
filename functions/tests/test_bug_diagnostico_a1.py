@@ -78,17 +78,21 @@ def corpus(conn_semantica):
                 (cuestionario, codigo, texto))
             preguntas[codigo] = cur.fetchone()["id"]
 
+        # R-UE — cada fila con su propio texto embebido (y por eso su propia
+        # unidad): estas pruebas miden el recall sobre muchos vectores
+        # distintos, no la deduplicación. Con el mismo texto, las 1.500
+        # serían **una** unidad (ver test_unidades_de_evidencia.py).
         filas = []
         for i in range(REPETIDAS + MARCAS):
             if i < REPETIDAS:
                 ruido = [azar.gauss(0, 0.05) for _ in range(DIMS)]
                 vector = _normal([c + r for c, r in zip(criterio, ruido)])
                 pregunta, valor = preguntas["var270"], "Soy el titular del contrato"
-                embebido = "¿Quién es el titular del contrato? → Soy el titular del contrato"
+                embebido = f"¿Quién es el titular del contrato? → Soy el titular del contrato #{i}"
             else:
                 vector = _normal([azar.gauss(0, 1) for _ in range(DIMS)])
                 pregunta, valor = preguntas["var273"], "Xiaomi"
-                embebido = "¿De qué marca es tu celular? → Xiaomi"
+                embebido = f"¿De qué marca es tu celular? → Xiaomi #{i}"
             filas.append((str(uuid.uuid4()), pregunta, valor, embebido, vector))
 
         ids_persona = {}
@@ -277,7 +281,7 @@ def test_el_recall_con_un_gate_amplio_es_el_exacto(corpus):
     plan = {}
     candidatos = semantica.recuperar(conn, criterio, 200, list(habilitadas.values()), plan)
 
-    assert plan == {"plan": "exacto", "motivo_plan": "filtro_por_personas"}
+    assert plan["plan"] == "exacto" and plan["motivo_plan"] == "filtro_por_personas"
     exactas = sorted(habilitadas, key=lambda r: _coseno(criterio, corpus["vectores"][r]))[:200]
     assert len(candidatos) == 200
     assert {c["respuesta_id"] for c in candidatos} == set(exactas)
@@ -312,7 +316,7 @@ def test_un_recall_corto_del_indice_se_registra_y_se_recalcula(corpus, monkeypat
 
     def indice_corto(c, sql, params=()):
         filas = original(c, sql, params)
-        if "materialized" not in sql and "order by r.embedding <=>" in sql:
+        if "materialized" not in sql and "order by u.embedding <=>" in sql:
             return filas[:10]
         return filas
 

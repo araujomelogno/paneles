@@ -243,6 +243,16 @@ error de «too many connections», no lentitud.**
 
 ### 4.4 · Que el índice vectorial no entre en RAM (solo `paneles-semantica`)
 
+> **Desde D73 (R-UE) el vector vive una vez por texto distinto**, en
+> `unidad_evidencia`, y el índice HNSW está sobre esa tabla: con el corpus de
+> hoy son **861 vectores** (~0,5 MB de índice) en vez de 21.340 (~12 MB). Lo
+> que crece con las respuestas es la tabla `respuesta` sin vector (después
+> de la `semantica/0011`, que quita `respuesta.embedding`); lo que crece con
+> los **textos distintos** es el índice. En una carga de preguntas cerradas
+> casi no crece. Con esto, `db-f1-micro` deja de tener fecha de vencimiento
+> por tamaño del índice. La tabla de abajo queda como referencia para un
+> corpus de textos libres, donde cada respuesta es su propio texto.
+
 > **Desde D72 el índice no se usa mientras el corpus no pase de
 > `RECALL_EXACTO_HASTA` (200 mil respuestas).** El recall sin filtro recorre
 > la tabla exacto, porque el índice podía devolver las 200 pedidas sin la más
@@ -265,10 +275,11 @@ El índice HNSW de pgvector rinde cuando entra en memoria. Cada vector son
 ```bash
 psql -h 127.0.0.1 -p 5433 -U app_paneles -d paneles_semantica -c "
 select count(*) as respuestas from respuesta;
+select count(*) as unidades from unidad_evidencia;
 select pg_size_pretty(pg_total_relation_size('respuesta')) as tabla_total;
-select indexrelname,
+select relname, indexrelname,
        pg_size_pretty(pg_relation_size(indexrelid)) as indice
-  from pg_stat_user_indexes where relname = 'respuesta';"
+  from pg_stat_user_indexes where relname in ('respuesta', 'unidad_evidencia');"
 ```
 
 Si el índice HNSW se acerca a la memoria disponible, **`paneles-semantica` es
@@ -361,6 +372,12 @@ US$ 0,05; `voyage-3.5` US$ 0,06):
   `COSTO_EMBEDDING_USD_MTOK` en `functions/.env`). Si cambia el modelo de
   `CLAUDE_MODELO`, hay que cambiarlas también, o la estimación miente.
 
+> **Desde D73 (R-UE)** la completa recorre **unidades** (textos distintos),
+> no respuestas: con el corpus de hoy, 861 en vez de 21.340. Un criterio
+> sobre todo el corpus son ~35 llamadas a Claude en lotes de 25, no
+> «cientos»: el modo completo pasa a ser viable sin restricciones de costo
+> fuertes.
+>
 > **Consecuencia de infraestructura.** La completa recorre todo el corpus de
 > las personas habilitadas a fuerza bruta (no por el índice HNSW, que sirve
 > para «los N más cercanos»). Con `paneles-semantica` en `db-f1-micro`

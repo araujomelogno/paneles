@@ -1912,21 +1912,37 @@
   <p>Cuando muchas personas dieron <strong>exactamente la misma
   respuesta</strong> a la misma pregunta —típico de una opción cerrada o de
   un texto que el campo copió en todas las filas—, el sistema la trata como
-  una sola <strong>unidad de evidencia</strong>: la ordena y la verifica una
-  vez, y el veredicto vale para todos los que la dieron. Eso tiene dos
-  efectos que se notan:</p>
+  una sola <strong>unidad de evidencia</strong>. En el corpus actual es lo más
+  común: de unas 21 mil respuestas, solo 861 son textos distintos. Desde esta
+  versión la unidad se usa en toda la búsqueda, no solo al verificar:</p>
   <ul class="puntos">
-    <li><strong>Cuesta menos.</strong> 25 copias del mismo texto son una lectura,
-    no 25.</li>
-    <li><strong>No se comen los lugares.</strong> Si las primeras personas del
-    ranking resultan tener solo respuestas irrelevantes, el sistema va a buscar a
-    las siguientes —hasta tres veces y sin pasar del tope de lecturas de
-    siempre—. Es lo que permite que aparezca quien mencionó la marca aunque
-    estuviera más abajo que 25 respuestas sobre otra cosa.</li>
+    <li><strong>Se busca entre textos distintos.</strong> «¿De qué marca es tu
+    celular? → Xiaomi» es un solo candidato aunque la hayan elegido 400
+    personas, y llega a la búsqueda con las 400. Antes, miles de copias
+    idénticas confundían a la búsqueda rápida, que podía no encontrar ninguna
+    (era el caso de Xiaomi y del fernet).</li>
+    <li><strong>«A verificar» cuenta respuestas distintas, no personas.</strong>
+    Con 25 se verifican 25 ideas distintas. Antes podían ser 25 personas con la
+    misma respuesta.</li>
+    <li><strong>El veredicto llega a todos los que la dieron.</strong> Si
+    «→ Xiaomi» cumple el criterio, las 400 personas que la eligieron entran al
+    resultado, aunque «A verificar» sea 25. Por eso el ranking puede traer
+    muchas más personas que antes con el mismo costo: el encabezado dice
+    cuántas se revisaron y cuántas se muestran (6.3).</li>
+    <li><strong>Cuesta menos.</strong> Una respuesta repetida 400 veces se lee
+    una vez.</li>
+    <li><strong>No se comen los lugares.</strong> Si las primeras respuestas
+    del ranking resultan irrelevantes, el sistema va a buscar a las siguientes
+    —hasta tres veces y sin pasar del tope de lecturas de siempre—.</li>
   </ul>
+  <p>De cada persona se revisan hasta tres respuestas, porque la contradicción
+  puede estar en otra. Si muchas personas entraron por la misma respuesta y
+  entre todas suman más respuestas de las que el tope permite leer, las que
+  quedaron sin leer se marcan <strong>sin verificar</strong> (la persona
+  queda «pendiente», nunca «posible» por eso), y el diagnóstico lo avisa.</p>
   <p>En el detalle (<strong>Ver</strong>) de una persona, cada respuesta
   revisada dice su veredicto y, si el mismo texto lo dieron otros, «el mismo
-  texto en N respuestas: se verificó una vez».</p>
+  texto en N respuestas de M personas: se verificó una vez».</p>
 
   <figure>
     <img class="recorte" src="capturas/92-detalle-estado.jpg" alt="Detalle de una persona con su estado" />
@@ -2253,14 +2269,17 @@
     <thead><tr><th>Parámetro</th><th>Conviene aumentarlo si…</th><th>Conviene reducirlo si…</th></tr></thead>
     <tr><td class="destacado">Pool de recuperación</td>
       <td>Hay motivos para pensar que se está perdiendo gente que debería
-      aparecer. El pool trae <strong>lo que se pide</strong>, y desde esta
-      versión trae además <strong>las más parecidas de verdad</strong>: antes
-      la búsqueda rápida podía devolver las 200 pedidas dejando afuera a la
-      mejor respuesta del corpus.</td>
+      aparecer. Cuenta <strong>respuestas distintas</strong> (unidades de
+      evidencia, 6.4), no respuestas ni personas: 200 son los 200 textos más
+      parecidos al criterio, cada uno con todas las personas que lo dieron.
+      Trae <strong>los más parecidos de verdad</strong>.</td>
       <td>—</td></tr>
     <tr><td class="destacado">A verificar</td>
-      <td>Se necesita un ranking más extenso. Subirlo sin subir <i>Personas a
-      mostrar</i> verifica gente que después no se ve.</td>
+      <td>Se necesita un ranking más extenso. Cuenta <strong>respuestas
+      distintas</strong>: con 25 se leen 25 ideas, y cada veredicto alcanza a
+      todas las personas que dieron esa respuesta. Subirlo sin subir
+      <i>Personas a mostrar</i> puede verificar gente que después no se
+      ve.</td>
       <td>La consulta demora demasiado o cuesta de más: es la palanca directa
       sobre el gasto. De 25 a 200 multiplica por ocho la verificación —de una
       llamada al verificador a ocho por criterio—.</td></tr>
@@ -2287,17 +2306,20 @@
   ejecución: cada consulta queda registrada con ese número (sin la lista de
   personas), para poder averiguar después si alguna etapa falló.</p>
 
-  <p>La etapa <strong>Recuperación (ANN)</strong> dice cuántas respuestas se pidieron
-  (<code>pedidos</code>), cuántas volvieron (<code>crudos</code>) y
-  <strong>cómo</strong> se buscaron (<code>plan</code>):</p>
+  <p>La etapa <strong>Recuperación (ANN)</strong> dice cuántas respuestas
+  distintas (unidades de evidencia) se pidieron (<code>pedidos</code>),
+  cuántas volvieron (<code>crudos</code>), cuántas respuestas de personas
+  traían en total (<code>respuestas</code>) y <strong>cómo</strong> se
+  buscaron (<code>plan</code>):</p>
 
   <ul class="pasos">
     <li><code>plan=exacto</code>: se compararon <strong>todas</strong> las
-    respuestas con el criterio, una por una, y vuelven las más parecidas sin
-    aproximación. Es lo habitual: con un filtro demográfico (6.7) se recorren
-    las de las personas habilitadas, y sin filtro, las de todo el corpus
-    mientras no pase de cierto tamaño (200 mil respuestas, hoy es diez veces
-    menos). <code>motivo_plan</code> dice cuál de los dos casos fue.</li>
+    respuestas distintas con el criterio, una por una, y vuelven las más
+    parecidas sin aproximación. Es lo habitual: con un filtro demográfico
+    (6.7) se recorren las de las personas habilitadas, y sin filtro, las de
+    todo el corpus mientras no pase de cierto tamaño (200 mil respuestas
+    distintas; hoy son menos de mil). <code>motivo_plan</code> dice cuál de
+    los dos casos fue.</li>
     <li><code>plan=indice</code>: la búsqueda rápida y aproximada, que se usa
     solo cuando el corpus es muy grande para recorrerlo entero. Junto al plan
     aparece <code>ef_search</code>: cuánto margen se le dio a la búsqueda
@@ -2309,11 +2331,22 @@
   </ul>
 
   <p>Si <code>crudos</code> es menor que <code>pedidos</code>, <strong>no
-  había más respuestas</strong> para esas personas: ya no puede deberse a la
-  búsqueda. Y con <code>plan=exacto</code>, las que volvieron son
+  había más respuestas distintas</strong> para esas personas: ya no puede
+  deberse a la búsqueda. Y con <code>plan=exacto</code>, las que volvieron son
   exactamente las más parecidas: si una respuesta que se esperaba no está,
   la causa está en el criterio o en cómo quedó escrita la respuesta, no en la
   búsqueda.</p>
+
+  <p>La etapa <strong>Unidades</strong> dice cuántas respuestas trajo el pool
+  y cuántos textos distintos eran, y <strong>cuántas personas hay detrás de
+  cada uno</strong>: <code>personas_por_unidad_max</code> (la respuesta más
+  compartida), <code>personas_por_unidad_mediana</code> y
+  <code>unidades_de_una_persona</code>. Una unidad que representa a 200
+  personas no pesa lo mismo que una de una persona, aunque en la lista sean
+  una fila cada una. La etapa <strong>Verificación</strong> suma
+  <code>unidades_principales</code> (las que contaron para <i>A verificar</i>),
+  <code>individuos</code> (a cuántas personas alcanzaron los veredictos) y, si
+  el tope dejó respuestas sin leer, <code>sin_verificar_por_tope</code>.</p>
 
   <figure>
     <img class="recorte" src="capturas/91-diagnostico-unidades.jpg" alt="Diagnóstico con la etapa de unidades de evidencia" />
@@ -2455,12 +2488,14 @@
 
   <div class="aviso grave">
     <div class="t">La completa cuesta bastante más que la exploratoria</div>
-    <p>Sobre el padrón actual, la diferencia no es de grado sino de unas cien
-    veces: una exploratoria hace una o dos llamadas al verificador por
-    criterio; una completa, cientos. Por eso pide confirmar el costo, exige un
-    presupuesto que la frena sola y la lanza solo un responsable de
-    operaciones o un administrador. Un analista puede estimarla y leer sus
-    resultados.</p>
+    <p>Una exploratoria hace una o dos llamadas al verificador por criterio;
+    una completa, una cada 25 <strong>respuestas distintas</strong>. Desde que
+    las respuestas repetidas se cuentan una vez, sobre el corpus actual una
+    completa de un criterio sin filtros son unas 35 llamadas, no cientos:
+    sigue costando más que la exploratoria, pero es viable. Por eso pide
+    confirmar el costo, exige un presupuesto que la frena sola y la lanza solo
+    un responsable de operaciones o un administrador. Un analista puede
+    estimarla y leer sus resultados.</p>
   </div>
 
   <ol class="pasos">
@@ -3706,15 +3741,19 @@
   <p>Panelistas con sus cortes —activos, sin panel, con correo, con celular,
   altas del mes—, el consentimiento vigente por finalidad (contado por
   persona: alguien que aceptó dos versiones del texto cuenta una vez), el corpus
-  semántico con sus estudios, y el tamaño de la tabla de respuestas y del
-  índice vectorial.</p>
+  semántico con sus estudios, el tamaño de las tablas de respuestas y del
+  índice vectorial, y cuántas <strong>respuestas distintas</strong> hay
+  (unidades de evidencia, 6.4).</p>
 
   <div class="aviso info">
     <div class="t">Cuándo conviene agrandar la base</div>
     <p>El índice vectorial tiene que entrar en la memoria de la instancia.
     Cuando el tamaño que muestra esta pantalla se acerque a esa memoria, las
     consultas empiezan a ponerse lentas y conviene subir de tier. Es el
-    número que nadie mira hasta que el sistema ya está lento.</p>
+    número que nadie mira hasta que el sistema ya está lento. Desde que cada
+    respuesta distinta se guarda una sola vez, el índice crece con las
+    respuestas <em>distintas</em> y no con el total: una carga de preguntas
+    cerradas casi no lo agranda.</p>
   </div>
 
   <p>El bloque <strong>Estudios de origen</strong> lista cada carga con su
@@ -3786,11 +3825,25 @@
   «dudoso» y en modo laxo entraba penalizada; ahora el verificador la marca
   <strong>irrelevante</strong> y no cuenta como coincidencia (6.4).</p>
 
+  <h4>Con «A verificar» en 25, el ranking trae cientos de personas</h4>
+  <p>Es lo correcto desde esta versión. <i>A verificar</i> cuenta
+  <strong>respuestas distintas</strong>, y el veredicto de cada una llega a
+  todas las personas que la dieron: si «→ Xiaomi» cumple y la eligieron 400
+  personas, entran las 400 con una sola lectura del verificador (6.4). Lo
+  que se muestra lo sigue decidiendo <strong>Personas a mostrar</strong>.</p>
+
+  <h4>Algunas personas aparecen «pendientes» con «el tope de unidades se agotó»</h4>
+  <p>Entraron por una respuesta que se verificó, pero tenían otra respuesta
+  parecida al criterio que no se llegó a leer dentro del tope (de cada persona
+  se revisan hasta tres, porque la contradicción puede estar en otra). No es
+  un «no cumple» ni un «dudoso»: es que falta leerla. Subir <i>A
+  verificar</i>, o usar la consulta completa (6.11), la resuelve.</p>
+
   <h4>¿Cuándo conviene la consulta completa?</h4>
   <p>Cuando hace falta la lista entera y no las mejores candidatas, y el costo
   se justifica. Para explorar, ajustar un criterio o ver si hay gente, la
-  exploratoria alcanza y cuesta unas cien veces menos. La estimación de 6.11
-  dice el número antes de gastar.</p>
+  exploratoria alcanza y cuesta bastante menos. La estimación de 6.11 dice el
+  número antes de gastar.</p>
 
   <h4>Hice una consulta solo demográfica y ya no veo los nombres</h4>
   <p>Es a propósito: el resultado demográfico es seudónimo, igual que el
@@ -3990,14 +4043,16 @@
       <td>Sobre quién se calcula la composición: todos los panelistas, un panel
       o una carga.</td></tr>
     <tr><td class="destacado">Unidad de evidencia</td>
-      <td>Un texto distinto dentro de una pregunta. Si muchas personas dieron
-      la misma respuesta, es una sola unidad: se verifica una vez y vale para
-      todas.</td></tr>
+      <td>Una respuesta distinta, con su pregunta: «¿De qué marca es tu
+      celular? → Xiaomi». Si muchas personas dieron la misma respuesta, es una
+      sola unidad: se busca y se verifica una vez, y el veredicto vale para
+      todas. <i>Pool de recuperación</i> y <i>A verificar</i> cuentan
+      unidades.</td></tr>
     <tr><td class="destacado">Irrelevante</td>
       <td>Veredicto de una respuesta que no habla del criterio: no lo afirma ni
       lo niega. Cuenta como falta de evidencia, no como «no cumple».</td></tr>
     <tr><td class="destacado">Plan de recuperación (índice / exacto)</td>
-      <td>Cómo se buscaron las respuestas más parecidas al criterio:
+      <td>Cómo se buscaron las respuestas distintas más parecidas al criterio:
       recorriéndolas una por una (exacto, lo habitual) o con el índice,
       rápido y aproximado, solo cuando el corpus es muy grande. Lo dice el
       diagnóstico.</td></tr>

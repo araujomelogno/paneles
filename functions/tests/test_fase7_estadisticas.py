@@ -108,6 +108,10 @@ def test_la_salud_del_corpus_trae_la_dimension_en_uso(conn_semantica, base):
     s = estadisticas.salud_del_corpus(conn_semantica)
     assert s["dimension_embeddings"] == 512
     assert s["tabla_bytes"] > 0
+    # R-UE — cuántos textos distintos hay: el índice crece con éstos.
+    distintos = estadisticas.db.una(
+        conn_semantica, "select count(distinct hash_texto) as n from respuesta")["n"]
+    assert s["unidades_de_evidencia"] == distintos
 
 
 def test_la_pantalla_entera_sale_en_una_llamada(ctx, actor, base):

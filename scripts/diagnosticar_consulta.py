@@ -16,6 +16,7 @@ nada en ninguna base:
             --patron xiam --contra "titular"
     python3 scripts/diagnosticar_consulta.py a1-reranker --ultimas 5
     python3 scripts/diagnosticar_consulta.py recall-indice --criterio "usa un celular xiaomi"
+    python3 scripts/diagnosticar_consulta.py unidades
     python3 scripts/diagnosticar_consulta.py estimar --criterio "usa un celular xiaomi"
     python3 scripts/diagnosticar_consulta.py input-type --consultas consultas_conocidas.json
 
@@ -45,6 +46,13 @@ Qué contesta cada uno:
   exactas faltan. Un recall equivocado devuelve la cantidad justa: esta es
   la única forma de verlo (`specs/BUG_recall_hnsw_completo_no_correcto.md`).
   Informa también los parámetros del índice y qué plan usa producción.
+* **unidades** (R-UE.5) — antes de la semantica/0010: cuántas respuestas y
+  cuántos textos distintos hay, y si algún texto tiene **más de un vector**
+  entre sus respuestas (la inconsistencia que la migración no esconde).
+  Después: cuántas unidades hay, si alguna respuesta quedó sin unidad o con
+  otro texto que su unidad, y cuántas personas hay detrás de las unidades
+  más compartidas. Solo números y huellas, nunca el texto. Sale con 1 si
+  encuentra una inconsistencia.
 * **a1-reranker** (A1.3) — ¿el reranker corrió? Lee `consulta_ejecucion`
   (bóveda/0025). Las ejecuciones anteriores a la 0025 no dejaron registro:
   para ellas hay que volver a correr la consulta, y el script lo dice.
@@ -146,7 +154,12 @@ def a1_texto(args):
 # * «¿cuántas del corpus están más cerca?» (`_delante`) es una pregunta
 #   sobre el corpus entero. Es un conteo con la distancia en el `where`, sin
 #   `order by … limit`: Postgres la resuelve recorriendo el corpus completo y
-#   el número es exacto. No se toca: es lo que se compara con `top_n`.
+#   el número es exacto. Desde R-UE cuenta **unidades** (textos distintos),
+#   que es lo que cuenta `top_n`.
+#
+# * R-UE — el vector vive en `unidad_evidencia`; una respuesta llega a él por
+#   `respuesta.unidad_id`. Nada de este script lee `respuesta.embedding`, que
+#   la semantica/0011 quita.
 
 AUSENTE = "ausente"
 """El patrón no está en ninguna respuesta del corpus: es ingesta."""
@@ -183,8 +196,9 @@ def _distancias(conn, vector, patron, limite):
     return semantica.db.todas(
         conn,
         f"""with filtradas as materialized (
-                 select r.id, r.valor_texto, r.embedding <=> %s::vector as distancia
+                 select r.id, r.valor_texto, u.embedding <=> %s::vector as distancia
                    from respuesta r
+                   join unidad_evidencia u on u.id = r.unidad_id
                   where {_FILTRO_PATRON}
              )
              select id, valor_texto, distancia
@@ -195,9 +209,12 @@ def _distancias(conn, vector, patron, limite):
 
 
 def _delante(conn, vector, distancia):
-    """Cuántas respuestas del corpus entero están más cerca que `distancia`."""
+    """Cuántas unidades de evidencia (textos distintos) del corpus entero
+    están más cerca que `distancia`. Unidades y no respuestas: es lo que
+    cuenta `top_n` desde R-UE."""
     return semantica.db.una(
-        conn, "select count(*) as n from respuesta r where r.embedding <=> %s::vector < %s",
+        conn,
+        "select count(*) as n from unidad_evidencia u where u.embedding <=> %s::vector < %s",
         (semantica._vector(vector), distancia))["n"]
 
 
@@ -208,8 +225,9 @@ def _mas_cerca_con_patron(conn, vector, patron, distancia):
     return semantica.db.una(
         conn,
         f"""select count(*) as total,
-                   count(*) filter (where r.embedding <=> %s::vector < %s) as mas_cerca
+                   count(*) filter (where u.embedding <=> %s::vector < %s) as mas_cerca
               from respuesta r
+              join unidad_evidencia u on u.id = r.unidad_id
              where {_FILTRO_PATRON}""",
         (semantica._vector(vector), distancia, f"%{patron}%", f"%{patron}%"))
 
@@ -232,11 +250,11 @@ def medir(conn, vector, patron, limite=5):
 
 
 RECALL_INCORRECTO = (
-    "→ EL RECALL NO LA TRAJO (plan={plan}): hay {delante} respuesta(s) más cerca, "
+    "→ EL RECALL NO LA TRAJO (plan={plan}): hay {delante} unidad(es) más cerca, "
     "menos que las {top_n} del pool, y no está entre las que devuelve. No es una "
     "falla de esta medición: es lo que hace el recall de la consulta con ese plan.")
 FUERA_POR_DISTANCIA = (
-    "→ Quedó fuera del pool por distancia: hay {delante} respuesta(s) más cerca "
+    "→ Quedó fuera del pool por distancia: hay {delante} unidad(es) más cerca "
     "y el pool es de {top_n}.")
 NO_APLICA_RECORTE = (
     "→ La conclusión del recorte NO APLICA: el recorte pasa después del recall, "
@@ -306,8 +324,8 @@ def a1_distancia(args):
         print(f"  [{tipo}] {medicion['coincidencias']} respuesta(s) con «{args.patron}»; "
               f"la mejor (#{objetivo[0]['id']}, {objetivo[0]['valor_texto']!r}) "
               f"está a {mejor:.4f};")
-        print(f"          {delante} respuesta(s) del corpus están más cerca del criterio "
-              f"(top_n por defecto: {top_n}).")
+        print(f"          {delante} unidad(es) de evidencia del corpus están más cerca "
+              f"del criterio (top_n por defecto: {top_n} unidades).")
         # Lo que de verdad trae el recall de la consulta, con el mismo
         # `semantica.recuperar` y el mismo plan que producción.
         plan = {}
@@ -315,7 +333,8 @@ def a1_distancia(args):
         recall = {c["respuesta_id"] for c in candidatos}
         entra = any(f["id"] in recall for f in objetivo)
         print(f"          recall real (top_n={top_n}, plan={plan.get('plan')}, "
-              f"{plan.get('motivo_plan')}): {len(recall)} respuesta(s); "
+              f"{plan.get('motivo_plan')}): {plan.get('unidades', 0)} unidad(es), "
+              f"{len(recall)} respuesta(s); "
               f"{'entra' if entra else 'NO entra'} la mejor con «{args.patron}».")
         repetidas = _repetidas(candidatos)
         if repetidas:
@@ -355,7 +374,7 @@ def recall_indice(args):
         sys.exit("Pasar --criterio (una o más veces) o --consultas.")
     corpus = semantica.tamano_corpus(conn)
     umbral = semantica.umbral_recall_exacto()
-    print(f"Recall real · corpus ~{corpus} respuestas · RECALL_EXACTO_HASTA={umbral} · "
+    print(f"Recall real · corpus ~{corpus} unidades de evidencia · RECALL_EXACTO_HASTA={umbral} · "
           f"producción usa {'EXACTO' if corpus <= umbral else 'ÍNDICE'} sin filtro")
     for indice in _indices_hnsw(conn):
         print(f"  índice {indice['indexname']}: {indice['parametros']} · {indice['tamano']}")
@@ -368,7 +387,7 @@ def recall_indice(args):
                   f"recall@{r['top_n']} {100 * r['recall']:.1f}% · "
                   f"faltan {len(r['faltan'])} de {r['exactas']}")
             for f in r["faltan"][:5]:
-                print(f"    puesto {f['puesto']} del exacto: #{f['respuesta_id']} "
+                print(f"    puesto {f['puesto']} del exacto: unidad #{f['unidad_id']} "
                       f"a {f['distancia']:.4f}")
             if r["faltan"]:
                 salida = 1
@@ -376,8 +395,9 @@ def recall_indice(args):
 
 
 def _indices_hnsw(conn):
-    """Los índices HNSW de `respuesta`, con `m` y `ef_construction` (los
-    defaults de pgvector, 16 y 64, si el índice no los declara)."""
+    """Los índices HNSW de `unidad_evidencia` (el que usa el recall desde
+    R-UE) y, mientras exista, el de `respuesta`, con `m` y `ef_construction`
+    (los defaults de pgvector, 16 y 64, si el índice no los declara)."""
     filas = semantica.db.todas(
         conn,
         """select c.relname as indexname, c.reloptions,
@@ -385,7 +405,8 @@ def _indices_hnsw(conn):
              from pg_index i
              join pg_class c on c.oid = i.indexrelid
              join pg_am a on a.oid = c.relam
-            where i.indrelid = 'respuesta'::regclass and a.amname = 'hnsw'""")
+            where i.indrelid in ('unidad_evidencia'::regclass, 'respuesta'::regclass)
+              and a.amname = 'hnsw'""")
     for f in filas:
         opciones = dict(o.split("=", 1) for o in (f["reloptions"] or []))
         f["parametros"] = (f"m={opciones.get('m', '16 (default)')}, "
@@ -504,6 +525,95 @@ def input_type(args):
     return 0
 
 
+# ── R-UE.5 · unidades de evidencia ───────────────────────────────────
+
+def chequear_unidades(conn):
+    """El estado de las unidades de evidencia, sin imprimir nada.
+
+    `migrada` dice si la semantica/0010 está aplicada. Antes: respuestas,
+    textos distintos y textos con más de un vector (R-UE.5). Después,
+    además: unidades, respuestas sin unidad, respuestas cuyo texto no es el
+    de su unidad, unidades huérfanas y la distribución de personas por
+    unidad. `problemas` es la lista de lo que no cierra.
+    """
+    db = semantica.db
+    migrada = bool(db.una(conn, "select to_regclass('unidad_evidencia') as t")["t"])
+    tiene_vector = bool(db.una(
+        conn, """select 1 as x from information_schema.columns
+                  where table_name = 'respuesta' and column_name = 'embedding'"""))
+    base = db.una(conn, """select count(*) as respuestas,
+                                  count(distinct texto_embebido) as textos,
+                                  count(*) filter (where hash_texto is null) as sin_huella
+                             from respuesta""")
+    salida = {"migrada": migrada, "respuestas": base["respuestas"],
+              "textos_distintos": base["textos"], "sin_huella": base["sin_huella"],
+              "problemas": []}
+    if tiene_vector:
+        filas = db.todas(conn, """
+            select coalesce(hash_texto, encode(sha256(convert_to(texto_embebido, 'UTF8')), 'hex'))
+                     as hash_texto,
+                   count(*) as respuestas, count(distinct embedding::text) as vectores
+              from respuesta
+             group by 1
+            having count(distinct embedding::text) > 1
+             order by 2 desc""")
+        salida["textos_con_mas_de_un_vector"] = [dict(f) for f in filas]
+        if filas:
+            salida["problemas"].append(
+                f"{len(filas)} texto(s) con más de un vector entre sus respuestas")
+    if not migrada:
+        return salida
+    despues = db.una(conn, """
+        select (select count(*) from unidad_evidencia) as unidades,
+               (select count(*) from respuesta where unidad_id is null) as sin_unidad,
+               (select count(*) from respuesta r join unidad_evidencia u on u.id = r.unidad_id
+                 where u.texto_embebido <> r.texto_embebido) as texto_distinto,
+               (select count(*) from unidad_evidencia u
+                 where not exists (select 1 from respuesta r where r.unidad_id = u.id))
+                 as huerfanas""")
+    salida.update({k: despues[k] for k in ("unidades", "sin_unidad", "texto_distinto",
+                                            "huerfanas")})
+    salida["mas_compartidas"] = [dict(f) for f in db.todas(conn, """
+        select unidad_id, respuestas, individuos as personas, preguntas
+          from v_unidad_evidencia order by individuos desc, unidad_id limit 10""")]
+    if salida["unidades"] != salida["textos_distintos"]:
+        salida["problemas"].append(
+            f"{salida['unidades']} unidades para {salida['textos_distintos']} textos distintos")
+    for clave, texto in (("sin_unidad", "respuesta(s) sin unidad"),
+                         ("texto_distinto", "respuesta(s) con otro texto que su unidad"),
+                         ("huerfanas", "unidad(es) sin respuestas")):
+        if salida[clave]:
+            salida["problemas"].append(f"{salida[clave]} {texto}")
+    return salida
+
+
+def unidades(args):
+    conn = _conectar("DSN_SEMANTICA")
+    r = chequear_unidades(conn)
+    print(f"R-UE · semantica/0010 {'APLICADA' if r['migrada'] else 'SIN APLICAR'}")
+    print(f"  {r['respuestas']} respuestas · {r['textos_distintos']} textos distintos"
+          + (f" · {100 * (1 - r['textos_distintos'] / r['respuestas']):.1f}% son copias"
+             if r["respuestas"] else ""))
+    if "textos_con_mas_de_un_vector" in r:
+        inconsistentes = r["textos_con_mas_de_un_vector"]
+        print(f"  textos con más de un vector: {len(inconsistentes)}")
+        for f in inconsistentes[:10]:
+            print(f"    {f['hash_texto'][:16]}… · {f['respuestas']} respuestas · "
+                  f"{f['vectores']} vectores distintos")
+    if r["migrada"]:
+        print(f"  {r['unidades']} unidades · {r['sin_unidad']} respuestas sin unidad · "
+              f"{r['texto_distinto']} con otro texto · {r['huerfanas']} huérfanas")
+        print("  unidades con más personas detrás:")
+        for f in r["mas_compartidas"]:
+            print(f"    unidad #{f['unidad_id']}: {f['personas']} personas, "
+                  f"{f['respuestas']} respuestas, {f['preguntas']} pregunta(s)")
+    for problema in r["problemas"]:
+        print(f"  → PROBLEMA: {problema}")
+    if not r["problemas"]:
+        print("  → sin inconsistencias")
+    return 1 if r["problemas"] else 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="comando", required=True)
@@ -527,6 +637,10 @@ def main():
     p.add_argument("--ef-search", type=int,
                    help="por defecto, el que usaría producción (2 × top_n, tope 1000)")
     p.set_defaults(funcion=recall_indice)
+
+    p = sub.add_parser("unidades",
+                       help="R-UE.5 — ¿mismo texto, mismo vector? ¿toda respuesta con unidad?")
+    p.set_defaults(funcion=unidades)
 
     p = sub.add_parser("a1-reranker", help="A1.3 — ¿corrió el reranker?")
     p.add_argument("--ultimas", type=int, default=5)

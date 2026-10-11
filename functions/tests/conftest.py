@@ -63,7 +63,11 @@ TABLAS_SEMANTICA = ["respuesta", "pregunta", "individuo", "cuestionario",
                     # R-VER.10 — las capturas del modo de depuración.
                     "verificacion_captura",
                     # R-CS — los veredictos de las ejecuciones completas.
-                    "veredicto_unidad"]
+                    "veredicto_unidad",
+                    # R-UE — las unidades de evidencia. Un `truncate` no
+                    # dispara el trigger que borra las huérfanas, así que sin
+                    # esto cada prueba vería los vectores de las anteriores.
+                    "unidad_evidencia"]
 
 VERSION_TEXTO = "consentimiento-2026-01"
 

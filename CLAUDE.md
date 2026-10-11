@@ -244,8 +244,8 @@ presupuesto de tiempo por consulta (60 s, para que COLOQUIO entre en sus
 
 Desde R-CS (D70, `specs/ADDENDUM_solicitud_consultas_semanticas.md`) la
 consulta semántica rerankea y verifica **unidades de evidencia** —un texto
-distinto dentro de una pregunta, `(pregunta_id, hash_texto)`— y tiene dos
-alcances. Lo que no hay que deshacer:
+embebido distinto; desde D73, la huella sola y no `(pregunta_id,
+hash_texto)`— y tiene dos alcances. Lo que no hay que deshacer:
 
 - **Una sola regla de agregación** (`consultas.hallazgo_de`), para la
   exploratoria y la completa: `no_cumple` > `cumple` > `dudoso` >
@@ -255,10 +255,11 @@ alcances. Lo que no hay que deshacer:
   En laxo, quien no tiene **ninguna** evidencia pertinente no aparece
   (`sin_evidencia_pertinente`). Y corrige la interpretación, no el recall:
   los lugares los recuperan las unidades.
-- **El catálogo de unidades es una vista** (`v_unidad_evidencia`), no una
-  tabla con texto ni con su propio embedding: una baja la achica sola. La
-  huella SQL de la `semantica/0009` y `semantica.hash_texto` tienen que
-  coincidir, y hay una prueba.
+- **La unidad es física desde D73** (`unidad_evidencia`, ver «Un vector por
+  texto distinto»); `v_unidad_evidencia` cuenta respuestas, personas y
+  preguntas por unidad. Una baja la achica sola (trigger). La huella SQL de
+  las migraciones y `semantica.hash_texto` tienen que coincidir, y hay una
+  prueba.
 - **La completa no corre en la request y no guarda el resultado.** Plan
   congelado, lotes en Cloud Tasks (`procesarconsulta`), avance y **gasto**
   derivados de los lotes (`v_consulta_progreso`), gate re-evaluado en cada
@@ -288,10 +289,10 @@ por el índice HNSW, que devuelve como mucho `hnsw.ef_search` vecinos (40 por
 defecto) **de todo el corpus**, y el `where` se aplica después. Un filtro
 selectivo da vacío y un `top_n` mayor que `ef_search` da 40, **sin error**.
 
-- **El recall pasa por `semantica._vecinos`**: con filtro por personas (el
-  gate) es exacto; sin filtro, **también exacto** mientras el corpus no pase
-  de `RECALL_EXACTO_HASTA` (200 mil, D72), y por encima índice con
-  `ef_search = 2 × top_n`. Un recall corto se registra (`[recall]`) y se
+- **El recall pasa por `semantica._vecinos`**, sobre unidades de evidencia
+  (D73): con filtro por personas (el gate) es exacto; sin filtro, **también
+  exacto** mientras el corpus no pase de `RECALL_EXACTO_HASTA` unidades (200
+  mil, D72), y por encima índice con `ef_search = 2 × top_n`. Un recall corto se registra (`[recall]`) y se
   recalcula. No escriban otro `order by <=> … limit` con un `where` al lado.
 - **Completo no es correcto** (D72): el índice puede devolver las 200 pedidas
   sin la más cercana, y ninguna cuenta lo ve. No agreguen un control que mire
@@ -308,6 +309,43 @@ selectivo da vacío y un `top_n` mayor que `ef_search` da 40, **sin error**.
   Y las conclusiones del diagnóstico son excluyentes: si la evidencia no
   entró al recall, no se concluye nada sobre lo que pasa después (el
   recorte).
+
+## Un vector por texto distinto
+
+Desde R-UE (D73, `specs/SPEC_unidades_de_evidencia.md`) el vector vive en
+`unidad_evidencia` (semantica/0010), **una vez por texto embebido distinto**,
+y cada respuesta lo referencia (`respuesta.unidad_id`). El 96 % del corpus
+eran copias, y las copias rompían el índice (bloques de vectores idénticos:
+0 % de recall para «xiaomi») y gastaban la verificación. Lo que no hay que
+deshacer:
+
+- **La unidad es la huella del texto embebido completo** (`hash_texto`, que
+  ya incluye la pregunta), no `(pregunta_id, hash_texto)`: la misma pregunta
+  con el mismo texto en dos olas es una unidad. `veredicto_unidad` es único
+  por `(ejecución, criterio, hash_texto)`; su `pregunta_id` es informativo.
+- **Se escribe por un solo camino**: `semantica.escribir_respuestas`, que usan
+  la ingesta y el reproceso. Reutiliza la unidad que existe y embebe una vez
+  por texto nuevo. No escriban `respuesta.embedding` ni inserten respuestas
+  con un vector propio: `upsert_respuestas` levanta `SinUnidad` si el texto
+  no tiene unidad, y la FK compuesta `(unidad_id, hash_texto)` rechaza una
+  respuesta apuntando a otro texto.
+- **El recall busca unidades** y `top_n` las cuenta; cada una vuelve con
+  todas sus respuestas, y el gate se aplica al resolver personas.
+  `RECALL_EXACTO_HASTA` cuenta unidades.
+- **`top_k` cuenta unidades distintas y el veredicto llega a todas sus
+  personas** (`consultas._seleccionar_y_verificar`). Las otras evidencias de
+  esas personas se verifican dentro del tope de siempre; la que no entra es
+  `sin_verificar` con `fallo = tope_de_unidades`, **nunca** `dudoso`.
+- **La unidad que se queda sin respuestas la borra la base** (trigger
+  `borrar_unidades_huerfanas()`), por cualquier camino que borre
+  respuestas. Así la baja se lleva el vector de un texto que solo esa
+  persona dio. No lo muevan a Python. Un `truncate` no dispara el trigger:
+  por eso las pruebas truncan también `unidad_evidencia`.
+- **`respuesta.embedding` está en transición**: la completa el trigger
+  `respuesta_asegurar_unidad()` desde la unidad, para que volver atrás el
+  código no exija volver atrás la base. **Ningún código nuevo la lee.** La
+  quita `db/semantica/posteriores/0011_…`, que se aplica a mano después de
+  verificar en producción; nunca la muevan a `db/semantica/`.
 
 ## De qué carga viene cada persona, y sobre quién se calcula la composición
 

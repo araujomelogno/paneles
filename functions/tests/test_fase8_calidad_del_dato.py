@@ -588,7 +588,10 @@ def test_el_reproceso_reembebe_solo_lo_que_cambio(
     despues = _estado_de_respuestas(conn_semantica)
     de_marca = [i for i, v in antes.items() if v[0] == "MARCA"]
     otras = [i for i, v in antes.items() if v[0] != "MARCA"]
-    assert len(contador.textos) == len(de_marca)
+    # R-UE — se embebe una vez **cada texto nuevo**, no cada respuesta: las
+    # 24 respuestas de MARCA son 4 textos distintos.
+    distintos = {despues[i][1] for i in de_marca}
+    assert len(contador.textos) == len(set(contador.textos)) == len(distintos)
     assert all(t.startswith("¿Qué marca de cigarrillos fuma? → ")
                for t in contador.textos)
     for i in de_marca:
@@ -616,7 +619,8 @@ def test_un_cambio_de_mapeo_solo_toca_los_codigos_afectados(
     contador = Contador(proveedor)
     _procesar_todo(conn_boveda, conn_semantica, contador, encolador)
     conn_semantica.commit()
-    assert contador.textos == ["¿Qué marca fumás habitualmente? → Nevada Blue"] * (N // 4)
+    # R-UE — un texto nuevo, embebido una vez para sus N // 4 respuestas.
+    assert contador.textos == ["¿Qué marca fumás habitualmente? → Nevada Blue"]
     despues = _estado_de_respuestas(conn_semantica)
     cambiadas = [i for i in antes if antes[i] != despues.get(i)]
     assert len(cambiadas) == N // 4
@@ -744,9 +748,20 @@ def test_el_reproceso_reaplica_el_gate_de_consentimiento(
                      encolador=encolador)
     contador = Contador(proveedor)
     resultados = _procesar_todo(conn_boveda, conn_semantica, contador, encolador)
-    assert len(contador.textos) == N - 1
+    # R-UE — una vez por texto distinto. El gate se ve en el conteo de abajo
+    # y en que la respuesta de R-000 no cambió.
+    assert len(contador.textos) == len(set(contador.textos))
+    assert all(t.startswith("Otra redacción → ") for t in contador.textos)
     assert sum(r["resultado"]["sin_consentimiento_reproceso"]
                for r in resultados) == 1
+    conn_semantica.commit()
+    suya = db.todas(conn_semantica,
+                    """select r.texto_embebido from respuesta r
+                         join individuo i on i.id = r.individuo_id
+                         join pregunta p on p.id = r.pregunta_id
+                        where i.id_persona = %s and p.codigo = 'MARCA'""", (id_persona,))
+    assert suya and not any(f["texto_embebido"].startswith("Otra redacción")
+                            for f in suya)
 
 
 def test_una_etiqueta_normalizada_se_sigue_reconociendo():

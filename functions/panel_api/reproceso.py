@@ -52,7 +52,7 @@ bóveda, que es donde viven los datos de los usuarios internos.
 import json
 
 from . import (cargas, consentimiento, db, diferida, embeddings as mod_embeddings,
-               encuestas, esquema, ingesta, pii, semantica)
+               encuestas, ingesta, pii, semantica)
 from .errores import Conflicto, DatosInvalidos, NoEncontrado
 
 OPERACION = "reproceso"
@@ -551,28 +551,23 @@ def procesar_lote(conn_boveda, conn_semantica, plan, ids, proveedor=None):
                     "delete from respuesta where id = any(%s::bigint[])",
                     (a_borrar,))
 
-    reembebidas = 0
+    reembebidas = textos_embebidos = 0
     if a_embeber:
         proveedor = proveedor or mod_embeddings.crear()
-        desajuste = esquema.desajuste_de_dimension(
-            conn_semantica, getattr(proveedor, "dims", None))
-        if desajuste:
-            raise DatosInvalidos(desajuste, {"motivo": "dimension_de_embeddings"})
-        textos = [f["texto_embebido"] for f in a_embeber]
-        # Sub-lote a sub-lote, igual que la ingesta (R-ASYNC.2.b): nunca hay
-        # más de un sub-lote de vectores vivo.
-        for inicio, vectores in proveedor.embeber_por_lotes(textos):
-            sublote = a_embeber[inicio:inicio + len(vectores)]
-            for fila, vector in zip(sublote, vectores):
-                fila["embedding"] = vector
-            reembebidas += semantica.upsert_respuestas(conn_semantica, sublote)
-            for fila in sublote:
-                fila["embedding"] = None
+        # El mismo camino de escritura que la ingesta (R-UE.4): un texto que
+        # ya tiene unidad —porque otra respuesta lo dio, o porque el cambio
+        # lo dejó igual a uno existente— no se vuelve a embeber; lo nuevo se
+        # embebe una vez por texto, sub-lote a sub-lote, con la dimensión
+        # comprobada antes.
+        escritura = semantica.escribir_respuestas(conn_semantica, a_embeber, proveedor)
+        reembebidas = escritura["escritas"]
+        textos_embebidos = escritura["textos_embebidos"]
 
     return {
         "operacion": OPERACION,
         "ref_estudio": plan.get("ref_estudio"),
         "reembebidas": reembebidas,
+        "textos_embebidos": textos_embebidos,
         "sin_cambios": sin_cambios,
         "borradas": len(a_borrar),
         "sin_consentimiento_reproceso": sin_consentimiento,

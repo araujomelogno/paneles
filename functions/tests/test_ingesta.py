@@ -428,27 +428,28 @@ def test_el_hash_guardado_es_del_texto_que_se_vectorizo(
         assert fila["hash_texto"] == semantica.hash_texto(fila["texto_embebido"])
 
 
-def test_una_fila_sin_hash_previo_se_re_embebe_una_vez(
+def test_una_fila_sin_hash_la_completa_la_base_y_no_se_re_embebe(
     conn_boveda, conn_semantica, proveedor, ola
 ):
-    """Las respuestas ingestadas antes de la migración 0003 quedan con
-    `hash_texto` nulo. La ingesta las trata como «no sé qué había» y las
-    re-embebe una vez, que es el comportamiento anterior; no hay backfill
-    porque el hash se calcula solo en la próxima ingesta."""
+    """Antes de R-UE, una respuesta con `hash_texto` nulo (anterior a la
+    0003) se re-embebía una vez. Desde la semantica/0010 la huella es la
+    clave de la unidad de evidencia: la base la completa sola (trigger) y no
+    puede quedar nula, y como el texto ya tiene su unidad, re-ingestar no
+    embebe nada."""
     encuestas.ingestar(
         conn_boveda, conn_semantica, ola["encuesta"]["id"], PREGUNTAS, FILAS,
         proveedor=proveedor,
     )
     db.ejecutar(conn_semantica, "update respuesta set hash_texto = null")
+    assert all(
+        f["hash_texto"] is not None
+        for f in db.todas(conn_semantica, "select hash_texto from respuesta")
+    )
 
     contador = ProveedorQueCuenta(proveedor)
     resultado = encuestas.ingestar(
         conn_boveda, conn_semantica, ola["encuesta"]["id"], PREGUNTAS, FILAS,
         proveedor=contador,
     )
-    assert resultado["embebidas"] == 3
-    assert len(contador.textos) == 3
-    assert all(
-        f["hash_texto"] is not None
-        for f in db.todas(conn_semantica, "select hash_texto from respuesta")
-    )
+    assert resultado["embebidas"] == 0
+    assert contador.textos == []
