@@ -28,3 +28,7 @@ functions/.secret.local
 # ── Datos de trabajo ──
 /tmp/
 /datos/
+
+# Copia temporal del script de diagnóstico para comparar antes/después
+# (despliegues D71 y D72). No se commitea.
+scripts/_diagnosticar_viejo.py

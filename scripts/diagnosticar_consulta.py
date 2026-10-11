@@ -15,6 +15,7 @@ nada en ninguna base:
     python3 scripts/diagnosticar_consulta.py a1-distancia --criterio "usa un celular xiaomi" \\
             --patron xiam --contra "titular"
     python3 scripts/diagnosticar_consulta.py a1-reranker --ultimas 5
+    python3 scripts/diagnosticar_consulta.py recall-indice --criterio "usa un celular xiaomi"
     python3 scripts/diagnosticar_consulta.py estimar --criterio "usa un celular xiaomi"
     python3 scripts/diagnosticar_consulta.py input-type --consultas consultas_conocidas.json
 
@@ -34,8 +35,16 @@ Qué contesta cada uno:
   distancia, porque con el índice HNSW de por medio un `where` selectivo
   devolvía vacío sin error (`specs/BUG_diagnostico_a1_distancia_y_hallazgo.md`).
   Sale con 0 si midió, con 1 si el patrón no está en el corpus (ingesta) y
-  con 2 si el patrón está pero la medición no lo encontró: eso es un fallo
-  del diagnóstico, no un resultado, y lo dice con ese nombre.
+  con 2 si el patrón está pero la medición no lo encontró, o si ninguna
+  respuesta está más cerca y el recall igual no la trae (es el recall, no
+  la medición). Las conclusiones son excluyentes: si la respuesta no entró
+  al recall, no concluye nada sobre el recorte, que pasa después. Lista
+  además los textos que más se repiten en el pool.
+* **recall-indice** — para uno o más criterios, compara lo que trae el
+  índice HNSW contra el recorrido exacto y dice cuántas de las `top_n`
+  exactas faltan. Un recall equivocado devuelve la cantidad justa: esta es
+  la única forma de verlo (`specs/BUG_recall_hnsw_completo_no_correcto.md`).
+  Informa también los parámetros del índice y qué plan usa producción.
 * **a1-reranker** (A1.3) — ¿el reranker corrió? Lee `consulta_ejecucion`
   (bóveda/0025). Las ejecuciones anteriores a la 0025 no dejaron registro:
   para ellas hay que volver a correr la consulta, y el script lo dice.
@@ -222,6 +231,57 @@ def medir(conn, vector, patron, limite=5):
     return {"estado": MEDIDO, "coincidencias": coincidencias, "filas": filas}
 
 
+RECALL_INCORRECTO = (
+    "→ EL RECALL NO LA TRAJO (plan={plan}): hay {delante} respuesta(s) más cerca, "
+    "menos que las {top_n} del pool, y no está entre las que devuelve. No es una "
+    "falla de esta medición: es lo que hace el recall de la consulta con ese plan.")
+FUERA_POR_DISTANCIA = (
+    "→ Quedó fuera del pool por distancia: hay {delante} respuesta(s) más cerca "
+    "y el pool es de {top_n}.")
+NO_APLICA_RECORTE = (
+    "→ La conclusión del recorte NO APLICA: el recorte pasa después del recall, "
+    "y esta respuesta no entró al recall.")
+CALIDAD_EMBEDDING = (
+    "→ Más lejos que 25 repeticiones de la otra respuesta: es CALIDAD DEL "
+    "EMBEDDING; las unidades de evidencia no lo resuelven.")
+RECORTE = (
+    "→ Entró al recall y está más cerca que las repeticiones: si no llegó al "
+    "resultado, fue el RECORTE posterior (cambio 3 justificado).")
+
+
+def conclusiones(entra, delante, top_n, plan, mas_cerca_contra=None):
+    """Lo que se concluye de una medición de A1.2, sin imprimir.
+
+    Son excluyentes: si la respuesta no entró al recall, ninguna conclusión
+    sobre lo que pasa **después** del recall (el recorte) se sostiene
+    (`specs/BUG_recall_hnsw_completo_no_correcto.md` §5). Devuelve la lista de
+    líneas y si es un defecto del sistema (para la salida 2).
+    """
+    if not entra and delante < top_n:
+        lineas = [RECALL_INCORRECTO.format(plan=plan, delante=delante, top_n=top_n)]
+        if mas_cerca_contra is not None:
+            lineas.append(NO_APLICA_RECORTE)
+        return lineas, True
+    if not entra:
+        lineas = [FUERA_POR_DISTANCIA.format(delante=delante, top_n=top_n)]
+        if mas_cerca_contra is not None:
+            lineas.append(CALIDAD_EMBEDDING if mas_cerca_contra >= 25 else NO_APLICA_RECORTE)
+        return lineas, False
+    if mas_cerca_contra is None:
+        return [], False
+    return [CALIDAD_EMBEDDING if mas_cerca_contra >= 25 else RECORTE], False
+
+
+def _repetidas(candidatos, cuantas=5):
+    """Los textos que más se repiten en el pool: qué ocupa los lugares."""
+    cuenta = {}
+    for c in candidatos:
+        clave = (c["pregunta_codigo"], c["texto_embebido"])
+        cuenta[clave] = cuenta.get(clave, 0) + 1
+    return sorted(((n, codigo, texto) for (codigo, texto), n in cuenta.items() if n > 1),
+                  key=lambda t: (-t[0], t[1] or "", t[2] or ""))[:cuantas]
+
+
 def a1_distancia(args):
     conn = _conectar("DSN_SEMANTICA")
     proveedor = embeddings.crear()
@@ -249,27 +309,88 @@ def a1_distancia(args):
         print(f"          {delante} respuesta(s) del corpus están más cerca del criterio "
               f"(top_n por defecto: {top_n}).")
         # Lo que de verdad trae el recall de la consulta, con el mismo
-        # `semantica.recuperar`. Si por el conteo tendría que entrar y no
-        # entró, el que recortó fue el índice, no la distancia.
-        recall = {c["respuesta_id"] for c in semantica.recuperar(conn, vector, top_n)}
-        entran = [f["id"] for f in objetivo if f["id"] in recall]
-        print(f"          recall real (top_n={top_n}): {len(recall)} respuesta(s); "
-              f"{'entra' if entran else 'NO entra'} la mejor con «{args.patron}».")
-        if delante < top_n and not entran:
-            print("          → FALLO DE MEDICIÓN del recall: por distancia tendría que "
-                  "entrar y el recall no la trajo (índice). No es un resultado.")
-            salida = 2
+        # `semantica.recuperar` y el mismo plan que producción.
+        plan = {}
+        candidatos = semantica.recuperar(conn, vector, top_n, informe=plan)
+        recall = {c["respuesta_id"] for c in candidatos}
+        entra = any(f["id"] in recall for f in objetivo)
+        print(f"          recall real (top_n={top_n}, plan={plan.get('plan')}, "
+              f"{plan.get('motivo_plan')}): {len(recall)} respuesta(s); "
+              f"{'entra' if entra else 'NO entra'} la mejor con «{args.patron}».")
+        repetidas = _repetidas(candidatos)
+        if repetidas:
+            print("          textos más repetidos en el pool:")
+            for n, codigo, texto in repetidas:
+                print(f"            {n}× [{codigo}] {texto[:90]!r}")
+        mas_cerca = None
         if args.contra:
             contra = _mas_cerca_con_patron(conn, vector, args.contra, mejor)
+            mas_cerca = contra["mas_cerca"]
             print(f"          «{args.contra}»: {contra['total']} respuesta(s), "
-                  f"{contra['mas_cerca']} más cerca que la buscada.")
-            if contra["mas_cerca"] >= 25:
-                print("          → Más lejos que 25 repeticiones de la otra respuesta: es "
-                      "CALIDAD DEL EMBEDDING; las unidades de evidencia no lo resuelven.")
-            else:
-                print("          → Más cerca que las repeticiones: si no llegó, fue el RECORTE "
-                      "(cambio 3 justificado).")
+                  f"{mas_cerca} más cerca que la buscada.")
+        lineas, defecto = conclusiones(entra, delante, top_n, plan.get("plan"), mas_cerca)
+        for linea in lineas:
+            print(f"          {linea}")
+        if defecto:
+            salida = 2
     return salida
+
+
+# ── Recall real: índice contra exacto ────────────────────────────────
+
+def recall_indice(args):
+    """Compara, para cada criterio, lo que trae el índice contra el exacto.
+
+    Es la salvaguarda de `specs/BUG_recall_hnsw_completo_no_correcto.md`: un
+    recall equivocado devuelve la cantidad justa y no se ve en ninguna
+    cuenta. Solo lee. Sale con 1 si al índice le falta alguna.
+    """
+    conn = _conectar("DSN_SEMANTICA")
+    proveedor = embeddings.crear()
+    criterios = list(args.criterio or [])
+    if args.consultas:
+        criterios += [c["criterio"] for c in
+                      json.loads(pathlib.Path(args.consultas).read_text(encoding="utf-8"))]
+    if not criterios:
+        sys.exit("Pasar --criterio (una o más veces) o --consultas.")
+    corpus = semantica.tamano_corpus(conn)
+    umbral = semantica.umbral_recall_exacto()
+    print(f"Recall real · corpus ~{corpus} respuestas · RECALL_EXACTO_HASTA={umbral} · "
+          f"producción usa {'EXACTO' if corpus <= umbral else 'ÍNDICE'} sin filtro")
+    for indice in _indices_hnsw(conn):
+        print(f"  índice {indice['indexname']}: {indice['parametros']} · {indice['tamano']}")
+    salida = 0
+    for criterio in criterios:
+        for tipo in embeddings.TIPOS_DE_CRITERIO:
+            vector = proveedor.embeber_criterio([criterio], tipo=tipo)[0]
+            r = semantica.comparar_recall(conn, vector, args.top_n, args.ef_search)
+            print(f"«{criterio}» [{tipo}] · ef_search={r['ef_search']} · "
+                  f"recall@{r['top_n']} {100 * r['recall']:.1f}% · "
+                  f"faltan {len(r['faltan'])} de {r['exactas']}")
+            for f in r["faltan"][:5]:
+                print(f"    puesto {f['puesto']} del exacto: #{f['respuesta_id']} "
+                      f"a {f['distancia']:.4f}")
+            if r["faltan"]:
+                salida = 1
+    return salida
+
+
+def _indices_hnsw(conn):
+    """Los índices HNSW de `respuesta`, con `m` y `ef_construction` (los
+    defaults de pgvector, 16 y 64, si el índice no los declara)."""
+    filas = semantica.db.todas(
+        conn,
+        """select c.relname as indexname, c.reloptions,
+                  pg_size_pretty(pg_relation_size(c.oid)) as tamano
+             from pg_index i
+             join pg_class c on c.oid = i.indexrelid
+             join pg_am a on a.oid = c.relam
+            where i.indrelid = 'respuesta'::regclass and a.amname = 'hnsw'""")
+    for f in filas:
+        opciones = dict(o.split("=", 1) for o in (f["reloptions"] or []))
+        f["parametros"] = (f"m={opciones.get('m', '16 (default)')}, "
+                           f"ef_construction={opciones.get('ef_construction', '64 (default)')}")
+    return filas
 
 
 # ── A1.3 ─────────────────────────────────────────────────────────────
@@ -397,6 +518,15 @@ def main():
     p.add_argument("--patron", required=True, help="texto de la respuesta buscada")
     p.add_argument("--contra", help="texto de la respuesta repetida que ocupó el top")
     p.set_defaults(funcion=a1_distancia)
+
+    p = sub.add_parser("recall-indice",
+                       help="¿el índice trae las mismas que el recorrido exacto?")
+    p.add_argument("--criterio", action="append")
+    p.add_argument("--consultas", help="JSON: [{criterio, …}] (el mismo de input-type)")
+    p.add_argument("--top-n", type=int, default=consultas.TOP_N_POR_DEFECTO)
+    p.add_argument("--ef-search", type=int,
+                   help="por defecto, el que usaría producción (2 × top_n, tope 1000)")
+    p.set_defaults(funcion=recall_indice)
 
     p = sub.add_parser("a1-reranker", help="A1.3 — ¿corrió el reranker?")
     p.add_argument("--ultimas", type=int, default=5)

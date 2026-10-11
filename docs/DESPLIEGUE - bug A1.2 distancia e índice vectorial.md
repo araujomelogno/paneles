@@ -178,8 +178,10 @@ Para que el «después» se compare contra algo medido y no recordado. El
 script viejo se saca de `main` sin cambiar de rama:
 
 ```bash
-git show origin/main:scripts/diagnosticar_consulta.py > /tmp/diagnosticar_viejo.py
-cp /tmp/diagnosticar_viejo.py scripts/_diagnosticar_viejo.py   # necesita estar en scripts/ por el sys.path
+# e7c0eba es el último commit ANTES de D71. No usar origin/main: ya contiene
+# el arreglo, y la comparación saldría idéntica sin comparar nada.
+git show e7c0eba:scripts/diagnosticar_consulta.py > /tmp/diagnosticar_viejo.py
+cp /tmp/diagnosticar_viejo.py scripts/_diagnosticar_viejo.py   # en scripts/ por el sys.path; está en .gitignore: NO commitearlo
 export EMBEDDINGS_API_KEY="$(gcloud secrets versions access latest --secret=EMBEDDINGS_API_KEY --project="$PROYECTO")"
 
 python3 scripts/_diagnosticar_viejo.py a1-texto --patron xiaomi --limite 3

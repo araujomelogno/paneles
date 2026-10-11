@@ -14,6 +14,15 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **El pool trae las más parecidas de verdad · 2026-10-10.** Corrección del
+> bug del recall por índice (D72): la búsqueda rápida podía devolver las 200
+> respuestas pedidas sin la más parecida del corpus. Ahora, sin filtro, se
+> comparan todas mientras el corpus no pase de 200 mil respuestas. La 6.9
+> reescribe la lectura de `plan` en la etapa *Recuperación (ANN)* (`exacto`
+> es lo habitual, `motivo_plan`, `ef_search`) y aclara el *Pool de
+> recuperación*; una pregunta frecuente nueva y el término de glosario
+> **Plan de recuperación** corregido. **Sin capturas nuevas.**
+
 > **El pool de recuperación trae lo que se pide · 2026-10-10.** Corrección
 > del bug del diagnóstico A1.2 (D71), que también afectaba a la consulta: la
 > búsqueda por índice devolvía como mucho ~40 respuestas, y con un filtro

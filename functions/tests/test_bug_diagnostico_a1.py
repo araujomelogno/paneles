@@ -277,20 +277,21 @@ def test_el_recall_con_un_gate_amplio_es_el_exacto(corpus):
     plan = {}
     candidatos = semantica.recuperar(conn, criterio, 200, list(habilitadas.values()), plan)
 
-    assert plan == {"plan": "exacto"}
+    assert plan == {"plan": "exacto", "motivo_plan": "filtro_por_personas"}
     exactas = sorted(habilitadas, key=lambda r: _coseno(criterio, corpus["vectores"][r]))[:200]
     assert len(candidatos) == 200
     assert {c["respuesta_id"] for c in candidatos} == set(exactas)
 
 
-def test_el_recall_sin_filtro_trae_top_n_y_no_ef_search(corpus):
+def test_el_recall_sin_filtro_trae_top_n_y_no_ef_search(corpus, monkeypatch):
     """`top_n` 200 con `ef_search` 40 devolvía 40: el pool era un quinto de lo
-    que la consulta decía."""
+    que la consulta decía. Con el índice forzado (umbral en 0, D72)."""
+    monkeypatch.setenv("RECALL_EXACTO_HASTA", "0")
     conn, criterio = corpus["conn"], corpus["criterio"]
     plan = {}
     candidatos = semantica.recuperar(conn, criterio, consultas.TOP_N_POR_DEFECTO, informe=plan)
     assert len(candidatos) == consultas.TOP_N_POR_DEFECTO
-    assert plan == {"plan": "indice"}
+    assert plan["plan"] == "indice"
 
 
 def test_el_recall_mas_grande_que_el_indice_es_exacto(corpus):
@@ -305,6 +306,7 @@ def test_el_recall_mas_grande_que_el_indice_es_exacto(corpus):
 def test_un_recall_corto_del_indice_se_registra_y_se_recalcula(corpus, monkeypatch, capsys):
     """Si el índice devuelve menos de lo pedido habiendo más en el corpus, no
     se presenta como «no hay más evidencia»."""
+    monkeypatch.setenv("RECALL_EXACTO_HASTA", "0")
     conn, criterio = corpus["conn"], corpus["criterio"]
     original = semantica.db.todas
 
@@ -318,6 +320,6 @@ def test_un_recall_corto_del_indice_se_registra_y_se_recalcula(corpus, monkeypat
     plan = {}
     candidatos = semantica.recuperar(conn, criterio, 100, informe=plan)
     assert len(candidatos) == 100
-    assert plan == {"plan": "exacto", "indice_corto": 10}
+    assert plan["plan"] == "exacto" and plan["indice_corto"] == 10
     assert "[recall] el índice devolvió 10 de 100" in capsys.readouterr().out
 

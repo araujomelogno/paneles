@@ -11,6 +11,7 @@ y su embedding.
 
 import hashlib
 import json
+import os
 
 from . import db, pii
 from .errores import NoEncontrado
@@ -262,6 +263,61 @@ EF_SEARCH_MINIMO = 40
 EF_SEARCH_MAXIMO = 1000
 """El tope que acepta pgvector. Un pedido más grande no cabe en el índice."""
 
+MARGEN_EF_SEARCH = 2
+"""Cuántas veces `top_n` se le pide al índice (`ef_search`). Con `ef_search`
+igual a `top_n` el grafo explora apenas lo justo, y el vecino de verdad
+puede quedar afuera aunque vuelvan las `top_n` filas pedidas (D72)."""
+
+RECALL_EXACTO_HASTA_POR_DEFECTO = 200_000
+"""Hasta cuántas respuestas el recall sin filtro es exacto (D72). Medido en
+local, recorrer 21.340 vectores de 512 dimensiones son ~115 ms, así que 200
+mil rondan el segundo: todavía poco frente a los segundos de la verificación
+con Claude. El índice existe para cuando deja de serlo."""
+
+
+def umbral_recall_exacto(entorno=None):
+    """`RECALL_EXACTO_HASTA`, o el default si falta o no es un entero ≥ 0.
+
+    Un valor ilegible no se adivina ni apaga el camino exacto: se usa el
+    default y queda una línea en el log.
+    """
+    entorno = os.environ if entorno is None else entorno
+    crudo = (entorno.get("RECALL_EXACTO_HASTA") or "").strip().replace("_", "")
+    if not crudo:
+        return RECALL_EXACTO_HASTA_POR_DEFECTO
+    try:
+        valor = int(crudo)
+        if valor < 0:
+            raise ValueError
+        return valor
+    except ValueError:
+        print(f"[recall] RECALL_EXACTO_HASTA={crudo!r} no es un entero ≥ 0; "
+              f"se usa {RECALL_EXACTO_HASTA_POR_DEFECTO}")
+        return RECALL_EXACTO_HASTA_POR_DEFECTO
+
+
+def ef_search_para(top_n):
+    """El `ef_search` del índice para un pedido: `MARGEN_EF_SEARCH × top_n`,
+    entre el default de pgvector y su tope."""
+    return min(max(top_n * MARGEN_EF_SEARCH, EF_SEARCH_MINIMO), EF_SEARCH_MAXIMO)
+
+
+def tamano_corpus(conn):
+    """Cuántas respuestas hay, para decidir el plan.
+
+    La estimación del catálogo (`reltuples`) y no un `count(*)`: decidir el
+    plan no puede costar un recorrido de la tabla, que es justo lo que el
+    índice evita por encima del umbral. Si la tabla nunca se analizó
+    (`reltuples` = -1), se cuenta.
+    """
+    fila = db.una(conn, "select reltuples::bigint as n from pg_class "
+                        "where oid = 'respuesta'::regclass")
+    if fila and fila["n"] is not None and fila["n"] >= 0:
+        estimado = int(fila["n"])
+        if estimado > 0:
+            return estimado
+    return int(db.una(conn, "select count(*) as n from respuesta")["n"])
+
 
 def _vecinos_exactos(conn, literal, top_n, ids_individuo):
     """Las `top_n` más cercanas recorriendo el conjunto entero, sin índice.
@@ -283,40 +339,11 @@ def _vecinos_exactos(conn, literal, top_n, ids_individuo):
     )
 
 
-def _vecinos(conn, literal, top_n, ids_individuo=None, informe=None):
-    """Las `top_n` respuestas más cercanas, con el plan que corresponde.
-
-    El índice HNSW es aproximado y **no sabe de filtros**: devuelve como
-    mucho `hnsw.ef_search` vecinos (40 por defecto) de todo el corpus, y el
-    `where` se aplica después. Eso deja dos trampas que no fallan, devuelven
-    menos (`specs/BUG_diagnostico_a1_distancia_y_hallazgo.md`):
-
-    * con un filtro por personas (el gate de consentimiento), los vecinos
-      del corpus entero pueden no ser de nadie habilitado, y el recall de las
-      personas habilitadas sale corto o vacío. Con filtro se recorre el
-      conjunto filtrado, exacto;
-    * sin filtro, un `top_n` mayor que `ef_search` recibe `ef_search` filas.
-      Se sube `ef_search` a `top_n` para esta transacción; si no cabe en el
-      índice, exacto.
-
-    Y si aun así el índice devuelve menos de lo pedido habiendo más en el
-    corpus, se registra (`[recall]`) y se recalcula exacto: un recall corto
-    se vería como «no hay más evidencia», que es un resultado de negocio, y
-    no lo es.
-
-    `informe`, si viene, se completa con el plan que se usó (`indice` o
-    `exacto`) y si el índice se quedó corto: va al diagnóstico de la etapa.
-    """
-    informe = informe if informe is not None else {}
-    if ids_individuo is not None or top_n > EF_SEARCH_MAXIMO:
-        informe["plan"] = "exacto"
-        return _vecinos_exactos(conn, literal, top_n, ids_individuo)
-
-    informe["plan"] = "indice"
-
-    db.una(conn, "select set_config('hnsw.ef_search', %s, true)",
-           (str(max(top_n, EF_SEARCH_MINIMO)),))
-    cercanas = db.todas(
+def _vecinos_indice(conn, literal, top_n, ef_search):
+    """Las `top_n` que devuelve el índice HNSW con ese `ef_search`. Sin
+    filtro: con un `where` el índice no corresponde (D71)."""
+    db.una(conn, "select set_config('hnsw.ef_search', %s, true)", (str(ef_search),))
+    return db.todas(
         conn,
         """
         select r.id, r.embedding <=> %s::vector as distancia
@@ -326,14 +353,83 @@ def _vecinos(conn, literal, top_n, ids_individuo=None, informe=None):
         """,
         (literal, literal, top_n),
     )
-    if len(cercanas) < top_n:
-        corpus = db.una(conn, "select count(*) as n from respuesta")["n"]
-        if corpus > len(cercanas):
-            print(f"[recall] el índice devolvió {len(cercanas)} de {top_n} pedidas con "
-                  f"{corpus} en el corpus; se recalcula sin índice")
-            informe.update(plan="exacto", indice_corto=len(cercanas))
-            return _vecinos_exactos(conn, literal, top_n, None)
+
+
+def _vecinos(conn, literal, top_n, ids_individuo=None, informe=None, entorno=None):
+    """Las `top_n` respuestas más cercanas, con el plan que corresponde.
+
+    El índice HNSW es **aproximado** y **no sabe de filtros**. Eso deja tres
+    trampas, y ninguna falla: devuelven algo plausible.
+
+    * Con un filtro por personas (el gate de consentimiento), el índice
+      devuelve vecinos de todo el corpus **antes** del filtro y el recall de
+      los habilitados sale corto (D71). Con filtro, siempre exacto.
+    * Un `top_n` mayor que `ef_search` recibe `ef_search` filas (D71).
+    * Y aun con la cantidad justa, **las filas pueden no ser las más
+      cercanas**: el índice puede devolver 200 de 200 dejando afuera al
+      vecino más cercano del corpus
+      (`specs/BUG_recall_hnsw_completo_no_correcto.md`). Ninguna cuenta lo
+      detecta. Por eso, sin filtro, el recall es exacto mientras el corpus
+      no pase de `RECALL_EXACTO_HASTA` (200 mil por defecto); por encima, el
+      índice con `ef_search` = `MARGEN_EF_SEARCH × top_n`, y el chequeo de
+      recall real (`comparar_recall`) es lo que dice cuánto pierde.
+
+    Si el índice devuelve menos de lo pedido habiendo más, se registra
+    (`[recall]`) y se recalcula exacto.
+
+    `informe`, si viene, se completa con el plan (`indice` o `exacto`), el
+    motivo del plan y, con índice, el `ef_search`: va al diagnóstico.
+    """
+    informe = informe if informe is not None else {}
+    if ids_individuo is not None:
+        informe.update(plan="exacto", motivo_plan="filtro_por_personas")
+        return _vecinos_exactos(conn, literal, top_n, ids_individuo)
+
+    corpus = tamano_corpus(conn)
+    umbral = umbral_recall_exacto(entorno)
+    if corpus <= umbral:
+        informe.update(plan="exacto", motivo_plan="corpus_bajo_umbral")
+        return _vecinos_exactos(conn, literal, top_n, None)
+
+    ef_search = ef_search_para(top_n)
+    if ef_search <= top_n:
+        # No hay margen posible dentro del tope de pgvector.
+        informe.update(plan="exacto", motivo_plan="top_n_sin_margen_en_el_indice")
+        return _vecinos_exactos(conn, literal, top_n, None)
+
+    informe.update(plan="indice", motivo_plan="corpus_sobre_umbral", ef_search=ef_search)
+    cercanas = _vecinos_indice(conn, literal, top_n, ef_search)
+    if len(cercanas) < top_n and corpus > len(cercanas):
+        print(f"[recall] el índice devolvió {len(cercanas)} de {top_n} pedidas con "
+              f"~{corpus} en el corpus; se recalcula sin índice")
+        informe.update(plan="exacto", indice_corto=len(cercanas))
+        return _vecinos_exactos(conn, literal, top_n, None)
     return cercanas
+
+
+def comparar_recall(conn, vector, top_n, ef_search=None):
+    """El chequeo de recall real: índice contra exacto, para un criterio.
+
+    Es la única forma de ver un recall equivocado, porque **no se ve en las
+    cuentas**: el índice puede devolver `top_n` de `top_n` y no ser las
+    correctas. Devuelve cuántas de las `top_n` exactas faltan en lo que trae
+    el índice (con el `ef_search` que usaría producción, o el que se pida),
+    cuáles, y en qué puesto del exacto estaban. Solo lee.
+    """
+    literal = _vector(vector)
+    ef = ef_search if ef_search is not None else ef_search_para(top_n)
+    exactas = _vecinos_exactos(conn, literal, top_n, None)
+    del_indice = {f["id"] for f in _vecinos_indice(conn, literal, top_n, ef)}
+    faltan = [{"puesto": i + 1, "respuesta_id": f["id"], "distancia": float(f["distancia"])}
+              for i, f in enumerate(exactas) if f["id"] not in del_indice]
+    return {
+        "top_n": top_n,
+        "ef_search": ef,
+        "exactas": len(exactas),
+        "del_indice": len(del_indice),
+        "faltan": faltan,
+        "recall": (1 - len(faltan) / len(exactas)) if exactas else 1.0,
+    }
 
 
 def recuperar(conn, vector, top_n, ids_persona=None, informe=None):
@@ -354,9 +450,10 @@ def recuperar(conn, vector, top_n, ids_persona=None, informe=None):
     Poner el join arriba del ORDER BY del operador de distancia le complica
     al planificador usar el índice, y el corpus es la parte grande.
 
-    Cuándo se usa el índice y cuándo no lo decide `_vecinos` (ver ahí): con
-    un filtro por personas el índice devolvería vecinos de todo el corpus
-    **antes** del filtro, y el recall saldría corto sin ningún error.
+    Cuándo se usa el índice y cuándo no lo decide `_vecinos` (ver ahí). Con
+    un filtro por personas, siempre exacto (D71); sin filtro, exacto
+    mientras el corpus no pase de `RECALL_EXACTO_HASTA`, porque el índice
+    puede devolver la cantidad pedida sin las filas correctas (D72).
     `informe` (opcional) vuelve con el plan que se usó.
     """
     if ids_persona is not None and not ids_persona:
