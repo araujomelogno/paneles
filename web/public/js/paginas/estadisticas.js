@@ -194,6 +194,7 @@ function estudiosHtml(estudios) {
     <p class="small muted">${esc(estudios.nota)}</p>
     <table class="tabla">
       <thead><tr><th>Estudio</th><th>Fecha del estudio</th><th>Público objetivo</th>
+                 <th>Tipo de datos</th><th>Modo de relevamiento</th>
                  <th class="num">Creadas</th><th class="num">Reutilizadas</th>
                  <th class="num">Total</th></tr></thead>
       <tbody>${estudios.items.map((e) => `
@@ -201,6 +202,8 @@ function estudiosHtml(estudios) {
           <td>${esc(e.nombre)}</td>
           <td>${e.fecha_estudio ? esc(fechaCorta(e.fecha_estudio)) : '—'}</td>
           <td class="small">${esc(e.publico_objetivo || '—')}</td>
+          <td class="small">${esc(e.tipo_datos_origen_etiqueta || '—')}</td>
+          <td class="small">${esc(e.modo_relevamiento_etiqueta || '—')}</td>
           <td class="num">${numero(e.personas_creadas)}</td>
           <td class="num">${numero(e.personas_reutilizadas)}</td>
           <td class="num">${numero(e.personas)}</td>

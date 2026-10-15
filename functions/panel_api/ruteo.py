@@ -1021,11 +1021,12 @@ def columnas_disponibles(ctx, actor, params, cuerpo, consulta):
     ficha no es lo mismo que verlos todos en una planilla.
     """
     return 200, {"items": atributos.columnas_ofrecibles(ctx.boveda) + [
-        # R-ORG.5 — de qué estudio salió cada persona. No es un atributo:
-        # sale del vínculo persona ↔ carga y de los datos de la carga, y por
-        # eso no se puede filtrar ni fijar cuota con ella. Solo se mira.
-        {"clave": cargas.COLUMNA_ESTUDIO_DE_ORIGEN,
-         "etiqueta": "Estudio de origen", "tipo": "procedencia"},
+        # R-ORG.5 — de qué estudio salió cada persona y, desde la 0026, de
+        # qué tipo de datos y con qué modo de relevamiento. No son atributos:
+        # salen del vínculo persona ↔ carga y de los datos de la carga, y por
+        # eso no se puede filtrar ni fijar cuota con ellos. Solo se miran.
+        {"clave": clave, "etiqueta": etiqueta, "tipo": "procedencia"}
+        for clave, etiqueta in cargas.COLUMNAS_DE_PROCEDENCIA
     ]}
 
 
@@ -1039,10 +1040,11 @@ def atributos_de_resultados(ctx, actor, params, cuerpo, consulta):
     """
     ids = (cuerpo or {}).get("ids_persona") or []
     valores = atributos.valores_de_varias(ctx.boveda, ids)
-    # R-ORG.5 — el estudio de origen como una columna más. Va en la misma
-    # llamada: sigue siendo una sola ida a la base por tanda de resultados.
-    for id_persona, origen in cargas.origen_de_varias(ctx.boveda, ids).items():
-        valores.setdefault(id_persona, {})[cargas.COLUMNA_ESTUDIO_DE_ORIGEN] = origen
+    # R-ORG.5 — la procedencia (estudio, tipo de datos, modo) como columnas
+    # de más. Va en la misma llamada: sigue siendo una sola ida a la base por
+    # tanda de resultados.
+    for id_persona, columnas in cargas.origen_de_varias(ctx.boveda, ids).items():
+        valores.setdefault(id_persona, {}).update(columnas)
     return 200, {"items": valores}
 
 
@@ -1551,7 +1553,14 @@ def crear_carga(ctx, actor, params, cuerpo, consulta):
         ctx.boveda, cuerpo.get("nombre"), cuerpo.get("descripcion"), actor,
         # R-ORG.4 — los datos del estudio, en la carga y no en cada persona.
         fecha_estudio=cuerpo.get("fecha_estudio"),
-        publico_objetivo=cuerpo.get("publico_objetivo"))
+        publico_objetivo=cuerpo.get("publico_objetivo"),
+        # boveda/0026 — una carga nueva declara de qué tipo de datos sale y
+        # cómo se relevaron. Llegan a cada panelista por el vínculo.
+        tipo_datos_origen=cuerpo.get("tipo_datos_origen"),
+        tipo_datos_origen_otro=cuerpo.get("tipo_datos_origen_otro"),
+        modo_relevamiento=cuerpo.get("modo_relevamiento"),
+        modo_relevamiento_otro=cuerpo.get("modo_relevamiento_otro"),
+        exigir_origen=True)
     ctx.boveda.commit()
     return 201, carga
 
@@ -1559,8 +1568,12 @@ def crear_carga(ctx, actor, params, cuerpo, consulta):
 @ruta("GET", "/cargas", "leer", requisito="R3.13, R-ORG.5")
 def listar_cargas(ctx, actor, params, cuerpo, consulta):
     """Las cargas con los datos del estudio y cuántas personas creó y
-    reutilizó cada una. Es lo que arma los selectores por nombre y fecha."""
-    return 200, {"items": cargas.listar(ctx.boveda)}
+    reutilizó cada una. Es lo que arma los selectores por nombre y fecha.
+
+    `opciones` son los vocabularios de tipo de datos y modo de relevamiento:
+    la pantalla los recibe de acá en vez de tener su propia copia."""
+    return 200, {"items": cargas.listar(ctx.boveda),
+                 "opciones": cargas.opciones()}
 
 
 @ruta("GET", "/cargas/<carga_id>", "leer", requisito="R-ORG.4")

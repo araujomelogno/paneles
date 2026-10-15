@@ -352,6 +352,9 @@ function sembrar() {
     descripcion: 'Estudio de terceros. Esta gente no es panelista.',
     // R-ORG.4 — los datos del estudio viven en la carga.
     fecha_estudio: '2026-08-15', publico_objetivo: 'Población adulta de todo el país',
+    // boveda/0026 — tipo de datos y modo de relevamiento, también en la carga.
+    tipo_datos_origen: 'encuesta', tipo_datos_origen_otro: null,
+    modo_relevamiento: 'telefonico', modo_relevamiento_otro: null,
     ref_estudio: uuid(), creado_en: diasAtras(25), creado_por: 'demo',
   };
   bd.cargas.push(omnibus);
@@ -611,11 +614,63 @@ function vincular(idPersona, cargaId, origen) {
   bd.vinculos.push({ id_persona: idPersona, carga_id: cargaId, origen, creado_en: ahora() });
 }
 
+/* boveda/0026 — el mismo vocabulario que `cargas.TIPOS_DATOS_ORIGEN` y
+   `cargas.MODOS_RELEVAMIENTO`. Es el doble del servidor, y la pantalla lo
+   recibe de `GET /cargas` igual que de allá. */
+const OPCIONES_CARGA = {
+  tipo_datos_origen: [
+    { clave: 'encuesta', etiqueta: 'Encuesta' },
+    { clave: 'reclutamiento', etiqueta: 'Reclutamiento' },
+    { clave: 'otro', etiqueta: 'Otro' },
+  ],
+  modo_relevamiento: [
+    { clave: 'cara_a_cara', etiqueta: 'Cara a cara' },
+    { clave: 'telefonico', etiqueta: 'Telefónico' },
+    { clave: 'whatsapp', etiqueta: 'WhatsApp' },
+    { clave: 'web', etiqueta: 'Web' },
+    { clave: 'otro', etiqueta: 'Otro' },
+  ],
+};
+const NOMBRE_CLASIFICACION = {
+  tipo_datos_origen: 'el tipo de datos de origen',
+  modo_relevamiento: 'el modo de relevamiento',
+};
+
+function etiquetaDeOrigen(campo, valor, otro) {
+  if (!valor) return null;
+  const etiqueta = OPCIONES_CARGA[campo].find((o) => o.clave === valor)?.etiqueta || valor;
+  return valor === 'otro' && otro ? `${etiqueta}: ${otro}` : etiqueta;
+}
+
+function datosDeOrigen(carga) {
+  const salida = {};
+  Object.keys(OPCIONES_CARGA).forEach((campo) => {
+    salida[campo] = carga[campo] || null;
+    salida[`${campo}_otro`] = carga[`${campo}_otro`] || null;
+    salida[`${campo}_etiqueta`] = etiquetaDeOrigen(campo, carga[campo], carga[`${campo}_otro`]);
+  });
+  return salida;
+}
+
+/* Las mismas reglas que `cargas._clasificacion`. */
+function clasificacionDemo(campo, valor, otro) {
+  const nombre = NOMBRE_CLASIFICACION[campo];
+  valor = (valor || '').toString().trim().toLowerCase();
+  if (!valor) throw new ErrorDemo(`Falta indicar ${nombre} de la carga.`, 400);
+  if (!OPCIONES_CARGA[campo].some((o) => o.clave === valor)) {
+    throw new ErrorDemo(`${nombre[0].toUpperCase()}${nombre.slice(1)} no es válido: '${valor}'.`, 400);
+  }
+  if (valor !== 'otro') return [valor, null];
+  otro = (otro || '').toString().trim();
+  if (!otro) throw new ErrorDemo(`Elegiste «Otro» para ${nombre}: especificá cuál.`, 400);
+  return [valor, otro];
+}
+
 function resumenCarga(carga) {
   const suyos = bd.vinculos.filter((v) => v.carga_id === carga.id
     && bd.personas.some((p) => p.id_persona === v.id_persona));
   return {
-    fecha_estudio: null, publico_objetivo: null, ...carga,
+    fecha_estudio: null, publico_objetivo: null, ...carga, ...datosDeOrigen(carga),
     personas_creadas: suyos.filter((v) => v.origen === 'creada').length,
     personas_reutilizadas: suyos.filter((v) => v.origen === 'reutilizada').length,
     personas: suyos.length,
@@ -627,8 +682,8 @@ function origenDe(idPersona) {
     const carga = bd.cargas.find((c) => c.id === v.carga_id) || {};
     return {
       carga_id: v.carga_id, nombre: carga.nombre, fecha_estudio: carga.fecha_estudio || null,
-      publico_objetivo: carga.publico_objetivo || null, origen: v.origen,
-      vinculado_en: v.creado_en,
+      publico_objetivo: carga.publico_objetivo || null, ...datosDeOrigen(carga),
+      origen: v.origen, vinculado_en: v.creado_en,
     };
   });
   return {
@@ -1553,19 +1608,27 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     if (cuerpo.fecha_estudio && !/^\d{4}-\d{2}-\d{2}$/.test(cuerpo.fecha_estudio)) {
       throw new ErrorDemo('La fecha del estudio no es una fecha válida. Usá el formato AAAA-MM-DD.', 400);
     }
+    const [tipo, tipoOtro] = clasificacionDemo('tipo_datos_origen',
+      cuerpo.tipo_datos_origen, cuerpo.tipo_datos_origen_otro);
+    const [modo, modoOtro] = clasificacionDemo('modo_relevamiento',
+      cuerpo.modo_relevamiento, cuerpo.modo_relevamiento_otro);
     const carga = {
       id: siguiente('carga'), nombre,
       descripcion: (cuerpo.descripcion || '').trim() || null,
       // R-ORG.4 — los datos del estudio, en la carga.
       fecha_estudio: cuerpo.fecha_estudio || null,
       publico_objetivo: (cuerpo.publico_objetivo || '').trim() || null,
+      tipo_datos_origen: tipo, tipo_datos_origen_otro: tipoOtro,
+      modo_relevamiento: modo, modo_relevamiento_otro: modoOtro,
       ref_estudio: uuid(), creado_en: ahora(), creado_por: 'demo',
     };
     bd.cargas.push(carga);
     return resumenCarga(carga);
   }
 
-  if (clave === 'GET /cargas') return { items: [...bd.cargas].reverse().map(resumenCarga) };
+  if (clave === 'GET /cargas') {
+    return { items: [...bd.cargas].reverse().map(resumenCarga), opciones: OPCIONES_CARGA };
+  }
 
   if (partes[0] === 'cargas' && partes.length === 2 && ['GET', 'PATCH'].includes(metodo)) {
     const carga = bd.cargas.find((c) => c.id === Number(partes[1]));
@@ -1575,6 +1638,12 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
         if (campo in cuerpo) carga[campo] = (cuerpo[campo] ?? '').toString().trim() || null;
       });
       if (!carga.nombre) throw new ErrorDemo('La carga necesita un nombre.', 400);
+      Object.keys(OPCIONES_CARGA).forEach((campo) => {
+        if (campo in cuerpo) {
+          [carga[campo], carga[`${campo}_otro`]] = clasificacionDemo(
+            campo, cuerpo[campo], cuerpo[`${campo}_otro`]);
+        }
+      });
     }
     return resumenCarga(carga);
   }
@@ -3546,7 +3615,10 @@ function composicionDeAmbitoDemo(consulta) {
     ...salida,
     ambito: { tipo: 'carga', id: carga.id, nombre: carga.nombre,
               fecha_estudio: carga.fecha_estudio || null,
-              publico_objetivo: carga.publico_objetivo || null, creado_en: carga.creado_en },
+              publico_objetivo: carga.publico_objetivo || null,
+              tipo_datos_origen_etiqueta: datosDeOrigen(carga).tipo_datos_origen_etiqueta,
+              modo_relevamiento_etiqueta: datosDeOrigen(carga).modo_relevamiento_etiqueta,
+              creado_en: carga.creado_en },
     objetivo_admitido: false,
     avisos: ['La composición de una carga muestra cómo está hoy ese grupo, no un registro '
       + 'fiel de lo que se cargó: quien se dio de baja ya no aparece. Y cuenta solo a las '

@@ -366,6 +366,12 @@ proviene (`persona_carga`, `boveda/0024`), y la composición se calcula por
   siempre: el muestreo y el optimizador dependen de él.
 - `estudio_de_origen` es una columna de resultados, no un atributo:
   `atributos.CLAVES_RESERVADAS` impide crear un atributo con esa clave.
+- Desde `boveda/0026` la carga declara también **tipo de datos de origen** y
+  **modo de relevamiento** (vocabulario cerrado + «otro» con especificación,
+  lo hace valer un `check`). Mismo patrón: viven en la carga, llegan a cada
+  panelista por el vínculo y son columnas de resultados reservadas
+  (`cargas.COLUMNAS_DE_PROCEDENCIA`). La pantalla recibe los vocabularios de
+  `GET /cargas` (`opciones`); no los repitan en JavaScript fuera de `demo.js`.
 
 Y desde la paridad de consultas (D69): **el resultado demográfico es
 seudónimo** —sin nombre, correo, documento ni celular— y usa la misma barra

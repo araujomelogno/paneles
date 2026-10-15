@@ -133,7 +133,8 @@ function pintarAmbito(ambito) {
   if (!ambito) return '';
   const detalle = ambito.tipo === 'carga'
     ? [ambito.fecha_estudio ? `estudio del ${fechaCorta(ambito.fecha_estudio)}` : null,
-       ambito.publico_objetivo].filter(Boolean).join(' · ')
+       ambito.publico_objetivo, ambito.tipo_datos_origen_etiqueta,
+       ambito.modo_relevamiento_etiqueta].filter(Boolean).join(' · ')
     : ambito.descripcion || '';
   return `<div class="ambito-elegido small" style="margin:0 0 1rem">
       <span class="badge badge-user">${esc(AMBITOS[ambito.tipo] || ambito.tipo)}</span>

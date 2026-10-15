@@ -620,6 +620,10 @@ def composicion_de_ambito(conn, ambito, referencia=None, dimensiones=None,
         descriptor = {"tipo": CARGA, "id": carga["id"], "nombre": carga["nombre"],
                       "fecha_estudio": carga["fecha_estudio"],
                       "publico_objetivo": carga["publico_objetivo"],
+                      "tipo_datos_origen_etiqueta":
+                          carga["tipo_datos_origen_etiqueta"],
+                      "modo_relevamiento_etiqueta":
+                          carga["modo_relevamiento_etiqueta"],
                       "creado_en": carga["creado_en"]}
         motivo = MOTIVO_SIN_OBJETIVO_CARGA
         avisos = [AVISO_CARGA]

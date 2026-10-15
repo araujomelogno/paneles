@@ -58,6 +58,9 @@ let filtro = { q: '', panel_id: '', sin_panel: false, carga_id: '' };
 /* R-ORG.5 — las cargas, para filtrar el listado por la de la que proviene
    cada persona. Se listan por nombre y fecha del estudio, nunca por id. */
 let cargasConocidas = [];
+/* boveda/0026 — los vocabularios de tipo de datos y modo de relevamiento.
+   Llegan con el listado de cargas: la pantalla no tiene su propia copia. */
+let opcionesDeCarga = {};
 const rotuloCarga = (c) => [c.nombre, c.fecha_estudio ? fechaCorta(c.fecha_estudio) : null]
   .filter(Boolean).join(' · ');
 let contexto = {};
@@ -83,12 +86,13 @@ export async function render(main, ctx) {
   contexto = ctx;
   if (ctx.contexto?.idPersona) return renderFicha(main, ctx.contexto.idPersona);
 
-  const [{ items: paneles }, delCatalogo, { items: cargasDisponibles }] = await Promise.all([
+  const [{ items: paneles }, delCatalogo, { items: cargasDisponibles, opciones }] = await Promise.all([
     api.paneles.listar(), catalogo.cargar(),
     api.cargas.listar().catch(() => ({ items: [] })), cargarTextosActivos(),
   ]);
   catalogoDeAtributos = delCatalogo;
   cargasConocidas = cargasDisponibles;
+  opcionesDeCarga = opciones || {};
 
   main.innerHTML = encabezado('Panelistas', 'de la bóveda',
     'Alta con deduplicación, consentimiento por finalidad y ficha de cada persona.') + `
@@ -369,6 +373,7 @@ function abrirCarga() {
           <div class="field-hint">Texto libre: describe al estudio, no a las personas.</div>
         </div>
       </div>
+      ${camposDeOrigen()}
       <div class="form-group">
         <label>Descripción (opcional)</label>
         <textarea class="finput" name="descripcion"
@@ -379,6 +384,7 @@ function abrirCarga() {
       { texto: 'Continuar', clase: 'btn-orange', onClick: seguirConLaCarga },
     ],
   });
+  activarCamposDeOrigen(caja);
   return caja;
 }
 
@@ -394,6 +400,10 @@ async function seguirConLaCarga(caja) {
   try {
     const carga = await api.cargas.crear(datos.nombre.trim(), datos.descripcion, {
       fechaEstudio: datos.fecha_estudio, publicoObjetivo: datos.publico_objetivo,
+      tipoDatosOrigen: datos.tipo_datos_origen,
+      tipoDatosOrigenOtro: datos.tipo_datos_origen_otro,
+      modoRelevamiento: datos.modo_relevamiento,
+      modoRelevamientoOtro: datos.modo_relevamiento_otro,
     });
     cerrarModal();
     // La pantalla de ingesta vive en Encuestas y es la misma para los dos
@@ -407,11 +417,53 @@ async function seguirConLaCarga(caja) {
 }
 
 
+/* boveda/0026 — tipo de datos de origen y modo de relevamiento. Vocabulario
+   cerrado; «Otro» abre un campo para especificar, y el servidor lo exige. Se
+   guardan en la carga y cada panelista que viene de ella los ve por el
+   vínculo, igual que la fecha y el público objetivo. */
+const CLASIFICACIONES_DE_CARGA = [
+  ['tipo_datos_origen', 'Tipo de datos de origen', 'Encuesta de un cliente, base de terceros…'],
+  ['modo_relevamiento', 'Modo de relevamiento', 'Mail, papel autoadministrado…'],
+];
+
+function camposDeOrigen(carga = {}) {
+  return CLASIFICACIONES_DE_CARGA.map(([campo, etiqueta, ejemplo]) => {
+    const elegido = carga[campo] || '';
+    return `<div class="form-row">
+      <div class="form-group">
+        <label>${esc(etiqueta)}</label>
+        <select class="fselect" name="${campo}" data-clasificacion="${campo}">
+          <option value="">— Elegir —</option>
+          ${(opcionesDeCarga[campo] || []).map((o) =>
+            `<option value="${esc(o.clave)}" ${o.clave === elegido ? 'selected' : ''}>${esc(o.etiqueta)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group" data-otro="${campo}" style="${elegido === 'otro' ? '' : 'display:none'}">
+        <label>Especificar</label>
+        <input type="text" name="${campo}_otro" placeholder="${esc(ejemplo)}"
+               value="${esc(carga[`${campo}_otro`] || '')}" />
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* Muestra «Especificar» solo con «Otro». Lo escrito queda en el campo
+   aunque se oculte: el servidor lo descarta si el valor no es «Otro». */
+function activarCamposDeOrigen(caja) {
+  $$('[data-clasificacion]', caja).forEach((select) => {
+    select.onchange = () => {
+      const otro = $(`[data-otro="${select.dataset.clasificacion}"]`, caja);
+      otro.style.display = select.value === 'otro' ? '' : 'none';
+      if (select.value === 'otro') $('input', otro).focus();
+    };
+  });
+}
+
 /* R-ORG.4 — corregir los datos del estudio de una carga. Es una fila: la
    ficha de cada persona que viene de ahí lo muestra por el vínculo, así que
    no hay que tocar a nadie. */
 function abrirDatosDelEstudio(carga) {
-  modal({
+  const caja = modal({
     titulo: 'Datos del estudio',
     ancho: '560px',
     cuerpo: `
@@ -429,18 +481,28 @@ function abrirDatosDelEstudio(carga) {
           <input type="text" name="publico_objetivo"
                  value="${esc(carga.publico_objetivo || '')}" /></div>
       </div>
+      ${camposDeOrigen(carga)}
       <div class="form-group"><label>Descripción</label>
         <textarea class="finput" name="descripcion">${esc(carga.descripcion || '')}</textarea></div>`,
     acciones: [
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
       { texto: 'Guardar', clase: 'btn-orange', onClick: async (caja) => {
         const datos = leerFormulario(caja);
+        const cambios = {
+          nombre: datos.nombre, descripcion: datos.descripcion,
+          fecha_estudio: datos.fecha_estudio || null,
+          publico_objetivo: datos.publico_objetivo,
+        };
+        // Una carga anterior a la 0026 puede seguir sin tipo ni modo: sin
+        // elegir, no se mandan (el servidor no admite vaciarlos).
+        CLASIFICACIONES_DE_CARGA.forEach(([campo]) => {
+          if (datos[campo]) {
+            cambios[campo] = datos[campo];
+            cambios[`${campo}_otro`] = datos[`${campo}_otro`];
+          }
+        });
         try {
-          const nueva = await api.cargas.editar(carga.id, {
-            nombre: datos.nombre, descripcion: datos.descripcion,
-            fecha_estudio: datos.fecha_estudio || null,
-            publico_objetivo: datos.publico_objetivo,
-          });
+          const nueva = await api.cargas.editar(carga.id, cambios);
           cargasConocidas = cargasConocidas.map((c) => (c.id === nueva.id ? { ...c, ...nueva } : c));
           cerrarModal();
           toast('Datos del estudio actualizados. Se ven en todas sus fichas.', 'ok');
@@ -451,6 +513,7 @@ function abrirDatosDelEstudio(carga) {
       } },
     ],
   });
+  activarCamposDeOrigen(caja);
 }
 
 function abrirAlta(paneles) {

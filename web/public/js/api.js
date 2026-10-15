@@ -473,11 +473,20 @@ export const atributos = {
 export const cargas = {
   /* R-ORG.4 — los datos del estudio viajan con la carga y se guardan en
      ella, no copiados en cada persona. */
-  crear: (nombre, descripcion, { fechaEstudio, publicoObjetivo } = {}) =>
+  crear: (nombre, descripcion, {
+    fechaEstudio, publicoObjetivo, tipoDatosOrigen, tipoDatosOrigenOtro,
+    modoRelevamiento, modoRelevamientoOtro,
+  } = {}) =>
     POST('/cargas', {
       nombre, descripcion,
       fecha_estudio: fechaEstudio || null,
       publico_objetivo: publicoObjetivo || null,
+      // boveda/0026 — obligatorios en una carga nueva; «otro» con su
+      // especificación.
+      tipo_datos_origen: tipoDatosOrigen || null,
+      tipo_datos_origen_otro: tipoDatosOrigenOtro || null,
+      modo_relevamiento: modoRelevamiento || null,
+      modo_relevamiento_otro: modoRelevamientoOtro || null,
     }),
   listar: () => GET('/cargas'),
   ver: (cargaId) => GET(`/cargas/${cargaId}`),
