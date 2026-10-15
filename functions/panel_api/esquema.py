@@ -160,6 +160,11 @@ MIGRACIONES_BOVEDA = (
         "consulta_ejecucion", "consulta_lote", "estado_consulta_ejecucion",
         "estado_lote_consulta", "v_consulta_progreso",
     )),
+    # ── tipo de datos y modo de relevamiento de cada carga ──
+    ("0026_carga_tipo_y_modo_de_origen.sql", (
+        "carga.tipo_datos_origen", "carga.tipo_datos_origen_otro",
+        "carga.modo_relevamiento", "carga.modo_relevamiento_otro",
+    )),
 )
 
 MIGRACIONES_SEMANTICA = (

@@ -290,16 +290,21 @@ def estudios_de_origen(conn_boveda, limite=50):
     el estado de **hoy** (quien se dio de baja ya no figura) y solo de lo
     cargado desde que el vínculo existe. La pantalla lo dice.
     """
+    # Import local, como en `composicion`: `cargas` arrastra la ingesta.
+    from . import cargas
+
     filas = db.todas(
         conn_boveda,
         """select id, nombre, fecha_estudio, publico_objetivo, creado_en,
+                  tipo_datos_origen, tipo_datos_origen_otro,
+                  modo_relevamiento, modo_relevamiento_otro,
                   personas_creadas, personas_reutilizadas, personas
              from v_carga_resumen
             order by coalesce(fecha_estudio, creado_en::date) desc, id desc
             limit %s""", (limite,))
     return {
         "items": [
-            {**f,
+            {**f, **cargas.datos_de_origen(f),
              "fecha_estudio": f["fecha_estudio"].isoformat() if f["fecha_estudio"] else None,
              "creado_en": f["creado_en"].isoformat()}
             for f in filas

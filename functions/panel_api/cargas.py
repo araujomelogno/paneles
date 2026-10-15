@@ -37,7 +37,32 @@ FINALIDAD_OBLIGATORIA = sav.SEMANTICO
 
 
 _COLUMNAS = ("id, nombre, descripcion, ref_estudio, fecha_estudio, "
-             "publico_objetivo, creado_en, creado_por")
+             "publico_objetivo, tipo_datos_origen, tipo_datos_origen_otro, "
+             "modo_relevamiento, modo_relevamiento_otro, creado_en, creado_por")
+
+# boveda/0026 — qué tipo de datos dio origen a la carga y cómo se relevaron.
+# Vocabulario cerrado con una salida «otro» que obliga a especificar. Las
+# claves son las del `check` de la migración; las etiquetas, lo que muestran
+# la pantalla y las fichas. La pantalla las recibe de `opciones()` y no las
+# repite: dos listas iguales en dos lugares terminan siendo distintas.
+OTRO = "otro"
+TIPOS_DATOS_ORIGEN = (
+    ("encuesta", "Encuesta"),
+    ("reclutamiento", "Reclutamiento"),
+    (OTRO, "Otro"),
+)
+MODOS_RELEVAMIENTO = (
+    ("cara_a_cara", "Cara a cara"),
+    ("telefonico", "Telefónico"),
+    ("whatsapp", "WhatsApp"),
+    ("web", "Web"),
+    (OTRO, "Otro"),
+)
+# campo → (vocabulario, cómo se nombra en un mensaje)
+_CLASIFICACIONES = {
+    "tipo_datos_origen": (TIPOS_DATOS_ORIGEN, "el tipo de datos de origen"),
+    "modo_relevamiento": (MODOS_RELEVAMIENTO, "el modo de relevamiento"),
+}
 
 # R-ORG.1 — los dos orígenes del vínculo persona ↔ carga.
 CREADA = "creada"
@@ -47,6 +72,15 @@ REUTILIZADA = "reutilizada"
 # de los resultados (R7.4). No es un atributo del catálogo: no se puede
 # filtrar ni fijar cuota con ella, solo mirarla.
 COLUMNA_ESTUDIO_DE_ORIGEN = "estudio_de_origen"
+# boveda/0026 — el tipo y el modo de la carga, como columnas de la misma
+# naturaleza: salen del vínculo persona ↔ carga, no de la persona.
+COLUMNA_TIPO_DATOS_ORIGEN = "tipo_datos_origen"
+COLUMNA_MODO_RELEVAMIENTO = "modo_relevamiento"
+COLUMNAS_DE_PROCEDENCIA = (
+    (COLUMNA_ESTUDIO_DE_ORIGEN, "Estudio de origen"),
+    (COLUMNA_TIPO_DATOS_ORIGEN, "Tipo de datos de origen"),
+    (COLUMNA_MODO_RELEVAMIENTO, "Modo de relevamiento"),
+)
 
 # R-ORG §7 — lo que la ficha dice de una persona sin vínculo. No es «sin
 # origen»: el vínculo existe desde esta versión y lo cargado antes no dejó
@@ -68,6 +102,7 @@ def _serializar(fila):
         "fecha_estudio": (fila["fecha_estudio"].isoformat()
                           if fila.get("fecha_estudio") else None),
         "publico_objetivo": fila.get("publico_objetivo"),
+        **datos_de_origen(fila),
         "creado_en": fila["creado_en"].isoformat(),
         "creado_por": fila["creado_por"],
     }
@@ -97,13 +132,80 @@ def _texto(crudo):
     return (str(crudo).strip() or None) if crudo is not None else None
 
 
+def opciones():
+    """Los dos vocabularios, para que la pantalla arme los selectores."""
+    return {
+        campo: [{"clave": clave, "etiqueta": etiqueta}
+                for clave, etiqueta in vocabulario]
+        for campo, (vocabulario, _) in _CLASIFICACIONES.items()
+    }
+
+
+def etiqueta_de(campo, valor, especificacion=None):
+    """«Telefónico», o «Otro: panel online» cuando es «otro». None sin dato."""
+    if not valor:
+        return None
+    vocabulario, _ = _CLASIFICACIONES[campo]
+    etiqueta = dict(vocabulario).get(valor, valor)
+    if valor == OTRO and especificacion:
+        return f"{etiqueta}: {especificacion}"
+    return etiqueta
+
+
+def datos_de_origen(fila):
+    """Las cuatro columnas de la 0026 y su etiqueta, para cualquier salida."""
+    salida = {}
+    for campo in _CLASIFICACIONES:
+        valor, otro = fila.get(campo), fila.get(f"{campo}_otro")
+        salida[campo] = valor
+        salida[f"{campo}_otro"] = otro
+        salida[f"{campo}_etiqueta"] = etiqueta_de(campo, valor, otro)
+    return salida
+
+
+def _clasificacion(campo, valor, especificacion, exigir):
+    """Valida un dato de la 0026 y devuelve `(valor, especificación)`.
+
+    Fuera del vocabulario se rechaza diciendo cuáles valen; «otro» exige
+    especificar, y cualquier otro valor descarta la especificación (la base
+    no admite una colgada de un valor que no es «otro»).
+    """
+    vocabulario, nombre = _CLASIFICACIONES[campo]
+    valor = (str(valor).strip().lower() or None) if valor is not None else None
+    if valor is None:
+        if exigir:
+            raise DatosInvalidos(
+                f"Falta indicar {nombre} de la carga.", {"campo": campo})
+        return None, None
+    claves = [clave for clave, _ in vocabulario]
+    if valor not in claves:
+        raise DatosInvalidos(
+            f"{nombre[0].upper()}{nombre[1:]} no es válido: {valor!r}. Puede "
+            f"ser {', '.join(claves)}.", {"campo": campo})
+    if valor != OTRO:
+        return valor, None
+    especificacion = _texto(especificacion)
+    if not especificacion:
+        raise DatosInvalidos(
+            f"Elegiste «Otro» para {nombre}: especificá cuál.",
+            {"campo": f"{campo}_otro"})
+    return valor, especificacion
+
+
 def crear(conn, nombre, descripcion=None, actor=None, fecha_estudio=None,
-          publico_objetivo=None):
+          publico_objetivo=None, tipo_datos_origen=None,
+          tipo_datos_origen_otro=None, modo_relevamiento=None,
+          modo_relevamiento_otro=None, exigir_origen=False):
     """Abre una carga con los datos del estudio del que sale (R-ORG.4).
 
-    Nombre, fecha y público objetivo se guardan **en la carga**, no en cada
-    persona: una persona que aparece en tres cargas ve los tres estudios por
-    el vínculo, y corregir la fecha es una fila.
+    Nombre, fecha, público objetivo, tipo de datos y modo de relevamiento se
+    guardan **en la carga**, no en cada persona: una persona que aparece en
+    tres cargas ve los tres estudios por el vínculo, y corregir la fecha es
+    una fila.
+
+    `exigir_origen` lo pasa la ruta: una carga nueva abierta desde la
+    pantalla tiene que declarar tipo y modo. Las anteriores a la 0026 no los
+    tienen, y por eso la base los admite nulos.
     """
     nombre = (nombre or "").strip()
     if not nombre:
@@ -111,16 +213,22 @@ def crear(conn, nombre, descripcion=None, actor=None, fecha_estudio=None,
             "La carga necesita un nombre: es lo que después identifica de "
             "dónde salieron esos datos (por ejemplo «Ómnibus agosto 2026»)."
         )
+    tipo = _clasificacion("tipo_datos_origen", tipo_datos_origen,
+                          tipo_datos_origen_otro, exigir_origen)
+    modo = _clasificacion("modo_relevamiento", modo_relevamiento,
+                          modo_relevamiento_otro, exigir_origen)
     fila = db.una(
         conn,
         f"""
         insert into carga (nombre, descripcion, fecha_estudio,
-                           publico_objetivo, creado_por)
-             values (%s, %s, %s, %s, %s)
+                           publico_objetivo, tipo_datos_origen,
+                           tipo_datos_origen_otro, modo_relevamiento,
+                           modo_relevamiento_otro, creado_por)
+             values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
           returning {_COLUMNAS}
         """,
         (nombre, (descripcion or "").strip() or None, _fecha(fecha_estudio),
-         _texto(publico_objetivo),
+         _texto(publico_objetivo), *tipo, *modo,
          getattr(actor, "uid", None) or (actor if isinstance(actor, str) else None)),
     )
     return _serializar(fila)
@@ -149,10 +257,23 @@ def editar(conn, carga_id, cambios):
     if "publico_objetivo" in cambios:
         columnas.append("publico_objetivo")
         valores.append(_texto(cambios.get("publico_objetivo")))
+    for campo in _CLASIFICACIONES:
+        if f"{campo}_otro" in cambios and campo not in cambios:
+            # La especificación sola no se puede validar: depende de si el
+            # valor es «otro», y el valor viaja con ella.
+            raise DatosInvalidos(
+                f"Para cambiar {campo}_otro mandá también {campo}.",
+                {"campo": campo})
+        if campo in cambios:
+            # Una vez declarado no se vacía: se corrige por otro valor.
+            columnas += [campo, f"{campo}_otro"]
+            valores += _clasificacion(campo, cambios.get(campo),
+                                      cambios.get(f"{campo}_otro"), exigir=True)
     if not columnas:
         raise DatosInvalidos(
             "No hay nada que cambiar. Se pueden editar nombre, descripcion, "
-            "fecha_estudio y publico_objetivo.")
+            "fecha_estudio, publico_objetivo, tipo_datos_origen y "
+            "modo_relevamiento.")
     fila = db.una(
         conn,
         f"update carga set {', '.join(c + ' = %s' for c in columnas)} "
@@ -240,6 +361,8 @@ def origen_de(conn, id_persona):
         conn,
         """
         select c.id, c.nombre, c.fecha_estudio, c.publico_objetivo,
+               c.tipo_datos_origen, c.tipo_datos_origen_otro,
+               c.modo_relevamiento, c.modo_relevamiento_otro,
                pc.origen, pc.creado_en
           from persona_carga pc
           join carga c on c.id = pc.carga_id
@@ -255,6 +378,7 @@ def origen_de(conn, id_persona):
             "fecha_estudio": (f["fecha_estudio"].isoformat()
                               if f["fecha_estudio"] else None),
             "publico_objetivo": f["publico_objetivo"],
+            **datos_de_origen(f),
             "origen": f["origen"],
             "vinculado_en": f["creado_en"].isoformat(),
         }
@@ -274,12 +398,17 @@ def _rotulo(fila):
 
 
 def origen_de_varias(conn, ids_persona):
-    """El estudio de origen de un conjunto, en una sola consulta (R7.4).
+    """La procedencia de un conjunto, en una sola consulta (R7.4).
 
-    Devuelve, por persona, el valor de la columna «Estudio de origen» con la
+    Devuelve, por persona, las columnas de `COLUMNAS_DE_PROCEDENCIA` —el
+    estudio de origen, el tipo de datos y el modo de relevamiento— con la
     misma forma que un atributo (`valor`, `etiqueta_valor`), para que la
-    pantalla lo pinte igual. Quien no tiene vínculo no tiene entrada: la
-    columna dice «sin dato», como con cualquier atributo.
+    pantalla las pinte igual. Quien no tiene vínculo no tiene entrada, y una
+    carga anterior a la 0026 no aporta tipo ni modo: la columna dice «sin
+    dato», como con cualquier atributo.
+
+    Con varias cargas, el estudio las lista todas; el tipo y el modo, los
+    valores distintos (dos encuestas telefónicas son «Telefónico», una vez).
     """
     ids = [str(i) for i in dict.fromkeys(i for i in (ids_persona or []) if i)]
     if not ids:
@@ -287,7 +416,9 @@ def origen_de_varias(conn, ids_persona):
     filas = db.todas(
         conn,
         """
-        select pc.id_persona, c.nombre, c.fecha_estudio
+        select pc.id_persona, c.nombre, c.fecha_estudio,
+               c.tipo_datos_origen, c.tipo_datos_origen_otro,
+               c.modo_relevamiento, c.modo_relevamiento_otro
           from persona_carga pc
           join carga c on c.id = pc.carga_id
          where pc.id_persona = any(%s::uuid[])
@@ -297,12 +428,21 @@ def origen_de_varias(conn, ids_persona):
     )
     por_persona = {}
     for f in filas:
-        por_persona.setdefault(str(f["id_persona"]), []).append(_rotulo(f))
+        rotulos = por_persona.setdefault(
+            str(f["id_persona"]), {clave: [] for clave, _ in COLUMNAS_DE_PROCEDENCIA})
+        rotulos[COLUMNA_ESTUDIO_DE_ORIGEN].append(_rotulo(f))
+        for columna in (COLUMNA_TIPO_DATOS_ORIGEN, COLUMNA_MODO_RELEVAMIENTO):
+            etiqueta = etiqueta_de(columna, f[columna], f[f"{columna}_otro"])
+            if etiqueta and etiqueta not in rotulos[columna]:
+                rotulos[columna].append(etiqueta)
     return {
-        id_persona: {"valor": " | ".join(rotulos),
-                     "etiqueta_valor": " | ".join(rotulos),
-                     "origen": "carga", "procedencia": None}
-        for id_persona, rotulos in por_persona.items()
+        id_persona: {
+            columna: {"valor": " | ".join(valores),
+                      "etiqueta_valor": " | ".join(valores),
+                      "origen": "carga", "procedencia": None}
+            for columna, valores in columnas.items() if valores
+        }
+        for id_persona, columnas in por_persona.items()
     }
 
 

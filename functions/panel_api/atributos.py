@@ -233,7 +233,8 @@ def mapa_por_clave(conn, solo_activos=True):
 # columna de los resultados que no es un atributo (R-ORG.5). Va escrita acá
 # y no importada de `cargas` para no crear una dependencia circular; una
 # prueba comprueba que coincidan.
-CLAVES_RESERVADAS = frozenset({"estudio_de_origen"})
+CLAVES_RESERVADAS = frozenset(
+    {"estudio_de_origen", "tipo_datos_origen", "modo_relevamiento"})
 
 
 def _clave_valida(crudo, que="atributo"):
@@ -264,11 +265,12 @@ def crear(conn, datos, actor=None):
             "persona, y ese cálculo vive en el esquema: no se puede definir "
             "desde la app. Los que existen son el tramo etario y la edad.")
     if clave in CLAVES_RESERVADAS:
-        # R-ORG.5 — la usa la columna «Estudio de origen» de los resultados.
-        # Un atributo con la misma clave la taparía en la lista sin aviso.
+        # R-ORG.5 — las usan las columnas de procedencia de los resultados
+        # (estudio, tipo de datos y modo de relevamiento de la carga). Un
+        # atributo con la misma clave la taparía en la lista sin aviso.
         raise Conflicto(
-            f"La clave «{clave}» está reservada por el sistema: es la columna "
-            f"que muestra el estudio de origen de cada persona.")
+            f"La clave «{clave}» está reservada por el sistema: es una de las "
+            f"columnas que muestran de qué carga proviene cada persona.")
     if db.una(conn, "select 1 from atributo_demografico where clave = %s", (clave,)):
         raise Conflicto(f"Ya existe un atributo con la clave «{clave}».")
 

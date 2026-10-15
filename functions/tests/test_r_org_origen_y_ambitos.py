@@ -150,7 +150,9 @@ def test_la_ruta_de_carga_deja_el_vinculo_de_punta_a_punta(ctx, actor):
     existente = _panelista(ctx.boveda, "20-2")
     _, carga = ruteo.despachar(
         "POST", "/cargas", {"nombre": "Ómnibus", "fecha_estudio": "2026-08-15",
-                            "publico_objetivo": "Adultos"},
+                            "publico_objetivo": "Adultos",
+                            "tipo_datos_origen": "encuesta",
+                            "modo_relevamiento": "telefonico"},
         {}, actor("operaciones"), ctx)
     _, salida = ruteo.despachar(
         "POST", f"/cargas/{carga['id']}/ingesta",
@@ -224,6 +226,7 @@ def test_se_puede_calcular_la_composicion_de_una_carga(ctx, bóveda_mixta, omnib
         "tipo": "carga", "id": omnibus["id"], "nombre": "Ómnibus agosto 2026",
         "fecha_estudio": "2026-08-15",
         "publico_objetivo": "Población adulta de Montevideo",
+        "tipo_datos_origen_etiqueta": None, "modo_relevamiento_etiqueta": None,
         "creado_en": omnibus["creado_en"]}
     # §7 — la pantalla dice que mira el presente, no un registro histórico.
     assert composicion.AVISO_CARGA in salida["avisos"]
@@ -377,6 +380,11 @@ def test_la_ficha_muestra_los_estudios_de_los_que_proviene(ctx, omnibus):
         "carga_id": omnibus["id"], "nombre": "Ómnibus agosto 2026",
         "fecha_estudio": "2026-08-15",
         "publico_objetivo": "Población adulta de Montevideo",
+        # boveda/0026 — la fixture no los declara: una carga anterior.
+        "tipo_datos_origen": None, "tipo_datos_origen_otro": None,
+        "tipo_datos_origen_etiqueta": None,
+        "modo_relevamiento": None, "modo_relevamiento_otro": None,
+        "modo_relevamiento_etiqueta": None,
         "origen": "creada",
         "vinculado_en": origen["estudios"][0]["vinculado_en"],
     }]
