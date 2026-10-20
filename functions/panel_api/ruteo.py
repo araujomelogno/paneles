@@ -46,6 +46,7 @@ from . import (
     sav,
     semantica,
     series,
+    tematicas,
     usuarios,
     verificacion as mod_verificacion,
     verificacion_contacto,
@@ -1565,20 +1566,65 @@ def crear_carga(ctx, actor, params, cuerpo, consulta):
     return 201, carga
 
 
-@ruta("GET", "/cargas", "leer", requisito="R3.13, R-ORG.5")
+@ruta("GET", "/cargas", "leer", requisito="R3.13, R-ORG.5, R-CAR.1")
 def listar_cargas(ctx, actor, params, cuerpo, consulta):
-    """Las cargas con los datos del estudio y cuántas personas creó y
-    reutilizó cada una. Es lo que arma los selectores por nombre y fecha.
+    """Las cargas con los datos del estudio, cuántas personas creó y
+    reutilizó cada una y sus temáticas. Es lo que arma los selectores por
+    nombre y fecha, y la sección Cargas (R-CAR.1), que filtra por temática
+    (`tematica_id`) y busca por nombre (`q`).
 
     `opciones` son los vocabularios de tipo de datos y modo de relevamiento:
     la pantalla los recibe de acá en vez de tener su propia copia."""
-    return 200, {"items": cargas.listar(ctx.boveda),
+    return 200, {"items": cargas.listar(
+                     ctx.boveda, busqueda=consulta.get("q"),
+                     tematica_id=_entero(consulta.get("tematica_id"))),
                  "opciones": cargas.opciones()}
 
 
-@ruta("GET", "/cargas/<carga_id>", "leer", requisito="R-ORG.4")
+@ruta("GET", "/cargas/<carga_id>", "leer", requisito="R-ORG.4, R-CAR.2")
 def ver_carga(ctx, actor, params, cuerpo, consulta):
+    """El detalle de una carga: sus atributos, creados y reutilizados y sus
+    temáticas. Los panelistas **no** vienen acá: la pantalla los pide a
+    `GET /panelistas?carga_id=…`, la misma ruta y el mismo permiso que la
+    sección Panelistas. Una segunda ruta que listara personas tendría que
+    volver a demostrar que no muestra más de lo que esa muestra."""
     return 200, cargas.obtener(ctx.boveda, _entero(params["carga_id"]))
+
+
+# ── R-TEM · Temáticas incorporadas ──────────────────────────────────
+
+@ruta("GET", "/tematicas", "leer", requisito="R-TEM.4")
+def listar_tematicas(ctx, actor, params, cuerpo, consulta):
+    """El vocabulario de temáticas, con cuántas cargas usa cada una: el
+    autocompletado del editor y el filtro del listado de cargas."""
+    return 200, {"items": tematicas.listar(ctx.boveda)}
+
+
+@ruta("PUT", "/cargas/<carga_id>/tematicas", "ingestar", requisito="R-TEM.4")
+def guardar_tematicas_de_carga(ctx, actor, params, cuerpo, consulta):
+    """Deja a la carga con la lista de temáticas que eligió el analista.
+
+    Es el único camino que las escribe: al confirmar una carga nueva y al
+    editarlas después. Mismo permiso que corregir los datos del estudio."""
+    salida = tematicas.guardar(
+        ctx.boveda, _entero(params["carga_id"]), cuerpo.get("tematicas"))
+    ctx.boveda.commit()
+    return 200, {"tematicas": salida}
+
+
+@ruta("POST", "/cargas/<carga_id>/tematicas/propuesta", "ingestar",
+      requisito="R-TEM.5")
+def proponer_tematicas_de_carga(ctx, actor, params, cuerpo, consulta):
+    """R-TEM.5 — propone temáticas para una carga ya confirmada, con las
+    preguntas que ya están guardadas (por su `ref_estudio`). No vuelve a
+    subir el archivo y **no aplica nada**: la propuesta pasa por la misma
+    revisión que en una carga nueva, y lo que se guarda es lo que el
+    analista confirme con `PUT /cargas/<id>/tematicas`."""
+    carga = cargas.obtener(ctx.boveda, _entero(params["carga_id"]))
+    preguntas = tematicas.preguntas_guardadas(ctx.semantica, carga["ref_estudio"])
+    salida = tematicas.proponer(ctx.boveda, ctx.proponente_tematicas, preguntas)
+    salida["actuales"] = carga["tematicas"]
+    return 200, salida
 
 
 @ruta("PATCH", "/cargas/<carga_id>", "ingestar", requisito="R-ORG.4")
@@ -1598,7 +1644,7 @@ def analizar_sav_de_carga(ctx, actor, params, cuerpo, consulta):
                              cuerpo.get("valores_no_respuesta"))
 
 
-@ruta("POST", "/cargas/<carga_id>/ingesta", "ingestar", requisito="R3.13")
+@ruta("POST", "/cargas/<carga_id>/ingesta", "ingestar", requisito="R3.13, R-TEM.2")
 def ingestar_carga(ctx, actor, params, cuerpo, consulta):
     """Incorpora los individuos del archivo y sus respuestas. Sin panel.
 
@@ -1625,13 +1671,29 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
     }
 
     if _revision_pedida(cuerpo):
-        return 200, resumen_ingesta.resumir(
+        resumen = resumen_ingesta.resumir(
             _plan_de(cuerpo, columna_id=columna_id,
                      origen=(cuerpo.get("origen") or "carga"),
                      preguntas=preguntas, demograficas=demograficas),
             filas, panel=None, evidencia=_evidencia_normalizada(cuerpo),
             destino_tipo="carga",
             nombre_destino=cargas.obtener(ctx.boveda, carga_id).get("nombre"))
+        # R-TEM.2 — la propuesta de temáticas aparece en la revisión, junto
+        # al resto de la configuración. Sale de **lo que el resumen dice que
+        # va al store semántico**: las demográficas, las de identidad y las
+        # excluidas ya quedaron afuera ahí, y no se vuelve a decidir en otro
+        # lado. Si Claude falla o tarda, la revisión llega igual, con el
+        # aviso: la carga no se frena por esto. `proponer_tematicas: false`
+        # la omite (la pantalla ya tiene una lista editada para estas
+        # mismas preguntas y no tiene por qué pagar ni esperar otra).
+        resumen["tematicas"] = (
+            tematicas.proponer(
+                ctx.boveda, ctx.proponente_tematicas,
+                tematicas.preguntas_para_proponer(
+                    resumen["al_store_semantico"]["variables"],
+                    demograficas, columna_id))
+            if cuerpo.get("proponer_tematicas", True) is not False else None)
+        return 200, resumen
 
     creacion = None
     if cuerpo.get("modo") == "crear_individuos":

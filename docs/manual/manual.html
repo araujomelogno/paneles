@@ -35,6 +35,7 @@
       <ul><li>Buscar · Enrolar · Duplicados · Revisión de altas · La ficha y
       sus respuestas procesadas · El origen de cada persona · Otorgar una
       finalidad · Cargar panelistas sin panel · Los datos del estudio ·
+      Las temáticas en la revisión ·
       Filtrar por carga · Canales de contacto</li></ul></li>
     <li><a href="#s4"><span><span class="num">4</span> Paneles</span></a>
       <ul><li>Crear · Agregar miembros · Dar de baja una membresía</li></ul></li>
@@ -66,8 +67,12 @@
       <ul><li>Cómo entra · Qué ve · Canjes con aprobación · Canales y
       permisos · La baja</li></ul></li>
     <li><a href="#s-estadisticas"><span><span class="num">14</span> Estadísticas de la base</span></a></li>
-    <li><a href="#s13"><span><span class="num">15</span> Preguntas frecuentes</span></a></li>
-    <li><a href="#s14"><span><span class="num">16</span> Glosario</span></a></li>
+    <li><a href="#s-cargas"><span><span class="num">15</span> Cargas y sus temáticas</span></a>
+      <ul><li>El listado y sus filtros · El detalle de una carga · Editar las
+      temáticas · Proponer temáticas para una carga anterior · Un vocabulario
+      que no se duplica</li></ul></li>
+    <li><a href="#s13"><span><span class="num">16</span> Preguntas frecuentes</span></a></li>
+    <li><a href="#s14"><span><span class="num">17</span> Glosario</span></a></li>
   </ol>
 
 </div>
@@ -154,8 +159,8 @@
     </tr>
     <tr>
       <td class="destacado">Analista</td>
-      <td>Crear encuestas, convocar, ingestar respuestas y ejecutar
-      consultas.</td>
+      <td>Crear encuestas, convocar, ingestar respuestas, editar las temáticas
+      de una carga y ejecutar consultas.</td>
       <td>Enrolar panelistas, gestionar paneles, resolver identificadores a
       personas y gestionar usuarios.</td>
     </tr>
@@ -163,8 +168,8 @@
       <td class="destacado">Cumplimiento / DPO</td>
       <td>Consultar toda la información, atender retiros de consentimiento y
       bajas, y revisar el registro de accesos a datos personales.</td>
-      <td>Enrolar, gestionar paneles, ejecutar consultas semánticas y gestionar
-      usuarios.</td>
+      <td>Enrolar, gestionar paneles, ingestar o editar las temáticas de una
+      carga, ejecutar consultas semánticas y gestionar usuarios.</td>
     </tr>
   </table>
 
@@ -546,6 +551,10 @@
     se carga el archivo.</li>
     <li><strong>Público objetivo</strong>: a quién estaba dirigido el estudio,
     en texto libre (<i>Población adulta de Montevideo</i>).</li>
+    <li><strong>Tipo de datos de origen</strong> (obligatorio): encuesta,
+    reclutamiento u otro, y <strong>modo de relevamiento</strong>
+    (obligatorio): cara a cara, telefónico, WhatsApp, web u otro. Si se elige
+    <i>Otro</i>, hay que especificar cuál.</li>
   </ul>
 
   <p>Estos datos se guardan <strong>en la carga, no en cada persona</strong>.
@@ -567,6 +576,44 @@
   respondente, mapeo de variables a preguntas, marcado de variables demográficas
   y modo de resolución de individuos. El procedimiento es idéntico, de modo que
   no hay un flujo nuevo que aprender.</p>
+
+  <h4>Las temáticas, en la revisión</h4>
+
+  <p>El paso de revisión de una carga —el resumen que aparece antes de
+  confirmar (sección 5.4)— tiene al final un bloque propio:
+  <strong>Temáticas incorporadas</strong>, los temas que tratan las preguntas
+  del archivo. El sistema las <strong>propone</strong>: le manda a Claude los
+  textos de las preguntas que van a la base semántica y recibe una lista de
+  temas. El analista decide: acepta las que sirven, quita con <b>×</b> las que
+  no y agrega a mano las que falten.</p>
+
+  <figure>
+    <img src="capturas/101-revision-tematicas-propuestas.jpg" alt="Temáticas propuestas en la revisión de una carga" />
+    <figcaption><b>Temáticas propuestas.</b> Las etiquetas naranjas con
+    <i>IA</i> las propuso Claude; las tres ya existían en el sistema, así que se
+    reutilizan en vez de crear variantes. Debajo, de qué preguntas sale cada
+    una.</figcaption>
+  </figure>
+
+  <ul class="puntos">
+    <li><strong>A Claude viajan solo los textos de las preguntas</strong>
+    —código y texto—: nunca una respuesta, ni las variables marcadas como
+    demográficas o de identidad, ni la columna que identifica al
+    respondente.</li>
+    <li>Una etiqueta marcada <b>nueva</b> no
+    existe todavía y se crea al confirmar. Las demás ya estaban en el sistema
+    (sección 15.5).</li>
+    <li>Si la propuesta <strong>falla o tarda</strong>, la revisión llega
+    igual, con un aviso y la lista vacía: la carga se confirma normalmente y
+    las temáticas se agregan a mano, ahí o después.</li>
+    <li>Si se vuelve a corregir y se revisa otra vez sin cambiar las
+    preguntas, se conserva la lista ya editada: no se pide otra
+    propuesta.</li>
+  </ul>
+
+  <p>Las temáticas se guardan al apretar <strong>Confirmar e importar</strong>,
+  y siguen siendo editables desde la sección <strong>Cargas</strong>
+  (sección 15).</p>
 
   <p>También es idéntico lo que pasa al confirmar: la carga <strong>queda en
   proceso</strong> y la barra de avance se muestra en la propia pantalla de
@@ -3782,13 +3829,180 @@
   </div>
 </section>
 
-<section id="s13">
+<!-- ════════════════ Cargas ════════════════ -->
+<section id="s-cargas">
   <div class="cab">
     <div class="barra"></div>
     <div class="kicker">Sección 15</div>
+    <h2>Cargas y sus temáticas</h2>
+    <p>Cada estudio incorporado como un todo: de dónde viene, cuánta gente trajo,
+    de qué trata y quiénes son.</p>
+  </div>
+
+  <p>La solapa <strong>Cargas</strong> reúne lo que antes estaba repartido: una
+  carga solo se veía como opción de un filtro en Panelistas, en Composición y en
+  Estadísticas. Acá se mira entera. La ven todos los roles; editar sus temáticas
+  requiere el permiso de ingestar (administración, responsable de panel y
+  analista).</p>
+
+  <p>Una carga nueva se sigue abriendo desde <strong>Panelistas → Cargar
+  panelistas</strong> (sección 3.6): es el mismo flujo de ingesta, y al
+  revisarla el sistema propone sus temáticas.</p>
+
+  <h3><span class="n">15.1</span> El listado y sus filtros</h3>
+
+  <p>Cada fila es una carga, con su <strong>nombre</strong> (y la descripción,
+  si la tiene), la <strong>fecha del estudio</strong>, el <strong>público
+  objetivo</strong>, cuántos <strong>individuos</strong> trajo —separados en
+  creados y reutilizados— y sus <strong>temáticas</strong>. Están ordenadas por
+  fecha del estudio, la más reciente primero; una carga sin fecha declarada se
+  ubica por el día en que se cargó.</p>
+
+  <figure>
+    <img src="capturas/97-cargas-listado.jpg" alt="Listado de cargas con sus temáticas" />
+    <figcaption><b>El listado.</b> Tres cargas; la base histórica todavía no
+    tiene temáticas.</figcaption>
+  </figure>
+
+  <p>Arriba hay dos filtros que se combinan:</p>
+
+  <ul class="puntos">
+    <li><strong>Buscar por nombre</strong>: sin importar mayúsculas ni tildes
+    («omnibus» encuentra «Ómnibus agosto 2026»).</li>
+    <li><strong>Todas las temáticas</strong>: deja las cargas que cubren una
+    temática. El desplegable muestra entre paréntesis en cuántas cargas está
+    cada una.</li>
+  </ul>
+
+  <figure>
+    <img src="capturas/98-cargas-filtro-tematica.jpg" alt="Listado de cargas filtrado por temática" />
+    <figcaption><b>Filtro por temática.</b> Solo el ómnibus cubre
+    «telefonía móvil».</figcaption>
+  </figure>
+
+  <h3><span class="n">15.2</span> El detalle de una carga</h3>
+
+  <p><strong>Ver</strong> abre el detalle, con cuatro bloques:</p>
+
+  <ul class="puntos">
+    <li><strong>Atributos</strong>: nombre, descripción, fecha del estudio,
+    público objetivo, tipo de datos, modo de relevamiento y fecha de carga.
+    Se corrigen desde Panelistas → <i>Datos del estudio</i> (sección 3.6).</li>
+    <li><strong>Individuos</strong>: cuántos en total, cuántos
+    <strong>creó</strong> esta carga y cuántos <strong>reutilizó</strong>
+    porque ya existían.</li>
+    <li><strong>Temáticas incorporadas</strong>, editables (15.3).</li>
+    <li><strong>Panelistas cargados</strong>: la lista de las personas
+    vinculadas, de a 25, con <i>Anterior</i> y <i>Siguiente</i>. La columna
+    <i>En esta carga</i> dice si la persona fue creada o reutilizada, y
+    <strong>Ver ficha</strong> abre su ficha (sección 3.5).</li>
+  </ul>
+
+  <figure>
+    <img src="capturas/99-carga-detalle.jpg" alt="Detalle de una carga" />
+    <figcaption><b>El detalle.</b> El ómnibus creó once personas y reutilizó
+    una panelista que ya existía; es la única con consentimiento de
+    contacto.</figcaption>
+  </figure>
+
+  <div class="aviso info">
+    <div class="t">La lista muestra lo mismo que Panelistas</div>
+    <p>La lista de panelistas de una carga es exactamente la del listado de
+    Panelistas filtrado por esa carga: los mismos datos y los mismos permisos.
+    Lo que un rol no puede ver allá, tampoco lo ve acá. Abrir una ficha queda
+    registrado igual que desde Panelistas.</p>
+  </div>
+
+  <p><strong>Ver su composición</strong> abre la pantalla de Composición en el
+  ámbito <i>Una carga</i>, con esta carga elegida (sección 7.5).</p>
+
+  <h3><span class="n">15.3</span> Editar las temáticas</h3>
+
+  <p>Las temáticas se muestran como etiquetas. Se quitan con <b>×</b>, y se
+  agregan escribiendo en el campo de abajo y apretando <i>Agregar</i> (o
+  Enter): mientras se escribe, el campo sugiere las temáticas que ya existen.
+  Los cambios se aplican con <strong>Guardar temáticas</strong>; hasta
+  entonces no se guarda nada.</p>
+
+  <p>Cada etiqueta recuerda su origen: las que propuso Claude llevan la marca
+  <i>IA</i> (y quedan registradas como <i>propuesta de IA</i> aunque después se
+  vuelva a guardar la lista); las agregadas a mano, no.</p>
+
+  <div class="aviso">
+    <div class="t">Describen la carga, no a cada persona</div>
+    <p>Que una carga cubra «consumo de tabaco» no quiere decir que todas sus
+    personas hayan respondido esas preguntas. Por eso las temáticas no
+    aparecen en la ficha ni sirven para filtrar personas: para encontrar
+    gente por lo que respondió está la consulta semántica (sección 6).</p>
+  </div>
+
+  <h3><span class="n">15.4</span> Proponer temáticas para una carga anterior</h3>
+
+  <p>Las cargas hechas antes de esta versión no tienen temáticas. En su
+  detalle, <strong>Proponer temáticas</strong> le pide la propuesta a Claude
+  con las <strong>preguntas que ya están guardadas</strong> de esa carga, sin
+  volver a subir el archivo. La propuesta se suma a lo que haya en el editor y
+  <strong>no se guarda sola</strong>: se revisa igual que en una carga nueva y
+  se aplica con <i>Guardar temáticas</i>.</p>
+
+  <figure>
+    <img src="capturas/100-carga-proponer-tematicas.jpg" alt="Temáticas propuestas para una carga anterior" />
+    <figcaption><b>Propuesta para una carga anterior.</b> «Servicios
+    financieros» es nueva; «hábitos de compra» ya existía y se reutiliza.
+    Nada se guardó todavía.</figcaption>
+  </figure>
+
+  <p>Cada propuesta cuesta unos dos centavos de dólar: es una sola llamada a
+  Claude por carga.</p>
+
+  <h3><span class="n">15.5</span> Un vocabulario que no se duplica</h3>
+
+  <p>Una temática no es texto suelto de cada carga: es una sola, compartida por
+  todas las cargas que la cubren. Es lo que permite filtrar por ella y
+  contestar «¿qué estudios tenemos sobre telefonía?». Para que no se
+  multipliquen las variantes:</p>
+
+  <ul class="puntos">
+    <li>Al guardar, el nombre se <strong>normaliza</strong>: minúsculas y un
+    solo espacio entre palabras. «Telefonía Móvil» y «telefonía  móvil» son la
+    misma temática.</li>
+    <li>Si lo que se escribe difiere de una existente <strong>solo en
+    tildes</strong> («telefonia movil»), se usa la existente.</li>
+    <li>A Claude se le pasa la lista de temáticas existentes, con la
+    instrucción de reutilizarlas tal cual en vez de inventar una variante. Si
+    igual devuelve una con otra escritura, el sistema la reconoce como la
+    existente. Si una propuesta es nueva o no, lo decide el sistema y no
+    Claude.</li>
+  </ul>
+
+  <p>Lo que estas reglas no evitan son los sinónimos («telefonía móvil» y
+  «celulares»). Por eso, antes de agregar una temática a mano, conviene mirar
+  las sugerencias del campo: si ya hay una que dice lo mismo, usar esa.</p>
+</section>
+
+<section id="s13">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 16</div>
     <h2>Preguntas frecuentes</h2>
     <p>Situaciones habituales y su explicación.</p>
   </div>
+
+  <h4>La revisión de una carga dice que no se pudieron proponer temáticas</h4>
+  <p>La llamada a Claude falló o tardó demasiado (el aviso dice el motivo). No
+  afecta a la carga: se confirma normalmente. Las temáticas se agregan a mano
+  en ese momento, o después desde Cargas con <i>Proponer temáticas</i>
+  (15.4).</p>
+
+  <h4>Escribí una temática con mayúsculas y quedó en minúsculas</h4>
+  <p>Es a propósito: los nombres se guardan normalizados para que
+  «Telefonía móvil» y «telefonía móvil» sean la misma temática (15.5). Si ya
+  existía una que difería solo en tildes, quedó esa.</p>
+
+  <h4>¿Puedo buscar a las personas de una temática?</h4>
+  <p>No con las temáticas: describen la carga, no a cada persona, y no todas
+  las personas de una carga respondieron todas sus preguntas. Para encontrar
+  gente por lo que respondió está la consulta semántica (sección 6).</p>
 
   <h4>Subí «A verificar» y el ranking sigue mostrando 50</h4>
   <p>Lo que se muestra lo decide <strong>Personas a mostrar</strong>, que es
@@ -4020,7 +4234,7 @@
 <section id="s14">
   <div class="cab">
     <div class="barra"></div>
-    <div class="kicker">Sección 16</div>
+    <div class="kicker">Sección 17</div>
     <h2>Glosario</h2>
     <p>Los términos que aparecen en pantalla.</p>
   </div>
@@ -4035,6 +4249,11 @@
     <tr><td class="destacado">Carga</td>
       <td>Un archivo de personas y respuestas incorporado sin panel, con los
       datos del estudio del que sale: nombre, fecha y público objetivo.</td></tr>
+    <tr><td class="destacado">Temática</td>
+      <td>Un tema que cubren las preguntas de una carga («telefonía móvil»,
+      «consumo de tabaco»). Es compartida entre cargas, se guarda en
+      minúsculas y la puede proponer Claude (<i>IA</i>) o agregar el analista.
+      Describe la carga, no a cada persona.</td></tr>
     <tr><td class="destacado">Origen (creada / reutilizada)</td>
       <td>De qué cargas proviene una persona. <i>Creada</i>: la carga la dio de
       alta. <i>Reutilizada</i>: ya existía y la carga la encontró por la

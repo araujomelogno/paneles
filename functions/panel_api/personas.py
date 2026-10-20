@@ -792,6 +792,10 @@ def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
         )
         params.append(carga_id)
     donde = ("where " + " and ".join(condiciones)) if condiciones else ""
+    origen_en_carga = (
+        ", (select pc.origen from persona_carga pc where pc.id_persona = "
+        "p.id_persona and pc.carga_id = %s) as origen_en_carga"
+        if carga_id else "")
 
     total = db.una(
         conn, f"select count(*)::int as n from persona p {donde}", tuple(params)
@@ -811,12 +815,16 @@ def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
                           and c.estado = 'vigente') as consiente_semantico,
                (select count(*) from membresia m
                  where m.id_persona = p.id_persona and m.estado = 'activo')::int as paneles
+               {origen_en_carga}
           from persona p left join v_demografia d on d.id_persona = p.id_persona
           {donde}
          order by p.creado_en desc
          limit %s offset %s
         """,
-        tuple(params) + (limite, desplazamiento),
+        # R-CAR.2 — filtrada por carga, cada fila dice si esa carga la creó
+        # o la reutilizó. El parámetro va primero: la subconsulta está en el
+        # `select`, antes del `where`.
+        ((carga_id,) if carga_id else ()) + tuple(params) + (limite, desplazamiento),
     )
     return {
         "total": total,
@@ -832,6 +840,7 @@ def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
                 "consiente_contacto": f["consiente_contacto"],
                 "consiente_semantico": f["consiente_semantico"],
                 "paneles": f["paneles"],
+                **({"origen_en_carga": f["origen_en_carga"]} if carga_id else {}),
             }
             for f in filas
         ],

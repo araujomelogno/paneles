@@ -286,6 +286,9 @@ def editar(conn, carga_id, cambios):
 
 
 def obtener(conn, carga_id):
+    """La carga con sus conteos y sus temáticas incorporadas (R-TEM.1)."""
+    from . import tematicas
+
     fila = db.una(
         conn,
         f"select {_COLUMNAS}, personas_creadas, personas_reutilizadas, personas "
@@ -294,18 +297,45 @@ def obtener(conn, carga_id):
     )
     if not fila:
         raise NoEncontrado(f"No existe la carga {carga_id}.")
-    return _serializar(fila)
+    return {**_serializar(fila),
+            "tematicas": tematicas.de_carga(conn, fila["id"])}
 
 
-def listar(conn):
-    return [
-        _serializar(f)
-        for f in db.todas(
-            conn,
-            f"select {_COLUMNAS}, personas_creadas, personas_reutilizadas, "
-            f"personas from v_carga_resumen order by creado_en desc",
-        )
-    ]
+def listar(conn, busqueda=None, tematica_id=None):
+    """R-CAR.1 — las cargas, con sus conteos y sus temáticas.
+
+    Ordenadas por **fecha del estudio**, la más reciente primero; la que no
+    la declaró se ubica por la fecha en que se cargó. `busqueda` filtra por
+    nombre; `tematica_id`, a las que cubren esa temática.
+    """
+    from . import tematicas
+
+    condiciones, params = [], []
+    if tematica_id:
+        condiciones.append(
+            "exists (select 1 from carga_tematica ct "
+            "where ct.carga_id = r.id and ct.tematica_id = %s)")
+        params.append(tematica_id)
+    donde = ("where " + " and ".join(condiciones)) if condiciones else ""
+    filas = db.todas(
+        conn,
+        f"select {', '.join('r.' + c.strip() for c in _COLUMNAS.split(','))}, "
+        f"r.personas_creadas, r.personas_reutilizadas, r.personas "
+        f"from v_carga_resumen r {donde} "
+        f"order by coalesce(r.fecha_estudio, r.creado_en::date) desc, "
+        f"r.creado_en desc",
+        tuple(params),
+    )
+    # El nombre se busca acá y no con `ilike`: sin tildes ni mayúsculas
+    # («omnibus» encuentra «Ómnibus»), y sin depender de la configuración
+    # regional de la base, que en `C` no pliega «Ó». Son decenas de cargas.
+    clave = tematicas.clave_de_busqueda(busqueda)
+    if clave:
+        filas = [f for f in filas
+                 if clave in tematicas.clave_de_busqueda(f["nombre"])]
+    por_carga = tematicas.de_cargas(conn, [f["id"] for f in filas])
+    return [{**_serializar(f), "tematicas": por_carga.get(f["id"], [])}
+            for f in filas]
 
 
 # ── R-ORG.1 · El vínculo persona ↔ carga ─────────────────────────────

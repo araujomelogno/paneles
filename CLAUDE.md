@@ -378,6 +378,36 @@ seudónimo** —sin nombre, correo, documento ni celular— y usa la misma barra
 de acciones que el semántico (`barraDeAcciones`). Una acción nueva sobre
 resultados se agrega ahí, una vez.
 
+## De qué trata una carga: temáticas, y la sección Cargas
+
+Desde R-TEM / R-CAR (D74, `boveda/0027`) cada carga tiene sus **temáticas
+incorporadas** y hay una sección «Cargas» que la mira entera. Lo que no hay
+que deshacer:
+
+- **Una temática es una entidad compartida** (`tematica`), no texto en la
+  carga. El nombre se guarda normalizado (minúsculas, espacios simples) y lo
+  hace valer un `check`; antes de crear una se busca la existente que difiera
+  solo en tildes (`tematicas._resolver_existente`). Sin esto el vocabulario se
+  llena de variantes y «¿qué cargas cubren telefonía?» deja de tener
+  respuesta.
+- **Claude propone, el analista confirma.** `tematicas.proponer` no escribe
+  nada; lo único que escribe `carga_tematica` es `tematicas.guardar`
+  (`PUT /cargas/<id>/tematicas`), antes y después de confirmar. El origen
+  (`propuesta_ia` | `manual`) se fija la primera vez. Si Claude falla o
+  tarda, la revisión llega con aviso y la lista vacía: **la carga no se
+  frena por las temáticas**, y confirmar no llama a Claude.
+- **Lo que viaja a Claude sale del resumen de revisión**
+  (`al_store_semantico.variables`) por `tematicas.preguntas_para_proponer`:
+  solo código y texto, nunca respuestas, ni demográficas, ni identidad, ni la
+  columna que identifica. No armen un segundo criterio de qué se manda.
+  `es_nueva` lo decide la base, no el modelo.
+- **Las temáticas describen la carga, no a la persona.** No se copian en
+  `persona`, no son atributos ni filtran personas: eso es la consulta
+  semántica.
+- **La lista de panelistas de una carga es `GET /panelistas?carga_id=…`**, la
+  misma ruta y permiso que la sección Panelistas. No agreguen una ruta bajo
+  `/cargas/` que liste personas; hay una prueba que lo vigila.
+
 ## Reglas de negocio que el código debe respetar
 
 - No se puede convocar ni incluir en muestreo a una persona sin `consentimiento` **vigente** para la finalidad correspondiente.

@@ -106,6 +106,8 @@ const bd = {
   ],
   cargas: [],              // R3.13 — lotes incorporados sin panel
   vinculos: [],            // R-ORG.1 — de qué carga proviene cada persona
+  tematicas: [],           // R-TEM.1 — el vocabulario compartido de temáticas
+  cargaTematicas: [],      // R-TEM.1 — qué temáticas cubre cada carga
   atributos: [],           // R3.14 — el catálogo de segmentadores
   canales: [],             // R4.4 — preferencias de canal por persona
   series: [],              // R4.1.b — series comparables entre olas
@@ -114,7 +116,7 @@ const bd = {
   secuencias: {
     panel: 1, encuesta: 1, revision: 1, consentimiento: 1, semantica: 1,
     guardada: 1, auditoria: 1, reident: 1, carga: 1, atributo: 1,
-    serie: 1,
+    serie: 1, tematica: 1,
   },
 };
 
@@ -388,6 +390,13 @@ function sembrar() {
     ],
     filas: EXTERNOS.map(([documento, , , , , , q1, q2]) => ({ documento, Q1: q1, Q2: q2 })),
   });
+  // R-TEM — el ómnibus con sus temáticas, una propuesta y otra a mano. Sin
+  // esto la sección Cargas no tendría etiquetas que mostrar ni filtrar.
+  guardarTematicasDemo(omnibus.id, [
+    { nombre: 'elección de marca', origen: 'propuesta_ia' },
+    { nombre: 'hábitos de compra', origen: 'propuesta_ia' },
+    { nombre: 'recomendaciones de conocidos', origen: 'manual' },
+  ]);
 
   // La calidad de la ola ya fieldeada: la mayoría bien, un par marcados. Sin
   // esto la liquidación de puntos no tendría nada que mostrar, y la revisión
@@ -666,6 +675,46 @@ function clasificacionDemo(campo, valor, otro) {
   return [valor, otro];
 }
 
+/* R-TEM — las mismas reglas que `tematicas.normalizar` y
+   `tematicas.guardar`, en el doble: minúsculas, espacios simples, y lo que
+   difiere solo en tildes reutiliza la existente. */
+const normalizarTematica = (nombre) => String(nombre || '').replace(/\s+/g, ' ')
+  .trim().replace(/^[\s.,;:·"'«»]+|[\s.,;:·"'«»]+$/g, '').toLowerCase();
+
+function tematicasDe(cargaId) {
+  return bd.cargaTematicas.filter((v) => v.carga_id === cargaId).map((v) => {
+    const t = bd.tematicas.find((x) => x.id === v.tematica_id);
+    return { id: t.id, nombre: t.nombre, origen: v.origen, creado_en: v.creado_en };
+  }).sort((a, b) => a.nombre.localeCompare(b.nombre));
+}
+
+function guardarTematicasDemo(cargaId, items) {
+  if (!Array.isArray(items)) throw new ErrorDemo('Mandá la lista de temáticas.', 400);
+  const elegidas = new Map();
+  items.forEach((crudo) => {
+    const nombre = normalizarTematica(typeof crudo === 'string' ? crudo : crudo.nombre);
+    if (nombre.length < 2) throw new ErrorDemo(`La temática '${nombre}' es demasiado corta.`, 400);
+    if (nombre.length > 80) throw new ErrorDemo('La temática es demasiado larga.', 400);
+    let tematica = bd.tematicas.find((t) => t.nombre === nombre)
+      || bd.tematicas.find((t) => sinTildes(t.nombre) === sinTildes(nombre));
+    if (!tematica) {
+      tematica = { id: siguiente('tematica'), nombre, creado_en: ahora() };
+      bd.tematicas.push(tematica);
+    }
+    if (!elegidas.has(tematica.id)) {
+      elegidas.set(tematica.id, (typeof crudo === 'string' ? null : crudo.origen) || 'manual');
+    }
+  });
+  bd.cargaTematicas = bd.cargaTematicas.filter(
+    (v) => v.carga_id !== cargaId || elegidas.has(v.tematica_id));
+  elegidas.forEach((origen, tematicaId) => {
+    if (!bd.cargaTematicas.some((v) => v.carga_id === cargaId && v.tematica_id === tematicaId)) {
+      bd.cargaTematicas.push({ carga_id: cargaId, tematica_id: tematicaId, origen, creado_en: ahora() });
+    }
+  });
+  return tematicasDe(cargaId);
+}
+
 function resumenCarga(carga) {
   const suyos = bd.vinculos.filter((v) => v.carga_id === carga.id
     && bd.personas.some((p) => p.id_persona === v.id_persona));
@@ -674,6 +723,7 @@ function resumenCarga(carga) {
     personas_creadas: suyos.filter((v) => v.origen === 'creada').length,
     personas_reutilizadas: suyos.filter((v) => v.origen === 'reutilizada').length,
     personas: suyos.length,
+    tematicas: tematicasDe(carga.id),
   };
 }
 
@@ -1013,9 +1063,16 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     if (consulta.carga_id) {
       const deLaCarga = new Set(bd.vinculos
         .filter((v) => v.carga_id === Number(consulta.carga_id)).map((v) => v.id_persona));
-      items = items.filter((p) => deLaCarga.has(p.id_persona));
+      items = items.filter((p) => deLaCarga.has(p.id_persona)).map((p) => ({
+        ...p,
+        // R-CAR.2 — si esa carga la creó o la reutilizó.
+        origen_en_carga: bd.vinculos.find((v) => v.id_persona === p.id_persona
+          && v.carga_id === Number(consulta.carga_id))?.origen || null,
+      }));
     }
-    return { total: items.length, items };
+    const desde = Number(consulta.desde || 0);
+    const limite = Number(consulta.limite || 50);
+    return { total: items.length, items: items.slice(desde, desde + limite) };
   }
 
   if (metodo === 'GET' && partes[0] === 'panelistas' && partes.length === 2) {
@@ -1626,8 +1683,58 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     return resumenCarga(carga);
   }
 
-  if (clave === 'GET /cargas') {
-    return { items: [...bd.cargas].reverse().map(resumenCarga), opciones: OPCIONES_CARGA };
+  if (metodo === 'GET' && camino === '/cargas') {
+    // R-CAR.1 — por fecha del estudio, la más reciente primero; filtro por
+    // temática y búsqueda por nombre, sin tildes ni mayúsculas.
+    const fecha = (c) => c.fecha_estudio || c.creado_en.slice(0, 10);
+    let items = [...bd.cargas].sort((a, b) => fecha(b).localeCompare(fecha(a)))
+      .map(resumenCarga);
+    const q = sinTildes(normalizarTematica(consulta.q || ''));
+    if (q) items = items.filter((c) => sinTildes(normalizarTematica(c.nombre)).includes(q));
+    if (consulta.tematica_id) {
+      items = items.filter((c) => c.tematicas.some((t) => t.id === Number(consulta.tematica_id)));
+    }
+    return { items, opciones: OPCIONES_CARGA };
+  }
+
+  if (clave === 'GET /tematicas') {
+    return {
+      items: [...bd.tematicas].sort((a, b) => a.nombre.localeCompare(b.nombre)).map((t) => ({
+        id: t.id, nombre: t.nombre,
+        cargas: bd.cargaTematicas.filter((v) => v.tematica_id === t.id).length,
+      })),
+    };
+  }
+
+  if (partes[0] === 'cargas' && partes[2] === 'tematicas' && partes.length === 3
+      && metodo === 'PUT') {
+    if (!bd.cargas.some((c) => c.id === Number(partes[1]))) throw new ErrorDemo('No existe la carga.', 404);
+    return { tematicas: guardarTematicasDemo(Number(partes[1]), cuerpo.tematicas) };
+  }
+
+  /* R-TEM.5 — en el modo demo no hay Claude: la «propuesta» sale de las
+     preguntas guardadas de la carga con una regla a la vista, solo para
+     poder recorrer la pantalla. */
+  if (metodo === 'POST' && partes[0] === 'cargas' && partes[2] === 'tematicas'
+      && partes[3] === 'propuesta') {
+    const carga = bd.cargas.find((c) => c.id === Number(partes[1]));
+    if (!carga) throw new ErrorDemo('No existe la carga.', 404);
+    const cuestionario = bd.semantica.cuestionarios.find((c) => c.ref_estudio === carga.ref_estudio);
+    const preguntas = bd.semantica.preguntas.filter((q) => q.cuestionario_id === cuestionario?.id);
+    if (!preguntas.length) {
+      return { estado: 'sin_preguntas', aviso: 'No hay preguntas que analizar.', propuesta: [],
+               preguntas_enviadas: 0, actuales: tematicasDe(carga.id) };
+    }
+    const nombres = ['elección de marca', 'motivos de compra', 'lealtad a la marca'];
+    return {
+      estado: 'ok', aviso: null, preguntas_enviadas: preguntas.length, proveedor: 'demo',
+      actuales: tematicasDe(carga.id),
+      propuesta: nombres.map((nombre, i) => ({
+        nombre, es_nueva: !bd.tematicas.some((t) => t.nombre === nombre),
+        preguntas_relacionadas: [preguntas[i % preguntas.length]]
+          .map((q) => ({ codigo: q.codigo, texto: q.texto })),
+      })),
+    };
   }
 
   if (partes[0] === 'cargas' && partes.length === 2 && ['GET', 'PATCH'].includes(metodo)) {

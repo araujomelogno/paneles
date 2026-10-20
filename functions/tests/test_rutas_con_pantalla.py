@@ -35,7 +35,10 @@ FASES_CON_PANTALLA = ("R7.", "R8.",
                       "R-ORG.",
                       # R-CS — recuperación y verificación de consultas
                       # semánticas: alcance completo y su ejecución.
-                      "R-CS.")
+                      "R-CS.",
+                      # R-TEM / R-CAR — temáticas de la carga y la sección
+                      # Cargas.
+                      "R-TEM.", "R-CAR.")
 
 # Rutas de estas fases que **no** tienen pantalla, con el motivo. Vacío hoy;
 # si alguna vez hace falta, el motivo va escrito acá y no en la memoria de
@@ -49,9 +52,11 @@ SIN_PANTALLA = {
 }
 
 # `nombre: (args) => VERBO(` seguido del camino entre comillas o backticks.
+# `subir(` es un POST con avance (XHR): lo usan las rutas que reciben un
+# archivo, como la ingesta de una carga.
 _LLAMADA = re.compile(
     r"(?P<nombre>[A-Za-z_]\w*)\s*:\s*\([^)]*\)\s*=>\s*"
-    r"(?:\n\s*)?(?P<verbo>GET|POST|PUT|PATCH|DELETE|pedir)\(\s*"
+    r"(?:\n\s*)?(?P<verbo>GET|POST|PUT|PATCH|DELETE|pedir|subir)\(\s*"
     r"(?:'(?P<metodo>[A-Z]+)'\s*,\s*)?[`'\"](?P<camino>[^`'\"]+)[`'\"]")
 
 
@@ -75,7 +80,8 @@ def _llamadas_de_api():
     for i in range(1, len(bloques), 2):
         objeto, cuerpo = bloques[i], bloques[i + 1]
         for m in _LLAMADA.finditer(cuerpo):
-            metodo = m.group("metodo") or m.group("verbo")
+            metodo = m.group("metodo") or (
+                "POST" if m.group("verbo") == "subir" else m.group("verbo"))
             clave = (metodo, _normalizar(m.group("camino")))
             llamadas.setdefault(clave, set()).add(f"{objeto}.{m.group('nombre')}")
     return llamadas

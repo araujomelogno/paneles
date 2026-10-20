@@ -17,6 +17,8 @@ Todo se abre en forma perezosa, y no por prolijidad:
   contraseña; una consulta semántica no tiene por qué instanciarlas.
 * **El encolador de ingestas.** Levanta el cliente de Cloud Tasks. Lo usan
   las tres rutas que confirman una carga y la de reintentar un lote.
+* **El proponente de temáticas** (R-TEM). Lee la clave de Claude. Solo lo
+  usan la revisión de una carga y «proponer temáticas» de una ya hecha.
 """
 
 import contextlib
@@ -46,6 +48,7 @@ class Contexto:
         self._padron = None
         self._credenciales = None
         self._encolador = None
+        self._proponente_tematicas = None
         self._pila = contextlib.ExitStack()
 
     @property
@@ -106,6 +109,19 @@ class Contexto:
 
             self._encolador = diferida.crear_encolador(self.cfg)
         return self._encolador
+
+    @property
+    def proponente_tematicas(self):
+        if self._proponente_tematicas is None:
+            from . import tematicas
+
+            self._proponente_tematicas = tematicas.crear(self.cfg)
+        return self._proponente_tematicas
+
+    @proponente_tematicas.setter
+    def proponente_tematicas(self, proponente):
+        # Para las pruebas: un doble con la misma interfaz que `Claude`.
+        self._proponente_tematicas = proponente
 
     def cerrar(self):
         self._pila.close()

@@ -53,6 +53,12 @@ export async function render(main, ctx) {
     api.cargas.listar().catch(() => ({ items: [] })),
   ]);
   catalogoDeAtributos = delCatalogo;
+  // R-CAR.2 — desde el detalle de una carga se llega con su id: se abre en
+  // el ámbito «una carga», con esa carga elegida.
+  if (ctx.contexto?.cargaId) {
+    ambitoActual = 'carga';
+    cargaActual = Number(ctx.contexto.cargaId);
+  }
   const activos = paneles.filter((p) => p.estado === 'activo');
   panelActual = activos.some((p) => p.id === panelActual) ? panelActual : activos[0]?.id ?? null;
   cargaActual = cargas.some((c) => c.id === cargaActual) ? cargaActual : cargas[0]?.id ?? null;

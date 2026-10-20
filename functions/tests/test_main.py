@@ -31,6 +31,9 @@ NO_SON_SECRETOS = frozenset({
     "EMBEDDINGS_PROVEEDOR", "EMBEDDINGS_MODELO", "EMBEDDINGS_DIMS",
     "RERANKER_PROVEEDOR", "RERANKER_MODELO",
     "VERIFICACION_PROVEEDOR", "CLAUDE_MODELO",
+    # R-TEM — la propuesta de temáticas: proveedor, modelo y espera. Por
+    # defecto son los de la verificación; la clave es `CLAUDE_API_KEY`.
+    "TEMATICAS_PROVEEDOR", "TEMATICAS_MODELO", "TEMATICAS_TIEMPO_S",
     "PADRON_USUARIOS",
     # R6.1.a — el interruptor del doble de credenciales, igual que
     # `PADRON_USUARIOS`: dice qué implementación usar, no qué clave.

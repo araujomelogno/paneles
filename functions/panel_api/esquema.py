@@ -165,6 +165,8 @@ MIGRACIONES_BOVEDA = (
         "carga.tipo_datos_origen", "carga.tipo_datos_origen_otro",
         "carga.modo_relevamiento", "carga.modo_relevamiento_otro",
     )),
+    # ── R-TEM ── las temáticas incorporadas de cada carga ──
+    ("0027_tematicas_de_la_carga.sql", ("tematica", "carga_tematica")),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -309,6 +311,9 @@ PARA_QUE = {
     "purgar_ingestas_terminadas()": "libera las filas guardadas de las cargas viejas; sin ella el espacio temporal de las cargas grandes no se recupera nunca",
     "estado_ingesta": "los estados de un trabajo de ingesta, con su etiqueta, para que la pantalla no repita el diccionario",
     "estado_lote_ingesta": "los estados de un lote de ingesta, con su etiqueta",
+    # ── R-TEM ──
+    "tematica": "el vocabulario compartido de temáticas con que se describe de qué trata cada carga",
+    "carga_tematica": "qué temáticas cubre cada carga y si las propuso Claude o las agregó el analista",
 }
 
 

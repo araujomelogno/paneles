@@ -14,6 +14,26 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Temáticas incorporadas y sección Cargas · 2026-10-20.** La **15, Cargas
+> y sus temáticas**, es nueva: el listado (con búsqueda por nombre y filtro
+> por temática), el detalle de una carga (atributos, creados y reutilizados,
+> la lista paginada de panelistas con enlace a la ficha y a la composición),
+> cómo se editan las temáticas, «Proponer temáticas» para una carga anterior
+> y cómo se mantiene el vocabulario sin variantes. La 3.6 suma el **tipo de
+> datos de origen** y el **modo de relevamiento** del formulario de carga
+> (boveda/0026, que el manual no había recogido) y el apartado «Las
+> temáticas, en la revisión». La 1.2 dice quién puede editar temáticas.
+> Preguntas frecuentes y Glosario pasan a ser la 16 y la 17; tres preguntas
+> frecuentes y el término **Temática** nuevos.
+>
+> **Capturas nuevas, de la 97 a la 101**, con el método de la 62: un
+> servidor mínimo que sirve `web/public` y despacha `/api/**` a
+> `ruteo.despachar` con un actor administrador, contra un Postgres de
+> pruebas sembrado con tres cargas (dos con temáticas, una anterior sin
+> ellas), Firebase Auth simulado en Playwright y un proponente `Claude` cuyo
+> transporte doble arma la propuesta por reglas a la vista sobre los textos
+> de las preguntas.
+
 > **Un candidato por respuesta distinta · 2026-10-11.** Unidades de
 > evidencia (D73): de ~21 mil respuestas, solo 861 son textos distintos, y
 > desde esta versión la búsqueda y la verificación trabajan sobre esos textos.

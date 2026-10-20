@@ -4210,3 +4210,88 @@ estimación del addendum A2). El ahorro grande es en verificación.
 (`clave_unidad`, `_seleccionar_y_verificar`), `consulta_completa.py`,
 `ingesta.py`, `reproceso.py`, `esquema.py`, `scripts/diagnosticar_consulta.py`
 (`unidades`), `functions/tests/test_unidades_de_evidencia.py`.
+
+## D74 · De qué trata una carga: temáticas compartidas que Claude propone y el analista confirma
+
+**El problema.** Una carga sabía de dónde vino (D67, boveda/0026) pero no de
+qué trata: para saber qué temas cubrió un estudio había que abrir el SAV. Y no
+había una pantalla donde mirar una carga como un todo
+(`specs/SPEC_tematicas_y_seccion_cargas.md`). La pregunta de fondo —«¿sobre qué
+temas tenemos información de esta gente?»— empieza por saber de qué trata cada
+carga.
+
+**La decisión.**
+
+- **Una temática es una entidad propia, compartida entre cargas**
+  (`tematica`, boveda/0027), con un vínculo `carga_tematica` que registra su
+  origen (`propuesta_ia` | `manual`). Si cada carga guardara sus etiquetas
+  como texto, el conjunto se llenaría de variantes en pocos meses.
+- **El nombre se normaliza y la base lo hace valer**: minúsculas, un espacio
+  entre palabras, nada en los bordes (`check tematica_nombre_normalizado`).
+  Además, antes de crear una temática se busca una existente que difiera solo
+  en tildes, para lo tipeado y para lo que devuelve Claude. Las tildes se
+  conservan en el nombre (es lo que se muestra), y la unicidad de la base es
+  por el nombre normalizado.
+- **Claude propone en el paso de revisión, con la herramienta forzada.** La
+  propuesta sale de la misma ruta que ejecuta, con `solo_revisar` (D63/R7.2),
+  y se calcula sobre lo que el propio resumen dice que va al store semántico
+  (`al_store_semantico.variables`): las demográficas, las de identidad, las
+  excluidas y la columna que identifica ya quedaron afuera ahí. Solo viajan
+  código y texto de cada pregunta, nunca una respuesta. El prompt lleva la
+  lista de temáticas existentes con la instrucción de reutilizarlas
+  textualmente; `es_nueva` lo decide la base, no el modelo.
+- **La propuesta nunca bloquea.** Una llamada por carga, sin reintentos,
+  con el modelo (`CLAUDE_MODELO`) y la espera (`VERIFICACION_PRESUPUESTO_S`)
+  de la verificación, separables con `TEMATICAS_MODELO` y
+  `TEMATICAS_TIEMPO_S`. Un error HTTP, de red, una respuesta truncada
+  (`stop_reason` mirado antes que la herramienta, como en D66) o ilegible dan
+  una propuesta vacía con su aviso, y la carga se confirma igual.
+- **Un solo camino de escritura**: `PUT /cargas/<id>/tematicas` reemplaza la
+  lista. La pantalla lo llama al confirmar una carga nueva (antes de encolar)
+  y desde el detalle de una carga ya confirmada. El cuerpo de la ingesta no
+  cambia: revisar y ejecutar siguen mandando el mismo objeto (D63). Volver a
+  revisar sin cambiar las preguntas no repite la llamada a Claude
+  (`proponer_tematicas: false`) y conserva lo editado.
+- **Cargas anteriores**: `POST /cargas/<id>/tematicas/propuesta` propone con
+  las preguntas ya guardadas en el store semántico (por `ref_estudio`), sin
+  volver a subir el archivo, y no aplica nada.
+- **La sección Cargas** lista las cargas por fecha del estudio (o de carga, sin
+  ella) con sus temáticas, filtra por temática y busca por nombre sin tildes
+  ni mayúsculas (en Python: el `ilike` de la base depende de su configuración
+  regional y en `C` no pliega «Ó»). El detalle muestra atributos, creados y
+  reutilizados, las temáticas editables y la lista paginada de panelistas,
+  que **es** `GET /panelistas?carga_id=…`: misma ruta y mismo permiso que la
+  sección Panelistas, ahora con `origen_en_carga` por fila. Una ruta propia
+  habría tenido que volver a demostrar que no muestra de más.
+
+**Lo que no cambia.** El store semántico (no se toca), la ingesta (confirmar
+no llama a Claude y las tareas no saben de temáticas), la superficie de
+COLOQUIO (las tablas nuevas no tienen `grant`) y la ficha: las temáticas
+describen la carga, no a cada persona, y no se ofrecen como atributo ni como
+filtro de personas.
+
+**Lo que cuesta.** ~US$ 0,02 por carga (una llamada); US$ 0 de
+infraestructura.
+
+**Lo que se descartó.**
+
+- *Texto libre en la carga* (`carga.tematicas text[]`): es lo que el
+  requerimiento existe para evitar.
+- *Proponer al analizar el SAV*, antes de marcar las demográficas: habría
+  mandado las variables de identidad y demográficas, y cada carga tendría
+  «datos demográficos» como temática.
+- *Mandar las temáticas en el cuerpo de la ingesta*: dos objetos distintos
+  para revisar y ejecutar, que es lo que D63 prohíbe; y dos caminos de
+  escritura de temáticas en vez de uno.
+- *Confiar en el `es_nueva` de Claude*: un «false» sobre un nombre que no
+  existe crearía una temática sin que la revisión la marcara como nueva.
+- *Jerarquía y fusión de temáticas*: fuera de esta versión. La FK de
+  `carga_tematica` a `tematica` es `restrict` para que fusionar sea mover los
+  vínculos y después borrar.
+
+**Dónde vive.** `db/boveda/0027_tematicas_de_la_carga.sql`,
+`db/revertir/boveda_0027.sql`, `functions/panel_api/tematicas.py`,
+`cargas.py` (`listar`, `obtener`), `personas.py` (`origen_en_carga`),
+`ruteo.py`, `contexto.py`, `esquema.py`, `web/public/js/tematicas.js`,
+`web/public/js/paginas/cargas.js`, `encuestas.js` (la revisión),
+`functions/tests/test_tematicas_y_seccion_cargas.py`.

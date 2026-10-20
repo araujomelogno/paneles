@@ -21,6 +21,7 @@ import * as pagGamificacion from './paginas/gamificacion.js';
 import * as pagInscripciones from './paginas/inscripciones.js';
 import * as pagLongitudinal from './paginas/longitudinal.js';
 import * as pagEstadisticas from './paginas/estadisticas.js';
+import * as pagCargas from './paginas/cargas.js';
 
 const CDN = 'https://www.gstatic.com/firebasejs/10.7.0';
 const cfg = window.firebaseConfig || {};
@@ -50,6 +51,8 @@ const puede = (rol, permiso) => (PERMISOS[permiso] || []).includes(rol);
 
 const PAGINAS = [
   { id: 'panelistas',    icono: '👤', etiqueta: 'Panelistas',   modulo: pagPanelistas,   permiso: 'leer' },
+  // R-CAR — cada carga como un todo: datos, individuos, temáticas y panelistas.
+  { id: 'cargas',        icono: '🗂️', etiqueta: 'Cargas',       modulo: pagCargas,       permiso: 'leer' },
   { id: 'paneles',       icono: '📋', etiqueta: 'Paneles',      modulo: pagPaneles,      permiso: 'leer' },
   { id: 'encuestas',     icono: '📨', etiqueta: 'Encuestas',    modulo: pagEncuestas,    permiso: 'leer' },
   { id: 'consultas',     icono: '🔎', etiqueta: 'Consultas',    modulo: pagConsultas,    permiso: 'consultar' },
