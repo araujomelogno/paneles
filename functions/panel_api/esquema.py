@@ -166,7 +166,10 @@ MIGRACIONES_BOVEDA = (
         "carga.modo_relevamiento", "carga.modo_relevamiento_otro",
     )),
     # ── R-TEM ── las temáticas incorporadas de cada carga ──
-    ("0027_tematicas_de_la_carga.sql", ("tematica", "carga_tematica")),
+    ("0027_tematicas_de_la_carga.sql", (
+        "tematica", "carga_tematica", "tematica.es_especial",
+        "tematica_pregunta", "persona_tematica",
+    )),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -314,6 +317,9 @@ PARA_QUE = {
     # ── R-TEM ──
     "tematica": "el vocabulario compartido de temáticas con que se describe de qué trata cada carga",
     "carga_tematica": "qué temáticas cubre cada carga y si las propuso Claude o las agregó el analista",
+    "tematica.es_especial": "marcar las temáticas de categoría especial, que no salen como columna ni en exportaciones y se consultan con permiso",
+    "tematica_pregunta": "qué preguntas sustentan cada temática en cada carga; sin ella ningún panelista puede tener la temática",
+    "persona_tematica": "sobre qué temáticas respondió cada panelista, para filtrar, contar en la composición y mostrar en la ficha",
 }
 
 

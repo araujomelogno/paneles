@@ -1696,7 +1696,8 @@ function abrirIngesta(destino, alTerminar) {
     const sinClave = Boolean(resumen.sin_clave_de_dedup);
     revision$.innerHTML = resumenHtml(resumen) + (esCarga ? `
       <h4>Temáticas incorporadas</h4>
-      <p class="small">De qué trata esta carga. ${proponer
+      <p class="small">De qué trata esta carga, y qué preguntas sustentan cada
+        temática: un panelista la tiene si respondió al menos una. ${proponer
         ? 'Claude las propuso a partir de los textos de las preguntas que van al store '
           + 'semántico (ni respuestas ni demográficos): aceptá, quitá o agregá.'
         : 'Las que dejaste en la revisión anterior.'} Se guardan al confirmar, y se
@@ -1724,6 +1725,10 @@ function abrirIngesta(destino, alTerminar) {
       const propuesta = resumen.tematicas;
       editorTematicas = editorDeTematicas($('#rev-tematicas', revision$), {
         vocabulario,
+        // R-TEM.6 — las preguntas que se pueden asociar son las que van al
+        // store semántico: las mismas que vio Claude.
+        preguntasDisponibles: resumen.al_store_semantico?.variables || [],
+        puedeDesmarcar: false,
         iniciales: proponer ? [] : (tematicasElegidas || []),
         propuesta: proponer ? (propuesta?.propuesta || []) : [],
         aviso: proponer ? propuesta?.aviso : null,

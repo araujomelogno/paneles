@@ -380,9 +380,9 @@ resultados se agrega ahí, una vez.
 
 ## De qué trata una carga: temáticas, y la sección Cargas
 
-Desde R-TEM / R-CAR (D74, `boveda/0027`) cada carga tiene sus **temáticas
-incorporadas** y hay una sección «Cargas» que la mira entera. Lo que no hay
-que deshacer:
+Desde R-TEM / R-CAR (D74, D75, `boveda/0027`) cada carga tiene sus
+**temáticas incorporadas**, cada panelista las suyas, y hay una sección
+«Cargas» que la mira entera. Lo que no hay que deshacer:
 
 - **Una temática es una entidad compartida** (`tematica`), no texto en la
   carga. El nombre se guarda normalizado (minúsculas, espacios simples) y lo
@@ -401,9 +401,26 @@ que deshacer:
   solo código y texto, nunca respuestas, ni demográficas, ni identidad, ni la
   columna que identifica. No armen un segundo criterio de qué se manda.
   `es_nueva` lo decide la base, no el modelo.
-- **Las temáticas describen la carga, no a la persona.** No se copian en
-  `persona`, no son atributos ni filtran personas: eso es la consulta
-  semántica.
+- **Hay dos niveles y no se mezclan** (R-TEM.6, D75): las temáticas de **la
+  carga** (qué cubrió el estudio) y las de **cada panelista**
+  (`persona_tematica`: sobre qué respondió). Una persona tiene la temática si
+  respondió **al menos una** de las preguntas que la sustentan en esa carga
+  (`tematica_pregunta`); haber estado en la carga no alcanza. No hereden la
+  temática de la carga.
+- **«Respondió» tiene una sola definición**: `tematicas.respondida` (lo
+  embebido que no es no respuesta, con `calidad_dato.es_no_respuesta`). La
+  usan los dos caminos: la ingesta (`registrar_de_lote`, con la fila en la
+  mano, **sin leer el store semántico**) y el recálculo (`recalcular_carga`,
+  desde el semántico por `ref_estudio`, al guardar las temáticas de una
+  carga). No escriban una tercera.
+- **Las especiales** (`tematica.es_especial`) no son columna
+  (`columna_de_varias` las excluye), no salen en exportaciones (sus columnas
+  son fijas) y filtrar, contar o verlas en la ficha exige
+  `tematicas_especiales`. Marcar es libre; **desmarcar** exige
+  `gestionar_atributos`. Un retiro de `uso_semantico` borra las temáticas de
+  la persona en el acto (`bajas.retirar`): se derivaron de ese contenido.
+- `tematica` y `tematicas` son claves reservadas (`atributos.CLAVES_RESERVADAS`):
+  la primera es la dimensión del filtro demográfico, la segunda la columna.
 - **La lista de panelistas de una carga es `GET /panelistas?carga_id=…`**, la
   misma ruta y permiso que la sección Panelistas. No agreguen una ruta bajo
   `/cargas/` que liste personas; hay una prueba que lo vigila.

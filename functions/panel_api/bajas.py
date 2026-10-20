@@ -160,6 +160,16 @@ def retirar(conn_boveda, id_persona, finalidad=TODAS, actor=None,
     if borra_pii:
         _lapida(conn_boveda, id_persona, "retiro_consentimiento", finalidad, actor)
 
+    # R-TEM.6 — las temáticas de la persona se derivan del contenido de sus
+    # respuestas: si ese contenido se borra, lo que se dedujo de él se va
+    # también, en la bóveda y en el acto, sin esperar al store semántico.
+    # (En la baja total la cascada desde `persona` lo haría igual.)
+    tematicas_borradas = 0
+    if borra_semantica:
+        tematicas_borradas = db.ejecutar(
+            conn_boveda, "delete from persona_tematica where id_persona = %s",
+            (id_persona,))
+
     resultado_semantica = {"estado": "no_aplica"}
     if not borra_semantica:
         # Un retiro que no toca el store semántico no le deja nada por hacer a
@@ -224,6 +234,7 @@ def retirar(conn_boveda, id_persona, finalidad=TODAS, actor=None,
         "finalidad_retirada": finalidad,
         "consentimientos_retirados": retirados,
         "membresias_dadas_de_baja": membresias_bajas,
+        "tematicas_borradas": tematicas_borradas,
         "pii_borrada": bool(pii_borrada),
         "semantica": resultado_semantica,
         # Qué pasó con la credencial del portal. Se informa en vez de

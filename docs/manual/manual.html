@@ -70,7 +70,8 @@
     <li><a href="#s-cargas"><span><span class="num">15</span> Cargas y sus temáticas</span></a>
       <ul><li>El listado y sus filtros · El detalle de una carga · Editar las
       temáticas · Proponer temáticas para una carga anterior · Un vocabulario
-      que no se duplica</li></ul></li>
+      que no se duplica · Las temáticas de cada panelista · Temáticas
+      especiales</li></ul></li>
     <li><a href="#s13"><span><span class="num">16</span> Preguntas frecuentes</span></a></li>
     <li><a href="#s14"><span><span class="num">17</span> Glosario</span></a></li>
   </ol>
@@ -162,14 +163,15 @@
       <td>Crear encuestas, convocar, ingestar respuestas, editar las temáticas
       de una carga y ejecutar consultas.</td>
       <td>Enrolar panelistas, gestionar paneles, resolver identificadores a
-      personas y gestionar usuarios.</td>
+      personas, filtrar o ver temáticas especiales y gestionar usuarios.</td>
     </tr>
     <tr>
       <td class="destacado">Cumplimiento / DPO</td>
       <td>Consultar toda la información, atender retiros de consentimiento y
       bajas, y revisar el registro de accesos a datos personales.</td>
       <td>Enrolar, gestionar paneles, ingestar o editar las temáticas de una
-      carga, ejecutar consultas semánticas y gestionar usuarios.</td>
+      carga, ejecutar consultas semánticas y gestionar usuarios. (Sí ve las
+      temáticas especiales en fichas y composición.)</td>
     </tr>
   </table>
 
@@ -504,6 +506,22 @@
     ninguna carga.</p>
   </div>
 
+  <h4>Las temáticas con información</h4>
+
+  <p>Debajo del origen, la tarjeta <strong>Temáticas con información</strong>
+  dice <strong>sobre qué temas respondió</strong> la persona y en qué carga:
+  una fila por temática y carga, con cuántas de sus preguntas respondió. Una
+  persona tiene una temática si respondió al menos una de las preguntas que la
+  sustentan; haber estado en una carga que cubría el tema no alcanza, y «No
+  sabe» o una respuesta vacía no cuentan (sección 15.6).</p>
+
+  <figure>
+    <img class="recorte" src="capturas/102-ficha-tematicas.jpg" alt="Tarjeta Temáticas con información de la ficha" />
+    <figcaption><b>Temáticas con información.</b> Respondió sobre telefonía en
+    dos estudios. Las de categoría especial solo se muestran a los roles
+    habilitados; para los demás, la tarjeta dice cuántas quedaron fuera.</figcaption>
+  </figure>
+
   <h4>Otorgar una finalidad</h4>
 
   <p>El botón <strong>Otorgar finalidad</strong> de la tarjeta de
@@ -590,9 +608,9 @@
   <figure>
     <img src="capturas/101-revision-tematicas-propuestas.jpg" alt="Temáticas propuestas en la revisión de una carga" />
     <figcaption><b>Temáticas propuestas.</b> Las etiquetas naranjas con
-    <i>IA</i> las propuso Claude; las tres ya existían en el sistema, así que se
-    reutilizan en vez de crear variantes. Debajo, de qué preguntas sale cada
-    una.</figcaption>
+    <i>IA</i> las propuso Claude: tres ya existían y se reutilizan, «salud y
+    bienestar» es nueva y Claude la sugirió como especial. Debajo, qué
+    preguntas sustentan cada una.</figcaption>
   </figure>
 
   <ul class="puntos">
@@ -603,6 +621,15 @@
     <li>Una etiqueta marcada <b>nueva</b> no
     existe todavía y se crea al confirmar. Las demás ya estaban en el sistema
     (sección 15.5).</li>
+    <li>Debajo de las etiquetas, una tabla dice <strong>qué preguntas
+    sustentan cada temática</strong> —las que propuso Claude— y permite quitar
+    o sumar preguntas. No es un detalle: un panelista tiene la temática si
+    respondió al menos una de ellas (sección 15.6). Una temática sin preguntas
+    describe la carga, pero nadie la va a tener.</li>
+    <li>La columna <strong>Especial</strong> marca las temáticas de categoría
+    especial (salud, consumo de sustancias, ideología política, religión, vida
+    sexual). Claude marca las que podrían serlo; el analista confirma
+    (sección 15.7).</li>
     <li>Si la propuesta <strong>falla o tarda</strong>, la revisión llega
     igual, con un aviso y la lista vacía: la carga se confirma normalmente y
     las temáticas se agregan a mano, ahí o después.</li>
@@ -2521,6 +2548,29 @@
     registrada muestra «sin dato» en <i>Estudio de origen</i>.</figcaption>
   </figure>
 
+  <h4>Filtrar por temática</h4>
+
+  <p>El botón <strong>+ Temática</strong>, junto a <i>+ Criterio
+  demográfico</i>, agrega el filtro «con información sobre…»: deja a quienes
+  respondieron sobre ese tema en alguna carga (sección 15.6). Con varias
+  temáticas elegidas alcanza con tener cualquiera. Se resuelve en la bóveda
+  como cualquier filtro demográfico, se puede combinar con atributos y con
+  criterios semánticos, y es la forma más barata de contestar «¿de cuántos
+  del panel sabemos algo sobre este tema?».</p>
+
+  <figure>
+    <img src="capturas/103-consulta-filtro-tematica.jpg" alt="Consulta filtrada por temática" />
+    <figcaption><b>Con información sobre telefonía móvil.</b> Trece personas
+    respondieron sobre el tema en alguna de las dos cargas que lo cubren. Se
+    resolvió en la bóveda, sin tocar las respuestas ni pagar una
+    consulta.</figcaption>
+  </figure>
+
+  <p>Las temáticas especiales aparecen marcadas como restringidas: filtrar por
+  ellas lo pueden hacer administración y responsable de panel. La columna
+  <strong>Temáticas con información</strong> del selector de columnas nunca
+  muestra una especial, y ninguna exportación las incluye.</p>
+
 
   <h3><span class="n">6.11</span> Consulta completa: verificar todo, con presupuesto</h3>
 
@@ -2737,6 +2787,19 @@
   cruzada.</p>
 
   <h3><span class="n">7.5</span> El ámbito: todos los panelistas, un panel o una carga</h3>
+
+  <p>Al final de la composición de cualquier ámbito, el bloque
+  <strong>Temáticas con información</strong> cuenta cuántas personas del
+  ámbito tienen cada temática (sección 15.6). Una persona puede tener varias,
+  así que los porcentajes no suman 100. No es una dimensión con universo de
+  referencia: no tiene brecha.</p>
+
+  <figure>
+    <img src="capturas/104-composicion-tematicas.jpg" alt="Temáticas con información en la composición" />
+    <figcaption><b>Temáticas en la composición.</b> De todos los panelistas,
+    cuántos respondieron sobre cada tema.</figcaption>
+  </figure>
+
 
   <p><strong>Todos los panelistas</strong> calcula la composición de la
   bóveda entera: todas las personas, estén o no en un panel. Es la única vista
@@ -3891,7 +3954,9 @@
     <li><strong>Individuos</strong>: cuántos en total, cuántos
     <strong>creó</strong> esta carga y cuántos <strong>reutilizó</strong>
     porque ya existían.</li>
-    <li><strong>Temáticas incorporadas</strong>, editables (15.3).</li>
+    <li><strong>Temáticas incorporadas</strong>, editables (15.3), con las
+    preguntas que sustentan cada una y cuántos panelistas de la carga la
+    tienen.</li>
     <li><strong>Panelistas cargados</strong>: la lista de las personas
     vinculadas, de a 25, con <i>Anterior</i> y <i>Siguiente</i>. La columna
     <i>En esta carga</i> dice si la persona fue creada o reutilizada, y
@@ -3899,7 +3964,7 @@
   </ul>
 
   <figure>
-    <img src="capturas/99-carga-detalle.jpg" alt="Detalle de una carga" />
+    <img src="capturas/105-carga-detalle-panelistas.jpg" alt="Detalle de una carga" />
     <figcaption><b>El detalle.</b> El ómnibus creó once personas y reutilizó
     una panelista que ya existía; es la única con consentimiento de
     contacto.</figcaption>
@@ -3928,13 +3993,19 @@
   <i>IA</i> (y quedan registradas como <i>propuesta de IA</i> aunque después se
   vuelva a guardar la lista); las agregadas a mano, no.</p>
 
-  <div class="aviso">
-    <div class="t">Describen la carga, no a cada persona</div>
-    <p>Que una carga cubra «consumo de tabaco» no quiere decir que todas sus
-    personas hayan respondido esas preguntas. Por eso las temáticas no
-    aparecen en la ficha ni sirven para filtrar personas: para encontrar
-    gente por lo que respondió está la consulta semántica (sección 6).</p>
-  </div>
+  <p>Debajo de las etiquetas, la tabla de cada temática tiene sus
+  <strong>preguntas</strong> (se quitan con <b>×</b> y se suman con
+  <i>+ Pregunta…</i>, de entre las preguntas guardadas de la carga), la marca
+  <strong>Especial</strong> y la columna <strong>Panelistas</strong>: cuántas
+  personas de la carga la tienen. Al guardar, el sistema
+  <strong>recalcula</strong> las temáticas de todos los panelistas de la carga:
+  sacar una pregunta puede hacer que alguien deje de tener la temática.</p>
+
+  <figure>
+    <img src="capturas/99-carga-detalle.jpg" alt="Detalle de una carga con sus temáticas" />
+    <figcaption><b>Las temáticas en el detalle.</b> Cada una con sus preguntas
+    y cuántos panelistas de la carga la tienen.</figcaption>
+  </figure>
 
   <h3><span class="n">15.4</span> Proponer temáticas para una carga anterior</h3>
 
@@ -3978,6 +4049,58 @@
   <p>Lo que estas reglas no evitan son los sinónimos («telefonía móvil» y
   «celulares»). Por eso, antes de agregar una temática a mano, conviene mirar
   las sugerencias del campo: si ya hay una que dice lo mismo, usar esa.</p>
+
+  <h3><span class="n">15.6</span> Las temáticas de cada panelista</h3>
+
+  <p>Hay dos niveles y conviene no confundirlos: las temáticas de
+  <strong>la carga</strong> dicen qué cubrió el estudio; las de <strong>cada
+  panelista</strong>, sobre qué respondió. Que una carga cubra un tema no
+  quiere decir que todas sus personas lo tengan: pudieron saltear esas
+  preguntas, o estar en una rama del cuestionario que no las incluía.</p>
+
+  <ul class="puntos">
+    <li>Un panelista tiene la temática si <strong>respondió al menos una</strong>
+    de las preguntas que la sustentan, en cualquiera de sus cargas. Si está en
+    varias cargas, acumula las temáticas de todas.</li>
+    <li>Una respuesta <strong>vacía</strong> o de <strong>no respuesta</strong>
+    («No sabe», «No contesta», los códigos de la lista de no respuesta de la
+    carga) no cuenta.</li>
+    <li>En una batería, una opción no marcada sí cuenta —la persona vio la
+    pregunta—, salvo que al cargarla se haya elegido <i>solo lo marcado</i>
+    (sección 5.8).</li>
+    <li>Se calculan al confirmar la carga, sin costo, y se
+    <strong>recalculan</strong> cada vez que se guardan las temáticas de la
+    carga. Para una carga anterior, guardarlas por primera vez es el cálculo
+    inicial.</li>
+    <li>Una <strong>baja</strong> o el retiro del consentimiento de uso
+    semántico eliminan las temáticas de la persona.</li>
+  </ul>
+
+  <p>Dónde se ven: en la ficha (sección 3.5), como filtro de la consulta
+  (6.10), como columna de los resultados y en la composición de cualquier
+  ámbito (7.5).</p>
+
+  <h3><span class="n">15.7</span> Temáticas especiales</h3>
+
+  <p>Una temática es <strong>especial</strong> si toca salud, consumo de
+  sustancias, ideología política, religión o vida sexual, igual que los
+  atributos de categoría especial (sección 12.6). Una temática no es la
+  respuesta —dice «respondió sobre salud», no qué respondió—, pero asociar a
+  una persona identificada con un tema sensible ya es información sobre ella.
+  Por eso, una temática especial:</p>
+
+  <ul class="puntos">
+    <li><strong>no se ofrece como columna</strong> de los resultados y
+    <strong>no sale en ninguna exportación</strong>;</li>
+    <li>se puede filtrar, contar en la composición y ver en la ficha solo con
+    los roles de administración, responsable de panel y cumplimiento.</li>
+  </ul>
+
+  <p>Al proponer, Claude marca las que podrían ser especiales y el analista lo
+  confirma. Cualquiera que edite temáticas puede marcar una como especial;
+  <strong>quitarle la marca</strong> lo puede hacer solo administración, porque
+  la vuelve a exponer. La marca es de la temática y vale en todas las
+  cargas.</p>
 </section>
 
 <section id="s13">
@@ -4000,9 +4123,19 @@
   existía una que difería solo en tildes, quedó esa.</p>
 
   <h4>¿Puedo buscar a las personas de una temática?</h4>
-  <p>No con las temáticas: describen la carga, no a cada persona, y no todas
-  las personas de una carga respondieron todas sus preguntas. Para encontrar
-  gente por lo que respondió está la consulta semántica (sección 6).</p>
+  <p>Sí: en Consultas, <i>+ Temática</i> (6.10) deja a quienes respondieron
+  sobre ese tema. Dice que hay información, no qué opinan: para eso está el
+  criterio semántico, que se puede sumar en la misma consulta.</p>
+
+  <h4>Alguien está en la carga y no tiene la temática de la carga</h4>
+  <p>Es lo esperable si no respondió ninguna de sus preguntas, o si respondió
+  «No sabe». La temática de la persona dice sobre qué respondió, no en qué
+  estudio estuvo (15.6). Si la temática tiene mal elegidas sus preguntas,
+  corregilas en el detalle de la carga y guardá: se recalcula.</p>
+
+  <h4>No veo una temática en la ficha, pero la carga la tiene</h4>
+  <p>Puede ser de categoría especial: con tu rol no se muestra, y la tarjeta
+  dice cuántas quedaron fuera (15.7).</p>
 
   <h4>Subí «A verificar» y el ranking sigue mostrando 50</h4>
   <p>Lo que se muestra lo decide <strong>Personas a mostrar</strong>, que es
@@ -4253,7 +4386,11 @@
       <td>Un tema que cubren las preguntas de una carga («telefonía móvil»,
       «consumo de tabaco»). Es compartida entre cargas, se guarda en
       minúsculas y la puede proponer Claude (<i>IA</i>) o agregar el analista.
-      Describe la carga, no a cada persona.</td></tr>
+      Un panelista la tiene si respondió al menos una de sus preguntas.</td></tr>
+    <tr><td class="destacado">Temática especial</td>
+      <td>Una temática sobre salud, sustancias, ideología política, religión o
+      vida sexual. No sale como columna ni en exportaciones, y filtrarla o
+      verla en una ficha queda restringido por rol.</td></tr>
     <tr><td class="destacado">Origen (creada / reutilizada)</td>
       <td>De qué cargas proviene una persona. <i>Creada</i>: la carga la dio de
       alta. <i>Reutilizada</i>: ya existía y la carga la encontró por la

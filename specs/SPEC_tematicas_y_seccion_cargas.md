@@ -32,8 +32,9 @@ carga son el primer paso para contestarla.
 ## 3. Non-Goals
 
 - **No se clasifican las respuestas**, solo las preguntas.
-- **No se buscan panelistas por temática** en esta versión: eso es la consulta
-  semántica. Las temáticas describen la carga, no reemplazan la búsqueda.
+- **Las temáticas no reemplazan la consulta semántica.** Permiten filtrar
+  panelistas «sobre los que hay información de un tema», pero para encontrar
+  quién opina qué sigue estando la búsqueda por concepto.
 - **No hay jerarquía de temáticas** (área → tema) en esta versión.
 - **Claude no decide solo**: propone, el analista confirma.
 
@@ -108,6 +109,77 @@ carga son el primer paso para contestarla.
   (por su `ref_estudio`), sin volver a subir el archivo.
 - [ ] La propuesta pasa por la misma revisión: no se aplica sola.
 
+### R-TEM.6 — Temáticas de cada panelista (P0)
+
+Las temáticas de la carga se trasladan **a los panelistas**, almacenadas en la
+**bóveda** y consultables junto con los atributos demográficos.
+
+**Qué significa que un panelista tenga una temática.** Un panelista tiene la
+temática Y si **respondió al menos una de las preguntas relacionadas con Y**, en
+cualquiera de sus cargas. No alcanza con haber estado en una carga que cubría Y.
+
+> **Por qué así y no heredando las de la carga.** Una carga que cubre «consumo de
+> tabaco» no garantiza que cada persona haya respondido esas preguntas: pueden
+> haberlas salteado, o haber estado en una rama del cuestionario que no las
+> incluía. Heredar la temática de la carga diría «tenemos información de esta
+> persona sobre tabaco» cuando no la hay. Basarla en las respuestas dice lo que
+> realmente se sabe.
+>
+> La relación pregunta ↔ temática **ya existe**: la propuesta de R-TEM.2
+> devuelve, para cada temática, sus preguntas relacionadas. Hay que guardarla.
+
+**Cálculo al ingestar**
+- Dada la confirmación de la carga, entonces se guarda la relación **pregunta ↔
+  temática** confirmada en la revisión.
+- Dada la ingesta, entonces, para cada persona, se registra cada temática para la
+  que respondió **al menos una pregunta relacionada**.
+- Dada una respuesta **vacía** o con un valor de **no respuesta** (`No sabe`,
+  `No contesta`, los códigos marcados como tales), entonces **no cuenta** como
+  haber respondido.
+- [ ] El cálculo se hace con los datos que la ingesta ya tiene en mano —la fila
+      del archivo y su `id_persona`—, **sin leer el store semántico**.
+- [ ] Una persona en varias cargas acumula las temáticas de todas.
+
+**Sincronización**
+- Dado que se editan las temáticas o la relación pregunta ↔ temática de una
+  carga, entonces se **recalculan** las temáticas de los panelistas de esa carga.
+- Dada una baja, entonces sus temáticas se eliminan con la persona.
+- [ ] Para las cargas anteriores a este cambio (R-TEM.5), el cálculo inicial lee
+      qué preguntas respondió cada individuo desde el store semántico, por
+      `ref_estudio`. Es una operación única.
+
+**Consulta**
+- Dada la **consulta demográfica**, entonces se puede filtrar por temática:
+  «panelistas con información sobre *telefonía móvil*».
+- Dados los **resultados de una consulta**, entonces la temática se puede agregar
+  como columna (R7.4).
+- Dada la **ficha del panelista**, entonces muestra sus temáticas y de qué carga
+  viene cada una.
+- Dada la **composición**, entonces se puede ver cuántos panelistas de un ámbito
+  tienen cada temática.
+
+> **Esto es la respuesta a «¿podemos hacer este estudio con el panel?».** Contar
+> cuántos panelistas de un segmento tienen información sobre un tema, sin tocar
+> el store semántico ni pagar una consulta, es exactamente la pregunta de
+> factibilidad que motivó todo esto.
+
+**Temáticas sensibles**
+- Dada una temática, entonces puede marcarse como **especial** (salud, consumo de
+  sustancias, ideología política, religión, vida sexual), igual que los
+  atributos demográficos de categoría especial (R3.14.e).
+- Dada una temática especial, entonces **no se ofrece como columna** en los
+  resultados, **no se incluye en exportaciones** con datos y su consulta queda
+  **restringida por rol**.
+- [ ] Al proponer temáticas, Claude indica cuáles podrían ser especiales, para
+      que el analista lo confirme.
+
+> **Por qué importa.** Las temáticas viven en la bóveda, junto a la identidad.
+> Una temática no es la respuesta —dice «respondió sobre salud», no qué
+> respondió— pero asociar una persona identificada con un tema sensible ya es
+> información sobre ella. La arquitectura separa identidad y contenido
+> justamente para que esto no ocurra por accidente; acá ocurre a propósito, y
+> conviene que sea con control.
+
 ---
 
 ### R-CAR.1 — Sección «Cargas»: listado (P0)
@@ -176,6 +248,14 @@ En la bóveda:
 - **`carga_tematica`**: `carga_id`, `tematica_id`, `origen`
   (`propuesta_ia` | `manual`), `creado_en`. Única por `(carga_id,
   tematica_id)`. Cascada al borrar la carga.
+- **`tematica`**: agregar `es_especial boolean not null default false`.
+- **`tematica_pregunta`**: `carga_id`, `tematica_id`, `codigo_pregunta`. Guarda
+  qué preguntas sustentan cada temática en cada carga. Cascada al borrar la
+  carga.
+- **`persona_tematica`**: `id_persona`, `tematica_id`, `carga_id`,
+  `preguntas_respondidas` (cuántas de las relacionadas), `creado_en`. Única por
+  `(id_persona, tematica_id, carga_id)`. **Cascada al borrar la persona** y la
+  carga.
 
 Migración aditiva. Sin cambios en el store semántico.
 
@@ -201,6 +281,13 @@ Migración aditiva. Sin cambios en el store semántico.
       el archivo (test).
 - [ ] La lista de panelistas respeta los permisos de la sección de panelistas
       (test).
+- [ ] Un panelista que **respondió** una pregunta relacionada tiene la temática;
+      uno que estuvo en la carga pero **no la respondió**, no (test).
+- [ ] Una respuesta «No sabe» o vacía no cuenta como haber respondido (test).
+- [ ] Editar las temáticas de una carga recalcula las de sus panelistas (test).
+- [ ] La consulta demográfica filtra por temática (test).
+- [ ] Una temática especial no aparece como columna ni en exportaciones (test).
+- [ ] Una baja elimina las temáticas de la persona (test).
 
 ## 8. Costos
 
@@ -208,6 +295,8 @@ Migración aditiva. Sin cambios en el store semántico.
 |---|---|
 | Una propuesta de temáticas por carga | **~US$ 0,02**: una llamada a Claude con unas decenas de preguntas (unos pocos miles de tokens de entrada y unos cientos de salida). |
 | Proponer temáticas para cargas existentes | Lo mismo por carga, una sola vez. |
+| Temáticas de cada panelista (R-TEM.6) | **US$ 0**: se calculan en la ingesta con datos que ya están en memoria, sin llamadas a ninguna API. |
+| Volumen en la bóveda | Una fila por persona y temática. Con 1.000 panelistas y unas 8 temáticas por carga, unas 8.000 filas pequeñas: despreciable. |
 | Esquema e interfaz | **US$ 0** de infraestructura. |
 
 > Es el componente de IA más barato del sistema: una llamada por carga, contra
@@ -219,10 +308,18 @@ Migración aditiva. Sin cambios en el store semántico.
   cuando —fusionar sinónimos, renombrar—, la reutilización de R-TEM.3 lo frena
   pero no lo evita. Conviene prever, más adelante, una forma de **fusionar dos
   temáticas**.
-- **[producto]** Las temáticas describen **la carga**, no a cada persona. Que
-  una carga cubra «consumo de tabaco» no significa que todas sus personas hayan
-  respondido esas preguntas. No usarlas como si fueran un atributo del
-  panelista.
+- **[producto]** Hay dos niveles y conviene no confundirlos en la interfaz: las
+  temáticas de **la carga** (qué cubrió el estudio) y las de **cada panelista**
+  (sobre qué respondió). Que una carga cubra un tema no implica que todos sus
+  panelistas lo tengan.
+- **[privacidad]** R-TEM.6 lleva a la bóveda, junto a la identidad, un dato
+  derivado del contenido de las respuestas. Es grueso —el tema, no la respuesta—
+  y por eso aceptable, pero para temáticas especiales conviene revisarlo con
+  quien asesora en protección de datos antes de habilitarlo.
+- **[datos]** En las baterías de respuesta múltiple, una opción no marcada
+  (`Unchecked`) **es** una respuesta: la persona vio la pregunta. Decidir si eso
+  cuenta para la temática. La propuesta: sí cuenta, porque la persona respondió
+  sobre el tema, aunque sea para decir que no.
 - **[datos]** Los textos de las preguntas tienen que estar bien escritos para
   que la propuesta sirva. Las mejoras de interpretación del SAV (Fase 8: separar
   `"Opción:Pregunta"`, sacar consignas) mejoran también esto.

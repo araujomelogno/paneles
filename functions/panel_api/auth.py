@@ -102,6 +102,14 @@ PERMISOS = {
     # puede estimarla y leer sus resultados, pero la lanza quien responde
     # por el presupuesto. Cambiar la lista es cambiar esa decisión.
     "consulta_completa": {"admin", "operaciones"},
+
+    # R-TEM.6 — filtrar por una temática de categoría especial (salud,
+    # sustancias, ideología, religión, vida sexual), contarla en la
+    # composición y verla en la ficha. Asociar a una persona identificada
+    # con un tema sensible ya es información sobre ella: la tiene quien
+    # puede reidentificar, más el dpo, que revisa el cumplimiento. El
+    # analista consulta, pero no segmenta por estos temas.
+    "tematicas_especiales": {"admin", "operaciones", "dpo"},
 }
 
 

@@ -529,8 +529,23 @@ def ingestar(conn_boveda, conn_semantica, carga_id, preguntas, filas,
         mapa_personas=mapa or None,
         motivos_sin_mapear=motivos,
         normalizacion=normalizacion,
+        con_respuestas=True,
     )
     resultado["carga_id"] = carga_id
+
+    # R-TEM.6 — las temáticas de cada persona del lote, con lo que la
+    # ingesta acaba de escribir: la fila del archivo y su `id_persona`, sin
+    # leer el store semántico. Las preguntas que sustentan cada temática se
+    # leen de la bóveda en cada lote, como el gate: si el analista las
+    # corrige mientras la carga avanza, el recálculo de esa edición y los
+    # lotes que faltan dicen lo mismo.
+    from . import tematicas
+
+    resultado["tematicas_de_panelistas"] = tematicas.registrar_de_lote(
+        conn_boveda, carga_id,
+        resultado.pop("respuestas_escritas_detalle", None) or [],
+        preguntas, resultado.get("ids_persona_ingestados") or [],
+        (normalizacion or {}).get("valores_no_respuesta"))
     resultado["tipo_identificador"] = tipo
 
     # R-ORG.1 — todos los que este lote resolvió participaron de la carga.

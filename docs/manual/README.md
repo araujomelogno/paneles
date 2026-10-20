@@ -14,6 +14,24 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Temáticas de cada panelista y temáticas especiales · 2026-10-20.**
+> Segunda versión del spec (R-TEM.6). La 15 suma la **15.6, Las temáticas de
+> cada panelista** (quien respondió al menos una pregunta de la temática; no
+> respuesta y vacío no cuentan; recálculo al guardar; bajas) y la **15.7,
+> Temáticas especiales**; la 15.3 explica la tabla de preguntas, la marca de
+> especial y la columna de panelistas de cada temática. La 3.5 suma la
+> tarjeta **Temáticas con información** de la ficha; la 3.6, la tabla de
+> preguntas y la columna Especial en la revisión; la 6.10, **+ Temática** («con
+> información sobre…»); la 7.5, el bloque de temáticas de la composición; la
+> 1.2, quién ve las especiales. Dos preguntas frecuentes nuevas, una
+> corregida («¿Puedo buscar a las personas de una temática?» ahora es sí) y
+> el término **Temática especial**.
+>
+> **Capturas nuevas 102 a 105 y recapturadas 97 a 101** (el editor de
+> temáticas cambió), con el mismo método que la entrada siguiente y el
+> escenario sembrado con preguntas por temática, respuestas vacías y de no
+> respuesta, una temática especial y personas en dos cargas.
+
 > **Temáticas incorporadas y sección Cargas · 2026-10-20.** La **15, Cargas
 > y sus temáticas**, es nueva: el listado (con búsqueda por nombre y filtro
 > por temática), el detalle de una carga (atributos, creados y reutilizados,

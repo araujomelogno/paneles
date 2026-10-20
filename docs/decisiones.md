@@ -4265,10 +4265,9 @@ carga.
   habría tenido que volver a demostrar que no muestra de más.
 
 **Lo que no cambia.** El store semántico (no se toca), la ingesta (confirmar
-no llama a Claude y las tareas no saben de temáticas), la superficie de
-COLOQUIO (las tablas nuevas no tienen `grant`) y la ficha: las temáticas
-describen la carga, no a cada persona, y no se ofrecen como atributo ni como
-filtro de personas.
+no llama a Claude) y la superficie de COLOQUIO (las tablas nuevas no tienen
+`grant`). *Corregido por D75:* las temáticas de cada panelista existen desde
+la segunda versión del spec, derivadas de sus respuestas y no de la carga.
 
 **Lo que cuesta.** ~US$ 0,02 por carga (una llamada); US$ 0 de
 infraestructura.
@@ -4295,3 +4294,82 @@ infraestructura.
 `ruteo.py`, `contexto.py`, `esquema.py`, `web/public/js/tematicas.js`,
 `web/public/js/paginas/cargas.js`, `encuestas.js` (la revisión),
 `functions/tests/test_tematicas_y_seccion_cargas.py`.
+
+## D75 · Las temáticas de cada panelista salen de lo que respondió, no de la carga
+
+**El problema.** La segunda versión del spec (R-TEM.6) lleva las temáticas a
+cada panelista, en la bóveda, para filtrar, contar y mostrar: es la respuesta
+a «¿podemos hacer este estudio con el panel?» sin tocar el store semántico ni
+pagar una consulta. Heredar las temáticas de la carga sería falso: una carga
+que cubre «consumo de tabaco» no garantiza que cada persona haya respondido
+esas preguntas.
+
+**La decisión.**
+
+- **Una persona tiene la temática Y en una carga si respondió al menos una de
+  las preguntas que la sustentan ahí.** La relación pregunta ↔ temática se
+  guarda por carga (`tematica_pregunta`, la que el analista confirma en la
+  revisión a partir de las `preguntas_relacionadas` de la propuesta) y el
+  resultado en `persona_tematica` (con `preguntas_respondidas`), las dos en
+  boveda/0027, que se amplió antes de desplegarse.
+- **«Respondió» tiene una sola definición** (`tematicas.respondida`): la celda
+  produjo texto embebible (`ingesta.respuesta_de`) y no es un valor de no
+  respuesta (`calidad_dato.es_no_respuesta`, con la lista de la carga), aunque
+  el analista haya decidido embeberlo. Vacío, «No sabe», «No contesta», 98/99
+  sin etiqueta: no cuentan.
+- **Dos caminos, la misma regla.** Al ingestar, cada lote registra las
+  temáticas de sus personas con lo que ya tiene en la mano —las respuestas que
+  acaba de escribir y sus `id_persona`—, **sin leer el store semántico**
+  (`registrar_de_lote`). Al guardar las temáticas de una carga
+  (`PUT /cargas/<id>/tematicas`) se **recalculan** todas, leyendo del
+  semántico qué preguntas respondió cada individuo por `ref_estudio`
+  (`recalcular_carga`): es la sincronización y, para una carga anterior, el
+  cálculo inicial. Un `Unchecked` cuenta como respuesta (la persona vio la
+  pregunta), **salvo** que el analista haya elegido «solo lo marcado» para esa
+  batería: ahí decidió que no marcar no es información, no se embebe, y el
+  recálculo —que solo ve lo embebido— no podría contarlo. Una regla que diera
+  distinto según el camino es la que no se quiere.
+- **No se guarda qué pregunta respondió cada persona.** Habría hecho el
+  recálculo puramente SQL en la bóveda, pero es un dato más fino que el tema
+  junto a la identidad («respondió la pregunta sobre VIH»), que es justo lo que
+  el riesgo de privacidad del spec pide no hacer.
+- **Consulta.** Una dimensión reservada `tematica` en el filtro demográfico
+  («con información sobre…», `eq`/`in` por nombre, contra `persona_tematica`),
+  una columna «Temáticas con información» (R7.4), la ficha con la carga de
+  cada una y un bloque en la composición de cualquier ámbito. Todo en la
+  bóveda.
+- **Temáticas especiales** (`tematica.es_especial`; Claude sugiere cuáles con
+  `podria_ser_especial` y el analista confirma): nunca columna, nunca en
+  exportaciones (sus columnas son fijas, R3.14.e), y filtrar, contar en la
+  composición o verlas en la ficha exige el permiso nuevo
+  `tematicas_especiales` (admin, operaciones, dpo). Marcar es libre;
+  desmarcar exige `gestionar_atributos`, como los atributos especiales.
+- **Baja.** La total cascadea desde `persona`. El retiro de `uso_semantico`
+  borra las temáticas de la persona en el acto, en la bóveda: se derivaron del
+  contenido que se está borrando.
+
+**Lo que cuesta.** US$ 0: el cálculo corre con datos en memoria. Una fila por
+persona, temática y carga.
+
+**Lo que se descartó.**
+
+- *Heredar las temáticas de la carga*: diría que se sabe algo que no se sabe.
+- *Calcular siempre desde el store semántico*: el spec pide que la ingesta no
+  lo lea, y la ingesta ya tiene todo en la mano.
+- *Contar `Unchecked` también bajo «solo marcadas»*: el recálculo no lo vería
+  y la misma persona tendría la temática o no según qué camino corrió último.
+- *Filtrar por temática con `ne`/`not_in`*: «sin información sobre» mezclaría
+  a quien respondió que no con quien vino de una carga sin temáticas.
+- *Un reproceso que recalcule*: el reproceso no toca la bóveda (Fase 8). Si
+  cambia qué se embebe de una batería, volver a guardar las temáticas de la
+  carga recalcula.
+
+**Dónde vive.** `db/boveda/0027_tematicas_de_la_carga.sql`,
+`functions/panel_api/tematicas.py` (`respondida`, `registrar_de_lote`,
+`recalcular_carga`, `de_persona`, `columna_de_varias`, `composicion`,
+`exigir_permiso_para_criterios`), `calidad_dato.es_no_respuesta`,
+`ingesta.py` (`con_respuestas`), `cargas.ingestar`, `demografia.py`
+(`DIMENSION_TEMATICA`), `bajas.py`, `auth.py`, `ruteo.py`, `composicion.py`,
+`web/public/js/tematicas.js`, `web/public/js/paginas/consultas.js`,
+`web/public/js/paginas/composicion.js`, `web/public/js/paginas/panelistas.js`,
+`functions/tests/test_tematicas_de_panelistas.py`.

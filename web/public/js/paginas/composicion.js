@@ -189,7 +189,40 @@ function pintar(salida) {
     </div>` : ''}
 
     ${salida.dimensiones.map((d) => pintarDimension(d, salida.miembros, puedeGestionar && admite)).join('')}
-    ${salida.cruce ? pintarCruce(salida.cruce) : ''}`;
+    ${salida.cruce ? pintarCruce(salida.cruce) : ''}
+    ${salida.tematicas ? pintarTematicas(salida.tematicas) : ''}`;
+}
+
+/* R-TEM.6 — cuántas personas del ámbito tienen información sobre cada
+   temática. Es la pregunta de factibilidad («¿podemos hacer este estudio con
+   el panel?»), contada en la bóveda, sin tocar el store semántico ni pagar
+   una consulta. No es una dimensión con universo de referencia: una persona
+   tiene varias temáticas, o ninguna. */
+function pintarTematicas(tematicas) {
+  const items = tematicas.items || [];
+  return `<div class="card">
+    <div class="card-header">
+      <span class="card-header-title">Temáticas con información</span>
+      <span class="small muted">quiénes respondieron sobre cada tema</span>
+    </div>
+    <div class="card-body tight">${items.length ? `
+      <div class="table-wrap"><table>
+        <thead><tr><th>Temática</th><th class="num">Personas</th><th class="num">%</th><th></th></tr></thead>
+        <tbody>${items.map((t) => `<tr>
+          <td><span class="chip chip-tematica">${esc(t.nombre)}${t.es_especial
+            ? ' <span class="chip-marca especial">especial</span>' : ''}</span></td>
+          <td class="num">${t.personas}</td>
+          <td class="num">${pct(t.proporcion)}</td>
+          <td style="width:30%"><div class="barra-tematica"><span
+            style="width:${Math.round((t.proporcion || 0) * 100)}%"></span></div></td>
+        </tr>`).join('')}</tbody></table></div>` : `<p class="small muted"
+        style="padding:1rem 1.5rem">Nadie de este ámbito tiene temáticas todavía. Se
+        calculan por carga, a partir de qué preguntas respondió cada persona.</p>`}
+      <p class="small muted" style="padding:0.6rem 1.5rem">Una persona cuenta en una
+        temática si respondió al menos una de sus preguntas en alguna de sus cargas;
+        puede tener varias, así que los porcentajes no suman 100.${tematicas.especiales_ocultas
+          ? ' Las de categoría especial no se muestran con tu rol.' : ''}</p>
+    </div></div>`;
 }
 
 function pintarDimension(dimension, miembros, puedeGestionar) {

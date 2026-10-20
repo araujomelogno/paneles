@@ -33,6 +33,9 @@ const POR_PAGINA = 25;
 // (permiso `ingestar`). Es una copia para no ofrecer un botón que da 403;
 // la autoridad es el servidor.
 const puedeEditar = () => ['admin', 'operaciones', 'analista'].includes(contexto.actor?.rol);
+// Quitarle la marca de especial a una temática es de quien administra los
+// atributos (`gestionar_atributos`). Misma salvedad: decide el servidor.
+const puedeDesmarcarEspecial = () => contexto.actor?.rol === 'admin';
 
 const ORIGEN_EN_CARGA = {
   creada: { texto: 'creada', clase: 'est-cerrada', titulo: 'Esta carga la dio de alta.' },
@@ -131,6 +134,12 @@ async function renderDetalle(main, cargaId) {
     api.cargas.ver(cargaId),
     api.tematicas.listar().catch(() => ({ items: [] })),
   ]);
+  // R-TEM.6 — las preguntas guardadas de la carga, para asociarlas a cada
+  // temática. Si el store semántico no responde, el editor sigue andando
+  // con las que ya están asociadas.
+  const { preguntas: preguntasDisponibles } = puedeEditar()
+    ? await api.cargas.tematicas(cargaId).catch(() => ({ preguntas: [] }))
+    : { preguntas: [] };
   const dato = (valor) => (valor ? esc(valor) : '<span class="muted">sin dato</span>');
 
   main.innerHTML = encabezado(carga.nombre, '', 'Detalle de la carga') + `
@@ -179,9 +188,11 @@ async function renderDetalle(main, cargaId) {
       <div class="card-body">
         <div id="tematicas-alerta"></div>
         <div id="tematicas">${puedeEditar() ? '' : chipsDeTematicas(carga.tematicas)}</div>
-        <p class="small muted" style="margin-top:0.6rem">Describen <strong>la
-          carga</strong>, no a cada persona: que cubra un tema no quiere decir que
-          todos sus individuos hayan respondido esas preguntas.</p>
+        <p class="small muted" style="margin-top:0.6rem">Dos niveles distintos: la
+          temática de <strong>la carga</strong> dice qué cubrió el estudio; la de
+          <strong>cada panelista</strong>, sobre qué respondió. Que la carga cubra un
+          tema no quiere decir que todos sus individuos lo tengan: lo tiene quien
+          respondió al menos una de sus preguntas. Guardar recalcula a todos.</p>
       </div>
     </div>
 
@@ -195,8 +206,9 @@ async function renderDetalle(main, cargaId) {
   $('#composicion').onclick = () => contexto.irA('composicion', { cargaId: carga.id });
 
   if (puedeEditar()) {
+    const opciones = { preguntasDisponibles, puedeDesmarcar: puedeDesmarcarEspecial() };
     let editor = editorDeTematicas($('#tematicas'), {
-      vocabulario, iniciales: carga.tematicas,
+      ...opciones, vocabulario, iniciales: carga.tematicas,
     });
     $('#guardar-tematicas').onclick = async (e) => {
       const boton = e.currentTarget;
@@ -204,7 +216,9 @@ async function renderDetalle(main, cargaId) {
       try {
         const { tematicas } = await api.cargas.guardarTematicas(carga.id, editor.valor());
         const { items } = await api.tematicas.listar().catch(() => ({ items: vocabulario }));
-        editor = editorDeTematicas($('#tematicas'), { vocabulario: items, iniciales: tematicas });
+        editor = editorDeTematicas($('#tematicas'), {
+          ...opciones, vocabulario: items, iniciales: tematicas,
+        });
         $('#tematicas-alerta').innerHTML = '';
         toast('Temáticas guardadas.', 'ok');
       } catch (error) {
@@ -223,7 +237,8 @@ async function renderDetalle(main, cargaId) {
       try {
         const salida = await api.cargas.proponerTematicas(carga.id);
         editor = editorDeTematicas($('#tematicas'), {
-          vocabulario, iniciales: editor.valor(),
+          ...opciones, vocabulario,
+          iniciales: editor.valor().map((t) => ({ ...t, es_especial: t.es_especial })),
           propuesta: salida.propuesta, aviso: salida.aviso,
         });
         $('#tematicas-alerta').innerHTML = salida.propuesta.length ? alerta(

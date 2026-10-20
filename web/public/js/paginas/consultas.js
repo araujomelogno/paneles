@@ -156,6 +156,8 @@ export async function render(main, ctx) {
         <div class="toolbar" style="margin-top:.75rem">
           <button class="btn btn-outline btn-sm" id="agregar-semantico">+ Criterio semántico</button>
           <button class="btn btn-outline btn-sm" id="agregar-demografico">+ Criterio demográfico</button>
+          <button class="btn btn-outline btn-sm" id="agregar-tematica"
+                  title="Panelistas con información sobre un tema">+ Temática</button>
           <span class="toolbar-spacer"></span>
           <button class="btn btn-outline btn-sm" id="parametros">Parámetros</button>
         </div>
@@ -214,6 +216,7 @@ export async function render(main, ctx) {
   ayudaAlcance();
   $('#agregar-semantico').onclick = () => abrirCriterioSemantico();
   $('#agregar-demografico').onclick = () => abrirCriterioDemografico();
+  $('#agregar-tematica').onclick = () => abrirCriterioTematica();
   $('#parametros').onclick = abrirParametros;
   $('#correr').onclick = correr;
   $('#guardar').onclick = abrirGuardar;
@@ -256,6 +259,10 @@ function pintarCriterios() {
       ? `<span class="badge badge-on">semántico</span> <strong>${esc(c.texto)}</strong>
          ${c.duro ? '<span class="badge">duro</span>' : ''}
          <span class="small muted">peso ${c.peso ?? 1}</span>`
+      : c.dimension === 'tematica'
+        ? `<span class="badge badge-user">temática</span>
+           Con información sobre
+           <strong>${esc(Array.isArray(c.valor) ? c.valor.join(' o ') : c.valor)}</strong>`
       : `<span class="badge badge-user">demográfico</span>
          <strong>${esc(catalogo.etiquetaDe(catalogoDeAtributos, c.dimension))}</strong>
          ${esc(OPERADORES[c.operador] || c.operador)}
@@ -309,6 +316,52 @@ function abrirCriterioSemantico() {
           definicion.criterios.push({
             tipo: 'semantico', texto: datos.texto,
             peso: Number(datos.peso) || 1, duro: !!datos.duro,
+          });
+          cerrarModal();
+          pintarCriterios();
+        } },
+    ],
+  });
+}
+
+/* R-TEM.6 — «panelistas con información sobre…»: quienes respondieron al
+   menos una pregunta de esa temática en alguna carga. Se resuelve en la
+   bóveda, como cualquier filtro demográfico, y se puede combinar con un
+   criterio semántico. Las especiales se ofrecen marcadas: filtrar por ellas
+   lo puede quien tiene el permiso, y el servidor lo controla. */
+async function abrirCriterioTematica() {
+  const { items } = await api.tematicas.listar();
+  const conCargas = items.filter((t) => t.cargas > 0);
+  if (!conCargas.length) {
+    toast('Todavía no hay temáticas: se agregan a las cargas desde la sección Cargas.', 'err');
+    return;
+  }
+  modal({
+    titulo: 'Filtrar por temática',
+    cuerpo: `
+      <div class="alert alert-info">
+        Deja a quienes <strong>respondieron sobre ese tema</strong> en alguna carga
+        (al menos una de sus preguntas, sin contar «No sabe»). Haber estado en una
+        carga que lo cubría no alcanza. Para saber qué opinan, sumá un criterio
+        semántico.
+      </div>
+      <div class="form-group"><label>Con información sobre</label>
+        <div class="tematicas-elegir">${conCargas.map((t) => `
+          <label class="check"><input type="checkbox" value="${esc(t.nombre)}" />
+            ${esc(t.nombre)}${t.es_especial
+              ? ' <span class="chip-marca especial">especial · restringida</span>' : ''}
+            <span class="small muted">(${t.cargas} carga${t.cargas === 1 ? '' : 's'})</span>
+          </label>`).join('')}</div>
+        <div class="field-hint">Con más de una, alcanza con tener cualquiera.</div></div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Agregar', clase: 'btn-orange', onClick: (c) => {
+          const elegidas = $$('input[type=checkbox]:checked', c).map((x) => x.value);
+          if (!elegidas.length) { toast('Elegí al menos una temática.', 'err'); return; }
+          definicion.criterios.push({
+            tipo: 'demografico', dimension: 'tematica',
+            operador: elegidas.length > 1 ? 'in' : 'eq',
+            valor: elegidas.length > 1 ? elegidas : elegidas[0],
           });
           cerrarModal();
           pintarCriterios();

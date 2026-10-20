@@ -498,6 +498,9 @@ export const cargas = {
     PUT(`/cargas/${cargaId}/tematicas`, { tematicas }),
   /* R-TEM.5 — propone con las preguntas ya guardadas. No aplica nada. */
   proponerTematicas: (cargaId) => POST(`/cargas/${cargaId}/tematicas/propuesta`, {}),
+  /* R-TEM.6 — las temáticas con sus preguntas y las preguntas guardadas de
+     la carga que se les pueden asociar. */
+  tematicas: (cargaId) => GET(`/cargas/${cargaId}/tematicas`),
   editar: (cargaId, cambios) => PATCH(`/cargas/${cargaId}`, cambios),
   analizar: (cargaId, archivoBase64, opciones) =>
     subir(`/cargas/${cargaId}/analizar`,

@@ -274,6 +274,11 @@ def ficha_panelista(ctx, actor, params, cuerpo, consulta):
     """Abrir una ficha es ver la PII de una persona identificada: es una
     reidentificación deliberada y queda registrada (P1)."""
     ficha = personas.ficha(ctx.boveda, params["id_persona"])
+    # R-TEM.6 — sobre qué temáticas respondió y de qué carga viene cada una.
+    # Las especiales, solo con permiso: la ficha ya identifica a la persona.
+    ficha["tematicas"] = tematicas.de_persona(
+        ctx.boveda, params["id_persona"],
+        incluir_especiales=actor.puede("tematicas_especiales"))
     auditoria.registrar_reidentificacion(
         ctx.boveda, [params["id_persona"]], actor=actor, motivo="ficha",
         contexto={"ruta": "GET /panelistas/{id_persona}"},
@@ -612,6 +617,10 @@ def correr_consulta(ctx, actor, params, cuerpo, consulta):
     Una ruta aparte para estimar empezaría igual y divergiría, y lo que
     divergiría es el número que se muestra antes de gastar.
     """
+    # R-TEM.6 — filtrar por una temática especial es de quien tiene el
+    # permiso. Antes de estimar, lanzar o correr nada.
+    tematicas.exigir_permiso_para_criterios(
+        ctx.boveda, cuerpo.get("criterios"), actor)
     alcance = (cuerpo.get("alcance") or consultas.EXPLORATORIO).strip().lower()
     if alcance == consultas.COMPLETO:
         if cuerpo.get("solo_estimar"):
@@ -842,13 +851,24 @@ def ver_composicion_de_ambito(ctx, actor, params, cuerpo, consulta):
     ambito = (consulta.get("ambito") or "panel").strip().lower()
     referencia = _entero(consulta.get("carga_id" if ambito == "carga"
                                       else "panel_id"))
-    return 200, composicion.composicion_de_ambito(
+    momento = _momento(ctx, consulta)
+    estado = consulta.get("estado", "activo")
+    salida = composicion.composicion_de_ambito(
         ctx.boveda, ambito, referencia,
         dimensiones=dimensiones or None,
         cruce_de=cruce_de or None,
-        estado=consulta.get("estado", "activo"),
-        momento=_momento(ctx, consulta),
+        estado=estado,
+        momento=momento,
     )
+    # R-TEM.6 — cuántos del ámbito tienen información sobre cada temática.
+    # Es la pregunta de factibilidad, contada en la bóveda. Las especiales,
+    # solo para quien tiene el permiso. A fecha no: las temáticas son de hoy.
+    if not momento:
+        salida["tematicas"] = tematicas.composicion(
+            ctx.boveda, composicion.universo_de_ambito(ambito, referencia, estado),
+            salida["miembros"],
+            incluir_especiales=actor.puede("tematicas_especiales"))
+    return 200, salida
 
 
 @ruta("GET", "/composicion/todos/objetivo", "leer", requisito="R-ORG.3")
@@ -1028,6 +1048,11 @@ def columnas_disponibles(ctx, actor, params, cuerpo, consulta):
         # eso no se puede filtrar ni fijar cuota con ellos. Solo se miran.
         {"clave": clave, "etiqueta": etiqueta, "tipo": "procedencia"}
         for clave, etiqueta in cargas.COLUMNAS_DE_PROCEDENCIA
+    ] + [
+        # R-TEM.6 — sobre qué temáticas respondió cada persona. Nunca lleva
+        # una especial (ver `tematicas.columna_de_varias`).
+        {"clave": tematicas.COLUMNA, "etiqueta": tematicas.ETIQUETA_COLUMNA,
+         "tipo": "tematica"},
     ]}
 
 
@@ -1045,6 +1070,9 @@ def atributos_de_resultados(ctx, actor, params, cuerpo, consulta):
     # de más. Va en la misma llamada: sigue siendo una sola ida a la base por
     # tanda de resultados.
     for id_persona, columnas in cargas.origen_de_varias(ctx.boveda, ids).items():
+        valores.setdefault(id_persona, {}).update(columnas)
+    # R-TEM.6 — las temáticas, sin las especiales, en la misma ida.
+    for id_persona, columnas in tematicas.columna_de_varias(ctx.boveda, ids).items():
         valores.setdefault(id_persona, {}).update(columnas)
     return 200, {"items": valores}
 
@@ -1600,16 +1628,39 @@ def listar_tematicas(ctx, actor, params, cuerpo, consulta):
     return 200, {"items": tematicas.listar(ctx.boveda)}
 
 
-@ruta("PUT", "/cargas/<carga_id>/tematicas", "ingestar", requisito="R-TEM.4")
+@ruta("PUT", "/cargas/<carga_id>/tematicas", "ingestar",
+      requisito="R-TEM.4, R-TEM.6")
 def guardar_tematicas_de_carga(ctx, actor, params, cuerpo, consulta):
-    """Deja a la carga con la lista de temáticas que eligió el analista.
+    """Deja a la carga con la lista de temáticas que eligió el analista, con
+    las preguntas que sustentan cada una y su marca de especial.
 
     Es el único camino que las escribe: al confirmar una carga nueva y al
-    editarlas después. Mismo permiso que corregir los datos del estudio."""
+    editarlas después. Mismo permiso que corregir los datos del estudio;
+    quitarle la marca de especial a una temática exige además el de los
+    atributos de categoría especial.
+
+    R-TEM.6 — y recalcula las temáticas de los panelistas de la carga, que
+    es lo que abre el store semántico: solo para leer qué preguntas
+    respondió cada `id_persona`. Para una carga anterior a las temáticas, es
+    el cálculo inicial."""
     salida = tematicas.guardar(
-        ctx.boveda, _entero(params["carga_id"]), cuerpo.get("tematicas"))
+        ctx.boveda, _entero(params["carga_id"]), cuerpo.get("tematicas"),
+        conn_semantica=ctx.semantica,
+        puede_desmarcar=actor.puede("gestionar_atributos"))
     ctx.boveda.commit()
     return 200, {"tematicas": salida}
+
+
+@ruta("GET", "/cargas/<carga_id>/tematicas", "leer", requisito="R-TEM.6")
+def tematicas_de_carga(ctx, actor, params, cuerpo, consulta):
+    """Las temáticas de la carga y las preguntas que se les pueden asociar:
+    las que la carga tiene en el store semántico, solo código y texto. Es lo
+    que necesita el editor del detalle para corregir qué preguntas sustentan
+    cada temática."""
+    carga = cargas.obtener(ctx.boveda, _entero(params["carga_id"]))
+    return 200, {"tematicas": carga["tematicas"],
+                 "preguntas": tematicas.preguntas_guardadas(
+                     ctx.semantica, carga["ref_estudio"])}
 
 
 @ruta("POST", "/cargas/<carga_id>/tematicas/propuesta", "ingestar",

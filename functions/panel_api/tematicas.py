@@ -39,7 +39,7 @@ import time
 import unicodedata
 
 from . import db, pii
-from .errores import DatosInvalidos, NoEncontrado
+from .errores import DatosInvalidos, NoEncontrado, SinPermiso
 
 log = logging.getLogger(__name__)
 
@@ -171,13 +171,17 @@ def listar(conn):
     """El vocabulario completo, con cuántas cargas usa cada temática.
 
     Es lo que alimenta el autocompletado y el filtro del listado de cargas.
+    El nombre de una temática especial no es un dato de nadie: se lista
+    igual, con su marca, para que la pantalla no la ofrezca como columna.
     """
     return [
-        {"id": f["id"], "nombre": f["nombre"], "cargas": f["cargas"]}
+        {"id": f["id"], "nombre": f["nombre"], "es_especial": f["es_especial"],
+         "cargas": f["cargas"]}
         for f in db.todas(
             conn,
             """
-            select t.id, t.nombre, count(ct.carga_id)::int as cargas
+            select t.id, t.nombre, t.es_especial,
+                   count(ct.carga_id)::int as cargas
               from tematica t
               left join carga_tematica ct on ct.tematica_id = t.id
              group by t.id
@@ -188,11 +192,19 @@ def listar(conn):
 
 def _fila(f):
     return {"id": f["tematica_id"], "nombre": f["nombre"],
-            "origen": f["origen"], "creado_en": f["creado_en"].isoformat()}
+            "origen": f["origen"], "es_especial": f["es_especial"],
+            "preguntas": list(f["preguntas"] or []),
+            "personas": f["personas"],
+            "creado_en": f["creado_en"].isoformat()}
 
 
 def de_cargas(conn, ids_carga):
-    """`{carga_id: [temática, …]}` para varias cargas, en una consulta."""
+    """`{carga_id: [temática, …]}` para varias cargas, en una consulta.
+
+    Cada temática viene con las preguntas que la sustentan en esa carga y
+    con cuántas personas de la carga la tienen (R-TEM.6): el número que
+    contesta «¿de cuántos sabemos algo sobre esto?».
+    """
     ids = [int(i) for i in dict.fromkeys(ids_carga or []) if i is not None]
     if not ids:
         return {}
@@ -200,7 +212,15 @@ def de_cargas(conn, ids_carga):
     for f in db.todas(
         conn,
         """
-        select ct.carga_id, ct.tematica_id, t.nombre, ct.origen, ct.creado_en
+        select ct.carga_id, ct.tematica_id, t.nombre, t.es_especial, ct.origen,
+               ct.creado_en,
+               array(select tp.codigo_pregunta from tematica_pregunta tp
+                      where tp.carga_id = ct.carga_id
+                        and tp.tematica_id = ct.tematica_id
+                      order by tp.codigo_pregunta) as preguntas,
+               (select count(*)::int from persona_tematica pt
+                 where pt.carga_id = ct.carga_id
+                   and pt.tematica_id = ct.tematica_id) as personas
           from carga_tematica ct
           join tematica t on t.id = ct.tematica_id
          where ct.carga_id = any(%s)
@@ -220,27 +240,83 @@ def de_carga(conn, carga_id):
 #  Guardar: la lista que dejó el analista
 # ════════════════════════════════════════════════════════════════════
 
+MAX_PREGUNTAS_POR_TEMATICA = 500
+
+
+def _codigos(crudos):
+    """Los códigos de pregunta de una temática, limpios y sin repetir."""
+    if crudos is None:
+        return None
+    if not isinstance(crudos, list):
+        raise DatosInvalidos("Las preguntas de una temática van como lista de "
+                             "códigos.", {"campo": "tematicas"})
+    codigos = [c for c in dict.fromkeys(
+        str((c.get("codigo") if isinstance(c, dict) else c) or "").strip()
+        for c in crudos) if c]
+    if len(codigos) > MAX_PREGUNTAS_POR_TEMATICA or any(len(c) > 120 for c in codigos):
+        raise DatosInvalidos("Demasiadas preguntas, o un código demasiado largo, "
+                             "en una temática.", {"campo": "tematicas"})
+    return codigos
+
+
 def _item(crudo):
-    """Una entrada de la lista: texto suelto o `{nombre, origen}`."""
+    """Una entrada de la lista: texto suelto o `{nombre, origen, preguntas,
+    es_especial}`. `preguntas` y `es_especial` ausentes quieren decir «como
+    estaban»: no es lo mismo que una lista vacía o un `false`."""
     if isinstance(crudo, dict):
         nombre = crudo.get("nombre") or crudo.get("tematica")
         origen = (crudo.get("origen") or MANUAL).strip().lower()
+        preguntas = _codigos(crudo.get("preguntas"))
+        especial = crudo.get("es_especial")
     else:
-        nombre, origen = crudo, MANUAL
+        nombre, origen, preguntas, especial = crudo, MANUAL, None, None
     if origen not in ORIGENES:
         raise DatosInvalidos(
             f"Origen de temática desconocido: {origen!r}. Puede ser "
             f"{', '.join(ORIGENES)}.", {"campo": "tematicas"})
-    return _validar(nombre), origen
+    return {"nombre": _validar(nombre), "origen": origen, "preguntas": preguntas,
+            "es_especial": None if especial is None else bool(especial)}
 
 
-def guardar(conn, carga_id, items):
+def _marcar_especiales(conn, especiales, puede_desmarcar):
+    """`{tematica_id: bool}` → la marca de categoría especial.
+
+    Marcar es siempre posible (es la dirección prudente). **Desmarcar** una
+    especial expone a quien la tiene —vuelve a ser columna, a salir en una
+    exportación— y por eso exige el mismo permiso que los atributos de
+    categoría especial (R3.14.e). Es una propiedad de la temática: vale en
+    todas las cargas.
+    """
+    if not especiales:
+        return
+    actuales = {f["id"]: f["es_especial"] for f in db.todas(
+        conn, "select id, es_especial from tematica where id = any(%s)",
+        (list(especiales),))}
+    for tematica_id, especial in especiales.items():
+        if actuales.get(tematica_id) and not especial and not puede_desmarcar:
+            raise SinPermiso(
+                "Quitar la marca de categoría especial de una temática la vuelve "
+                "a ofrecer como columna y en exportaciones: lo puede hacer quien "
+                "administra los atributos.", {"permiso": "gestionar_atributos"})
+        if actuales.get(tematica_id) != especial:
+            db.ejecutar(conn, "update tematica set es_especial = %s where id = %s",
+                        (especial, tematica_id))
+
+
+def guardar(conn, carga_id, items, conn_semantica=None, puede_desmarcar=False):
     """Deja a la carga con **esas** temáticas: agrega las nuevas y quita las
-    que no vinieron. Devuelve la lista como quedó.
+    que no vinieron, con las preguntas que sustentan cada una (R-TEM.6) y
+    su marca de especial. Devuelve la lista como quedó.
 
-    Es el único camino que escribe `carga_tematica`, antes y después de
-    confirmar la carga (R-TEM.4). El origen se fija la primera vez: volver a
-    guardar una propuesta ya aceptada no la convierte en manual.
+    Es el único camino que escribe `carga_tematica` y `tematica_pregunta`,
+    antes y después de confirmar la carga (R-TEM.4). El origen se fija la
+    primera vez: volver a guardar una propuesta ya aceptada no la convierte
+    en manual.
+
+    Con `conn_semantica`, **recalcula** las temáticas de las personas de la
+    carga (R-TEM.6, sincronización): cambiar qué preguntas sustentan una
+    temática cambia quién la tiene. Para una carga anterior a las temáticas
+    es también el cálculo inicial.
     """
     if items is None or not isinstance(items, list):
         raise DatosInvalidos(
@@ -251,8 +327,8 @@ def guardar(conn, carga_id, items):
 
     elegidas = {}
     for crudo in items:
-        nombre, origen = _item(crudo)
-        elegidas.setdefault(nombre, origen)
+        item = _item(crudo)
+        elegidas.setdefault(item["nombre"], item)
     if len(elegidas) > MAX_POR_CARGA:
         raise DatosInvalidos(
             f"Son {len(elegidas)} temáticas: el máximo por carga es "
@@ -261,17 +337,28 @@ def guardar(conn, carga_id, items):
 
     vocabulario = _vocabulario(conn)
     vinculos = {}
-    for nombre, origen in elegidas.items():
+    for nombre, item in elegidas.items():
         tematica_id, _, _ = _asegurar(conn, nombre, vocabulario)
-        # Dos variantes de la misma temática en la lista quedan en una.
-        vinculos.setdefault(tematica_id, origen)
+        # Dos variantes de la misma temática en la lista quedan en una; sus
+        # preguntas se suman.
+        if tematica_id in vinculos:
+            previas = vinculos[tematica_id]["preguntas"]
+            if item["preguntas"] is not None:
+                vinculos[tematica_id]["preguntas"] = list(dict.fromkeys(
+                    (previas or []) + item["preguntas"]))
+            continue
+        vinculos[tematica_id] = dict(item)
+
+    _marcar_especiales(
+        conn, {t: i["es_especial"] for t, i in vinculos.items()
+               if i["es_especial"] is not None}, puede_desmarcar)
 
     db.ejecutar(
         conn,
         "delete from carga_tematica where carga_id = %s "
         "and not (tematica_id = any(%s))",
         (carga_id, list(vinculos)))
-    for tematica_id, origen in vinculos.items():
+    for tematica_id, item in vinculos.items():
         db.ejecutar(
             conn,
             """
@@ -279,8 +366,277 @@ def guardar(conn, carga_id, items):
             values (%s, %s, %s)
             on conflict (carga_id, tematica_id) do nothing
             """,
-            (carga_id, tematica_id, origen))
+            (carga_id, tematica_id, item["origen"]))
+        if item["preguntas"] is None:
+            continue
+        db.ejecutar(
+            conn,
+            "delete from tematica_pregunta where carga_id = %s and tematica_id = %s "
+            "and not (codigo_pregunta = any(%s))",
+            (carga_id, tematica_id, item["preguntas"]))
+        if item["preguntas"]:
+            db.ejecutar(
+                conn,
+                """
+                insert into tematica_pregunta (carga_id, tematica_id, codigo_pregunta)
+                select %s, %s, unnest(%s::text[])
+                on conflict do nothing
+                """,
+                (carga_id, tematica_id, item["preguntas"]))
+    if conn_semantica is not None:
+        recalcular_carga(conn, conn_semantica, carga_id)
     return de_carga(conn, carga_id)
+
+
+# ════════════════════════════════════════════════════════════════════
+#  R-TEM.6 · Las temáticas de cada panelista
+# ════════════════════════════════════════════════════════════════════
+#
+# Una persona tiene la temática Y en una carga si respondió **al menos una**
+# de las preguntas que la sustentan ahí. No alcanza con haber estado en la
+# carga: pudo saltearlas, o estar en una rama del cuestionario que no las
+# incluía, y heredar la temática diría que sabemos algo que no sabemos.
+#
+# «Respondió» tiene una sola definición (`respondida`) para los dos caminos
+# que la calculan: la ingesta, con la fila del archivo en la mano, y el
+# recálculo, con lo que el store semántico tiene de esa carga. Es lo que
+# se embebió (`ingesta.respuesta_de` produjo texto) y no es un valor de no
+# respuesta («No sabe», «No contesta», los códigos de la lista de la carga),
+# aunque el analista haya decidido embeberlo igual. Por eso una opción no
+# marcada de una batería cuenta, salvo que se haya elegido «solo lo
+# marcado»: ahí el analista decidió que no marcar no es información, y el
+# recálculo, que solo ve lo embebido, no podría contarla igual (D75).
+
+def respondida(pregunta, etiqueta, valores_no_respuesta=None):
+    """¿Esta respuesta, ya embebible, cuenta como haber respondido?"""
+    from . import calidad_dato
+
+    if etiqueta is None or not str(etiqueta).strip():
+        return False
+    return not calidad_dato.es_no_respuesta(
+        pregunta or {}, etiqueta, calidad_dato.lista_no_respuesta(valores_no_respuesta))
+
+
+def _aplicar(conn, carga_id, pares, personas=None):
+    """Escribe `persona_tematica` de una carga a partir de pares
+    `(id_persona, codigo_pregunta)` respondidos.
+
+    `personas` acota qué personas se reemplazan (las de un lote); sin él se
+    reemplaza la carga entera (el recálculo). Quien no respondió ninguna
+    pregunta relacionada queda sin fila. Solo para personas que existen en
+    la bóveda: el store semántico no tiene FK hacia acá.
+    """
+    if personas is None:
+        db.ejecutar(conn, "delete from persona_tematica where carga_id = %s",
+                    (carga_id,))
+    else:
+        personas = [str(p) for p in dict.fromkeys(personas)]
+        if not personas:
+            return 0
+        db.ejecutar(
+            conn,
+            "delete from persona_tematica where carga_id = %s "
+            "and id_persona = any(%s::uuid[])", (carga_id, personas))
+    pares = list(dict.fromkeys((str(a), str(b)) for a, b in pares))
+    if not pares:
+        return 0
+    return db.ejecutar(
+        conn,
+        """
+        insert into persona_tematica (id_persona, tematica_id, carga_id,
+                                      preguntas_respondidas)
+        select r.id_persona, tp.tematica_id, tp.carga_id, count(*)::int
+          from unnest(%s::uuid[], %s::text[]) as r(id_persona, codigo)
+          join tematica_pregunta tp
+            on tp.carga_id = %s and tp.codigo_pregunta = r.codigo
+          join persona p on p.id_persona = r.id_persona
+         group by r.id_persona, tp.tematica_id, tp.carga_id
+        on conflict (id_persona, tematica_id, carga_id)
+          do update set preguntas_respondidas = excluded.preguntas_respondidas
+        """,
+        ([a for a, _ in pares], [b for _, b in pares], carga_id))
+
+
+def registrar_de_lote(conn, carga_id, respuestas, preguntas, personas,
+                      valores_no_respuesta=None):
+    """R-TEM.6 — al ingestar: las temáticas de las personas de un lote.
+
+    `respuestas` son las `(id_persona, codigo, etiqueta)` que la ingesta
+    acaba de escribir (ya pasaron el gate de `uso_semantico`); `personas`,
+    todas las del lote que la ingesta procesó, para que quien no respondió
+    ninguna relacionada pierda una fila vieja. **No lee el store
+    semántico**: todo lo necesario vino con la fila del archivo. Idempotente:
+    el reintento de un lote reemplaza lo mismo.
+    """
+    por_codigo = {p.get("codigo"): p for p in preguntas or []}
+    pares = [(id_persona, codigo) for id_persona, codigo, etiqueta in respuestas
+             if respondida(por_codigo.get(codigo), etiqueta, valores_no_respuesta)]
+    return _aplicar(conn, carga_id, pares, personas=personas)
+
+
+def recalcular_carga(conn_boveda, conn_semantica, carga_id):
+    """Recalcula las temáticas de todas las personas de una carga.
+
+    Lee del store semántico, por `ref_estudio`, qué preguntas respondió cada
+    individuo: solo `id_persona`, código y la etiqueta para descartar la no
+    respuesta. Es el camino de la sincronización (se editaron las temáticas
+    o sus preguntas) y el del cálculo inicial de una carga anterior
+    (R-TEM.5): para esas no hay otra fuente.
+    """
+    carga = db.una(conn_boveda, "select ref_estudio from carga where id = %s",
+                   (carga_id,))
+    if not carga:
+        raise NoEncontrado(f"No existe la carga {carga_id}.")
+    filas = db.todas(
+        conn_semantica,
+        """
+        select i.id_persona::text as id_persona, p.codigo, p.opciones, p.tipo,
+               r.valor_texto, c.normalizacion
+          from cuestionario c
+          join pregunta p on p.cuestionario_id = c.id
+          join respuesta r on r.pregunta_id = p.id
+          join individuo i on i.id = r.individuo_id
+         where c.ref_estudio = %s
+        """,
+        (str(carga["ref_estudio"]),))
+    pares = [
+        (f["id_persona"], f["codigo"]) for f in filas
+        if respondida({"opciones": f["opciones"], "tipo": f["tipo"]},
+                      f["valor_texto"],
+                      (f["normalizacion"] or {}).get("valores_no_respuesta"))
+    ]
+    return _aplicar(conn_boveda, carga_id, pares)
+
+
+def de_persona(conn, id_persona, incluir_especiales=False):
+    """La ficha: las temáticas de una persona y de qué carga viene cada una.
+
+    Las especiales solo con permiso (`tematicas_especiales`): verlas asocia a
+    una persona identificada con un tema sensible.
+    """
+    filas = db.todas(
+        conn,
+        """
+        select t.id, t.nombre, t.es_especial, c.id as carga_id,
+               c.nombre as carga, c.fecha_estudio, pt.preguntas_respondidas
+          from persona_tematica pt
+          join tematica t on t.id = pt.tematica_id
+          join carga c on c.id = pt.carga_id
+         where pt.id_persona = %s
+           and (%s or not t.es_especial)
+         order by t.nombre, c.fecha_estudio nulls last, c.id
+        """,
+        (str(id_persona), bool(incluir_especiales)))
+    ocultas = 0
+    if not incluir_especiales:
+        ocultas = db.una(
+            conn,
+            """select count(distinct pt.tematica_id)::int as n
+                 from persona_tematica pt join tematica t on t.id = pt.tematica_id
+                where pt.id_persona = %s and t.es_especial""",
+            (str(id_persona),))["n"]
+    return {
+        "items": [
+            {"id": f["id"], "nombre": f["nombre"], "es_especial": f["es_especial"],
+             "carga_id": f["carga_id"], "carga": f["carga"],
+             "fecha_estudio": (f["fecha_estudio"].isoformat()
+                               if f["fecha_estudio"] else None),
+             "preguntas_respondidas": f["preguntas_respondidas"]}
+            for f in filas],
+        "especiales_ocultas": ocultas,
+    }
+
+
+COLUMNA = "tematicas"
+ETIQUETA_COLUMNA = "Temáticas con información"
+
+
+def columna_de_varias(conn, ids_persona):
+    """R7.4 — la columna «Temáticas con información» de un conjunto de
+    resultados, en una consulta. **Nunca** lleva una temática especial: verla
+    en la ficha de alguien con permiso no es lo mismo que una planilla."""
+    ids = [str(i) for i in dict.fromkeys(i for i in (ids_persona or []) if i)]
+    if not ids:
+        return {}
+    filas = db.todas(
+        conn,
+        """
+        select pt.id_persona::text as id_persona,
+               array_agg(distinct t.nombre order by t.nombre) as nombres
+          from persona_tematica pt
+          join tematica t on t.id = pt.tematica_id
+         where pt.id_persona = any(%s::uuid[]) and not t.es_especial
+         group by pt.id_persona
+        """,
+        (ids,))
+    return {
+        f["id_persona"]: {COLUMNA: {
+            "valor": " | ".join(f["nombres"]), "etiqueta_valor": " | ".join(f["nombres"]),
+            "origen": "tematica", "procedencia": None}}
+        for f in filas
+    }
+
+
+def especiales_entre(conn, nombres):
+    """Los nombres (normalizados) que son de temáticas especiales."""
+    nombres = [n for n in dict.fromkeys(normalizar(x) for x in nombres or []) if n]
+    if not nombres:
+        return []
+    return [f["nombre"] for f in db.todas(
+        conn, "select nombre from tematica where nombre = any(%s) and es_especial "
+              "order by nombre", (nombres,))]
+
+
+def exigir_permiso_para_criterios(conn, criterios, actor):
+    """Una consulta que filtra por una temática especial exige el permiso
+    `tematicas_especiales`. Se chequea antes de correr nada."""
+    nombres = []
+    for c in criterios or []:
+        if isinstance(c, dict) and str(c.get("dimension") or "").strip().lower() == DIMENSION:
+            valor = c.get("valor")
+            nombres += valor if isinstance(valor, list) else [valor]
+    especiales = especiales_entre(conn, nombres)
+    if especiales and not actor.puede("tematicas_especiales"):
+        raise SinPermiso(
+            f"Filtrar por {', '.join('«' + e + '»' for e in especiales)} no está "
+            f"habilitado para tu rol: es una temática de categoría especial.",
+            {"permiso": "tematicas_especiales", "tematicas": especiales})
+
+
+DIMENSION = "tematica"
+
+
+def composicion(conn, universo, total, incluir_especiales=False):
+    """R-TEM.6 — cuántas personas de un ámbito tienen cada temática.
+
+    `universo` es el `(from, where, parámetros)` de la composición, así que
+    el ámbito se decide en un solo lugar. Es la pregunta de factibilidad
+    —«¿de cuántos de este segmento sabemos algo sobre esto?»— sin tocar el
+    store semántico.
+    """
+    desde, donde, params = universo
+    filas = db.todas(
+        conn,
+        f"""
+        select t.id, t.nombre, t.es_especial,
+               count(distinct p.id_persona)::int as personas
+          {desde}
+          join persona_tematica pt on pt.id_persona = p.id_persona
+          join tematica t on t.id = pt.tematica_id
+         where {donde} and (%s or not t.es_especial)
+         group by t.id
+         order by 4 desc, t.nombre
+        """,
+        params + (bool(incluir_especiales),))
+    return {
+        "total": total,
+        "items": [
+            {"id": f["id"], "nombre": f["nombre"], "es_especial": f["es_especial"],
+             "personas": f["personas"],
+             "proporcion": (f["personas"] / total) if total else None}
+            for f in filas],
+        "especiales_ocultas": not incluir_especiales,
+    }
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -343,6 +699,10 @@ variantes de una existente («telefonía celular» si ya está «telefonía \
 móvil»).
 - En preguntas_relacionadas poné los códigos de las preguntas de las que \
 sale cada temática, tal como aparecen en la lista.
+- Marcá podria_ser_especial = true si la temática toca una categoría \
+especial de datos personales: salud (física o mental), consumo de \
+sustancias (alcohol, tabaco, drogas), ideología u opinión política, \
+religión o creencias, vida u orientación sexual. El analista lo confirma.
 
 Registrá tu propuesta con la herramienta proponer_tematicas."""
 
@@ -373,8 +733,15 @@ HERRAMIENTA = {
                             "description": "Códigos de las preguntas de las "
                                            "que sale la temática.",
                         },
+                        "podria_ser_especial": {
+                            "type": "boolean",
+                            "description": "true si toca salud, sustancias, "
+                                           "ideología política, religión o "
+                                           "vida sexual.",
+                        },
                     },
-                    "required": ["tematica", "es_nueva", "preguntas_relacionadas"],
+                    "required": ["tematica", "es_nueva", "preguntas_relacionadas",
+                                 "podria_ser_especial"],
                 },
             },
         },
@@ -537,7 +904,7 @@ def crear(cfg=None, entorno=None):
         return NoDisponible(str(error))
 
 
-def _limpiar(crudas, preguntas, vocabulario):
+def _limpiar(crudas, preguntas, vocabulario, especiales=frozenset()):
     """La salida del modelo → la propuesta que ve el analista.
 
     - El nombre se normaliza y se resuelve contra el vocabulario: si difiere
@@ -548,6 +915,8 @@ def _limpiar(crudas, preguntas, vocabulario):
     - Las preguntas relacionadas se filtran a las que se mandaron, y vuelven
       con su texto para mostrar de dónde salió cada temática.
     - Sin repetidas, y como mucho `MAX_PROPUESTAS`.
+    - `podria_ser_especial` es lo que dijo Claude **o** que la existente ya
+      está marcada: una especial no deja de serlo porque el modelo no lo vio.
     """
     por_codigo = {p["codigo"]: p for p in preguntas}
     salida, vistas = [], set()
@@ -567,7 +936,9 @@ def _limpiar(crudas, preguntas, vocabulario):
                 str(c).strip() for c in (cruda.get("preguntas_relacionadas") or []))
             if c in por_codigo]
         salida.append({"nombre": nombre, "es_nueva": existente is None,
-                       "preguntas_relacionadas": relacionadas})
+                       "preguntas_relacionadas": relacionadas,
+                       "podria_ser_especial": bool(cruda.get("podria_ser_especial"))
+                                              or nombre in especiales})
         if len(salida) >= MAX_PROPUESTAS:
             break
     return salida
@@ -595,7 +966,9 @@ def proponer(conn, proponente, preguntas):
         estado = NO_DISPONIBLE if not getattr(proponente, "disponible", True) else FALLO
         return {**base, "estado": estado,
                 "aviso": AVISO_FALLO.format(motivo=str(error)), "propuesta": []}
-    propuesta = _limpiar(crudas, preguntas, vocabulario)
+    especiales = {f["nombre"] for f in db.todas(
+        conn, "select nombre from tematica where es_especial")}
+    propuesta = _limpiar(crudas, preguntas, vocabulario, especiales)
     if not propuesta:
         return {**base, "estado": FALLO,
                 "aviso": AVISO_FALLO.format(motivo="la respuesta no trajo "

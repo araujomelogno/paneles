@@ -608,3 +608,15 @@ tr.fila-problema td { background: var(--red-light); }
   font-size: 0.82rem; }
 .carga-atributos dt { color: var(--gray); font-weight: 600; }
 .carga-atributos dd { margin: 0; }
+/* R-TEM.6 — qué preguntas sustentan cada temática, y la marca de especial. */
+.chip-marca.especial { color: var(--red); }
+.tematicas-detalle { margin-top: 0.8rem; }
+.tematicas-detalle td { vertical-align: top; }
+.tematicas-detalle .chip { font-weight: 600; max-width: 100%; }
+.tematicas-detalle .chip code { font-size: 0.66rem; }
+.tematicas-detalle .fselect-sm { margin-top: 0.35rem; padding: 0.25rem 0.5rem; font-size: 0.72rem; width: auto; max-width: 100%; }
+.tematicas-detalle .centro { text-align: center; }
+.aviso-sin-preguntas { color: var(--amber); }
+.barra-tematica { height: 8px; border-radius: 4px; background: var(--blue-light); overflow: hidden; min-width: 120px; }
+.barra-tematica > span { display: block; height: 100%; background: var(--blue); }
+.tematicas-elegir { display: flex; flex-direction: column; gap: 0.35rem; max-height: 50vh; overflow: auto; }

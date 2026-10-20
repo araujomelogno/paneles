@@ -230,11 +230,14 @@ def mapa_por_clave(conn, solo_activos=True):
 # ── Escritura del catálogo ───────────────────────────────────────────
 
 # Claves que no puede tomar un atributo del catálogo porque ya las usa una
-# columna de los resultados que no es un atributo (R-ORG.5). Va escrita acá
-# y no importada de `cargas` para no crear una dependencia circular; una
-# prueba comprueba que coincidan.
+# columna de los resultados que no es un atributo (R-ORG.5) o una dimensión
+# de filtro que no sale del catálogo (R-TEM.6: `tematica`, y su columna
+# `tematicas`). Va escrita acá y no importada de `cargas` ni de `tematicas`
+# para no crear una dependencia circular; una prueba comprueba que
+# coincidan.
 CLAVES_RESERVADAS = frozenset(
-    {"estudio_de_origen", "tipo_datos_origen", "modo_relevamiento"})
+    {"estudio_de_origen", "tipo_datos_origen", "modo_relevamiento",
+     "tematica", "tematicas"})
 
 
 def _clave_valida(crudo, que="atributo"):
