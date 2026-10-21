@@ -533,7 +533,7 @@ def test_sin_respuesta_embedding_la_ingesta_y_el_recall_siguen_andando(
             {"individuo_id": i, "pregunta_id": preguntas["P"], "valor_texto": "x",
              "texto_embebido": "P → x"} for i in individuos.values()], contador)
         assert escritura == {"escritas": 3, "textos_embebidos": 1,
-                             "respuestas_reutilizadas": 0}
+                             "respuestas_reutilizadas": 0, "repetidas": 0}
         candidatos = semantica.recuperar(conn_semantica, proveedor.embeber(["P → x"])[0], 1)
         assert len(candidatos) == 3
         assert db.una(conn_semantica, "select count(*) as n from v_respuesta_estudio "

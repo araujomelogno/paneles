@@ -597,11 +597,17 @@ def test_un_lote_grande_no_acumula_los_vectores_en_memoria(
                 yield inicio, vectores
 
     medidor = ProveedorQueMidePico()
-    filas = [{"id_en_origen": f"R-{(n % 6) + 1:03d}", "P2": f"Texto {n}"}
-             for n in range(120)]
+    # 120 textos distintos: los seis panelistas, veinte abiertas cada uno.
+    # No 120 filas de seis personas a la misma pregunta: desde D79 esas son
+    # repetidas, quedan seis y no hay sub-lotes que medir.
+    abiertas = [{"codigo": f"A{k}", "texto": f"Pregunta abierta {k}",
+                 "tipo": "abierta", "orden": k} for k in range(1, 21)]
+    filas = [{"id_en_origen": f"R-{p:03d}",
+              **{f"A{k}": f"Texto {p}-{k}" for k in range(1, 21)}}
+             for p in range(1, 7)]
     salida = diferida.encolar(
-        conn_boveda, "encuesta", ola["encuesta"]["id"], _plan(), filas,
-        tamano_lote=120, encolador=encolador)
+        conn_boveda, "encuesta", ola["encuesta"]["id"], _plan(preguntas=abiertas),
+        filas, tamano_lote=120, encolador=encolador)
     diferida.procesar_lote(conn_boveda, conn_semantica, salida["trabajo_id"],
                            0, proveedor=medidor)
 
