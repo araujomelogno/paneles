@@ -363,6 +363,13 @@ deshacer:
 - **El recall busca unidades** y `top_n` las cuenta; cada una vuelve con
   todas sus respuestas, y el gate se aplica al resolver personas.
   `RECALL_EXACTO_HASTA` cuenta unidades.
+- **Las respuestas de un lote se escriben en una sola sentencia** (D79,
+  `upsert_respuestas`). El trigger de huérfanas corre al final de cada
+  sentencia: escribiendo fila por fila, un `UPDATE` borraba a mitad del lote
+  la unidad que una respuesta posterior iba a usar, y su vector quedaba nulo
+  (la carga 28). No vuelvan al loop. Las repetidas (misma persona y
+  pregunta) dejan la última, y una unidad sin vector es `RespuestaSinVector`
+  con huella y pregunta, no un `not null` mudo.
 - **`top_k` cuenta unidades distintas y el veredicto llega a todas sus
   personas** (`consultas._seleccionar_y_verificar`). Las otras evidencias de
   esas personas se verifican dentro del tope de siempre; la que no entra es
