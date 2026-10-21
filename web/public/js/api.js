@@ -488,8 +488,19 @@ export const cargas = {
       modo_relevamiento: modoRelevamiento || null,
       modo_relevamiento_otro: modoRelevamientoOtro || null,
     }),
-  listar: () => GET('/cargas'),
+  /* R-CAR.1 — sin consulta, todas (los selectores); la sección Cargas
+     filtra por temática (`tematica_id`) y busca por nombre (`q`). */
+  listar: (consulta) => GET('/cargas', consulta),
   ver: (cargaId) => GET(`/cargas/${cargaId}`),
+  /* R-TEM.4 — deja a la carga con esa lista: `[{ nombre, origen }]`. Es el
+     único camino que las escribe, antes y después de confirmar. */
+  guardarTematicas: (cargaId, tematicas) =>
+    PUT(`/cargas/${cargaId}/tematicas`, { tematicas }),
+  /* R-TEM.5 — propone con las preguntas ya guardadas. No aplica nada. */
+  proponerTematicas: (cargaId) => POST(`/cargas/${cargaId}/tematicas/propuesta`, {}),
+  /* R-TEM.6 — las temáticas con sus preguntas y las preguntas guardadas de
+     la carga que se les pueden asociar. */
+  tematicas: (cargaId) => GET(`/cargas/${cargaId}/tematicas`),
   editar: (cargaId, cambios) => PATCH(`/cargas/${cargaId}`, cambios),
   analizar: (cargaId, archivoBase64, opciones) =>
     subir(`/cargas/${cargaId}/analizar`,
@@ -501,6 +512,12 @@ export const cargas = {
      cuerpo viaja tal cual: ver el comentario de allá. */
   ingestarFilas: (cargaId, cuerpo, opciones) =>
     subir(`/cargas/${cargaId}/ingesta`, cuerpo, opciones),
+};
+
+/* R-TEM — el vocabulario compartido de temáticas, con cuántas cargas usa
+   cada una: el autocompletado del editor y el filtro de la sección Cargas. */
+export const tematicas = {
+  listar: () => GET('/tematicas'),
 };
 
 /* Fase 8 — calidad del dato semántico. Todo lo de acá **propone**: las

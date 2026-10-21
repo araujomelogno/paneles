@@ -52,6 +52,10 @@ TABLAS_BOVEDA = [
     "envio_correo",
     # R-CS — las ejecuciones de consulta; `consulta_lote` cascadea.
     "consulta_ejecucion",
+    # R-TEM — el vocabulario de temáticas no cascadea desde la carga (la
+    # temática sobrevive a sus cargas, a propósito): sin truncarlo, una
+    # prueba vería las temáticas de las anteriores.
+    "tematica",
 ]
 
 # R3.14 — el catálogo de atributos **no** se trunca: `sexo`, `localidad`,
@@ -243,6 +247,24 @@ class ContextoDePrueba:
         if self._verificador is None:
             self._verificador = mod.Lexico()
         return self._verificador
+
+    # R-TEM — sin red: por defecto no hay proponente y la propuesta vuelve
+    # vacía con su aviso, que es justamente el camino que no bloquea la
+    # carga. Las pruebas de temáticas asignan un doble.
+    _proponente_tematicas = None
+
+    @property
+    def proponente_tematicas(self):
+        from panel_api import tematicas
+
+        if self._proponente_tematicas is None:
+            self._proponente_tematicas = tematicas.NoDisponible(
+                "sin proponente en las pruebas")
+        return self._proponente_tematicas
+
+    @proponente_tematicas.setter
+    def proponente_tematicas(self, proponente):
+        self._proponente_tematicas = proponente
 
     @property
     def padron(self):

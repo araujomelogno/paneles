@@ -306,6 +306,7 @@ def ingestar(
     mapa_personas=None,
     motivos_sin_mapear=None,
     normalizacion=None,
+    con_respuestas=False,
 ):
     """Corre la ingesta de un estudio. `encuesta` es el dict del store de bóveda
     (necesita `ref_estudio`, `nombre`, `fecha_campo`).
@@ -317,6 +318,12 @@ def ingestar(
     ninguna pregunta en particular —hoy, la lista de valores de no respuesta
     que se usó para detectar—. Se guarda con el cuestionario para que un
     reproceso sepa qué se había decidido.
+
+    `con_respuestas` (R-TEM.6) agrega `respuestas_escritas_detalle`: las
+    `(id_persona, codigo, etiqueta)` que se escribieron, para que la carga
+    calcule las temáticas de cada persona **con lo que ya tiene en la mano**,
+    sin volver a leer el store semántico. No viaja al resumen: quien lo pide
+    lo saca del resultado.
     """
     proveedor = proveedor or mod_embeddings.crear()
     ref_estudio = str(encuesta["ref_estudio"])
@@ -421,7 +428,14 @@ def ingestar(
     escritura = semantica.escribir_respuestas(conn_semantica, respuestas, proveedor)
     escritas = escritura["escritas"]
 
+    extra = {}
+    if con_respuestas:
+        extra["respuestas_escritas_detalle"] = [
+            (mapa[id_origen], codigo, etiqueta)
+            for id_origen, codigo, etiqueta, _texto in largo]
+
     return {
+        **extra,
         **_descartadas(descartes),
         "ref_estudio": ref_estudio,
         "respuestas_escritas": escritas,

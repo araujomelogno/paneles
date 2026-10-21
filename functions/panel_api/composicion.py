@@ -310,6 +310,18 @@ def _universo_carga(carga_id):
     )
 
 
+def universo_de_ambito(ambito, referencia=None, estado="activo"):
+    """El `(from, where, parámetros)` de un ámbito, para quien cuenta otra
+    cosa sobre el mismo conjunto de personas (R-TEM.6: las temáticas). Es el
+    mismo que usa la composición: el ámbito se decide en un solo lugar."""
+    ambito = (ambito or PANEL).strip().lower()
+    if ambito == TODOS:
+        return _universo_todos()
+    if ambito == CARGA:
+        return _universo_carga(referencia)
+    return _universo_panel(referencia, estado)
+
+
 def _observada(conn, universo, dimension, momento=None):
     """Cuántas personas del universo hay en cada categoría de una dimensión.
 

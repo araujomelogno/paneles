@@ -436,6 +436,27 @@ def inferir_tipo(pregunta, por_valor, por_codigo):
 #  R8.5 · No respuesta
 # ════════════════════════════════════════════════════════════════════
 
+def es_no_respuesta(pregunta, valor, lista):
+    """¿Este valor —código del archivo o etiqueta ya traducida— es de no
+    respuesta? Las mismas reglas que `detectar_no_respuesta`, para un valor
+    suelto: el texto de la lista se compara sin mayúsculas ni tildes, y un
+    código (98, 99) cuenta solo si la variable tiene etiquetas y no es
+    numérica. Lo usa R-TEM.6: «No sabe» no es haber respondido."""
+    if valor is None:
+        return True
+    crudo = str(valor).strip()
+    opciones = {str(k): str(v) for k, v in (pregunta.get("opciones") or {}).items()}
+    textos = {_plano(v) for v in lista if not _es_numero(v)}
+    codigos = {str(v).strip() for v in lista if _es_numero(v)}
+    etiqueta = opciones.get(crudo)
+    if etiqueta is not None and _plano(etiqueta) in textos:
+        return True
+    if _plano(crudo) in textos:
+        return True
+    return (crudo in codigos and bool(opciones) and etiqueta is None
+            and pregunta.get("tipo") != NUMERICA)
+
+
 def detectar_no_respuesta(pregunta, por_valor, lista):
     """Los códigos de no respuesta de una variable: `[{valor, etiqueta,
     filas}]`. Busca en los valores del archivo y en las etiquetas."""

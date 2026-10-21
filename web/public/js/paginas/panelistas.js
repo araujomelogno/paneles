@@ -723,6 +723,31 @@ function avisarRevision(resultado) {
 
 /* ── Ficha ──────────────────────────────────────────────────────── */
 
+/* R-TEM.6 — las temáticas de la persona: una por carga en la que respondió
+   al menos una de sus preguntas. No son las de la carga: haber estado en un
+   estudio que cubría un tema no alcanza. Las especiales llegan solo si el
+   rol puede verlas; si no, se dice cuántas quedaron fuera. */
+function pintarTematicas(tematicas) {
+  const items = tematicas?.items || [];
+  const ocultas = tematicas?.especiales_ocultas || 0;
+  const nota = ocultas ? `<p class="small muted" style="padding:0.6rem 1.5rem">
+    ${ocultas} temática(s) de categoría especial no se muestran con tu rol.</p>` : '';
+  if (!items.length) {
+    return `<p class="small muted" style="padding:1rem 1.5rem">No respondió preguntas
+      asociadas a ninguna temática. Las temáticas se calculan por carga: las de las
+      cargas sin temáticas, o anteriores a ellas, no figuran.</p>${nota}`;
+  }
+  return `<div class="table-wrap"><table>
+    <thead><tr><th>Temática</th><th>Carga</th><th class="num">Preguntas respondidas</th></tr></thead>
+    <tbody>${items.map((t) => `<tr>
+      <td><span class="chip chip-tematica">${esc(t.nombre)}${t.es_especial
+        ? ' <span class="chip-marca especial">especial</span>' : ''}</span></td>
+      <td class="small">${esc(t.carga)}${t.fecha_estudio
+        ? ` · ${esc(fechaCorta(t.fecha_estudio))}` : ''}</td>
+      <td class="num">${t.preguntas_respondidas}</td>
+    </tr>`).join('')}</tbody></table></div>${nota}`;
+}
+
 async function renderFicha(main, idPersona) {
   main.innerHTML = cargando();
   const ficha = await api.panelistas.ficha(idPersona);
@@ -831,6 +856,14 @@ async function renderFicha(main, idPersona) {
             <span class="small muted">de qué estudios proviene</span>
           </div>
           <div class="card-body tight">${pintarOrigen(ficha.origen)}</div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-header-title">Temáticas con información</span>
+            <span class="small muted">sobre qué respondió, y en qué carga</span>
+          </div>
+          <div class="card-body tight">${pintarTematicas(ficha.tematicas)}</div>
         </div>
 
         <div class="card">

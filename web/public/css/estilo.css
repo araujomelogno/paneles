@@ -591,3 +591,32 @@ tr.fila-problema td { background: var(--red-light); }
 .alerta-pie { flex-basis: 100%; }
 .alerta-pie:empty { display: none; }
 .alerta-pie .alert { margin: 0 0 0.4rem; text-align: left; }
+
+/* R-TEM — las temáticas de una carga, como etiquetas. */
+.tematicas-chips { display: inline-flex; flex-wrap: wrap; gap: 0.3rem; }
+.chip-tematica { font-size: 0.72rem; background: var(--blue-light); border-color: transparent;
+  color: var(--blue); }
+.chip-tematica.chip-ia { background: var(--orange-light); color: var(--orange-dark); }
+.chip-marca { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.04em;
+  background: var(--white); border-radius: 999px; padding: 0 0.3rem; color: var(--green); }
+.chip-marca.ia { color: var(--orange-dark); }
+.chip-nueva { color: var(--green); }
+.tematicas-agregar { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.6rem; }
+.tematicas-agregar input { flex: 1 1 auto; }
+.tematicas-agregar .btn { white-space: nowrap; }
+.carga-atributos { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1rem;
+  font-size: 0.82rem; }
+.carga-atributos dt { color: var(--gray); font-weight: 600; }
+.carga-atributos dd { margin: 0; }
+/* R-TEM.6 — qué preguntas sustentan cada temática, y la marca de especial. */
+.chip-marca.especial { color: var(--red); }
+.tematicas-detalle { margin-top: 0.8rem; }
+.tematicas-detalle td { vertical-align: top; }
+.tematicas-detalle .chip { font-weight: 600; max-width: 100%; }
+.tematicas-detalle .chip code { font-size: 0.66rem; }
+.tematicas-detalle .fselect-sm { margin-top: 0.35rem; padding: 0.25rem 0.5rem; font-size: 0.72rem; width: auto; max-width: 100%; }
+.tematicas-detalle .centro { text-align: center; }
+.aviso-sin-preguntas { color: var(--amber); }
+.barra-tematica { height: 8px; border-radius: 4px; background: var(--blue-light); overflow: hidden; min-width: 120px; }
+.barra-tematica > span { display: block; height: 100%; background: var(--blue); }
+.tematicas-elegir { display: flex; flex-direction: column; gap: 0.35rem; max-height: 50vh; overflow: auto; }

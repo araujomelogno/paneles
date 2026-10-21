@@ -42,6 +42,15 @@ OPERADORES = {
 OPERADORES_LISTA = {"in", "not_in"}
 OPERADORES_TEXTO = {"contiene"}
 
+# R-TEM.6 — «panelistas con información sobre *telefonía móvil*». No es un
+# atributo del catálogo (no tiene categorías ni cuota): es un hecho derivado
+# de qué respondió cada persona (`persona_tematica`). Se filtra con `eq` o
+# `in` sobre el nombre de la temática; la clave está reservada en
+# `atributos.CLAVES_RESERVADAS`. Filtrar por una especial exige permiso, y
+# eso lo controla la ruta (`tematicas.exigir_permiso_para_criterios`).
+DIMENSION_TEMATICA = "tematica"
+OPERADORES_TEMATICA = {"eq", "in"}
+
 # Qué dimensiones se comparan como número y no como texto. `edad` siempre lo
 # es; cualquier atributo `numerico` del catálogo también.
 NUMERICAS = {"edad"}
@@ -90,7 +99,10 @@ def normalizar_criterio(crudo, dimensiones=None, catalogo_por_clave=None):
     if not isinstance(crudo, dict):
         raise DatosInvalidos(f"Criterio demográfico mal formado: {crudo!r}.")
     dimension = (crudo.get("dimension") or "").strip().lower()
-    validas = set(dimensiones) if dimensiones else set(DIMENSIONES_BASE)
+    if dimension == DIMENSION_TEMATICA:
+        return _criterio_tematica(crudo)
+    validas = (set(dimensiones) if dimensiones else set(DIMENSIONES_BASE)) \
+        | {DIMENSION_TEMATICA}
     if dimension not in validas:
         raise DatosInvalidos(
             f"Dimensión demográfica desconocida: {dimension!r}.",
@@ -134,6 +146,32 @@ def normalizar_criterio(crudo, dimensiones=None, catalogo_por_clave=None):
     }
 
 
+def _criterio_tematica(crudo):
+    """R-TEM.6 — un criterio por temática, en forma canónica: nombres
+    normalizados como los guarda `tematicas.normalizar`."""
+    from . import tematicas
+
+    operador = (crudo.get("operador") or "eq").strip().lower()
+    if operador not in OPERADORES_TEMATICA:
+        raise DatosInvalidos(
+            f"Sobre una temática se puede filtrar con {sorted(OPERADORES_TEMATICA)}, "
+            f"no con {operador!r}: «tiene información sobre…».")
+    crudos = crudo.get("valor")
+    crudos = crudos if isinstance(crudos, list) else [crudos]
+    nombres = [n for n in dict.fromkeys(tematicas.normalizar(v) for v in crudos) if n]
+    if not nombres:
+        raise DatosInvalidos("Falta la temática del criterio.")
+    return {
+        "tipo": "demografico",
+        "dimension": DIMENSION_TEMATICA,
+        "operador": "in" if len(nombres) > 1 or operador == "in" else "eq",
+        "valor": nombres if len(nombres) > 1 or operador == "in" else nombres[0],
+        "duro": True,
+        "etiqueta": crudo.get("etiqueta")
+                    or f"Con información sobre {' o '.join(nombres)}",
+    }
+
+
 def condiciones(criterios, alias="p", catalogo_por_clave=None, momento=None):
     """`[criterio]` → `(fragmentos_sql, parametros)`. Sin interpolar valores.
 
@@ -154,6 +192,17 @@ def condiciones(criterios, alias="p", catalogo_por_clave=None, momento=None):
     fragmentos, parametros = [], []
     for criterio in criterios:
         dimension = criterio["dimension"]
+        if dimension == DIMENSION_TEMATICA:
+            # Tiene la temática en **alguna** de sus cargas. Va por el
+            # nombre, que es único y normalizado.
+            valor = criterio["valor"]
+            fragmentos.append(
+                f"exists (select 1 from persona_tematica pt "
+                f"join tematica t on t.id = pt.tematica_id "
+                f"where pt.id_persona = {alias}.id_persona "
+                f"and t.nombre = any(%s::text[]))")
+            parametros.append(valor if isinstance(valor, list) else [valor])
+            continue
         numerica = _es_numerica(dimension, catalogo_por_clave)
         columna = "va.valor_num" if numerica else "va.valor"
         operador, valor = criterio["operador"], criterio["valor"]

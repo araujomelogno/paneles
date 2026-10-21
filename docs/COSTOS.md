@@ -330,6 +330,15 @@ No entran en la base fija y dependen de la actividad:
   repetidas se verifican una vez (unidades de evidencia), y cada consulta
   registra su costo real (sección 5.1).
 - **Reranker:** una llamada por criterio semántico.
+- **Temáticas de una carga con Claude (R-TEM):** **una** llamada por carga,
+  al revisarla (o al pedir «Proponer temáticas» en una carga anterior), con
+  los textos de sus preguntas y la lista de temáticas existentes: unos pocos
+  miles de tokens de entrada y unos cientos de salida, **~US$ 0,02 por
+  carga**. Es el componente de IA más barato del sistema. Volver a revisar
+  sin cambiar las preguntas no repite la llamada; confirmar la carga no la
+  hace. Las **temáticas de cada panelista** (R-TEM.6) cuestan US$ 0: se
+  calculan en la ingesta con datos en memoria y se recalculan en la bóveda,
+  sin ninguna API.
 - **WhatsApp (Meta):** por conversación iniciada por el negocio. Escala con el
   tamaño de las convocatorias.
 

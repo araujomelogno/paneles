@@ -358,6 +358,8 @@ SUMABLES = (
     "reembebidas", "sin_cambios", "borradas", "sin_consentimiento_reproceso",
     # R-UE — cuántos textos distintos se mandaron a embeber en el reproceso.
     "textos_embebidos",
+    # R-TEM.6 — filas persona ↔ temática que dejó la carga.
+    "tematicas_de_panelistas",
 )
 CONCATENABLES = (
     "sin_mapear", "sin_mapear_detalle", "sin_consentimiento",

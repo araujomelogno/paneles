@@ -10,6 +10,7 @@ import * as api from '../api.js';
 import * as consentimiento from '../consentimiento.js';
 import * as catalogo from '../catalogo.js';
 import * as calidad from '../calidad.js';
+import { editorDeTematicas } from '../tematicas.js';
 import {
   $, $$, esc, encabezado, token, vacio, cargando, toast, modal, cerrarModal,
   leerFormulario, activarTokens, fechaCorta, estado, alerta, confirmar,
@@ -637,6 +638,12 @@ function abrirIngesta(destino, alTerminar) {
   const esCarga = destino.tipo === 'carga';
   const encuesta = destino;
   let datosArchivo = { encabezados: [], filas: [] };
+  /* R-TEM.2 — las temáticas que el analista dejó en la revisión, y para qué
+     preguntas se pidió la propuesta. Volver a corregir y revisar de nuevo
+     no vuelve a llamar a Claude si las preguntas no cambiaron: se conserva
+     lo que el analista ya editó. */
+  let tematicasElegidas = null;
+  let firmaDeLaPropuesta = null;
 
   const caja = modal({
     titulo: `${esCarga ? 'Cargar panelistas' : 'Ingestar respuestas'} — ${encuesta.nombre}`,
@@ -1662,8 +1669,17 @@ function abrirIngesta(destino, alTerminar) {
      todo lo que se había puesto. */
   async function revisarAntesDeImportar(cuerpo) {
     let resumen;
+    // R-TEM.2 — en una carga, la revisión trae además la propuesta de
+    // temáticas. Solo se pide si cambiaron las preguntas o sus marcas desde
+    // la última: si no, se sigue con la lista ya editada.
+    const firma = JSON.stringify([
+      (cuerpo.preguntas || []).map((p) => [p.codigo, p.texto]), cuerpo.demograficas]);
+    const proponer = esCarga && (tematicasElegidas === null || firma !== firmaDeLaPropuesta);
     try {
-      resumen = await enviarIngesta({ ...cuerpo, solo_revisar: true });
+      resumen = await enviarIngesta({
+        ...cuerpo, solo_revisar: true,
+        ...(esCarga ? { proponer_tematicas: proponer } : {}),
+      });
     } catch (error) {
       avisarEnIngesta(alerta(error.message));
       return false;
@@ -1678,7 +1694,15 @@ function abrirIngesta(destino, alTerminar) {
     // nombre. «Confirmar e importar» a secas, debajo de un cartel rojo, se
     // lee como «no se puede», y es justo lo que el analista puede decidir.
     const sinClave = Boolean(resumen.sin_clave_de_dedup);
-    revision$.innerHTML = resumenHtml(resumen) + `
+    revision$.innerHTML = resumenHtml(resumen) + (esCarga ? `
+      <h4>Temáticas incorporadas</h4>
+      <p class="small">De qué trata esta carga, y qué preguntas sustentan cada
+        temática: un panelista la tiene si respondió al menos una. ${proponer
+        ? 'Claude las propuso a partir de los textos de las preguntas que van al store '
+          + 'semántico (ni respuestas ni demográficos): aceptá, quitá o agregá.'
+        : 'Las que dejaste en la revisión anterior.'} Se guardan al confirmar, y se
+        pueden editar después desde la sección Cargas.</p>
+      <div id="rev-tematicas">${cargando('6vh')}</div>` : '') + `
       <div class="modal-foot pie-revision" style="padding-left:0;padding-right:0">
         <button class="btn btn-outline" id="volver-a-corregir">${sinClave
           ? 'Volver a corregir el mapeo' : 'Volver a corregir'}</button>
@@ -1695,8 +1719,26 @@ function abrirIngesta(destino, alTerminar) {
     alertaPie$.innerHTML = '';
     caja.scrollTop = 0;
 
+    let editorTematicas = null;
+    if (esCarga) {
+      const { items: vocabulario } = await api.tematicas.listar().catch(() => ({ items: [] }));
+      const propuesta = resumen.tematicas;
+      editorTematicas = editorDeTematicas($('#rev-tematicas', revision$), {
+        vocabulario,
+        // R-TEM.6 — las preguntas que se pueden asociar son las que van al
+        // store semántico: las mismas que vio Claude.
+        preguntasDisponibles: resumen.al_store_semantico?.variables || [],
+        puedeDesmarcar: false,
+        iniciales: proponer ? [] : (tematicasElegidas || []),
+        propuesta: proponer ? (propuesta?.propuesta || []) : [],
+        aviso: proponer ? propuesta?.aviso : null,
+      });
+      if (proponer) firmaDeLaPropuesta = firma;
+    }
+
     return new Promise((resolver) => {
       const cerrar = (confirmado) => {
+        if (editorTematicas) tematicasElegidas = editorTematicas.valor();
         revision$.classList.add('hidden');
         revision$.innerHTML = '';
         formulario$.classList.remove('hidden');
@@ -1949,13 +1991,18 @@ function abrirIngesta(destino, alTerminar) {
 
   function enviarIngesta(cuerpo, avance) {
     if (datosArchivo.savBase64) {
-      return (esCarga ? api.cargas : api.sav).ingestar(encuesta.id, cuerpo, {
+      const opciones = {
         alSubir: (f) => (f < 1
           ? avance?.medido('Subiendo al servidor', f)
           : avance?.abierto('Ingestando en el servidor…',
               'Se leen las respuestas, se resuelve cada individuo y se '
               + 'calculan los embeddings. Con archivos grandes tarda.')),
-      });
+      };
+      // Las dos llamadas escritas enteras, y no `(esCarga ? a : b).ingestar`:
+      // así `test_rutas_con_pantalla` ve que la ruta de cada destino tiene
+      // pantalla.
+      return esCarga ? api.cargas.ingestar(encuesta.id, cuerpo, opciones)
+        : api.sav.ingestar(encuesta.id, cuerpo, opciones);
     }
     avance?.abierto('Ingestando en el servidor…',
       'Se resuelve cada individuo y se calculan los embeddings. '
@@ -2012,6 +2059,19 @@ function abrirIngesta(destino, alTerminar) {
     // oportunidad de ver que la columna de identidad está mal elegida
     // antes de crear miles de duplicados.
     if (!(await revisarAntesDeImportar(cuerpo))) return;
+
+    /* R-TEM.4 — las temáticas revisadas se guardan antes de encolar, por el
+       mismo camino con el que se editan después. Si no se pudieran guardar,
+       la carga sigue igual: las temáticas no son razón para frenarla, y se
+       completan desde la sección Cargas. */
+    if (esCarga && tematicasElegidas) {
+      try {
+        await api.cargas.guardarTematicas(encuesta.id, tematicasElegidas);
+      } catch (error) {
+        toast(`No se guardaron las temáticas (${error.message}). La carga sigue; `
+          + 'agregalas desde la sección Cargas.', 'err');
+      }
+    }
 
     // Avance para los dos caminos, no solo para el `.sav`. La espera larga
     // es la del servidor —resolver cada individuo y calcular embeddings— y
