@@ -13,6 +13,8 @@ import hashlib
 import json
 import os
 
+import psycopg
+
 from . import db, pii
 from .errores import NoEncontrado
 
@@ -249,15 +251,89 @@ class SinUnidad(RuntimeError):
     error de programación: `escribir_respuestas` crea las unidades antes."""
 
 
+class RespuestaSinVector(SinUnidad):
+    """Una respuesta iba a apuntar a una unidad que no existe o no tiene
+    vector. Dice **qué** huellas y **qué** preguntas: el error de Postgres
+    («null value in column "embedding"… violates not-null constraint») no lo
+    decía, y reconstruirlo a mano costó horas (BUG del embedding nulo)."""
+
+
+def _sin_repetidas(respuestas):
+    """Una respuesta por `(individuo_id, pregunta_id)`: la **última**, que es
+    con la que quedaba la escritura fila por fila de antes. Pasa cuando el
+    dedup fusiona dos filas del archivo en una persona, o con la fusión de
+    una cerrada con su «Otro, especificar». Devuelve `(unicas, repetidas)`."""
+    ultima = {}
+    for r in respuestas:
+        ultima[(r["individuo_id"], r["pregunta_id"])] = r
+    unicas = list(ultima.values())
+    return unicas, len(respuestas) - len(unicas)
+
+
+def _exigir_unidades_con_vector(conn, respuestas, unidad_de):
+    """Las unidades a las que van a apuntar estas respuestas existen y tienen
+    vector, y quedan **bloqueadas** (`for key share`) hasta el commit: otra
+    tarea que deje una de ellas huérfana no la puede borrar en el medio.
+
+    Si falta alguna, levanta `RespuestaSinVector` con la huella y el código
+    de pregunta de cada una, y lo deja en el log (`[ingesta]`, huellas y
+    códigos: nunca el texto, que es contenido)."""
+    ids = sorted({unidad_de[r["hash_texto"]] for r in respuestas})
+    con_vector = {
+        f["id"] for f in db.todas(
+            conn,
+            """select id from unidad_evidencia
+                where id = any(%s::bigint[]) and embedding is not null
+                for key share""",
+            (ids,))
+    }
+    malas = [r for r in respuestas if unidad_de[r["hash_texto"]] not in con_vector]
+    if malas:
+        _falta_vector(conn, malas)
+
+
+def _falta_vector(conn, malas, causa=None):
+    codigo_de = {
+        f["id"]: f["codigo"] for f in db.todas(
+            conn, "select id, codigo from pregunta where id = any(%s::bigint[])",
+            (sorted({r["pregunta_id"] for r in malas}),))
+    }
+    casos = sorted({(r["hash_texto"], codigo_de.get(r["pregunta_id"], "?"))
+                    for r in malas})
+    for huella, codigo in casos[:20]:
+        print(f"[ingesta] respuesta sin vector: huella={huella} pregunta={codigo}"
+              + (f" error={type(causa).__name__}" if causa else ""), flush=True)
+    detalle = "; ".join(f"pregunta {c}, huella {h}" for h, c in casos[:5])
+    raise RespuestaSinVector(
+        f"{len(malas)} respuesta(s) iban a apuntar a una unidad de evidencia "
+        f"que no existe o no tiene vector ({detalle}"
+        f"{'; …' if len(casos) > 5 else ''}). Ninguna se escribió. "
+        f"Reintentar el lote vuelve a resolver las unidades."
+        # La primera línea del error de Postgres, si lo hubo: dice qué
+        # restricción saltó. El DETAIL no, que trae la fila con su texto.
+        + (f" Error de Postgres: {str(causa).splitlines()[0]}" if causa else "")
+    ) from causa
+
+
 def upsert_respuestas(conn, respuestas):
     """`respuestas`: [{individuo_id, pregunta_id, valor_texto, texto_embebido,
     hash_texto?, embedding?}]. Idempotente por (individuo, pregunta):
-    re-ingestar no duplica.
+    re-ingestar no duplica. Si llegan dos para la misma persona y pregunta,
+    queda la última (`_sin_repetidas`).
 
     Cada respuesta apunta a la unidad de su texto. Si la fila trae
     `embedding`, la unidad se crea con ese vector cuando falta; si no lo
     trae, la unidad **tiene** que existir (`SinUnidad`): una respuesta sin
     vector sería invisible para la búsqueda y contaría en los totales.
+
+    **Se escriben en una sola sentencia**, y no es por velocidad. El trigger
+    que borra las unidades huérfanas (`semantica/0010`) corre al final de
+    cada sentencia: escribiendo fila por fila, un `UPDATE` que cambiaba el
+    texto de una respuesta borraba la unidad del texto anterior **a mitad del
+    lote**, y si otra respuesta posterior tenía ese mismo texto, apuntaba a
+    una unidad que ya no estaba y su vector quedaba nulo (BUG del embedding
+    nulo, carga 28). En una sola sentencia el trigger corre cuando todas ya
+    apuntan a su unidad, y solo borra la que de verdad quedó sin nadie.
 
     `respuesta.embedding` no se escribe: mientras exista (hasta la
     semantica/0011), lo completa el trigger de la 0010 desde la unidad.
@@ -268,6 +344,9 @@ def upsert_respuestas(conn, respuestas):
     )
     for r in respuestas:
         r["hash_texto"] = r.get("hash_texto") or hash_texto(r["texto_embebido"])
+    respuestas, _ = _sin_repetidas(respuestas)
+    if not respuestas:
+        return 0
     crear_unidades(conn, [
         {"hash_texto": r["hash_texto"], "texto_embebido": r["texto_embebido"],
          "embedding": r["embedding"]}
@@ -278,32 +357,45 @@ def upsert_respuestas(conn, respuestas):
         raise SinUnidad(
             f"{len(faltan)} texto(s) sin unidad de evidencia: hay que embeberlos "
             f"antes de escribir sus respuestas (semantica.escribir_respuestas).")
+    _exigir_unidades_con_vector(conn, respuestas, unidad_de)
 
-    escritas = 0
-    for r in respuestas:
-        escritas += db.ejecutar(
+    # En un savepoint, para poder diagnosticar si falla sin deshacer lo que
+    # quien llama ya hizo en esta transacción.
+    db.ejecutar(conn, "savepoint antes_de_las_respuestas")
+    try:
+        return db.ejecutar(
             conn,
             """
             insert into respuesta
                    (individuo_id, pregunta_id, valor_texto, texto_embebido,
                     hash_texto, unidad_id)
-                 values (%s, %s, %s, %s, %s, %s)
+            select * from unnest(%s::bigint[], %s::bigint[], %s::text[],
+                                 %s::text[], %s::text[], %s::bigint[])
             on conflict (individuo_id, pregunta_id) do update
                     set valor_texto = excluded.valor_texto,
                         texto_embebido = excluded.texto_embebido,
                         hash_texto = excluded.hash_texto,
                         unidad_id = excluded.unidad_id
             """,
-            (
-                r["individuo_id"],
-                r["pregunta_id"],
-                r.get("valor_texto"),
-                r["texto_embebido"],
-                r["hash_texto"],
-                unidad_de[r["hash_texto"]],
-            ),
+            ([r["individuo_id"] for r in respuestas],
+             [r["pregunta_id"] for r in respuestas],
+             [r.get("valor_texto") for r in respuestas],
+             [r["texto_embebido"] for r in respuestas],
+             [r["hash_texto"] for r in respuestas],
+             [unidad_de[r["hash_texto"]] for r in respuestas]),
         )
-    return escritas
+    except (psycopg.errors.NotNullViolation,
+            psycopg.errors.ForeignKeyViolation) as error:
+        # No debería pasar con las unidades bloqueadas; si pasa, el error
+        # dice cuáles, en vez de la violación sola.
+        db.ejecutar(conn, "rollback to savepoint antes_de_las_respuestas")
+        vivas = {f["id"] for f in db.todas(
+            conn, "select id from unidad_evidencia where id = any(%s::bigint[]) "
+                  "and embedding is not null",
+            (sorted(set(unidad_de.values())),))}
+        _falta_vector(conn, [r for r in respuestas
+                             if unidad_de[r["hash_texto"]] not in vivas] or respuestas,
+                      causa=error)
 
 
 def escribir_respuestas(conn, respuestas, proveedor):
@@ -321,9 +413,10 @@ def escribir_respuestas(conn, respuestas, proveedor):
     `unidad_evidencia.embedding`: un desajuste haría pagar el lote para que
     el insert lo rechace después.
 
-    Devuelve `{escritas, textos_embebidos, respuestas_reutilizadas}`:
-    cuántas respuestas se escribieron, cuántos textos se mandaron a embeber
-    y cuántas respuestas apuntaron a una unidad que ya existía.
+    Devuelve `{escritas, textos_embebidos, respuestas_reutilizadas,
+    repetidas}`: cuántas respuestas se escribieron, cuántos textos se
+    mandaron a embeber, cuántas apuntaron a una unidad que ya existía y
+    cuántas se descartaron por repetir persona y pregunta.
     """
     from . import esquema
     from .errores import DatosInvalidos
@@ -331,6 +424,13 @@ def escribir_respuestas(conn, respuestas, proveedor):
     for r in respuestas:
         r["hash_texto"] = r.get("hash_texto") or hash_texto(r["texto_embebido"])
         r["embedding"] = None
+    # Antes de embeber: un texto que solo traía la respuesta repetida que se
+    # descarta no se paga, y su unidad no quedaría huérfana para siempre (el
+    # trigger solo mira las respuestas que se borran o cambian).
+    respuestas, repetidas = _sin_repetidas(respuestas)
+    if repetidas:
+        print(f"[ingesta] {repetidas} respuesta(s) repetidas para la misma "
+              f"persona y pregunta: queda la última", flush=True)
     existentes = unidades_por_hash(conn, (r["hash_texto"] for r in respuestas))
     nuevos = {}
     for r in respuestas:
@@ -360,6 +460,7 @@ def escribir_respuestas(conn, respuestas, proveedor):
         "textos_embebidos": len(nuevos),
         "respuestas_reutilizadas": sum(
             1 for r in respuestas if r["hash_texto"] in existentes),
+        "repetidas": repetidas,
     }
 
 

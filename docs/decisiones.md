@@ -4628,3 +4628,59 @@ cargando una base con el celular como identificador. Tres cosas:
 `functions/tests/test_pedido_pii_columna_de_identidad.py`,
 `functions/tests/test_borrar_carga.py`,
 `functions/tests/test_borrar_carga_pantalla.py`.
+
+## D79 · Las respuestas de un lote se escriben en una sola sentencia, y una unidad sin vector es un error que dice cuál
+
+**El problema.** `docs/BUG_ingesta_embedding_nulo_un_texto.md`: la carga 28
+quedó con 910 personas y ninguna respuesta. El lote fallaba en sus cinco
+intentos, siempre en el mismo texto, con «null value in column "embedding" …
+violates not-null constraint» y nada más.
+
+**La causa**, reproducida con la misma huella (`0df92b48…`):
+`upsert_respuestas` escribía fila por fila, y el trigger que borra las
+unidades huérfanas (`semantica/0010`, `after update … for each statement`)
+corre al final de **cada** sentencia. El lote traía dos respuestas de la
+misma persona a la misma pregunta, con textos distintos: dos filas del
+archivo que el dedup fusionó en una persona. La segunda era un `UPDATE` que
+dejaba sin respuestas a la unidad del primer texto, y el trigger la borraba
+**a mitad del lote**. Más adelante otra persona tenía ese mismo texto. Su
+respuesta apuntaba a la unidad recién borrada, porque el mapa huella →
+unidad se había armado antes. El `select embedding into` del trigger
+`respuesta_asegurar_unidad` no encontraba filas y dejaba el vector nulo.
+Pasa igual en una re-ingesta: alguien cambia su respuesta y otra persona,
+nueva, da la que él tenía antes.
+
+**La decisión.**
+
+- **Una sola sentencia por lote**
+  (`insert … select from unnest … on conflict do update`). El trigger de
+  huérfanas corre una vez, cuando todas las respuestas ya apuntan a su
+  unidad, y solo borra la que de verdad quedó sin nadie. No se tocó el
+  trigger: «la unidad sin respuestas la borra la base» sigue en pie (D73).
+- **Repetidas: queda la última** (`_sin_repetidas`), que es con la que
+  quedaba la escritura fila por fila. Se descartan **antes de embeber**: un
+  texto que solo traía la descartada no se paga, ni deja una unidad huérfana
+  que el trigger no vería (solo mira respuestas que se borran o cambian). Se
+  informa en el log y en `escribir_respuestas` (`repetidas`).
+- **Salvaguarda.** Antes de escribir, las unidades se verifican con vector y
+  se bloquean (`for key share`), para que otra tarea no pueda borrarlas en
+  el medio. Si falta una, `RespuestaSinVector` dice la huella y el código de
+  pregunta (en el error, que queda en `ingesta_lote.error`, y en el log
+  `[ingesta]`), nunca el texto. Si Postgres rechaza igual, se traduce al
+  mismo error, con la primera línea del de Postgres.
+
+**Lo que se descartó.**
+
+- *Diferir el trigger de huérfanas al commit.* Arregla todos los caminos,
+  pero un trigger de sentencia con tablas de transición no puede ser
+  `deferrable`. Uno por fila sí, pero cuesta una llamada por respuesta en
+  cada baja, y cambia lo que ven las pruebas y el código que miran
+  `unidad_evidencia` en la misma transacción.
+- *Volver a resolver la unidad fila por fila.* Seguiría siendo una sentencia
+  por fila, y un `select` más cada vez.
+- *Descartar la primera de las repetidas.* Cambiaría lo que queda escrito
+  respecto de antes, sin que nadie lo haya pedido.
+
+**Dónde vive.** `functions/panel_api/semantica.py` (`upsert_respuestas`,
+`_sin_repetidas`, `_exigir_unidades_con_vector`, `RespuestaSinVector`),
+`functions/tests/test_bug_embedding_nulo_un_texto.py`.
