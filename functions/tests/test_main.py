@@ -50,6 +50,8 @@ NO_SON_SECRETOS = frozenset({
     # va declarado es `TAREAS_URL` y `TAREAS_CUENTA`, sin las cuales nadie
     # toma los lotes.
     "INGESTA_FILAS_POR_LOTE", "TAREAS_COLA", "TAREAS_REGION",
+    # D78 — cuántas personas procesa cada lote del borrado de una carga.
+    "BORRADO_PERSONAS_POR_LOTE",
     # Las pone el runtime de Cloud Functions solo. Declararlas como secreto
     # no solo sobra: `firebase deploy` fallaría pidiendo que existan en
     # Secret Manager.

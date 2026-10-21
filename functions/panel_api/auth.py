@@ -116,6 +116,9 @@ PERMISOS = {
     # revisa y confirma lo que propone Claude. El dpo no: no es su trabajo y
     # una fusión reapunta referencias sin vuelta atrás.
     "gestionar_taxonomia": {"admin", "operaciones", "analista"},
+    # PEDIDO del celular, parte 3 — borrar una carga da de baja a las
+    # personas que trajo y no tiene vuelta atrás: solo administración.
+    "borrar_carga": {"admin"},
 }
 
 

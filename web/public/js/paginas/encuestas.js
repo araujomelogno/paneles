@@ -300,9 +300,10 @@ async function convocar(encuestaId) {
 /* R3.12.d — las tres causas se arreglan distinto, así que el informe las
    separa en vez de dar un número suelto. */
 const MOTIVOS_SIN_MAPEAR = {
-  formato_invalido: 'el valor no es un id_persona válido',
+  formato_invalido: 'el valor no tiene el formato del tipo elegido (un id_persona, un celular)',
   no_encontrado: 'ese identificador no existe en la bóveda',
   sin_alias_para_ese_origen: 'esa plataforma no tiene registrado ese id',
+  celular_compartido: 'ese celular lo tiene más de una persona: no se asigna a ninguna',
 };
 
 function resumirSinMapear(resultado) {
@@ -762,6 +763,7 @@ function abrirIngesta(destino, alTerminar) {
             <option value="id_persona">Trae el id_persona del sistema (precargado)</option>
             <option value="documento">Trae el documento</option>
             <option value="email">Trae el correo</option>
+            <option value="celular">Trae el celular</option>
           </select>
         </div>
         <div class="field-hint" id="hint-identificador"></div>
@@ -1324,6 +1326,12 @@ function abrirIngesta(destino, alTerminar) {
   /* ¿La variable está marcada como demográfica? Va a la bóveda, no se
      embebe, y el panel de calidad no tiene nada que proponerle. */
   const esDemografica = (codigo) => Boolean(filaDe(codigo)?.querySelector('.p-rol').value);
+  /* Lo mismo la columna que identifica: resuelve a la persona y nunca se
+     embebe. Sin esto, el celular elegido como identificador salía como
+     «posibles datos personales», sobre una columna que no puede llegar al
+     store semántico (PEDIDO del celular, parte 2). */
+  const noSeEmbebe = (codigo) => esDemografica(codigo)
+    || codigo === $('#columna-id', caja).value;
 
   function pintarCalidad() {
     const destino = $('#calidad-panel', caja);
@@ -1331,7 +1339,7 @@ function abrirIngesta(destino, alTerminar) {
     $('#bloque-calidad', caja).classList.remove('hidden');
     // Se filtra al pintar, no al recibir: el rol se puede cambiar después,
     // y una variable que deja de ser demográfica recupera sus hallazgos.
-    const visible = calidad.soloSemanticas(diagnostico, esDemografica);
+    const visible = calidad.soloSemanticas(diagnostico, noSeEmbebe);
     destino.innerHTML = calidad.panelHtml(visible, aplicados);
     calidad.activarPanel(destino, visible, aplicados,
       (_h, accion) => aplicarPropuesta(accion.propuesta), pintarCalidad);
@@ -1400,7 +1408,14 @@ function abrirIngesta(destino, alTerminar) {
     email: 'Respaldo, cuando no se pudo precargar. Al terminar queda '
       + 'registrado el alias de esta plataforma, así la próxima carga ya no '
       + 'necesita el correo.',
+    celular: 'Para un panel que trabaja por teléfono o WhatsApp. Se compara '
+      + 'en formato internacional (da igual «099 123 456» que «+598 99 123 456»). '
+      + 'Si el número lo tiene más de una persona, la fila no se asigna a '
+      + 'ninguna: un celular puede ser de un hogar. No deja alias registrado.',
   };
+  // Cambiar la columna que identifica cambia qué se embebe: el panel de
+  // calidad se vuelve a filtrar con la elección vigente.
+  $('#columna-id', caja).addEventListener('change', () => pintarCalidad());
   const tipoId$ = $('#tipo-identificador', caja);
   const refrescarAyudaIdentificador = () => {
     $('#hint-identificador', caja).textContent = AYUDA_IDENTIFICADOR[tipoId$.value];
@@ -2265,6 +2280,16 @@ function mostrarResumenDeIngesta(resultado, esCarga, titulo = 'Ingesta terminada
   resultado = resultado || {};
   // R8.9 — un reproceso corre por la misma vía y se sigue igual, pero su
   // resumen es otro: qué se re-embebió, qué quedó igual y qué se borró.
+  // D78 — borrar una carga también corre por la vía diferida.
+  if (resultado.operacion === 'borrado_carga') {
+    mostrarResultado('Carga borrada', [
+      ['Personas dadas de baja', resultado.personas_dadas_de_baja || 0],
+      ['Personas conservadas', resultado.personas_conservadas || 0],
+    ], 'Se borraron todas las respuestas del estudio. Las personas conservadas '
+      + 'perdieron el vínculo con la carga y sus respuestas de ella; las bajas '
+      + 'se avisaron a los otros sistemas que usan la bóveda.');
+    return;
+  }
   if (resultado.operacion === 'reproceso') {
     mostrarResultado('Reproceso terminado', [
       ['Re-embebidas', resultado.reembebidas || 0],
@@ -2388,8 +2413,10 @@ async function seguirIngesta(trabajoId, { avance, esCarga, alTerminar,
   for (;;) {
     estado = await api.ingestas.ver(trabajoId);
     const restante = estado.segundos_restantes;
+    // Un borrado de carga reparte personas, no filas del archivo.
+    const unidad = estado.operacion === 'borrado_carga' ? 'persona(s)' : 'fila(s)';
     avance.medido(
-      `${estado.estado_etiqueta} · ${estado.filas_procesadas} de ${estado.filas_total} fila(s)`
+      `${estado.estado_etiqueta} · ${estado.filas_procesadas} de ${estado.filas_total} ${unidad}`
       + (restante ? ` · faltan ~${duracion(restante)}` : ''),
       (estado.porcentaje || 0) / 100);
     if (estado.terminal) break;

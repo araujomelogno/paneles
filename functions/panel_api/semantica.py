@@ -708,6 +708,112 @@ def borrar_respuestas_de_estudio(conn, id_persona, ref_estudio):
     return {"respuestas_borradas": n}
 
 
+# ── PEDIDO del celular, parte 3 · Borrar una carga ───────────────────
+#
+# El lado semántico del borrado de una carga (`cargas_borrado.py`). Mismo
+# patrón que la baja: capturas primero, `delete` después, y las unidades
+# que quedan sin respuestas las borra el trigger de la `semantica/0010`; las
+# compartidas con otro estudio se quedan solas, sin que nadie las elija.
+
+_RESPUESTAS_DEL_ESTUDIO = """
+    select r.id from respuesta r
+      join pregunta p on p.id = r.pregunta_id
+      join cuestionario c on c.id = p.cuestionario_id
+     where c.ref_estudio = %s"""
+
+
+def contar_estudio(conn, ref_estudio):
+    """Respuestas y unidades de evidencia que se irían con el estudio. Las
+    unidades son las que no tienen ninguna respuesta de otro estudio."""
+    fila = db.una(
+        conn,
+        """
+        with del_estudio as materialized (
+          select r.unidad_id
+            from respuesta r
+            join pregunta p on p.id = r.pregunta_id
+            join cuestionario c on c.id = p.cuestionario_id
+           where c.ref_estudio = %s
+        )
+        select (select count(*) from del_estudio) as respuestas,
+               (select count(*) from (select distinct unidad_id from del_estudio) u
+                 where not exists (
+                   select 1 from respuesta r2
+                     join pregunta p2 on p2.id = r2.pregunta_id
+                     join cuestionario c2 on c2.id = p2.cuestionario_id
+                    where r2.unidad_id = u.unidad_id and c2.ref_estudio <> %s))
+                 as unidades_que_se_borran
+        """,
+        (str(ref_estudio), str(ref_estudio)))
+    return {"respuestas": fila["respuestas"],
+            "unidades_que_se_borran": fila["unidades_que_se_borran"]}
+
+
+def con_respuestas_de_otro_estudio(conn, ids_persona, ref_estudio):
+    """De esas personas, las que tienen alguna respuesta de **otro** estudio:
+    esas tienen otra vida en el sistema y no se dan de baja."""
+    if not ids_persona:
+        return set()
+    return {
+        str(f["id_persona"])
+        for f in db.todas(
+            conn,
+            """
+            select distinct i.id_persona
+              from individuo i
+              join respuesta r on r.individuo_id = i.id
+              join pregunta p on p.id = r.pregunta_id
+              join cuestionario c on c.id = p.cuestionario_id
+             where i.id_persona = any(%s::uuid[]) and c.ref_estudio <> %s
+            """,
+            ([str(i) for i in ids_persona], str(ref_estudio)))
+    }
+
+
+def borrar_respuestas_de_estudio_de(conn, ids_persona, ref_estudio):
+    """Las respuestas de ese estudio de esas personas, de una vez (un lote
+    del borrado). Las de otros estudios no se tocan."""
+    if not ids_persona:
+        return 0
+    ids = [str(i) for i in ids_persona]
+    _borrar_capturas(conn, """
+        select r.id from respuesta r
+          join individuo i on i.id = r.individuo_id
+          join pregunta p on p.id = r.pregunta_id
+          join cuestionario c on c.id = p.cuestionario_id
+         where i.id_persona = any(%s::uuid[]) and c.ref_estudio = %s""",
+        (ids, str(ref_estudio)))
+    n = db.ejecutar(
+        conn,
+        """
+        delete from respuesta r
+         using individuo i, pregunta p, cuestionario c
+         where r.individuo_id = i.id
+           and r.pregunta_id = p.id
+           and p.cuestionario_id = c.id
+           and i.id_persona = any(%s::uuid[])
+           and c.ref_estudio = %s
+        """,
+        (ids, str(ref_estudio)))
+    borrar_veredictos_huerfanos(conn)
+    return n
+
+
+def borrar_estudio(conn, ref_estudio):
+    """El cuestionario entero: sus preguntas y **todas** las respuestas que
+    queden —también las de quien ya no tiene vínculo con la carga—, en
+    cascada. Idempotente: sin cuestionario, no hace nada."""
+    _borrar_capturas(conn, _RESPUESTAS_DEL_ESTUDIO, (str(ref_estudio),))
+    respuestas = db.una(
+        conn, f"select count(*) as n from ({_RESPUESTAS_DEL_ESTUDIO}) r",
+        (str(ref_estudio),))["n"]
+    cuestionarios = db.ejecutar(
+        conn, "delete from cuestionario where ref_estudio = %s", (str(ref_estudio),))
+    borrar_veredictos_huerfanos(conn)
+    return {"respuestas_borradas": respuestas,
+            "cuestionario_borrado": bool(cuestionarios)}
+
+
 def auditar_columnas(conn):
     """Auditoría en vivo del esquema semántico: columnas con nombre de PII.
 

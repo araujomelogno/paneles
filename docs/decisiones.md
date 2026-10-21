@@ -4540,3 +4540,91 @@ filas) entran holgadas; una de decenas de miles se acerca a los 300 s.
 `scripts/completar_fechas_de_cargas.py`,
 `functions/tests/test_pedido_indicador_ingesta_y_doble_envio.py`,
 `functions/tests/test_modal_de_ingesta_procesando.py`.
+
+## D78 · El celular encuentra personas con las reglas con que las crea; el detector mira lo que se ingesta; borrar una carga deshace lo que trajo
+
+**El problema.** El PEDIDO del 2026-10-20
+(`docs/PEDIDO_celular_identificador_y_falso_positivo_pii.md`), detectado
+cargando una base con el celular como identificador. Tres cosas:
+
+1. El celular era clave del dedup para **crear** personas sin duplicarlas,
+   pero no servía para **encontrarlas**: una base de un panel telefónico, con
+   el celular como único dato, no tenía cómo cargarse en modo «ya existen».
+2. Con el celular elegido como columna que identifica, la revisión decía
+   «Posibles datos personales en var7O11» con nivel «rompe». Falso: esa
+   columna no va al store semántico. Una alarma que salta sobre lo obvio
+   enseña a no leerla.
+3. No había cómo deshacer una carga hecha con un mapeo equivocado.
+
+**La decisión.**
+
+- **El celular es un tipo de identificador** (`ingesta.POR_CELULAR`), con
+  las reglas del dedup (D64): se compara en E.164, y si el número lo tiene
+  más de una persona la fila no se asigna (`celular_compartido`). Una celda
+  con palabras alrededor del número es `formato_invalido`, aunque
+  `normalizar_celular` sabría rescatarlo: para el alta está bien, para
+  decidir **de quién** es una fila no. **No registra alias** de la
+  plataforma, a diferencia del documento y el correo: fijaría el número a
+  esa persona y la carga siguiente se saltearía la pregunta de si sigue
+  teniendo una sola titular.
+- **El chequeo de calidad mira lo que se va a ingestar**: el resumen de la
+  revisión saca del diagnóstico la columna que identifica y las marcadas
+  como demográficas o de identidad y contacto, y lista la columna de
+  identidad entre las excluidas, con su motivo. La pantalla filtra igual
+  (`noSeEmbebe` en `encuestas.js`) y vuelve a filtrar al cambiar la columna o
+  la marca. Lo que sí va al semántico —las «Otro, especificar»— se sigue
+  revisando.
+- **Borrar una carga deshace lo que la carga trajo**, no todo lo que aparece
+  en ella (`cargas_borrado.py`):
+  - todas las respuestas de su estudio y el cuestionario; las unidades de
+    evidencia sin respuestas las borra el trigger, y las compartidas se
+    quedan;
+  - las personas que **creó y no tienen otra vida** (ninguna otra carga, ni
+    panel, ni participación, ni puntos, ni canjes, ni respuestas de otro
+    estudio) se dan de baja **por `bajas.retirar()`**, que genera el
+    `borrado_pendiente` para COLOQUIO; su lápida dice `borrado_de_carga`;
+  - las demás se conservan, sin el vínculo ni las respuestas de la carga.
+  «Sin otra vida» lo decide una sola función (`_clasificar`) para la vista
+  previa y para cada lote, y se re-evalúa en cada lote, como el gate.
+- **Es un trabajo de la vía diferida** (`plan.operacion = 'borrado_carga'`),
+  así que la guarda de la `0029` vale sola: no se borra con una ingesta en
+  curso ni se ingesta mientras se borra. En cada lote va **primero el
+  semántico** (commiteado) y después la bóveda; al final, el cuestionario y
+  recién entonces la carga (`diferida._al_terminar`). Si algo se corta,
+  quedan personas sin respuestas de la carga, nunca respuestas de gente que
+  no existe. **Volver a pedir el borrado lo reanuda**: finaliza, reintenta los
+  lotes fallidos o devuelve el trabajo en curso.
+- **La auditoría es `carga_borrado`** (boveda/0030): quién, cuándo, la vista
+  previa confirmada y los conteos finales; `carga_id` es `on delete set null`
+  y el nombre se copia, así sobrevive a la carga. Las respuestas borradas se
+  cuentan contra el estudio (las que había al confirmar; al terminar no queda
+  ninguna), no por lote: un lote cortado después de commitear el semántico no
+  las vuelve a encontrar.
+- **Confirmación fuerte**: escribir el nombre de la carga (lo comprueba el
+  servidor), texto de irreversible y de respaldo, y permiso nuevo
+  `borrar_carga`, solo administración.
+
+**Lo que se descartó.**
+
+- *Un `delete from carga` y que las cascadas hagan el resto.* No avisa a
+  COLOQUIO, que pudo haber guardado el contacto, y dejaría en el semántico
+  las respuestas de personas que sí se borran.
+- *Borrar a todas las personas que aparecen en la carga.* Una reutilizada
+  puede tener paneles, puntos y otros estudios que no tienen nada que ver.
+- *Una ruta aparte para la vista previa.* Diverge; es la misma con
+  `solo_revisar`, como la revisión de una importación.
+- *Un borrado sincrónico.* Toca dos bases sin transacción común y una carga
+  grande no entra en una request.
+
+**Dónde vive.** `functions/panel_api/ingesta.py` (`_resolver_por_celular`),
+`functions/panel_api/resumen_ingesta.py`, `functions/panel_api/cargas_borrado.py`,
+`functions/panel_api/semantica.py` (`contar_estudio`, `borrar_estudio`,
+`borrar_respuestas_de_estudio_de`, `con_respuestas_de_otro_estudio`),
+`functions/panel_api/bajas.py` (`motivo`), `functions/panel_api/diferida.py`
+(`_al_terminar`), `db/boveda/0030_borrado_de_carga.sql`,
+`db/revertir/boveda_0030.sql`, `web/public/js/paginas/encuestas.js`,
+`web/public/js/paginas/cargas.js`,
+`functions/tests/test_pedido_celular_identificador.py`,
+`functions/tests/test_pedido_pii_columna_de_identidad.py`,
+`functions/tests/test_borrar_carga.py`,
+`functions/tests/test_borrar_carga_pantalla.py`.

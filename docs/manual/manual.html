@@ -71,7 +71,8 @@
       <ul><li>El listado y sus filtros · El detalle de una carga · Editar las
       temáticas · Proponer temáticas para una carga anterior · Un vocabulario
       que no se duplica · Las temáticas de cada panelista · Temáticas
-      especiales · La taxonomía: áreas · Temáticas sin personas</li></ul></li>
+      especiales · La taxonomía: áreas · Temáticas sin personas · Borrar una
+      carga</li></ul></li>
     <li><a href="#s13"><span><span class="num">16</span> Preguntas frecuentes</span></a></li>
     <li><a href="#s14"><span><span class="num">17</span> Glosario</span></a></li>
   </ol>
@@ -1241,12 +1242,24 @@
       carga del mismo estudio ya no lo necesite.</td></tr>
     <tr><td class="destacado">El correo</td>
       <td>Igual que el documento. No distingue mayúsculas.</td></tr>
+    <tr><td class="destacado">El celular</td>
+      <td>Para un panel que trabaja por teléfono o WhatsApp, cuando el celular
+      es el único dato que trae la base. Se compara en formato internacional,
+      así que da igual «099 123 456», «99123456» o «+598 99 123 456». Con las
+      mismas cautelas que al crear personas: si el número lo tiene
+      <strong>más de una persona</strong> —un celular puede ser de un hogar—,
+      la fila no se asigna a ninguna. Una celda con palabras alrededor del
+      número («solo WhatsApp 095…») no se toma como celular. A diferencia
+      del documento y el correo, no deja registrado el identificador de la
+      plataforma: cada carga vuelve a comprobar que el número tenga una sola
+      titular.</td></tr>
   </table>
 
   <p>Cuando alguna fila no se puede vincular, el resultado dice <strong>por
-  qué</strong>: si el valor no tiene la forma de un identificador del sistema,
-  si el identificador no existe en la bóveda, o si esa plataforma no tiene
-  registrado ese número. Las tres se corrigen de forma distinta.</p>
+  qué</strong>: si el valor no tiene la forma del identificador elegido (un
+  id_persona, un celular), si no existe en la bóveda, si esa plataforma no
+  tiene registrado ese número, o si el celular lo comparten varias personas.
+  Cada una se corrige de forma distinta.</p>
 
   <h4>Qué es cada variable: preguntas y demográficos</h4>
 
@@ -1726,6 +1739,12 @@
     no aparece como «posibles datos personales», y ninguna acción del panel
     puede quitarla. Si se le saca la marca, sus hallazgos vuelven a
     aparecer.</p>
+    <p>Lo mismo la <strong>columna que identifica al respondente</strong>
+    (paso 2): resuelve a la persona y nunca se embebe, así que no recibe la
+    advertencia aunque tenga teléfonos o correos. Si se elige otra columna
+    como identificador, la anterior vuelve a revisarse. El resumen de la
+    revisión sigue la misma regla y la lista entre las excluidas, con el
+    motivo.</p>
   </div>
 
   <table class="parte">
@@ -4274,6 +4293,51 @@
   variable que después se marcó como demográfica («nivel educativo»), o que
   sus preguntas estén mal elegidas. <strong>Ir a la carga</strong> abre el
   detalle, donde se quitan o se corrigen sus preguntas.</p>
+
+  <h3><span class="n">15.10</span> Borrar una carga</h3>
+
+  <p>Una carga hecha con un mapeo equivocado, o de prueba, se puede borrar
+  desde su detalle con <strong>Borrar la carga…</strong>. Solo lo ve y lo
+  puede hacer el rol de administración. Lo que se borra es <strong>lo que la
+  carga trajo</strong>, no todo lo que aparece en ella:</p>
+
+  <ul class="puntos">
+    <li><strong>Todas las respuestas de su estudio</strong>, de todas las
+    personas, y el cuestionario. Los textos embebidos que solo existían ahí se
+    van con ellas; los que también dio alguien en otro estudio se
+    conservan.</li>
+    <li><strong>Las personas que la carga creó y no tienen otra vida en el
+    sistema</strong> se dan de baja, por el mismo camino que la baja de un
+    panelista: se avisa a los otros sistemas que usan la bóveda (COLOQUIO)
+    para que borren lo suyo.</li>
+    <li><strong>Las demás se conservan</strong>, sin el vínculo con la carga ni
+    sus respuestas de ella: las que ya existían y la carga reutilizó, y las
+    que la carga creó pero después entraron en otra carga o en un panel,
+    participaron en una encuesta, tienen puntos o canjes, o respuestas de
+    otro estudio.</li>
+  </ul>
+
+  <figure>
+    <img class="recorte" src="capturas/111-borrar-carga.jpg" alt="Vista previa del borrado de una carga" />
+    <figcaption><b>Antes de borrar.</b> Cuántas personas se dan de baja,
+    cuántas se conservan y por qué, cuántas respuestas y textos se borran. El
+    botón se habilita recién cuando se escribe el nombre exacto de la
+    carga.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Es irreversible</div>
+    <p>Lo borrado no se recupera. Antes de borrar una carga real con muchos
+    panelistas, conviene tener un respaldo reciente de las dos bases. El
+    borrado queda registrado: quién lo hizo, cuándo, y cuántas personas se
+    dieron de baja, se conservaron y cuántas respuestas se borraron.</p>
+  </div>
+
+  <p>Con una carga grande, el borrado corre por partes y se ve su avance, igual
+  que una ingesta. No se puede borrar una carga mientras tiene una ingesta en
+  curso, ni cargar en una que se está borrando. Si el borrado se corta a mitad
+  de camino, el detalle de la carga sigue ahí: volver a borrarla lo reanuda
+  desde donde quedó, sin dejar respuestas sueltas.</p>
 </section>
 
 <section id="s13">
@@ -4283,6 +4347,19 @@
     <h2>Preguntas frecuentes</h2>
     <p>Situaciones habituales y su explicación.</p>
   </div>
+
+  <h4>Borré una carga y algunas de sus personas siguen en el sistema</h4>
+  <p>Es lo esperable: el borrado da de baja solo a quienes la carga creó y no
+  tienen otra vida en el sistema. Quien ya existía, o después entró en otra
+  carga, en un panel o en otro estudio, se conserva sin el vínculo ni las
+  respuestas de esa carga. La vista previa lo dice antes de confirmar
+  (15.10).</p>
+
+  <h4>Una fila con el celular no se vinculó a nadie</h4>
+  <p>Mirá el motivo en el resultado. Si dice que el celular lo tiene más de
+  una persona, el sistema no elige: un número puede ser de un hogar. Si dice
+  que no tiene el formato, la celda trae algo más que el número. Si dice que
+  no existe, nadie en la bóveda tiene ese celular (5.4).</p>
 
   <h4>Las respuestas de una carga dicen «sin fecha de campo»</h4>
   <p>La carga no tiene fecha del estudio. Completala desde Panelistas →

@@ -20,7 +20,7 @@ el `id_persona`. La PII se queda de este lado.
 
 import re
 
-from . import consentimiento, db, embeddings as mod_embeddings, semantica
+from . import consentimiento, db, embeddings as mod_embeddings, preferencias, semantica
 from .errores import DatosInvalidos, NoEncontrado
 
 
@@ -154,13 +154,29 @@ POR_ID_PERSONA = "id_persona"
 POR_ALIAS = "alias"
 POR_DOCUMENTO = "documento"
 POR_EMAIL = "email"
-TIPOS_DE_IDENTIFICADOR = (POR_ID_PERSONA, POR_ALIAS, POR_DOCUMENTO, POR_EMAIL)
+# PEDIDO del celular como identificador: el celular ya era la tercera clave
+# de `dedup.resolver` para *crear* personas sin duplicarlas; tiene que servir
+# también para *encontrarlas*, con las mismas reglas (E.164, una sola
+# titular). Es el caso de un panel que trabaja por teléfono y WhatsApp.
+POR_CELULAR = "celular"
+TIPOS_DE_IDENTIFICADOR = (POR_ID_PERSONA, POR_ALIAS, POR_DOCUMENTO, POR_EMAIL,
+                          POR_CELULAR)
 
-# Por qué una fila no resolvió. Las tres se arreglan distinto, y una lista sin
-# motivo obliga a adivinar cuál de las tres pasó.
+# Por qué una fila no resolvió. Se arreglan distinto, y una lista sin motivo
+# obliga a adivinar cuál pasó.
 FORMATO_INVALIDO = "formato_invalido"
 NO_ENCONTRADO = "no_encontrado"
 SIN_ALIAS = "sin_alias_para_ese_origen"
+# El número lo tiene más de una persona: un celular puede ser de un hogar, no
+# de una persona. La fila no se asigna a ninguna, igual que en el dedup.
+CELULAR_COMPARTIDO = "celular_compartido"
+
+# Lo que puede traer una celda de celular para tomarla como número: dígitos,
+# un `+` adelante y los separadores habituales. `normalizar_celular` es más
+# generosa —le saca todo lo que no es dígito a «solo WhatsApp 095093112»—, y
+# para el alta está bien; para decidir **de quién** es una fila, un texto con
+# palabras alrededor del número no es un identificador.
+_CELULAR_ESCRITO = re.compile(r"^\+?[\d\s().-]+$")
 
 _UUID = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
@@ -210,6 +226,9 @@ def resolver_identificadores(conn_boveda, tipo, valores, origen=None):
         motivos.update({v: NO_ENCONTRADO for v in candidatos if v not in mapa})
         return mapa, motivos
 
+    if tipo == POR_CELULAR:
+        return _resolver_por_celular(conn_boveda, valores)
+
     columna = "documento" if tipo == POR_DOCUMENTO else "email"
     comparacion = (
         "documento = any(%s)" if tipo == POR_DOCUMENTO
@@ -233,6 +252,47 @@ def resolver_identificadores(conn_boveda, tipo, valores, origen=None):
             mapa[valor] = encontrados[clave]
         else:
             motivos[valor] = NO_ENCONTRADO
+    return mapa, motivos
+
+
+def _resolver_por_celular(conn_boveda, valores):
+    """Cada celular del archivo, en E.164, contra `persona.celular`.
+
+    Con las cautelas del dedup (D64): se asigna solo si **una** persona tiene
+    ese número; si lo tienen varias, `celular_compartido` y a ninguna. Se
+    compara normalizado, así «095 093 112», «95093112» y «+598 95093112» son
+    el mismo. Un celular guardado en otro formato no coincide con nada, que es
+    lo seguro (lo mismo que dice la `0022` para el dedup).
+
+    No se registra alias de la plataforma, a diferencia del documento y el
+    correo (`encuestas._sembrar_alias`): un alias fijaría el
+    número a esa persona para siempre y la carga siguiente se saltearía la
+    pregunta de si sigue teniendo una sola titular.
+    """
+    motivos, normalizados = {}, {}
+    for valor in valores:
+        e164 = (preferencias.normalizar_celular(valor)
+                if _CELULAR_ESCRITO.match(valor) else None)
+        if e164:
+            normalizados[valor] = e164
+        else:
+            motivos[valor] = FORMATO_INVALIDO
+
+    titulares = {}
+    if normalizados:
+        for fila in db.todas(
+                conn_boveda,
+                "select celular, id_persona from persona where celular = any(%s)",
+                (sorted(set(normalizados.values())),)):
+            titulares.setdefault(fila["celular"], []).append(str(fila["id_persona"]))
+
+    mapa = {}
+    for valor, e164 in normalizados.items():
+        ids = titulares.get(e164, [])
+        if len(ids) == 1:
+            mapa[valor] = ids[0]
+        else:
+            motivos[valor] = CELULAR_COMPARTIDO if ids else NO_ENCONTRADO
     return mapa, motivos
 
 

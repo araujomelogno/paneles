@@ -643,3 +643,14 @@ tr.fila-problema td { background: var(--red-light); }
 .spinner-sm { width: 18px; height: 18px; border-width: 2px; margin: 0; flex: 0 0 auto; }
 .procesando-modal .modal-body { cursor: progress; }
 .alerta-pie .procesando { margin: 0 0 0.5rem; }
+
+/* Borrar una carga (D78). */
+.texto-peligro { color: var(--red); border-color: var(--red); }
+.tabla-borrado { width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 0.85rem; }
+.tabla-borrado td { padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+.tabla-borrado td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tabla-borrado tr.peligro td { color: var(--red); }
+.tabla-borrado ul { margin: 0.3rem 0 0 1rem; padding: 0; }
+/* Una etiqueta que muestra un texto que hay que copiar tal cual: sin las
+   mayúsculas de las etiquetas, o el nombre que se ve no es el que se pide. */
+.form-group label.etiqueta-literal { text-transform: none; letter-spacing: normal; font-size: 0.85rem; }

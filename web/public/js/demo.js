@@ -756,6 +756,16 @@ function origenDe(idPersona) {
   };
 }
 
+/* El celular en un formato comparable: dígitos, sin el 598 ni el 0 de
+   larga distancia. Una celda con palabras no es un identificador. */
+function celularDemo(valor) {
+  const texto = String(valor || '').trim();
+  if (!/^\+?[\d\s().-]+$/.test(texto)) return null;
+  const digitos = texto.replace(/\D/g, '').replace(/^00/, '').replace(/^598/, '')
+    .replace(/^0/, '');
+  return digitos.length >= 8 ? digitos : null;
+}
+
 function ingestarEn(encuesta, cuerpo, { sinPanel }) {
   const encuestaId = encuesta.id;
   const columnaId = cuerpo.columna_id || 'id_en_origen';
@@ -792,6 +802,15 @@ function ingestarEn(encuesta, cuerpo, { sinPanel }) {
     filas.forEach((fila) => {
       const valor = String(fila[columnaId] || '').trim();
       if (!valor) return;
+      if (tipo === 'celular') {
+        // Lo mismo que `ingesta._resolver_por_celular`, en chico: se compara
+        // normalizado y solo con una titular.
+        const numero = celularDemo(valor);
+        const titulares = numero
+          ? bd.personas.filter((p) => celularDemo(p.celular) === numero) : [];
+        if (titulares.length === 1) mapa[valor] = titulares[0].id_persona;
+        return;
+      }
       const persona = tipo === 'id_persona'
         ? bd.personas.find((p) => p.id_persona === valor)
         : tipo === 'documento'
@@ -840,8 +859,12 @@ function ingestarEn(encuesta, cuerpo, { sinPanel }) {
       if (idOrigen) {
         sinMapear.push(idOrigen);
         motivos[idOrigen] = tipo === 'alias' ? 'sin_alias_para_ese_origen'
-          : tipo === 'id_persona' && !/^[0-9a-f-]{36}$/i.test(idOrigen)
-            ? 'formato_invalido' : 'no_encontrado';
+          : (tipo === 'id_persona' && !/^[0-9a-f-]{36}$/i.test(idOrigen))
+            || (tipo === 'celular' && !celularDemo(idOrigen))
+            ? 'formato_invalido'
+            : tipo === 'celular' && bd.personas.filter(
+              (p) => celularDemo(p.celular) === celularDemo(idOrigen)).length > 1
+              ? 'celular_compartido' : 'no_encontrado';
       }
       return;
     }
@@ -1810,6 +1833,33 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
       });
     }
     return resumenCarga(carga);
+  }
+
+  // D78 — borrar una carga: la vista previa, en chico (creadas sin otro
+  // vínculo se van; el resto se conserva). Borrar de verdad no: la demo no
+  // guarda nada que valga la pena perder, pero tampoco lo simula.
+  if (metodo === 'POST' && partes[0] === 'cargas' && partes[2] === 'borrado') {
+    const carga = bd.cargas.find((c) => c.id === Number(partes[1]));
+    if (!carga) throw new ErrorDemo('No existe la carga.', 404);
+    if (!cuerpo?.solo_revisar) {
+      throw new ErrorDemo('En el modo demo no se borran cargas.', 400);
+    }
+    const suyos = bd.vinculos.filter((v) => v.carga_id === carga.id);
+    const conOtra = (v) => bd.vinculos.some(
+      (o) => o.id_persona === v.id_persona && o.carga_id !== carga.id);
+    const seVan = suyos.filter((v) => v.origen === 'creada' && !conOtra(v)).length;
+    const reutilizadas = suyos.filter((v) => v.origen !== 'creada').length;
+    return {
+      carga: { id: carga.id, nombre: carga.nombre, ref_estudio: carga.ref_estudio },
+      personas: suyos.length, se_dan_de_baja: seVan, se_conservan: suyos.length - seVan,
+      conservadas_por_motivo: [
+        ...(reutilizadas ? [{ motivo: 'reutilizada', etiqueta: 'ya existía: la carga la reutilizó', personas: reutilizadas }] : []),
+        ...(suyos.length - seVan - reutilizadas
+          ? [{ motivo: 'otra_carga', etiqueta: 'también vino en otra carga', personas: suyos.length - seVan - reutilizadas }] : []),
+      ],
+      respuestas_a_borrar: suyos.length, unidades_que_se_borran: 0,
+      irreversible: true, borrado_en_curso: null,
+    };
   }
 
   if (metodo === 'POST' && partes[0] === 'cargas' && partes[2] === 'ingesta') {

@@ -493,6 +493,9 @@ SUMABLES = (
     "textos_embebidos",
     # R-TEM.6 — filas persona ↔ temática que dejó la carga.
     "tematicas_de_panelistas",
+    # El borrado de una carga (`cargas_borrado`).
+    "respuestas_borradas", "personas_dadas_de_baja", "personas_conservadas",
+    "personas_ya_procesadas",
 )
 CONCATENABLES = (
     "sin_mapear", "sin_mapear_detalle", "sin_consentimiento",
@@ -555,9 +558,14 @@ def _ingestar_el_lote(conn_boveda, conn_semantica, trabajo, filas, proveedor):
     de consentimiento, el guardrail de PII y la idempotencia valgan igual por
     esta vía sin haberlos vuelto a escribir.
     """
-    from . import cargas, encuestas, reproceso
+    from . import cargas, cargas_borrado, encuestas, reproceso
 
     plan = trabajo["plan"] or {}
+    # Borrar una carga (D78) tampoco es una ingesta: su lote son personas,
+    # y lo que hace con cada una lo decide `cargas_borrado`.
+    if plan.get("operacion") == cargas_borrado.OPERACION:
+        return cargas_borrado.procesar_lote(conn_boveda, conn_semantica, plan,
+                                            filas)
     # Fase 8 · R8.9 — un reproceso no lee filas de un archivo: su lote son
     # ids de respuestas ya ingestadas. Tampoco es una segunda ingesta: no
     # resuelve identidades, no crea individuos ni toca la bóveda; recompone
@@ -638,8 +646,23 @@ def procesar_lote(conn_boveda, conn_semantica, trabajo_id, indice,
     conn_boveda.commit()
 
     cierre = _cerrar_si_termino(conn_boveda, trabajo_id)
+    _al_terminar(conn_boveda, conn_semantica, trabajo, cierre)
     return {"estado": LOTE_OK, "trabajo_id": trabajo_id, "indice": indice,
             "resultado": resultado, "trabajo": cierre}
+
+
+def _al_terminar(conn_boveda, conn_semantica, trabajo, cierre):
+    """Lo que una operación hace cuando su último lote cierra el trabajo
+    **entero bien**. Hoy, solo el borrado de una carga: borrar el
+    cuestionario y la carga recién cuando no queda ninguna persona por
+    procesar. Con lotes fallidos no corre: se reintentan y el lote que
+    cierre después lo dispara."""
+    from . import cargas_borrado
+
+    plan = trabajo.get("plan") or {}
+    if (cierre and cierre["estado"] == TERMINADA
+            and plan.get("operacion") == cargas_borrado.OPERACION):
+        cargas_borrado.al_terminar_el_trabajo(conn_boveda, conn_semantica, plan)
 
 
 def _marcar_fallido(conn, trabajo_id, indice, mensaje, reintentable):
