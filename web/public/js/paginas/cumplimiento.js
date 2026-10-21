@@ -109,15 +109,115 @@ export async function render(main, ctx) {
           </div>
         </div>
       </div>
-    </div>`;
+    </div>
+
+    ${puedeCumplimiento() ? `<!-- R-AUD.1 — cada «ver quiénes son», ficha abierta o
+         exportación con datos quedó registrada desde siempre; esto la muestra. -->
+    <div class="card" style="margin-top:1.25rem">
+      <div class="card-header">
+        <span class="card-header-title">Reidentificaciones</span>
+        <span class="small muted">quién vio los datos de quién, cuándo y por qué</span>
+      </div>
+      <div class="card-body">
+        <div class="toolbar" id="reid-filtros">
+          <input type="text" class="finput" name="actor" placeholder="Usuario (correo)"
+                 style="max-width:220px" />
+          <input type="text" class="finput" name="panelista"
+                 placeholder="Panelista: documento, correo o id" style="max-width:260px" />
+          <label class="small">Desde <input type="date" name="desde" /></label>
+          <label class="small">Hasta <input type="date" name="hasta" /></label>
+          <button class="btn btn-outline btn-sm" id="reid-filtrar">Filtrar</button>
+        </div>
+      </div>
+      <div class="card-body tight"><div id="reidentificaciones">${cargando('12vh')}</div></div>
+    </div>` : ''}`;
 
   $('#auditar').onclick = cargarAuditoria;
   $('#ver-esquema').onclick = cargarEsquema;
   $('#ver-contacto').onclick = cargarContacto;
   $('#reintentar').onclick = reintentar;
   $('#ver-borrados').onclick = cargarBorrados;
+  if (puedeCumplimiento()) {
+    $('#reid-filtrar').onclick = () => { filtroReid.desde_fila = 0; cargarReidentificaciones(); };
+  }
   await Promise.all([cargarAuditoria(), cargarEsquema(), cargarContacto(),
-                     cargarPendientes(), cargarBorrados()]);
+                     cargarPendientes(), cargarBorrados(),
+                     puedeCumplimiento() ? cargarReidentificaciones() : null]);
+}
+
+/* ── R-AUD.1 · Reidentificaciones ─────────────────────────────────
+
+   Por evento: una llamada que tradujo diez ids a datos es una fila, con
+   «a 10 personas» y la forma de ver cuáles. Los ids son tokens: ver quién
+   es cada uno es abrir su ficha, que también queda registrado. El filtro
+   por panelista es la pregunta de un pedido de acceso: «¿quién vio mis
+   datos?». */
+const filtroReid = { desde_fila: 0, limite: 25 };
+
+async function cargarReidentificaciones() {
+  const contenedor = $('#reidentificaciones');
+  if (!contenedor) return;
+  contenedor.innerHTML = cargando('12vh');
+  const filtros = {};
+  $$('#reid-filtros [name]').forEach((campo) => {
+    if (campo.value.trim()) filtros[campo.name] = campo.value.trim();
+  });
+  try {
+    const { total, items } = await api.reidentificacion.registro({
+      eventos: 1, ...filtros, limite: filtroReid.limite, desde_fila: filtroReid.desde_fila,
+    });
+    if (!items.length) {
+      contenedor.innerHTML = vacio(Object.keys(filtros).length
+        ? 'Ninguna reidentificación coincide con el filtro.'
+        : 'Todavía no se reidentificó a nadie.', '🔍');
+      return;
+    }
+    const paginas = Math.max(1, Math.ceil(total / filtroReid.limite));
+    const pagina = Math.floor(filtroReid.desde_fila / filtroReid.limite) + 1;
+    contenedor.innerHTML = `<div class="table-wrap"><table>
+      <thead><tr><th>Cuándo</th><th>Quién</th><th>Motivo</th><th class="num">Personas</th><th></th></tr></thead>
+      <tbody>${items.map((e, i) => `<tr>
+        <td class="small">${esc(fechaHora(e.creado_en))}</td>
+        <td class="small">${esc(e.actor_email || e.actor_uid)}</td>
+        <td><strong>${esc(e.motivo_etiqueta)}</strong>
+          ${e.contexto?.ruta ? `<div class="small muted mono">${esc(e.contexto.ruta)}</div>` : ''}</td>
+        <td class="num">${e.personas}</td>
+        <td class="right"><button class="btn btn-outline btn-sm" data-cuales="${i}">Ver cuáles</button></td>
+      </tr>
+      <tr data-detalle="${i}" style="display:none"><td colspan="5">
+        <div class="alias-lista">${e.ids_persona.map((id) =>
+          `<a href="#" data-ficha="${esc(id)}" title="Abrir su ficha (queda registrado)">${token(id, id.slice(0, 13))}</a>`).join(' ')}</div>
+      </td></tr>`).join('')}</tbody></table></div>
+      <div class="paginacion">
+        <span class="p-info">Página ${pagina} de ${paginas} · ${total} evento(s)</span>
+        <div class="toolbar">
+          <button class="btn btn-outline btn-sm" id="reid-anterior" ${pagina <= 1 ? 'disabled' : ''}>← Anterior</button>
+          <button class="btn btn-outline btn-sm" id="reid-siguiente" ${pagina >= paginas ? 'disabled' : ''}>Siguiente →</button>
+        </div>
+      </div>`;
+    $$('[data-cuales]', contenedor).forEach((boton) => {
+      boton.onclick = () => {
+        const fila = $(`[data-detalle="${boton.dataset.cuales}"]`, contenedor);
+        fila.style.display = fila.style.display === 'none' ? '' : 'none';
+      };
+    });
+    $$('[data-ficha]', contenedor).forEach((enlace) => {
+      enlace.onclick = (e) => {
+        e.preventDefault();
+        contexto.irA('panelistas', { idPersona: enlace.dataset.ficha });
+      };
+    });
+    $('#reid-anterior').onclick = () => {
+      filtroReid.desde_fila = Math.max(0, filtroReid.desde_fila - filtroReid.limite);
+      cargarReidentificaciones();
+    };
+    $('#reid-siguiente').onclick = () => {
+      filtroReid.desde_fila += filtroReid.limite;
+      cargarReidentificaciones();
+    };
+  } catch (error) {
+    contenedor.innerHTML = alerta(error.message);
+  }
 }
 
 /* Las migraciones se aplican a mano contra cada instancia de Cloud SQL. Una

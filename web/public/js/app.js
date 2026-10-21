@@ -22,6 +22,7 @@ import * as pagInscripciones from './paginas/inscripciones.js';
 import * as pagLongitudinal from './paginas/longitudinal.js';
 import * as pagEstadisticas from './paginas/estadisticas.js';
 import * as pagCargas from './paginas/cargas.js';
+import * as pagListaNegra from './paginas/lista_negra.js';
 
 const CDN = 'https://www.gstatic.com/firebasejs/10.7.0';
 const cfg = window.firebaseConfig || {};
@@ -45,6 +46,9 @@ const PERMISOS = {
   aprobar_inscripciones: ['admin', 'operaciones'],
   // Fase 4
   gestionar_series: ['admin', 'operaciones', 'analista'],
+  // R-LN — ver la lista negra (y el motivo) y gestionarla.
+  ver_lista_negra: ['admin', 'operaciones', 'dpo'],
+  gestionar_lista_negra: ['admin', 'operaciones'],
 };
 
 const puede = (rol, permiso) => (PERMISOS[permiso] || []).includes(rol);
@@ -63,6 +67,7 @@ const PAGINAS = [
   { id: 'gamificacion',  icono: '🎁', etiqueta: 'Puntos y premios', modulo: pagGamificacion, permiso: 'gamificacion' },
   { id: 'inscripciones', icono: '📥', etiqueta: 'Inscripciones', modulo: pagInscripciones, permiso: 'aprobar_inscripciones' },
   { id: 'revisiones',    icono: '🔀', etiqueta: 'Revisión de altas', modulo: pagRevisiones, permiso: 'leer' },
+  { id: 'lista-negra',   icono: '⛔', etiqueta: 'Lista negra',  modulo: pagListaNegra,   permiso: 'ver_lista_negra' },
   { id: 'estadisticas',  icono: '🧮', etiqueta: 'Estadísticas', modulo: pagEstadisticas, permiso: 'leer' },
   { id: 'cumplimiento',  icono: '🛡️', etiqueta: 'Cumplimiento', modulo: pagCumplimiento, permiso: 'leer' },
   { id: 'configuracion', icono: '⚙️', etiqueta: 'Configuración', modulo: pagConfiguracion, permiso: 'gestionar_usuarios' },

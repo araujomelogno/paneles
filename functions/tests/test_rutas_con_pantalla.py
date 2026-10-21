@@ -38,7 +38,10 @@ FASES_CON_PANTALLA = ("R7.", "R8.",
                       "R-CS.",
                       # R-TEM / R-CAR — temáticas de la carga y la sección
                       # Cargas.
-                      "R-TEM.", "R-CAR.")
+                      "R-TEM.", "R-CAR.",
+                      # SPEC_clientes_lista_negra_y_mejoras — clientes,
+                      # lista negra y la auditoría de reidentificaciones.
+                      "R-CLI.", "R-LN.", "R-AUD.")
 
 # Rutas de estas fases que **no** tienen pantalla, con el motivo. Vacío hoy;
 # si alguna vez hace falta, el motivo va escrito acá y no en la memoria de

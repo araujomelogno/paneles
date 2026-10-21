@@ -32,3 +32,36 @@ export function pintarOrigen(origen, { compacto = false } = {}) {
     </tr>`).join('')}</tbody></table></div>`;
 }
 
+
+/* R-CAR.4 — la sección «Cargas» de la ficha de la bóveda: en qué cargas
+   aparece, la más reciente primero, si la creó o la reutilizó, los clientes
+   de cada carga y las temáticas que respondió **en ella**. Cada carga lleva
+   a su detalle (`data-ir-carga`). Debajo, si entró por la landing, un alta
+   manual o una encuesta. Los clientes son confidenciales: esta sección no
+   está en la ficha seudónima ni en el portal. */
+export function pintarCargas(datos) {
+  const cargas = datos?.cargas || [];
+  const ingresos = datos?.otros_ingresos || [];
+  const chips = (lista, clase) => (lista.length
+    ? `<span class="tematicas-chips">${lista.map((x) =>
+      `<span class="chip ${clase}">${esc(x.nombre)}</span>`).join('')}</span>`
+    : '<span class="small muted">—</span>');
+  return `${cargas.length ? `<div class="table-wrap"><table>
+    <thead><tr><th>Carga</th><th>Fecha</th><th>En esta carga</th><th>Clientes</th>
+      <th>Temáticas que respondió</th></tr></thead>
+    <tbody>${cargas.map((c) => `<tr>
+      <td><a class="td-strong" href="#" data-ir-carga="${c.carga_id}">${esc(c.nombre)}</a></td>
+      <td class="small">${c.fecha_estudio ? esc(fechaCorta(c.fecha_estudio)) : '<span class="muted">sin fecha</span>'}</td>
+      <td><span class="badge ${c.origen === 'creada' ? 'badge-on' : ''}">${
+        c.origen === 'creada' ? 'creado' : 'reutilizado'}</span></td>
+      <td>${chips(c.clientes || [], 'chip-cliente')}</td>
+      <td>${chips(c.tematicas || [], 'chip-tematica')}</td>
+    </tr>`).join('')}</tbody></table></div>`
+    : `<p class="small muted" style="padding:1rem 1.5rem 0">${esc(datos?.aviso
+      || 'No aparece en ninguna carga.')}</p>`}
+  ${ingresos.length ? `<div style="padding:.75rem 1.5rem">${ingresos.map((i) => `
+    <div class="small"><span class="badge">${esc(i.etiqueta)}</span>
+      ${i.detalle ? esc(i.detalle) : ''}
+      ${i.fecha ? `<span class="muted">· ${esc(fechaCorta(i.fecha))}</span>` : ''}</div>`).join('')}
+  </div>` : ''}`;
+}

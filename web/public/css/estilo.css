@@ -654,3 +654,14 @@ tr.fila-problema td { background: var(--red-light); }
 /* Una etiqueta que muestra un texto que hay que copiar tal cual: sin las
    mayúsculas de las etiquetas, o el nombre que se ve no es el que se pide. */
 .form-group label.etiqueta-literal { text-transform: none; letter-spacing: normal; font-size: 0.85rem; }
+
+/* R-CLI — los clientes de una carga. */
+.chip-cliente { font-size: 0.72rem; background: var(--gray-light); border-color: transparent; }
+
+/* R-LN — la lista negra: se marca, no se oculta. */
+.badge-lista-negra { background: var(--red); color: var(--white); }
+.bloque-lista-negra { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center;
+  justify-content: space-between; padding: .6rem .8rem; border: 1px solid var(--gray-light);
+  border-radius: 8px; margin: .75rem 0; }
+.bloque-lista-negra.activa { border-color: var(--red); }
+tr.en-lista-negra td { background: var(--red-light); }

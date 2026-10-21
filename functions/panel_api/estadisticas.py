@@ -86,8 +86,9 @@ def panelistas(conn_boveda):
 def consentimiento(conn_boveda):
     """Cuántos tienen vigente cada finalidad, leído de la vista y no a mano.
 
-    `v_persona_convocable` es el gate de verdad: contar con un `select`
-    propio daría un número parecido y, el día que la regla cambie, uno
+    Las vistas del gate son la verdad (`v_persona_finalidad_vigente`, la
+    misma regla que `v_persona_convocable` sin la lista negra, D80): contar
+    con un `select` propio daría un número parecido y, el día que la regla cambie, uno
     equivocado. Es la misma razón por la que el gate no se recalcula en
     Python en ningún lado.
 
@@ -99,10 +100,13 @@ def consentimiento(conn_boveda):
     """
     filas = db.todas(
         conn_boveda,
-        """select f.finalidad, count(*)::int as vigentes
-             from v_persona_convocable v
-             cross join lateral unnest(v.finalidades) as f(finalidad)
-            group by f.finalidad order by f.finalidad""")
+        # D80 — de `v_persona_finalidad_vigente` y no de `v_persona_convocable`:
+        # desde la 0031 la convocable deja afuera a la lista negra, que no le
+        # quita a nadie el consentimiento. Esto cuenta consentimientos.
+        """select finalidad, count(distinct id_persona)::int as vigentes
+             from v_persona_finalidad_vigente
+            where ref_estudio is null
+            group by finalidad order by finalidad""")
     total = db.una(conn_boveda, "select count(*) as n from persona")["n"]
     vigentes = {f["finalidad"]: f["vigentes"] for f in filas}
     # Las dos finalidades que trata esta aplicación se muestran siempre,
@@ -226,10 +230,12 @@ def brecha(conn_boveda, conn_semantica, ejemplos=EJEMPLOS):
             # Es un `except` y no un `not exists` correlacionado porque la
             # vista es una función `security definer`: correlacionada se
             # evaluaría una vez por persona.
+            # D80 — la lista negra no saca a nadie de los resultados: el gate
+            # de `uso_semantico` es `v_persona_finalidad_vigente`.
             """select id_persona from persona
                except
-               select id_persona from v_persona_convocable
-                where 'uso_semantico' = any(finalidades)""")}
+               select id_persona from v_persona_finalidad_vigente
+                where finalidad = 'uso_semantico' and ref_estudio is null""")}
 
     sin_respuestas = en_boveda - con_respuestas
     huerfanos = en_semantico - en_boveda

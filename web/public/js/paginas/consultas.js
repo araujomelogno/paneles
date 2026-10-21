@@ -20,6 +20,7 @@ import * as api from '../api.js';
 import * as catalogo from '../catalogo.js';
 import * as respuestas from '../respuestas.js';
 import { pintarOrigen } from '../origen.js';
+import * as listaNegra from '../lista_negra.js';
 import {
   $, $$, esc, encabezado, token, vacio, cargando, toast, modal, cerrarModal,
   leerFormulario, alerta, activarTokens, fechaCorta, confirmar,
@@ -1074,10 +1075,10 @@ function tablaDemografica(resultado) {
 
 function filaDemografica(item, indice, columnas) {
   const nombre = nombresResueltos[item.id_persona]?.nombre;
-  return `<tr>
+  return `<tr class="${item.lista_negra ? 'en-lista-negra' : ''}">
     <td class="mono">${indice + 1}</td>
     <td>${nombre ? `<div class="td-strong">${esc(nombre)}</div>` : ''}
-        ${token(item.id_persona)}
+        ${token(item.id_persona)} ${listaNegra.marca(item.lista_negra)}
         <button class="btn btn-outline btn-sm" data-ficha="${indice}"
                 style="margin-top:.35rem">Ficha</button></td>
     ${columnas.map((c) => `<td>${celdaDemografica(item, c)}</td>`).join('')}
@@ -1112,10 +1113,11 @@ function estadoHtml(item) {
 function filaItem(item, indice) {
   const nombre = nombresResueltos[item.id_persona]?.nombre;
   const mejor = item.evidencias[0];
-  return `<tr>
+  // R-LN.2 — marcada, no oculta; el motivo va en el `title` si llegó.
+  return `<tr class="${item.lista_negra ? 'en-lista-negra' : ''}">
     <td class="mono">${indice + 1}</td>
     <td>${nombre ? `<div class="td-strong">${esc(nombre)}</div>` : ''}
-        ${token(item.id_persona)}
+        ${token(item.id_persona)} ${listaNegra.marca(item.lista_negra)}
         <button class="btn btn-outline btn-sm" data-ficha="${indice}"
                 style="margin-top:.35rem">Ficha</button></td>
     ${columnasElegidas.map((c) => `<td>${celdaDeColumna(item.id_persona, c)}</td>`).join('')}
@@ -1262,7 +1264,17 @@ async function abrirFicha(item) {
         ? { respuestas: idsEvidencia.join(',') } : {}),
       respuestas.estudiosDe(idPersona),
     ]);
-    $('.modal-body', caja).innerHTML = fichaHtml(ficha, item, estudios);
+    // R-LN.1 — desde acá se agrega a alguien visto en un resultado. Al
+    // cambiar, la ficha se vuelve a abrir y la fila del resultado se
+    // actualiza con lo que diga el servidor.
+    item.lista_negra = ficha.lista_negra ?? null;
+    $('.modal-body', caja).innerHTML = listaNegra.bloqueDeFicha({
+      idPersona, entrada: ficha.lista_negra, actor: contexto.actor,
+      alCambiar: async () => {
+        await abrirFicha(item);
+        if (ultimoResultado) pintarResultado(ultimoResultado);
+      },
+    }) + fichaHtml(ficha, item, estudios);
     activarTokens(caja);
     respuestas.activar(caja, idPersona, estudios, { prefijo: 'ficha-resp' });
     const quien = $('#ficha-quien', caja);
@@ -1750,6 +1762,9 @@ async function crearPanelDesdeConsulta() {
     toast('El resultado está vacío: no hay panel que crear.', 'err');
     return;
   }
+  // R-LN.2 — los de la lista negra quedan afuera por defecto; quien
+  // gestiona la lista puede incluirlos (igual no se los puede convocar).
+  const enListaNegra = ultimoResultado.items.filter((i) => i.lista_negra).length;
   modal({
     titulo: `Crear un panel con estas ${ultimoResultado.items.length} personas`,
     cuerpo: `
@@ -1757,6 +1772,13 @@ async function crearPanelDesdeConsulta() {
       individuo del resultado. Quien ya sea miembro no se duplica. El panel
       queda con la definición de esta consulta anotada, como una foto: no se
       actualiza solo.</p>
+      ${enListaNegra ? `<div class="aviso">
+        <p><strong>${enListaNegra} persona(s) del resultado están en la lista negra</strong>
+        y quedan afuera del panel.</p>
+        ${listaNegra.puedeGestionar(contexto.actor) ? `<label class="check">
+          <input type="checkbox" name="incluir_lista_negra" /> Incluirlas igual (no se
+          las puede convocar)</label>` : ''}
+      </div>` : ''}
       <div class="form-group"><label>Nombre del panel</label>
         <input class="finput" name="nombre" placeholder="Tomadores de fernet — set A"></div>
       <div class="form-group"><label>Descripción</label>
@@ -1770,9 +1792,12 @@ async function crearPanelDesdeConsulta() {
           if (!datos.nombre?.trim()) { toast('El panel necesita un nombre.', 'err'); return; }
           try {
             const panel = await api.panelDesdeConsulta(
-              datos.nombre.trim(), ultimoResultado, definicion, datos.descripcion);
+              datos.nombre.trim(), ultimoResultado, definicion, datos.descripcion,
+              { incluirListaNegra: Boolean($('[name="incluir_lista_negra"]', contenedor)?.checked) });
             cerrarModal();
-            toast(`Panel «${panel.nombre}» creado con ${panel.miembros} miembros.`, 'ok');
+            toast(`Panel «${panel.nombre}» creado con ${panel.miembros} miembros.`
+              + (panel.excluidos_lista_negra
+                ? ` ${panel.excluidos_lista_negra} quedaron afuera por estar en la lista negra.` : ''), 'ok');
             if (panel.aviso) toast(panel.aviso.mensaje, 'aviso');
           } catch (error) { toast(error.message, 'err'); }
         },

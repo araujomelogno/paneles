@@ -288,9 +288,15 @@ async function convocar(encuestaId) {
       ['Convocados nuevos', resultado.convocados_nuevos],
       ['Total habilitados', resultado.convocados_total],
       ['Sin consentimiento', resultado.sin_consentimiento.length, true],
-    ], resultado.sin_consentimiento.length
-      ? `${resultado.sin_consentimiento.length} persona(s) quedaron fuera por no tener el
-         consentimiento de contacto vigente.` : null);
+      // R-LN.2 — se cuentan aparte: no es falta de consentimiento.
+      ['En lista negra', resultado.en_lista_negra || 0, true],
+    ], [
+      resultado.sin_consentimiento.length
+        ? `${resultado.sin_consentimiento.length} persona(s) quedaron fuera por no tener el
+           consentimiento de contacto vigente.` : '',
+      resultado.en_lista_negra
+        ? `${resultado.en_lista_negra} persona(s) quedaron fuera por estar en la lista negra.` : '',
+    ].filter(Boolean).join(' ') || null);
     await cargarParticipacion(encuestaId);
   } catch (error) {
     toast(error.message, 'err');
@@ -2502,6 +2508,7 @@ const MOTIVOS_EXCLUSION = {
   sin_celular: 'sin celular cargado',
   celular_invalido: 'el celular cargado no es un número válido',
   no_existe: 'la persona ya no existe',
+  lista_negra: 'está en la lista negra',
 };
 
 async function cargarEstadoFlow(encuestaId) {

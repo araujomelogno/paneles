@@ -109,6 +109,7 @@ const bd = {
   tematicas: [],           // R-TEM.1 — el vocabulario compartido de temáticas
   cargaTematicas: [],      // R-TEM.1 — qué temáticas cubre cada carga
   clientes: [],            // R-CLI.1 — para quién se hizo cada estudio
+  listaNegra: [],          // R-LN — una fila por entrada; activa = sin removido_en
   atributos: [],           // R3.14 — el catálogo de segmentadores
   canales: [],             // R4.4 — preferencias de canal por persona
   series: [],              // R4.1.b — series comparables entre olas
@@ -565,6 +566,18 @@ function crearEncuesta(panelId, nombre, fechaCampo) {
   return fila;
 }
 
+/* R-LN — la lista negra, en chico. Las categorías son las del servidor
+   (`lista_negra.CATEGORIAS`): acá están solo porque la demo no tiene uno. */
+const CATEGORIAS_LISTA_NEGRA = {
+  calidad_respuestas: 'Calidad de respuestas', fraude_duplicacion: 'Fraude o duplicación',
+  comportamiento: 'Comportamiento', otro: 'Otro',
+};
+const entradaDemo = (e) => e && ({
+  ...e, categoria_etiqueta: CATEGORIAS_LISTA_NEGRA[e.categoria], activa: !e.removido_en,
+});
+const listaNegraDe = (idPersona) => entradaDemo(
+  bd.listaNegra.find((e) => e.id_persona === idPersona && !e.removido_en)) || null;
+
 function convocar(encuestaId, cuerpo) {
   const encuesta = bd.encuestas.find((e) => e.id === encuestaId);
   let ids = cuerpo.ids_persona || [];
@@ -573,6 +586,9 @@ function convocar(encuestaId, cuerpo) {
       .filter((m) => m.panel_id === encuesta.panel_id && m.estado === 'activo')
       .map((m) => m.id_persona);
   }
+  // R-LN.2 — afuera, y contados aparte.
+  const enListaNegra = ids.filter((id) => listaNegraDe(id));
+  ids = ids.filter((id) => !listaNegraDe(id));
   const habilitadas = ids.filter((id) => vigente(id, 'contacto_participacion'));
   const bloqueadas = ids.filter((id) => !vigente(id, 'contacto_participacion'));
   let nuevas = 0;
@@ -589,6 +605,7 @@ function convocar(encuestaId, cuerpo) {
   return {
     encuesta_id: encuestaId, convocados_nuevos: nuevas,
     convocados_total: habilitadas.length, sin_consentimiento: bloqueadas,
+    en_lista_negra: enListaNegra.length,
   };
 }
 
@@ -774,6 +791,54 @@ function origenDe(idPersona) {
       : 'No hay registro de la carga de la que proviene. El vínculo entre personas y '
         + 'cargas se registra desde la versión R-ORG; lo que se cargó antes no dejó '
         + 'constancia, y no se reconstruye para no inventar un origen.',
+  };
+}
+
+/* R-CAR.4 — las cargas de una persona, la más reciente primero, con sus
+   clientes y temáticas. En la demo no hay temáticas por persona: van las de
+   la carga. Sin carga que la haya creado, se la cuenta como alta manual. */
+function cargasDeDemo(idPersona) {
+  const fecha = (c) => c.fecha_estudio || (c.creado_en || '').slice(0, 10);
+  const cargas = bd.vinculos.filter((v) => v.id_persona === idPersona).map((v) => {
+    const carga = bd.cargas.find((c) => c.id === v.carga_id) || {};
+    const resumen = resumenCarga(carga);
+    return {
+      carga_id: v.carga_id, nombre: carga.nombre, fecha_estudio: carga.fecha_estudio || null,
+      origen: v.origen, vinculado_en: v.creado_en, _fecha: fecha(carga),
+      clientes: resumen.clientes, tematicas: [],
+    };
+  }).sort((a, b) => String(b._fecha).localeCompare(String(a._fecha)))
+    .map(({ _fecha, ...c }) => c);
+  const persona = bd.personas.find((p) => p.id_persona === idPersona) || {};
+  return {
+    cargas,
+    otros_ingresos: cargas.some((c) => c.origen === 'creada') ? []
+      : [{ via: 'alta_manual', etiqueta: 'Alta manual', fecha: persona.creado_en, detalle: null }],
+    aviso: cargas.length ? null : origenDe(idPersona).aviso,
+  };
+}
+
+/* R-CAR.3 — de qué otras cargas vienen los reutilizados de una. */
+function reutilizadosDemo(cargaId) {
+  const suyos = bd.vinculos.filter((v) => v.carga_id === cargaId && v.origen === 'reutilizada');
+  const conteo = new Map();
+  let sinPrevia = 0;
+  suyos.forEach((v) => {
+    const previas = bd.vinculos.filter((o) => o.id_persona === v.id_persona
+      && o.carga_id !== cargaId && (o.creado_en < v.creado_en
+        || (o.creado_en === v.creado_en && o.carga_id < cargaId)));
+    if (!previas.length) sinPrevia += 1;
+    previas.forEach((o) => conteo.set(o.carga_id, (conteo.get(o.carga_id) || 0) + 1));
+  });
+  return {
+    carga_id: cargaId, reutilizados: suyos.length,
+    cargas: [...conteo.entries()].map(([id, personas]) => {
+      const carga = bd.cargas.find((c) => c.id === id) || {};
+      return { carga_id: id, nombre: carga.nombre, fecha_estudio: carga.fecha_estudio || null, personas };
+    }).sort((a, b) => b.personas - a.personas),
+    sin_carga_previa: sinPrevia,
+    sin_carga_previa_etiqueta: 'sin carga previa: landing, alta manual o encuesta',
+    nota: 'Una persona puede aparecer en más de una carga.',
   };
 }
 
@@ -1127,6 +1192,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     }
     const desde = Number(consulta.desde || 0);
     const limite = Number(consulta.limite || 50);
+    items = items.map((p) => ({ ...p, en_lista_negra: Boolean(listaNegraDe(p.id_persona)) }));
     return { total: items.length, items: items.slice(desde, desde + limite) };
   }
 
@@ -1135,6 +1201,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     if (!persona) throw new ErrorDemo('No existe la persona.', 404);
     return {
       id_persona: persona.id_persona,
+      lista_negra: listaNegraDe(persona.id_persona),
       persona: {
         documento: persona.documento, nombre: persona.nombre, sexo: persona.sexo,
         fecha_nacimiento: persona.fecha_nacimiento, localidad: persona.localidad,
@@ -1167,6 +1234,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
         .sort((a, b) => b.otorgado_en.localeCompare(a.otorgado_en)),
       // R-ORG.5 — de qué estudios proviene.
       origen: origenDe(persona.id_persona),
+      cargas: cargasDeDemo(persona.id_persona),
       participacion: (() => {
         const suyas = bd.participaciones.filter((p) => p.id_persona === persona.id_persona);
         return {
@@ -1847,6 +1915,12 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     };
   }
 
+  if (metodo === 'GET' && partes[0] === 'cargas' && partes[2] === 'reutilizados') {
+    const cargaId = Number(partes[1]);
+    if (!bd.cargas.some((c) => c.id === cargaId)) throw new ErrorDemo('No existe la carga.', 404);
+    return reutilizadosDemo(cargaId);
+  }
+
   if (partes[0] === 'cargas' && partes.length === 2 && ['GET', 'PATCH'].includes(metodo)) {
     const carga = bd.cargas.find((c) => c.id === Number(partes[1]));
     if (!carga) throw new ErrorDemo('No existe la carga.', 404);
@@ -2000,7 +2074,73 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
      Fase 2
      ══════════════════════════════════════════════════════════════ */
 
-  if (clave === 'POST /consultas') return correrConsulta(cuerpo);
+  if (clave === 'POST /consultas') {
+    // R-LN.2 — marcados, no ocultos (la demo es admin: ve el motivo).
+    const salida = correrConsulta(cuerpo);
+    (salida.items || []).forEach((i) => { i.lista_negra = listaNegraDe(i.id_persona); });
+    return salida;
+  }
+
+  /* R-LN — agregar, sacar, historial y la sección. */
+  if (partes[0] === 'panelistas' && partes[2] === 'lista-negra') {
+    const idPersona = partes[1];
+    if (!bd.personas.some((p) => p.id_persona === idPersona)) {
+      throw new ErrorDemo('No existe la persona.', 404);
+    }
+    if (metodo === 'GET') {
+      return { items: bd.listaNegra.filter((e) => e.id_persona === idPersona)
+        .sort((a, b) => b.agregado_en.localeCompare(a.agregado_en)).map(entradaDemo) };
+    }
+    const texto = (v) => String(v || '').replace(/\s+/g, ' ').trim();
+    if (partes[3] === 'remocion') {
+      const activa = bd.listaNegra.find((e) => e.id_persona === idPersona && !e.removido_en);
+      if (!activa) throw new ErrorDemo('La persona no está en la lista negra.', 409);
+      if (texto(cuerpo.motivo).length < 5) {
+        throw new ErrorDemo('Falta el motivo para sacarla: describí los hechos en una frase.', 400);
+      }
+      Object.assign(activa, { removido_en: ahora(), removido_por: 'demo@equipos.com.uy',
+        motivo_remocion: texto(cuerpo.motivo) });
+      return entradaDemo(activa);
+    }
+    if (!CATEGORIAS_LISTA_NEGRA[cuerpo.categoria]) {
+      throw new ErrorDemo('Elegí la categoría del motivo.', 400);
+    }
+    if (texto(cuerpo.detalle).length < 5) {
+      throw new ErrorDemo('Falta el detalle del motivo: describí los hechos en una frase '
+        + '(por ejemplo, «respondió en 40 segundos un cuestionario de 15 minutos»).', 400);
+    }
+    if (listaNegraDe(idPersona)) throw new ErrorDemo('La persona ya está en la lista negra.', 409);
+    // Las invitaciones pendientes se cancelan.
+    const canceladas = bd.participaciones.filter((p) => p.id_persona === idPersona
+      && p.origen === 'convocatoria' && !p.respondio
+      && bd.encuestas.find((e) => e.id === p.encuesta_id)?.estado !== 'cerrada');
+    bd.participaciones = bd.participaciones.filter((p) => !canceladas.includes(p));
+    const entrada = {
+      id: bd.listaNegra.length + 1, id_persona: idPersona, categoria: cuerpo.categoria,
+      detalle: texto(cuerpo.detalle), agregado_por: 'demo@equipos.com.uy', agregado_en: ahora(),
+      invitaciones_canceladas: canceladas.map((p) => ({ encuesta_id: p.encuesta_id,
+        encuesta: bd.encuestas.find((e) => e.id === p.encuesta_id)?.nombre,
+        convocado_en: p.convocado_en })),
+      removido_por: null, removido_en: null, motivo_remocion: null,
+    };
+    bd.listaNegra.push(entrada);
+    return entradaDemo(entrada);
+  }
+  if (clave === 'GET /lista-negra') {
+    const q = (consulta.q || '').toLowerCase();
+    let items = bd.listaNegra.filter((e) => consulta.removidas || !e.removido_en).map((e) => {
+      const persona = bd.personas.find((p) => p.id_persona === e.id_persona) || {};
+      return { ...entradaDemo(e), nombre: persona.nombre, documento: persona.documento,
+        entradas: bd.listaNegra.filter((o) => o.id_persona === e.id_persona).length };
+    }).filter((e) => !q || [e.nombre, e.documento].some((v) => (v || '').toLowerCase().includes(q)))
+      .sort((a, b) => b.agregado_en.localeCompare(a.agregado_en));
+    const desde = Number(consulta.desde || 0);
+    const limite = Number(consulta.limite || 50);
+    const total = items.length;
+    items = items.slice(desde, desde + limite);
+    return { total, limite, desde, items,
+      categorias: Object.entries(CATEGORIAS_LISTA_NEGRA).map(([clave, etiqueta]) => ({ clave, etiqueta })) };
+  }
 
   if (clave === 'GET /consultas/guardadas') {
     const panelId = consulta.panel_id ? Number(consulta.panel_id) : null;
@@ -2074,7 +2214,43 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   }
 
   if (clave === 'GET /reidentificacion') {
-    return { items: [...bd.reidentificaciones].reverse() };
+    if (!consulta.eventos) return { items: [...bd.reidentificaciones].reverse() };
+    // R-AUD.1 — por evento: mismas filas de una misma llamada. Las etiquetas
+    // son las de `motivo_reidentificacion` (boveda/0020).
+    const ETIQUETAS = {
+      ficha: 'Se abrió la ficha de un panelista',
+      consulta: 'Se resolvió un resultado de consulta',
+      convocatoria: 'Se armó una convocatoria',
+      exportacion: 'Se bajó un archivo con datos personales',
+      cumplimiento: 'Atención de un pedido de baja o de acceso',
+      respuestas_panelista: 'Se vieron las respuestas de un panelista',
+    };
+    const eventos = new Map();
+    bd.reidentificaciones.forEach((r) => {
+      const llave = [r.actor_email, r.motivo, JSON.stringify(r.contexto), r.creado_en].join('|');
+      if (!eventos.has(llave)) {
+        eventos.set(llave, { evento_id: r.id, actor_uid: r.actor_uid || 'demo',
+          actor_email: r.actor_email, motivo: r.motivo,
+          motivo_etiqueta: ETIQUETAS[r.motivo] || r.motivo,
+          contexto: r.contexto, creado_en: r.creado_en, personas: 0, ids_persona: [] });
+      }
+      const e = eventos.get(llave);
+      e.personas += 1;
+      e.ids_persona.push(r.id_persona);
+    });
+    let items = [...eventos.values()].reverse();
+    if (consulta.actor) items = items.filter((e) => (e.actor_email || '').includes(consulta.actor));
+    if (consulta.panelista) {
+      const q = consulta.panelista;
+      const ids = bd.personas.filter((p) => [p.id_persona, p.documento, p.email].includes(q))
+        .map((p) => p.id_persona);
+      items = items.filter((e) => e.ids_persona.some((id) => ids.includes(id) || id === q));
+    }
+    if (consulta.desde) items = items.filter((e) => e.creado_en.slice(0, 10) >= consulta.desde);
+    if (consulta.hasta) items = items.filter((e) => e.creado_en.slice(0, 10) <= consulta.hasta);
+    const desde = Number(consulta.desde_fila || 0);
+    const limite = Number(consulta.limite || 50);
+    return { total: items.length, items: items.slice(desde, desde + limite) };
   }
 
   if (metodo === 'GET' && partes[0] === 'paneles' && partes[2] === 'composicion') {
@@ -2654,8 +2830,11 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
 
   // ── R3.11 · Panel desde una consulta ─────────────────────────
   if (clave === 'POST /paneles/desde-consulta') {
-    const ids = (cuerpo.resultado?.items || []).map((i) => i.id_persona);
+    let ids = (cuerpo.resultado?.items || []).map((i) => i.id_persona);
     if (!ids.length) throw new ErrorDemo('El resultado no tiene ningún individuo.', 400);
+    // R-LN.2 — afuera por defecto, y se avisa cuántos.
+    const enListaNegra = ids.filter((id) => listaNegraDe(id)).length;
+    if (!cuerpo.incluir_lista_negra) ids = ids.filter((id) => !listaNegraDe(id));
     const panel = { id: bd.paneles.length + 1, nombre: cuerpo.nombre,
       descripcion: cuerpo.descripcion || null, estado: 'activo',
       origen: 'consulta', creado_en: new Date().toISOString() };
@@ -2676,7 +2855,9 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
         mensaje: `${noConvocables.length} de los ${ids.length} integrantes no tienen `
                + 'consentimiento vigente de contacto. Son miembros del panel, pero no '
                + 'pueden ser convocados hasta regularizarlo.' } : null,
-      registrado_como_reidentificacion: true };
+      registrado_como_reidentificacion: true,
+      excluidos_lista_negra: cuerpo.incluir_lista_negra ? 0 : enListaNegra,
+      incluidos_en_lista_negra: cuerpo.incluir_lista_negra ? enListaNegra : 0 };
   }
 
   // ── R3.10 · Exportación identificada ─────────────────────────

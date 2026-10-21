@@ -127,7 +127,9 @@ async function cargarTabla() {
           <td class="small">${esc(c.publico_objetivo || '—')}</td>
           <td class="num"><strong>${c.personas ?? 0}</strong>
               <div class="td-muted small">${c.personas_creadas ?? 0} creados ·
-                ${c.personas_reutilizadas ?? 0} reutilizados</div></td>
+                ${c.personas_reutilizadas
+                  ? `<a href="#" data-reutilizados="${c.id}" title="De qué otras cargas vienen">${c.personas_reutilizadas} reutilizados</a>`
+                  : '0 reutilizados'}</div></td>
           <td>${chipsDeClientes(c.clientes || [])}</td>
           <td>${chipsDeTematicas(c.tematicas)}</td>
           <td class="right"><button class="btn btn-outline btn-sm" data-carga="${c.id}">Ver</button></td>
@@ -139,6 +141,58 @@ async function cargarTabla() {
   $$('[data-carga]', contenedor).forEach((boton) => {
     boton.onclick = () => contexto.irA('cargas', { cargaId: Number(boton.dataset.carga) });
   });
+  activarReutilizados(contenedor);
+}
+
+/* ── R-CAR.3 · De dónde vienen los reutilizados ─────────────────── */
+
+function activarReutilizados(contenedor) {
+  $$('[data-reutilizados]', contenedor).forEach((enlace) => {
+    enlace.onclick = (e) => {
+      e.preventDefault();
+      abrirReutilizados(Number(enlace.dataset.reutilizados));
+    };
+  });
+}
+
+/* Para cada otra carga en la que ya estaban, cuántos. Una persona puede
+   haber estado en varias: la suma puede superar el total, y el modal lo
+   dice. Quien no venía de ninguna carga tiene su fila, para que los
+   números cierren. */
+async function abrirReutilizados(cargaId) {
+  const caja = modal({
+    titulo: 'De dónde vienen los reutilizados',
+    ancho: '640px',
+    cuerpo: cargando('15vh'),
+    acciones: [{ texto: 'Cerrar', clase: 'btn-outline', onClick: cerrarModal }],
+  });
+  try {
+    const d = await api.cargas.reutilizados(cargaId);
+    $('.modal-body', caja).innerHTML = `
+      <p><strong>${d.reutilizados}</strong> persona(s) ya existían cuando entró esta
+        carga. ${esc(d.nota)} Por eso la suma puede ser mayor.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Carga anterior</th><th>Fecha del estudio</th><th class="num">Personas</th></tr></thead>
+        <tbody>${d.cargas.map((f) => `<tr>
+          <td><a href="#" data-ir-carga="${f.carga_id}" class="td-strong">${esc(f.nombre)}</a></td>
+          <td class="small">${f.fecha_estudio ? esc(fechaCorta(f.fecha_estudio)) : '<span class="muted">sin fecha</span>'}</td>
+          <td class="num">${f.personas}</td></tr>`).join('')}
+          <tr><td colspan="2" class="small"><em>${esc(d.sin_carga_previa_etiqueta)}</em></td>
+            <td class="num">${d.sin_carga_previa}</td></tr>
+        </tbody></table></div>
+      <p class="small muted">Lo cargado antes de que existiera el vínculo con la
+        carga (R-ORG) no dejó constancia: esas personas cuentan como «sin carga
+        previa».</p>`;
+    $$('[data-ir-carga]', caja).forEach((enlace) => {
+      enlace.onclick = (e) => {
+        e.preventDefault();
+        cerrarModal();
+        contexto.irA('cargas', { cargaId: Number(enlace.dataset.irCarga) });
+      };
+    });
+  } catch (error) {
+    $('.modal-body', caja).innerHTML = alerta(error.message);
+  }
 }
 
 /* ── R-CAR.2 · El detalle ────────────────────────────────────────── */
@@ -190,7 +244,9 @@ async function renderDetalle(main, cargaId) {
             <div class="tarjeta-dato"><div class="valor">${carga.personas_creadas ?? 0}</div>
               <div class="etiqueta">creados por esta carga</div></div>
             <div class="tarjeta-dato"><div class="valor">${carga.personas_reutilizadas ?? 0}</div>
-              <div class="etiqueta">reutilizados (ya existían)</div></div>
+              <div class="etiqueta">${carga.personas_reutilizadas
+                ? `<a href="#" data-reutilizados="${carga.id}">reutilizados (ya existían) · ver de dónde</a>`
+                : 'reutilizados (ya existían)'}</div></div>
           </div>
           <p class="small muted" style="margin-top:0.6rem">Ninguno queda en un panel
             por venir de una carga. Quien se cargó antes de la versión R-ORG no
@@ -236,6 +292,7 @@ async function renderDetalle(main, cargaId) {
     </div>`;
 
   $('#volver').onclick = () => contexto.irA('cargas');
+  activarReutilizados(main);
   if (puedeBorrar()) $('#borrar-carga').onclick = () => abrirBorrado(carga);
   // El ámbito «una carga» de la composición (R-ORG) ya existe: se abre ahí.
   $('#composicion').onclick = () => contexto.irA('composicion', { cargaId: carga.id });

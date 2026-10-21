@@ -105,6 +105,74 @@ def listar_reidentificaciones(conn, id_persona=None, actor_uid=None, limite=200)
     ]
 
 
+def eventos_de_reidentificacion(conn, actor=None, desde=None, hasta=None,
+                                panelista=None, limite=50, desplazamiento=0):
+    """R-AUD.1 — el registro de reidentificaciones, **por evento**: quién,
+    cuándo, con qué motivo y a cuántas personas alcanzó, con sus ids.
+
+    Se guarda una fila por persona (así se puede preguntar «¿quién vio los
+    datos de esta?» sin abrir un json), y un evento son las filas que dejó
+    una misma llamada: mismo actor, motivo, contexto y momento. Por eso se
+    agrupa al leer, y no se agrega un id de evento a la tabla.
+
+    `actor` filtra por uid o por correo (parcial); `desde`/`hasta`, por
+    fecha (inclusive); `panelista`, por `id_persona`, documento o correo de
+    alguien que **todavía** está en la bóveda: deja los eventos que lo
+    alcanzaron, completos. Es la pregunta de un pedido de acceso."""
+    condiciones, parametros = [], []
+    if actor:
+        condiciones.append("(r.actor_uid = %s or r.actor_email ilike %s)")
+        parametros += [actor.strip(), f"%{actor.strip()}%"]
+    if desde:
+        condiciones.append("r.creado_en >= %s::date")
+        parametros.append(desde)
+    if hasta:
+        condiciones.append("r.creado_en < %s::date + 1")
+        parametros.append(hasta)
+    donde = " and ".join(condiciones) or "true"
+    if panelista:
+        crudo = panelista.strip()
+        if len(crudo) == 36 and crudo.count("-") == 4:
+            alcanzados = [crudo]
+        else:
+            alcanzados = [str(f["id_persona"]) for f in db.todas(
+                conn,
+                """select id_persona from persona
+                    where documento = %s or lower(email) = lower(%s)""",
+                (crudo, crudo))]
+        filtro_evento = "having bool_or(r.id_persona = any(%s::uuid[]))"
+        parametros_alcanzados = [alcanzados]
+    else:
+        filtro_evento, parametros_alcanzados = "", []
+    agrupado = f"""
+        select min(r.id) as evento_id, r.actor_uid, r.actor_email, r.motivo,
+               min(r.motivo_etiqueta) as motivo_etiqueta,
+               bool_or(r.expone_pii) as expone_pii, r.contexto, r.creado_en,
+               count(*)::int as personas,
+               array_agg(r.id_persona::text order by r.id) as ids_persona
+          from v_reidentificacion r
+         where {donde}
+         group by r.actor_uid, r.actor_email, r.motivo, r.contexto, r.creado_en
+         {filtro_evento}"""
+    todos = tuple(parametros + parametros_alcanzados)
+    total = db.una(conn, f"select count(*)::int as n from ({agrupado}) e", todos)["n"]
+    filas = db.todas(
+        conn,
+        f"{agrupado} order by r.creado_en desc, min(r.id) desc limit %s offset %s",
+        todos + (int(limite), int(desplazamiento)))
+    return {
+        "total": total,
+        "items": [{
+            "evento_id": f["evento_id"],
+            "actor_uid": f["actor_uid"], "actor_email": f["actor_email"],
+            "motivo": f["motivo"], "motivo_etiqueta": f["motivo_etiqueta"] or f["motivo"],
+            "expone_pii": f["expone_pii"],
+            "contexto": f["contexto"], "creado_en": f["creado_en"].isoformat(),
+            "personas": f["personas"], "ids_persona": f["ids_persona"],
+        } for f in filas],
+    }
+
+
 # ── Gestión de usuarios de la app ────────────────────────────────────
 
 def registrar_usuario(conn, accion, uid_objetivo, actor=None, email_objetivo=None,

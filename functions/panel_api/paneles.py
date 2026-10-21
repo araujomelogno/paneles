@@ -167,7 +167,7 @@ def listar_miembros(conn, panel_id, estado="activo", limite=200, desplazamiento=
 # ════════════════════════════════════════════════════════════════════
 
 def desde_consulta(conn, nombre, resultado, definicion=None, descripcion=None,
-                   actor=None, consulta_id=None):
+                   actor=None, consulta_id=None, incluir_lista_negra=False):
     """Crea un panel con los individuos que salieron de una consulta.
 
     Materializar un ranking en un panel es, en los hechos, fijar una lista de
@@ -184,6 +184,11 @@ def desde_consulta(conn, nombre, resultado, definicion=None, descripcion=None,
 
     Idempotente en las membresías: quien ya era miembro no se duplica ni se
     reactiva silenciosamente si estaba de baja.
+
+    R-LN.2 — quien está en la lista negra queda **afuera por defecto**, y se
+    informa cuántos. `incluir_lista_negra` lo revierte; la ruta lo permite
+    solo a quien gestiona la lista. Aun incluidos, no se los puede convocar:
+    eso lo decide `v_persona_convocable`.
     """
     import json
 
@@ -205,6 +210,17 @@ def desde_consulta(conn, nombre, resultado, definicion=None, descripcion=None,
             "El resultado no tiene ningún individuo, así que no hay panel que "
             "crear."
         )
+
+    from . import lista_negra
+
+    en_lista_negra = sorted(lista_negra.activas_de(conn, ids))
+    if not incluir_lista_negra and en_lista_negra:
+        ids = [i for i in ids if i not in set(en_lista_negra)]
+        if not ids:
+            raise DatosInvalidos(
+                "Todos los individuos del resultado están en la lista negra, así "
+                "que no hay panel que crear.",
+                {"excluidos_lista_negra": len(en_lista_negra)})
 
     fila = db.una(
         conn,
@@ -298,4 +314,8 @@ def desde_consulta(conn, nombre, resultado, definicion=None, descripcion=None,
             } if sin_consentimiento else None
         ),
         "registrado_como_reidentificacion": fue_semantica,
+        # R-LN.2 — cuántos quedaron afuera por estar en la lista negra (o,
+        # con `incluir_lista_negra`, cuántos entraron estándolo).
+        "excluidos_lista_negra": 0 if incluir_lista_negra else len(en_lista_negra),
+        "incluidos_en_lista_negra": len(en_lista_negra) if incluir_lista_negra else 0,
     }

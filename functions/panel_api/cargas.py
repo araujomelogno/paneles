@@ -481,6 +481,153 @@ def origen_de(conn, id_persona):
     }
 
 
+# R-CAR.4 — por dónde entró alguien que no vino de una carga. Una persona
+# puede tener varios; si no hay rastro de ninguno, es un alta manual.
+INGRESO_LANDING = "landing"
+INGRESO_ENCUESTA = "encuesta"
+INGRESO_ALTA_MANUAL = "alta_manual"
+ETIQUETAS_INGRESO = {
+    INGRESO_LANDING: "Se inscribió por la landing",
+    INGRESO_ENCUESTA: "Llegó en el archivo de campo de una encuesta",
+    INGRESO_ALTA_MANUAL: "Alta manual",
+}
+
+
+def _otros_ingresos(conn, id_persona, creada_por_carga):
+    """Lo que no es una carga: la inscripción aprobada, la encuesta de cuyo
+    archivo salió, o —si no hay rastro de nada— el alta manual."""
+    ingresos = [
+        {"via": INGRESO_LANDING, "etiqueta": ETIQUETAS_INGRESO[INGRESO_LANDING],
+         "fecha": f["resuelto_en"].isoformat() if f["resuelto_en"] else None,
+         "detalle": None}
+        for f in db.todas(
+            conn,
+            """select resuelto_en from inscripcion
+                where id_persona = %s and estado = 'aprobada' order by resuelto_en""",
+            (str(id_persona),))
+    ] + [
+        {"via": INGRESO_ENCUESTA, "etiqueta": ETIQUETAS_INGRESO[INGRESO_ENCUESTA],
+         "fecha": f["convocado_en"].isoformat(), "detalle": f["nombre"],
+         "encuesta_id": f["encuesta_id"]}
+        for f in db.todas(
+            conn,
+            """select pa.encuesta_id, e.nombre, pa.convocado_en
+                 from participacion pa join encuesta e on e.id = pa.encuesta_id
+                where pa.id_persona = %s and pa.origen = 'importacion'
+                order by pa.convocado_en""",
+            (str(id_persona),))
+    ]
+    if not ingresos and not creada_por_carga:
+        fila = db.una(conn, "select creado_en from persona where id_persona = %s",
+                      (str(id_persona),))
+        ingresos.append({
+            "via": INGRESO_ALTA_MANUAL, "etiqueta": ETIQUETAS_INGRESO[INGRESO_ALTA_MANUAL],
+            "fecha": fila["creado_en"].isoformat() if fila else None, "detalle": None})
+    return ingresos
+
+
+def cargas_de_persona(conn, id_persona, incluir_especiales=False):
+    """R-CAR.4 — la sección «Cargas» de la ficha: en qué cargas aparece, si
+    la creó o la reutilizó, los clientes de cada carga y las temáticas que
+    respondió **en ella**. La más reciente primero. Y, aparte, si entró por
+    la landing, un alta manual o una encuesta.
+
+    Los clientes y las temáticas se leen por join, como el resto de los
+    datos del estudio: no se copian en la persona."""
+    from . import clientes as mod_clientes, tematicas as mod_tematicas
+
+    filas = db.todas(
+        conn,
+        """
+        select c.id, c.nombre, c.fecha_estudio, c.creado_en as carga_creada_en,
+               pc.origen, pc.creado_en
+          from persona_carga pc join carga c on c.id = pc.carga_id
+         where pc.id_persona = %s
+         order by coalesce(c.fecha_estudio, c.creado_en::date) desc, c.id desc
+        """,
+        (str(id_persona),))
+    por_carga = mod_clientes.de_cargas(conn, [f["id"] for f in filas])
+    tematicas = {}
+    for t in mod_tematicas.de_persona(
+            conn, id_persona, incluir_especiales=incluir_especiales)["items"]:
+        tematicas.setdefault(t["carga_id"], []).append(
+            {"id": t["id"], "nombre": t["nombre"], "es_especial": t["es_especial"]})
+    cargas = [{
+        "carga_id": f["id"], "nombre": f["nombre"],
+        "fecha_estudio": f["fecha_estudio"].isoformat() if f["fecha_estudio"] else None,
+        "origen": f["origen"], "vinculado_en": f["creado_en"].isoformat(),
+        "clientes": por_carga.get(f["id"], []),
+        "tematicas": tematicas.get(f["id"], []),
+    } for f in filas]
+    return {
+        "cargas": cargas,
+        "otros_ingresos": _otros_ingresos(
+            conn, id_persona, any(c["origen"] == CREADA for c in cargas)),
+        "aviso": None if cargas else SIN_VINCULO_REGISTRADO,
+    }
+
+
+SIN_CARGA_PREVIA = "sin carga previa: landing, alta manual o encuesta"
+
+
+def reutilizados(conn, carga_id):
+    """R-CAR.3 — de dónde vienen los reutilizados de una carga: para cada
+    **otra** carga en la que esas personas ya estaban (vinculadas antes que
+    a esta), cuántas son. Una persona puede estar en varias, así que la suma
+    puede superar el total. Quien no estaba en ninguna carga anterior va en
+    una fila propia, para que nadie quede sin explicar."""
+    carga = db.una(conn, "select id from carga where id = %s", (carga_id,))
+    if not carga:
+        raise NoEncontrado(f"No existe la carga {carga_id}.")
+    total = db.una(
+        conn,
+        """select count(*)::int as n from persona_carga
+            where carga_id = %s and origen = 'reutilizada'""",
+        (carga_id,))["n"]
+    filas = db.todas(
+        conn,
+        """
+        select c.id, c.nombre, c.fecha_estudio, count(*)::int as personas
+          from persona_carga esta
+          join persona_carga otra
+            on otra.id_persona = esta.id_persona
+           and otra.carga_id <> esta.carga_id
+           -- «Antes»: por cuándo se vinculó; a igual momento (una misma
+           -- transacción), la carga más vieja.
+           and (otra.creado_en, otra.carga_id) < (esta.creado_en, esta.carga_id)
+          join carga c on c.id = otra.carga_id
+         where esta.carga_id = %s and esta.origen = 'reutilizada'
+         group by c.id
+         order by count(*) desc, coalesce(c.fecha_estudio, c.creado_en::date) desc, c.id
+        """,
+        (carga_id,))
+    sin_previa = db.una(
+        conn,
+        """
+        select count(*)::int as n
+          from persona_carga esta
+         where esta.carga_id = %s and esta.origen = 'reutilizada'
+           and not exists (select 1 from persona_carga otra
+                            where otra.id_persona = esta.id_persona
+                              and otra.carga_id <> esta.carga_id
+                              and (otra.creado_en, otra.carga_id)
+                                  < (esta.creado_en, esta.carga_id))
+        """,
+        (carga_id,))["n"]
+    return {
+        "carga_id": carga_id,
+        "reutilizados": total,
+        "cargas": [{
+            "carga_id": f["id"], "nombre": f["nombre"],
+            "fecha_estudio": f["fecha_estudio"].isoformat() if f["fecha_estudio"] else None,
+            "personas": f["personas"],
+        } for f in filas],
+        "sin_carga_previa": sin_previa,
+        "sin_carga_previa_etiqueta": SIN_CARGA_PREVIA,
+        "nota": "Una persona puede aparecer en más de una carga.",
+    }
+
+
 def _rotulo(fila):
     partes = [fila["nombre"]]
     if fila["fecha_estudio"]:

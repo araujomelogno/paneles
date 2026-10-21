@@ -5,8 +5,9 @@ import * as api from '../api.js';
 import * as consentimiento from '../consentimiento.js';
 import * as catalogo from '../catalogo.js';
 import * as respuestas from '../respuestas.js';
-import { pintarOrigen } from '../origen.js';
+import { pintarCargas } from '../origen.js';
 import { editorDeClientes } from '../clientes.js';
+import * as listaNegra from '../lista_negra.js';
 import {
   $, $$, esc, encabezado, consentimientos, token, vacio, cargando, toast,
   modal, cerrarModal, leerFormulario, confirmar, activarTokens, fechaCorta,
@@ -55,6 +56,10 @@ const CANALES = [
 const ETIQUETA_CANAL = Object.fromEntries(CANALES.map(([k, v]) => [k, v]));
 
 let filtro = { q: '', panel_id: '', sin_panel: false, carga_id: '' };
+/* R-PAN.1 — la grilla pagina. La página vive aparte de los filtros: cambiar
+   un filtro vuelve a la primera, y pasar de página los conserva. */
+const TAMANOS_DE_PAGINA = [25, 50, 100];
+const paginado = { desde: 0, limite: 50 };
 
 /* R-ORG.5 — las cargas, para filtrar el listado por la de la que proviene
    cada persona. Se listan por nombre y fecha del estudio, nunca por id. */
@@ -131,6 +136,7 @@ export async function render(main, ctx) {
   $('#q').oninput = (e) => {
     clearTimeout(temporizador);
     filtro.q = e.target.value;
+    paginado.desde = 0;
     temporizador = setTimeout(cargarTabla, 280);
   };
   // R3.13.e — «sin panel» es la gente que entró por una carga externa y a la
@@ -138,12 +144,14 @@ export async function render(main, ctx) {
   $('#f-panel').onchange = (e) => {
     filtro.sin_panel = e.target.value === '__sin__';
     filtro.panel_id = filtro.sin_panel ? '' : e.target.value;
+    paginado.desde = 0;
     cargarTabla();
   };
   // R-ORG.5 — por carga: quienes provienen de ella, creados o reutilizados.
   $('#f-carga').onchange = (e) => {
     filtro.carga_id = e.target.value;
     $('#editar-estudio').style.display = filtro.carga_id ? '' : 'none';
+    paginado.desde = 0;
     cargarTabla();
   };
   // Se relee la carga en vez de usar la del selector: los conteos de
@@ -169,10 +177,17 @@ async function cargarTabla() {
   if (!contenedor) return;
   contenedor.innerHTML = cargando('20vh');
   const { items, total } = await api.panelistas.listar({
-    q: filtro.q, panel_id: filtro.panel_id, limite: 100,
+    q: filtro.q, panel_id: filtro.panel_id,
+    limite: paginado.limite, desde: paginado.desde,
     sin_panel: filtro.sin_panel ? '1' : '',
     carga_id: filtro.carga_id,
   });
+  // Una página que quedó más allá del final (se dio de baja gente, o cambió
+  // el tamaño): se vuelve a la última que existe.
+  if (!items.length && total > 0 && paginado.desde > 0) {
+    paginado.desde = Math.floor((total - 1) / paginado.limite) * paginado.limite;
+    return cargarTabla();
+  }
 
   if (!items.length) {
     contenedor.innerHTML = vacio(
@@ -192,9 +207,10 @@ async function cargarTabla() {
         <th>Consentimiento</th><th>Paneles</th><th>Identificador</th><th></th>
       </tr></thead>
       <tbody>${items.map((p) => `
-        <tr>
+        <tr class="${p.en_lista_negra ? 'en-lista-negra' : ''}">
           <td>
-            <div class="td-strong">${esc(p.nombre || 'Sin nombre')}</div>
+            <div class="td-strong">${esc(p.nombre || 'Sin nombre')}
+              ${p.en_lista_negra ? listaNegra.marca({}) : ''}</div>
             <div class="td-muted small">${esc(p.email || '—')}</div>
           </td>
           <td class="mono">${esc(p.documento || '—')}</td>
@@ -206,12 +222,45 @@ async function cargarTabla() {
         </tr>`).join('')}
       </tbody>
     </table></div>
-    <div class="paginacion"><span class="p-info">${items.length} de ${total} panelistas</span></div>`;
+    ${barraDePaginas(total)}`;
 
   activarTokens(contenedor);
+  activarPaginas(contenedor, total);
   $$('[data-ficha]', contenedor).forEach((boton) => {
     boton.onclick = () => contexto.irA('panelistas', { idPersona: boton.dataset.ficha });
   });
+}
+
+/* R-PAN.1 — «Página N de M · T panelistas», anterior/siguiente y tamaño. */
+function barraDePaginas(total) {
+  const paginas = Math.max(1, Math.ceil(total / paginado.limite));
+  const pagina = Math.floor(paginado.desde / paginado.limite) + 1;
+  return `<div class="paginacion">
+    <span class="p-info" data-pagina-info>Página ${pagina} de ${paginas} · ${total} panelista${total === 1 ? '' : 's'}</span>
+    <div class="toolbar">
+      <select class="fselect fselect-sm" data-tamano style="width:auto" title="Panelistas por página">
+        ${TAMANOS_DE_PAGINA.map((n) => `<option value="${n}" ${n === paginado.limite ? 'selected' : ''}>${n} por página</option>`).join('')}
+      </select>
+      <button class="btn btn-outline btn-sm" data-anterior ${pagina <= 1 ? 'disabled' : ''}>← Anterior</button>
+      <button class="btn btn-outline btn-sm" data-siguiente ${pagina >= paginas ? 'disabled' : ''}>Siguiente →</button>
+    </div>
+  </div>`;
+}
+
+function activarPaginas(contenedor, total) {
+  $('[data-anterior]', contenedor).onclick = () => {
+    paginado.desde = Math.max(0, paginado.desde - paginado.limite);
+    cargarTabla();
+  };
+  $('[data-siguiente]', contenedor).onclick = () => {
+    if (paginado.desde + paginado.limite < total) paginado.desde += paginado.limite;
+    cargarTabla();
+  };
+  $('[data-tamano]', contenedor).onchange = (e) => {
+    paginado.limite = Number(e.target.value);
+    paginado.desde = 0;
+    cargarTabla();
+  };
 }
 
 async function cambiarCanal(idPersona, canal, activar) {
@@ -774,7 +823,12 @@ async function renderFicha(main, idPersona) {
   const dato = (etiqueta, valor) =>
     `<dt>${esc(etiqueta)}</dt><dd class="${valor ? '' : 'vacio'}">${esc(valor || '—')}</dd>`;
 
-  main.innerHTML = encabezado(p.nombre || 'Panelista', '', 'Ficha de la bóveda de identidad.') + `
+  main.innerHTML = encabezado(p.nombre || 'Panelista', '', 'Ficha de la bóveda de identidad.')
+    // R-LN.1 — el estado en la lista negra y, para quien gestiona, la acción.
+    + listaNegra.bloqueDeFicha({
+      idPersona, nombre: p.nombre, entrada: ficha.lista_negra, actor: contexto.actor,
+      alCambiar: () => renderFicha(main, idPersona),
+    }) + `
     <div class="grid-2">
       <div class="stack">
         <div class="card">
@@ -870,10 +924,10 @@ async function renderFicha(main, idPersona) {
 
         <div class="card">
           <div class="card-header">
-            <span class="card-header-title">Origen</span>
-            <span class="small muted">de qué estudios proviene</span>
+            <span class="card-header-title">Cargas</span>
+            <span class="small muted">en cuáles aparece, y por dónde entró</span>
           </div>
-          <div class="card-body tight">${pintarOrigen(ficha.origen)}</div>
+          <div class="card-body tight" id="ficha-cargas">${pintarCargas(ficha.cargas)}</div>
         </div>
 
         <div class="card">
@@ -936,6 +990,13 @@ async function renderFicha(main, idPersona) {
   $('#volver').onclick = () => contexto.irA('panelistas');
   $('#editar').onclick = () => abrirEdicion(ficha);
   activarTokens(main);
+  // R-CAR.4 — cada carga lleva a su detalle.
+  $$('[data-ir-carga]', main).forEach((enlace) => {
+    enlace.onclick = (e) => {
+      e.preventDefault();
+      contexto.irA('cargas', { cargaId: Number(enlace.dataset.irCarga) });
+    };
+  });
 
   $('#otorgar').onclick = () => abrirOtorgar(idPersona);
   $('#alias-editar').onclick = (e) => { e.preventDefault(); abrirAlias(ficha); };
