@@ -24,6 +24,7 @@ import {
   fechaCorta, fechaHora, modal, cerrarModal,
 } from '../ui.js';
 import { editorDeTematicas, chipsDeTematicas } from '../tematicas.js';
+import { editorDeClientes, chipsDeClientes } from '../clientes.js';
 
 let contexto = {};
 let filtro = { q: '', tematica_id: '' };
@@ -115,7 +116,7 @@ async function cargarTabla() {
     <div class="table-wrap"><table>
       <thead><tr>
         <th>Carga</th><th>Fecha del estudio</th><th>Público objetivo</th>
-        <th class="num">Individuos</th><th>Temáticas</th><th></th>
+        <th class="num">Individuos</th><th>Clientes</th><th>Temáticas</th><th></th>
       </tr></thead>
       <tbody>${items.map((c) => `
         <tr>
@@ -127,6 +128,7 @@ async function cargarTabla() {
           <td class="num"><strong>${c.personas ?? 0}</strong>
               <div class="td-muted small">${c.personas_creadas ?? 0} creados ·
                 ${c.personas_reutilizadas ?? 0} reutilizados</div></td>
+          <td>${chipsDeClientes(c.clientes || [])}</td>
           <td>${chipsDeTematicas(c.tematicas)}</td>
           <td class="right"><button class="btn btn-outline btn-sm" data-carga="${c.id}">Ver</button></td>
         </tr>`).join('')}
@@ -175,6 +177,7 @@ async function renderDetalle(main, cargaId) {
             <dt>Público objetivo</dt><dd>${dato(carga.publico_objetivo)}</dd>
             <dt>Tipo de datos</dt><dd>${dato(carga.tipo_datos_origen_etiqueta)}</dd>
             <dt>Modo de relevamiento</dt><dd>${dato(carga.modo_relevamiento_etiqueta)}</dd>
+            <dt>Clientes</dt><dd id="clientes-de-la-carga">${chipsDeClientes(carga.clientes || [])}</dd>
             <dt>Fecha de carga</dt><dd>${esc(fechaHora(carga.creado_en))}</dd>
           </dl>
         </div></div>
@@ -194,6 +197,21 @@ async function renderDetalle(main, cargaId) {
             dejó constancia de su carga y no figura acá.</p>
         </div></div>
     </div>
+
+    ${puedeEditar() ? `<div class="card">
+      <div class="card-header"><span class="card-header-title">Clientes</span>
+        <div class="toolbar">
+          <button class="btn btn-orange btn-sm" id="guardar-clientes">Guardar clientes</button>
+        </div></div>
+      <div class="card-body">
+        <div id="clientes-alerta"></div>
+        <div id="clientes"></div>
+        <p class="small muted" style="margin-top:0.6rem">Para quién se hizo el estudio.
+          Cada panelista de la carga lo hereda sin copiarse: corregirlo acá se ve
+          en todas sus fichas. Es confidencial: no llega al portal ni a las
+          exportaciones.</p>
+      </div>
+    </div>` : ''}
 
     <div class="card">
       <div class="card-header"><span class="card-header-title">Temáticas incorporadas</span>
@@ -223,6 +241,23 @@ async function renderDetalle(main, cargaId) {
   $('#composicion').onclick = () => contexto.irA('composicion', { cargaId: carga.id });
 
   if (puedeEditar()) {
+    // R-CLI.2 — los clientes se editan después de creada la carga.
+    let clientes = editorDeClientes($('#clientes'), { iniciales: carga.clientes || [] });
+    $('#guardar-clientes').onclick = async (e) => {
+      const boton = e.currentTarget;
+      boton.disabled = true;
+      try {
+        const nueva = await api.cargas.editar(carga.id, { clientes: clientes.valor() });
+        clientes = editorDeClientes($('#clientes'), { iniciales: nueva.clientes || [] });
+        $('#clientes-de-la-carga').innerHTML = chipsDeClientes(nueva.clientes || []);
+        $('#clientes-alerta').innerHTML = '';
+        toast('Clientes guardados. Se ven en las fichas de sus panelistas.', 'ok');
+      } catch (error) {
+        $('#clientes-alerta').innerHTML = alerta(error.message);
+      } finally {
+        boton.disabled = false;
+      }
+    };
     const opciones = { preguntasDisponibles, areas, puedeDesmarcar: puedeDesmarcarEspecial() };
     let editor = editorDeTematicas($('#tematicas'), {
       ...opciones, vocabulario, iniciales: carga.tematicas,

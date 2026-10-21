@@ -108,6 +108,7 @@ const bd = {
   vinculos: [],            // R-ORG.1 — de qué carga proviene cada persona
   tematicas: [],           // R-TEM.1 — el vocabulario compartido de temáticas
   cargaTematicas: [],      // R-TEM.1 — qué temáticas cubre cada carga
+  clientes: [],            // R-CLI.1 — para quién se hizo cada estudio
   atributos: [],           // R3.14 — el catálogo de segmentadores
   canales: [],             // R4.4 — preferencias de canal por persona
   series: [],              // R4.1.b — series comparables entre olas
@@ -735,7 +736,27 @@ function resumenCarga(carga) {
     personas_reutilizadas: suyos.filter((v) => v.origen === 'reutilizada').length,
     personas: suyos.length,
     tematicas: tematicasDe(carga.id),
+    clientes: (carga.clientes || []).map((id) => bd.clientes.find((c) => c.id === id))
+      .filter(Boolean).sort((a, b) => a.nombre.localeCompare(b.nombre)),
   };
+}
+
+/* R-CLI.1 — los nombres que llegan → ids del vocabulario (los nuevos se
+   crean). Misma regla que el servidor: minúsculas, un espacio, y una
+   variante que difiere solo en tildes reutiliza la existente. */
+function clientesDemo(nombres = []) {
+  const ids = [];
+  nombres.forEach((crudo) => {
+    const nombre = String(crudo || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!nombre) return;
+    let cliente = bd.clientes.find((c) => sinTildes(c.nombre) === sinTildes(nombre));
+    if (!cliente) {
+      cliente = { id: bd.clientes.length + 1, nombre };
+      bd.clientes.push(cliente);
+    }
+    if (!ids.includes(cliente.id)) ids.push(cliente.id);
+  });
+  return ids;
 }
 
 function origenDe(idPersona) {
@@ -1712,6 +1733,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
       tipo_datos_origen: tipo, tipo_datos_origen_otro: tipoOtro,
       modo_relevamiento: modo, modo_relevamiento_otro: modoOtro,
       ref_estudio: uuid(), creado_en: ahora(), creado_por: 'demo',
+      clientes: clientesDemo(cuerpo.clientes),
     };
     bd.cargas.push(carga);
     return resumenCarga(carga);
@@ -1741,6 +1763,14 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
         id: t.id, nombre: t.nombre, es_especial: Boolean(t.es_especial),
         es_especial_propia: Boolean(t.es_especial),
         cargas: bd.cargaTematicas.filter((v) => v.tematica_id === t.id).length, personas: null,
+      })),
+    };
+  }
+  if (clave === 'GET /clientes') {
+    const q = sinTildes((consulta.q || '').toLowerCase());
+    return {
+      items: bd.clientes.filter((c) => !q || sinTildes(c.nombre).includes(q)).map((c) => ({
+        ...c, cargas: bd.cargas.filter((k) => (k.clientes || []).includes(c.id)).length,
       })),
     };
   }
@@ -1831,6 +1861,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
             campo, cuerpo[campo], cuerpo[`${campo}_otro`]);
         }
       });
+      if (Array.isArray(cuerpo.clientes)) carga.clientes = clientesDemo(cuerpo.clientes);
     }
     return resumenCarga(carga);
   }

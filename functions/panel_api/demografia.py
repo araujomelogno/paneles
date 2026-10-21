@@ -53,6 +53,14 @@ DIMENSION_TEMATICA = "tematica"
 DIMENSION_AREA_TEMATICA = "area_tematica"
 OPERADORES_TEMATICA = {"eq", "in"}
 
+# R-CLI.3 (D80) — «panelistas que participaron (o no) en estudios para *X*».
+# Sale de `v_persona_cliente` (los clientes de las cargas de cada persona).
+# `in` incluye; `not_in` excluye, y acá sí niega el `exists` entero: no
+# haber participado para X es exactamente no tener ese vínculo, a
+# diferencia de un atributo, donde no tener el dato no es «otra categoría».
+DIMENSION_CLIENTE = "cliente"
+OPERADORES_CLIENTE = {"in", "not_in"}
+
 # Qué dimensiones se comparan como número y no como texto. `edad` siempre lo
 # es; cualquier atributo `numerico` del catálogo también.
 NUMERICAS = {"edad"}
@@ -103,8 +111,10 @@ def normalizar_criterio(crudo, dimensiones=None, catalogo_por_clave=None):
     dimension = (crudo.get("dimension") or "").strip().lower()
     if dimension in (DIMENSION_TEMATICA, DIMENSION_AREA_TEMATICA):
         return _criterio_tematica(crudo)
+    if dimension == DIMENSION_CLIENTE:
+        return _criterio_cliente(crudo)
     validas = (set(dimensiones) if dimensiones else set(DIMENSIONES_BASE)) \
-        | {DIMENSION_TEMATICA, DIMENSION_AREA_TEMATICA}
+        | {DIMENSION_TEMATICA, DIMENSION_AREA_TEMATICA, DIMENSION_CLIENTE}
     if dimension not in validas:
         raise DatosInvalidos(
             f"Dimensión demográfica desconocida: {dimension!r}.",
@@ -192,6 +202,40 @@ def _criterio_tematica(crudo):
     return criterio
 
 
+def _criterio_cliente(crudo):
+    """R-CLI.3 — un criterio de cliente: `in` (participó en estudios para
+    alguno de esos clientes) o `not_in` (para ninguno). `valor` lleva
+    clientes por id (lo que manda la pantalla) o por nombre."""
+    from . import clientes
+
+    operador = (crudo.get("operador") or "in").strip().lower()
+    if operador in ("eq", "incluir"):
+        operador = "in"
+    if operador in ("ne", "excluir"):
+        operador = "not_in"
+    if operador not in OPERADORES_CLIENTE:
+        raise DatosInvalidos(
+            f"Sobre un cliente se filtra incluyendo (`in`) o excluyendo "
+            f"(`not_in`), no con {operador!r}.")
+    valores = crudo.get("valor")
+    valores = valores if isinstance(valores, list) else [valores]
+    ids, nombres = clientes.separar(valores)
+    if not ids and not nombres:
+        raise DatosInvalidos("Falta el cliente del criterio.")
+    valor = list(dict.fromkeys(ids)) + list(dict.fromkeys(nombres))
+    que = " o ".join(str(v) for v in valor)
+    return {
+        "tipo": "demografico",
+        "dimension": DIMENSION_CLIENTE,
+        "operador": operador,
+        "valor": valor,
+        "duro": True,
+        "etiqueta": crudo.get("etiqueta") or (
+            f"Participó en estudios para {que}" if operador == "in"
+            else f"No participó en estudios para {que}"),
+    }
+
+
 def condiciones(criterios, alias="p", catalogo_por_clave=None, momento=None):
     """`[criterio]` → `(fragmentos_sql, parametros)`. Sin interpolar valores.
 
@@ -230,6 +274,18 @@ def condiciones(criterios, alias="p", catalogo_por_clave=None, momento=None):
                 f"and (%s or not t.es_especial))")
             parametros.extend([ids, nombres, list(criterio.get("areas") or []),
                                bool(criterio.get("incluir_especiales"))])
+            continue
+        if dimension == DIMENSION_CLIENTE:
+            from . import clientes
+
+            ids, nombres = clientes.separar(criterio["valor"])
+            negado = "not " if criterio["operador"] == "not_in" else ""
+            fragmentos.append(
+                f"{negado}exists (select 1 from v_persona_cliente vc "
+                f"where vc.id_persona = {alias}.id_persona "
+                f"and (vc.cliente_id = any(%s::bigint[]) "
+                f"or vc.cliente = any(%s::text[])))")
+            parametros.extend([ids, nombres])
             continue
         numerica = _es_numerica(dimension, catalogo_por_clave)
         columna = "va.valor_num" if numerica else "va.valor"

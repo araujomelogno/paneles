@@ -93,19 +93,34 @@ def otorgar(conn, id_persona, finalidad, version_texto, panel_id=None):
     }
 
 
+# D80 — de qué vista sale cada gate. Las dos son de la base; acá solo se
+# elige cuál, nunca se recalcula la regla.
+#
+# El **contacto** sale de `v_persona_convocable`, que desde la `0031` deja
+# afuera a quien está en la lista negra: no se lo convoca, ni desde acá ni
+# desde COLOQUIO. Las **demás finalidades** (el uso semántico) salen de
+# `v_persona_finalidad_vigente`, que no mira la lista negra. Si salieran de
+# la otra, la lista negra frenaría la ingesta de sus respuestas y un
+# reproceso **borraría** las que ya tiene; y el spec las quiere en los
+# resultados, marcadas, no ocultas.
+_GATE_DE_CONTACTO = """
+    select id_persona from v_persona_convocable
+     where %s = any(finalidades) and id_persona = any(%s::uuid[])"""
+_GATE_DE_FINALIDAD = """
+    select distinct id_persona from v_persona_finalidad_vigente
+     where finalidad = %s and ref_estudio is null
+       and id_persona = any(%s::uuid[])"""
+
+
+def _gate(finalidad):
+    return _GATE_DE_CONTACTO if finalidad == CONTACTO else _GATE_DE_FINALIDAD
+
+
 def esta_vigente(conn, id_persona, finalidad):
-    """¿La persona tiene esta finalidad vigente ahora?"""
+    """¿La persona tiene esta finalidad vigente ahora? Para el contacto,
+    además, que no esté en la lista negra."""
     _validar_finalidad(finalidad)
-    fila = db.una(
-        conn,
-        """
-        select 1
-          from v_persona_convocable
-         where id_persona = %s and %s = any(finalidades)
-        """,
-        (id_persona, finalidad),
-    )
-    return fila is not None
+    return db.una(conn, _gate(finalidad), (finalidad, [str(id_persona)])) is not None
 
 
 def exigir(conn, id_persona, finalidad):
@@ -128,16 +143,7 @@ def filtrar_con_consentimiento(conn, ids_persona, finalidad):
     ids = [str(i) for i in ids_persona]
     if not ids:
         return [], []
-    filas = db.todas(
-        conn,
-        """
-        select id_persona
-          from v_persona_convocable
-         where %s = any(finalidades)
-           and id_persona = any(%s::uuid[])
-        """,
-        (finalidad, ids),
-    )
+    filas = db.todas(conn, _gate(finalidad), (finalidad, ids))
     habilitadas = {str(f["id_persona"]) for f in filas}
     return (
         [i for i in ids if i in habilitadas],

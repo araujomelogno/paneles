@@ -180,6 +180,11 @@ MIGRACIONES_BOVEDA = (
      ("ingesta_trabajo_uno_activo_por_destino", "ingesta_trabajo.preparacion")),
     # ── PEDIDO del celular, parte 3 ── borrar una carga, con su auditoría.
     ("0030_borrado_de_carga.sql", ("carga_borrado",)),
+    # ── Clientes de cada carga y lista negra (D80). `f_persona_convocable()`
+    # se reemplaza y no se declara (ya existía).
+    ("0031_clientes_y_lista_negra.sql", (
+        "cliente", "carga_cliente", "v_persona_cliente", "lista_negra",
+    )),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -335,6 +340,10 @@ PARA_QUE = {
     "tematica.area_id": "en qué área está cada temática",
     "taxonomia_cambio": "el registro de lo que se cambió en la taxonomía, quién y cuándo",
     "ingesta_trabajo_uno_activo_por_destino": "la guarda contra el doble envío: sin ella un segundo clic en «Ingestar» encola otra ingesta de la misma carga y se procesa todo dos veces",
+    "cliente": "los clientes para los que se hicieron los estudios; sin ella no hay filtro por cliente",
+    "carga_cliente": "qué clientes tiene cada carga",
+    "v_persona_cliente": "los clientes de cada panelista, derivados de sus cargas",
+    "lista_negra": "quién está en la lista negra y su historia; sin ella no se excluye a nadie de las convocatorias",
     "carga_borrado": "el registro de cada borrado de una carga (quién, cuándo, cuántos) y lo que permite reanudar uno cortado",
     "ingesta_trabajo.preparacion": "cuánto tardó cada parte del pedido de ingesta; sin ella no hay cómo saber qué parte de la preparación crece con la base",
     "v_tematica": "la marca especial efectiva de cada temática (la propia o la de su área); sin ella una temática de un área especial saldría como columna",

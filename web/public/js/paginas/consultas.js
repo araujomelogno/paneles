@@ -158,6 +158,8 @@ export async function render(main, ctx) {
           <button class="btn btn-outline btn-sm" id="agregar-demografico">+ Criterio demográfico</button>
           <button class="btn btn-outline btn-sm" id="agregar-tematica"
                   title="Panelistas con información sobre un tema">+ Temática</button>
+          <button class="btn btn-outline btn-sm" id="agregar-cliente"
+                  title="Quienes participaron (o no) en estudios para un cliente">+ Cliente</button>
           <span class="toolbar-spacer"></span>
           <button class="btn btn-outline btn-sm" id="parametros">Parámetros</button>
         </div>
@@ -217,6 +219,7 @@ export async function render(main, ctx) {
   $('#agregar-semantico').onclick = () => abrirCriterioSemantico();
   $('#agregar-demografico').onclick = () => abrirCriterioDemografico();
   $('#agregar-tematica').onclick = () => abrirCriterioTematica();
+  $('#agregar-cliente').onclick = () => abrirCriterioCliente();
   $('#parametros').onclick = abrirParametros;
   $('#correr').onclick = correr;
   $('#guardar').onclick = abrirGuardar;
@@ -259,6 +262,10 @@ function pintarCriterios() {
       ? `<span class="badge badge-on">semántico</span> <strong>${esc(c.texto)}</strong>
          ${c.duro ? '<span class="badge">duro</span>' : ''}
          <span class="small muted">peso ${c.peso ?? 1}</span>`
+      : c.dimension === 'cliente'
+        ? `<span class="badge badge-user">cliente</span>
+           <strong>${esc(c.etiqueta || `${c.operador === 'not_in' ? 'No participó' : 'Participó'}
+             en estudios para ${(Array.isArray(c.valor) ? c.valor : [c.valor]).join(' o ')}`)}</strong>`
       : c.dimension === 'tematica'
         ? `<span class="badge badge-user">temática</span>
            ${c.etiqueta ? `<strong>${esc(c.etiqueta)}</strong>` : `Con información sobre
@@ -425,6 +432,56 @@ async function abrirCriterioTematica() {
       grupo.open = Boolean(q) && visibles > 0;
     });
   };
+}
+
+/* R-CLI.3 — participó (o no) en estudios para un cliente. Los clientes de
+   cada persona salen de sus cargas; «no participó» deja afuera a quien
+   estuvo en **alguna** carga de ese cliente. */
+async function abrirCriterioCliente() {
+  const { items } = await api.clientes.listar();
+  if (!items.length) {
+    toast('Todavía ninguna carga tiene clientes: se indican al crear la carga o '
+      + 'desde su detalle, en Cargas.', 'err');
+    return;
+  }
+  modal({
+    titulo: 'Filtrar por cliente',
+    ancho: '560px',
+    cuerpo: `
+      <div class="form-group"><label>Quiénes</label>
+        <select class="fselect" name="operador">
+          <option value="in">Participaron en estudios para…</option>
+          <option value="not_in">No participaron en estudios para…</option>
+        </select>
+        <div class="field-hint">Se mira de qué cargas viene cada persona. «No
+          participaron» excluye a quien estuvo en alguna carga de ese cliente.</div>
+      </div>
+      <div class="form-group"><label>Clientes</label>
+        <div class="tematicas-elegir">${items.map((c) => `
+          <label class="check">
+            <input type="checkbox" data-cliente="${c.id}" data-nombre="${esc(c.nombre)}" />
+            ${esc(c.nombre)} <span class="small muted">(${c.cargas} carga${c.cargas === 1 ? '' : 's'})</span>
+          </label>`).join('')}</div>
+        <div class="field-hint">Con varios elegidos, alcanza con cualquiera.</div>
+      </div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Agregar', clase: 'btn-orange', onClick: (c) => {
+          const elegidos = $$('[data-cliente]:checked', c)
+            .map((x) => ({ id: Number(x.dataset.cliente), nombre: x.dataset.nombre }));
+          if (!elegidos.length) { toast('Elegí al menos un cliente.', 'err'); return; }
+          const operador = $('[name="operador"]', c).value;
+          const nombres = elegidos.map((x) => x.nombre).join(' o ');
+          definicion.criterios.push({
+            tipo: 'demografico', dimension: 'cliente', operador,
+            valor: elegidos.map((x) => x.id),
+            etiqueta: `${operador === 'not_in' ? 'No participó' : 'Participó'} en estudios para ${nombres}`,
+          });
+          cerrarModal();
+          pintarCriterios();
+        } },
+    ],
+  });
 }
 
 function abrirCriterioDemografico() {

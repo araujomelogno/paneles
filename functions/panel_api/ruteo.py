@@ -19,6 +19,7 @@ from . import (
     calidad_dato,
     cargas,
     cargas_borrado,
+    clientes,
     composicion,
     consentimiento,
     consulta_completa,
@@ -1059,6 +1060,10 @@ def columnas_disponibles(ctx, actor, params, cuerpo, consulta):
         # una especial (ver `tematicas.columna_de_varias`).
         {"clave": tematicas.COLUMNA, "etiqueta": tematicas.ETIQUETA_COLUMNA,
          "tipo": "tematica"},
+        # R-CLI.3 — para qué clientes participó. En pantalla; no va en
+        # ninguna exportación (R-CLI.4).
+        {"clave": clientes.COLUMNA, "etiqueta": clientes.ETIQUETA_COLUMNA,
+         "tipo": "cliente"},
     ]}
 
 
@@ -1079,6 +1084,9 @@ def atributos_de_resultados(ctx, actor, params, cuerpo, consulta):
         valores.setdefault(id_persona, {}).update(columnas)
     # R-TEM.6 — las temáticas, sin las especiales, en la misma ida.
     for id_persona, columnas in tematicas.columna_de_varias(ctx.boveda, ids).items():
+        valores.setdefault(id_persona, {}).update(columnas)
+    # R-CLI.3 — los clientes, en la misma ida.
+    for id_persona, columnas in clientes.columna_de_varias(ctx.boveda, ids).items():
         valores.setdefault(id_persona, {}).update(columnas)
     return 200, {"items": valores}
 
@@ -1602,7 +1610,9 @@ def crear_carga(ctx, actor, params, cuerpo, consulta):
         tipo_datos_origen_otro=cuerpo.get("tipo_datos_origen_otro"),
         modo_relevamiento=cuerpo.get("modo_relevamiento"),
         modo_relevamiento_otro=cuerpo.get("modo_relevamiento_otro"),
-        exigir_origen=True)
+        exigir_origen=True,
+        # R-CLI.1 — para quién se hizo el estudio, al abrir la carga.
+        clientes=cuerpo.get("clientes"))
     ctx.boveda.commit()
     return 201, carga
 
@@ -1630,6 +1640,18 @@ def ver_carga(ctx, actor, params, cuerpo, consulta):
     sección Panelistas. Una segunda ruta que listara personas tendría que
     volver a demostrar que no muestra más de lo que esa muestra."""
     return 200, cargas.obtener(ctx.boveda, _entero(params["carga_id"]))
+
+
+# ── R-CLI · Clientes ─────────────────────────────────────────────────
+
+@ruta("GET", "/clientes", "leer", requisito="R-CLI.1")
+def listar_clientes(ctx, actor, params, cuerpo, consulta):
+    """El vocabulario de clientes, para autocompletar al cargar o editar una
+    carga y al filtrar una consulta. Confidencial: no es parte de la
+    superficie de COLOQUIO ni del portal (R-CLI.4)."""
+    return 200, {"items": clientes.listar(
+        ctx.boveda, busqueda=consulta.get("q"),
+        limite=_entero(consulta.get("limite"), 50))}
 
 
 # ── R-TEM · Temáticas incorporadas ──────────────────────────────────

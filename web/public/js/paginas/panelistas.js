@@ -6,6 +6,7 @@ import * as consentimiento from '../consentimiento.js';
 import * as catalogo from '../catalogo.js';
 import * as respuestas from '../respuestas.js';
 import { pintarOrigen } from '../origen.js';
+import { editorDeClientes } from '../clientes.js';
 import {
   $, $$, esc, encabezado, consentimientos, token, vacio, cargando, toast,
   modal, cerrarModal, leerFormulario, confirmar, activarTokens, fechaCorta,
@@ -374,6 +375,7 @@ function abrirCarga() {
         </div>
       </div>
       ${camposDeOrigen()}
+      ${campoDeClientes()}
       <div class="form-group">
         <label>Descripción (opcional)</label>
         <textarea class="finput" name="descripcion"
@@ -385,6 +387,7 @@ function abrirCarga() {
     ],
   });
   activarCamposDeOrigen(caja);
+  caja.clientes = editorDeClientes($('[data-clientes]', caja));
   return caja;
 }
 
@@ -404,6 +407,7 @@ async function seguirConLaCarga(caja) {
       tipoDatosOrigenOtro: datos.tipo_datos_origen_otro,
       modoRelevamiento: datos.modo_relevamiento,
       modoRelevamientoOtro: datos.modo_relevamiento_otro,
+      clientes: caja.clientes?.valor(),
     });
     cerrarModal();
     // La pantalla de ingesta vive en Encuestas y es la misma para los dos
@@ -447,6 +451,17 @@ function camposDeOrigen(carga = {}) {
   }).join('');
 }
 
+/* R-CLI.1 — para quién se hizo el estudio. Varios por carga; confidencial:
+   no llega al portal ni a las exportaciones. */
+function campoDeClientes() {
+  return `<div class="form-group">
+    <label>Clientes</label>
+    <div data-clientes></div>
+    <div class="field-hint">Para quién se hizo el estudio. Confidencial: el
+      panelista no lo ve y no sale en las exportaciones.</div>
+  </div>`;
+}
+
 /* Muestra «Especificar» solo con «Otro». Lo escrito queda en el campo
    aunque se oculte: el servidor lo descarta si el valor no es «Otro». */
 function activarCamposDeOrigen(caja) {
@@ -482,6 +497,7 @@ function abrirDatosDelEstudio(carga) {
                  value="${esc(carga.publico_objetivo || '')}" /></div>
       </div>
       ${camposDeOrigen(carga)}
+      ${campoDeClientes()}
       <div class="form-group"><label>Descripción</label>
         <textarea class="finput" name="descripcion">${esc(carga.descripcion || '')}</textarea></div>`,
     acciones: [
@@ -501,6 +517,7 @@ function abrirDatosDelEstudio(carga) {
             cambios[`${campo}_otro`] = datos[`${campo}_otro`];
           }
         });
+        cambios.clientes = editor.valor();
         try {
           const nueva = await api.cargas.editar(carga.id, cambios);
           cargasConocidas = cargasConocidas.map((c) => (c.id === nueva.id ? { ...c, ...nueva } : c));
@@ -514,6 +531,7 @@ function abrirDatosDelEstudio(carga) {
     ],
   });
   activarCamposDeOrigen(caja);
+  const editor = editorDeClientes($('[data-clientes]', caja), { iniciales: carga.clientes || [] });
 }
 
 function abrirAlta(paneles) {

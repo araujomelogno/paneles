@@ -195,8 +195,11 @@ def _clasificacion(campo, valor, especificacion, exigir):
 def crear(conn, nombre, descripcion=None, actor=None, fecha_estudio=None,
           publico_objetivo=None, tipo_datos_origen=None,
           tipo_datos_origen_otro=None, modo_relevamiento=None,
-          modo_relevamiento_otro=None, exigir_origen=False):
+          modo_relevamiento_otro=None, exigir_origen=False, clientes=None):
     """Abre una carga con los datos del estudio del que sale (R-ORG.4).
+
+    `clientes` (R-CLI.1, D80): para quién se hizo el estudio, por nombre; los
+    que no existen se crean. Se pueden corregir después con `editar`.
 
     Nombre, fecha, público objetivo, tipo de datos y modo de relevamiento se
     guardan **en la carga**, no en cada persona: una persona que aparece en
@@ -231,7 +234,10 @@ def crear(conn, nombre, descripcion=None, actor=None, fecha_estudio=None,
          _texto(publico_objetivo), *tipo, *modo,
          getattr(actor, "uid", None) or (actor if isinstance(actor, str) else None)),
     )
-    return _serializar(fila)
+    from . import clientes as mod_clientes
+
+    return {**_serializar(fila),
+            "clientes": mod_clientes.guardar_de_carga(conn, fila["id"], clientes or [])}
 
 
 def sincronizar_fecha(conn_boveda, conn_semantica, carga_id, solo_si_vacia=False):
@@ -307,11 +313,19 @@ def editar(conn, carga_id, cambios, conn_semantica=None):
             columnas += [campo, f"{campo}_otro"]
             valores += _clasificacion(campo, cambios.get(campo),
                                       cambios.get(f"{campo}_otro"), exigir=True)
-    if not columnas:
+    if not columnas and "clientes" not in cambios:
         raise DatosInvalidos(
             "No hay nada que cambiar. Se pueden editar nombre, descripcion, "
-            "fecha_estudio, publico_objetivo, tipo_datos_origen y "
-            "modo_relevamiento.")
+            "fecha_estudio, publico_objetivo, tipo_datos_origen, "
+            "modo_relevamiento y clientes.")
+    if "clientes" in cambios:
+        # R-CLI.1 — los clientes se corrigen acá, y se ven en todos los
+        # panelistas de la carga en el acto: se derivan, no se copiaron.
+        from . import clientes as mod_clientes
+
+        mod_clientes.guardar_de_carga(conn, carga_id, cambios.get("clientes") or [])
+    if not columnas:
+        return obtener(conn, carga_id)
     fila = db.una(
         conn,
         f"update carga set {', '.join(c + ' = %s' for c in columnas)} "
@@ -337,8 +351,11 @@ def obtener(conn, carga_id):
     )
     if not fila:
         raise NoEncontrado(f"No existe la carga {carga_id}.")
+    from . import clientes as mod_clientes
+
     return {**_serializar(fila),
-            "tematicas": tematicas.de_carga(conn, fila["id"])}
+            "tematicas": tematicas.de_carga(conn, fila["id"]),
+            "clientes": mod_clientes.de_carga(conn, fila["id"])}
 
 
 def listar(conn, busqueda=None, tematica_id=None):
@@ -373,8 +390,12 @@ def listar(conn, busqueda=None, tematica_id=None):
     if clave:
         filas = [f for f in filas
                  if clave in tematicas.clave_de_busqueda(f["nombre"])]
+    from . import clientes as mod_clientes
+
     por_carga = tematicas.de_cargas(conn, [f["id"] for f in filas])
-    return [{**_serializar(f), "tematicas": por_carga.get(f["id"], [])}
+    clientes_de = mod_clientes.de_cargas(conn, [f["id"] for f in filas])
+    return [{**_serializar(f), "tematicas": por_carga.get(f["id"], []),
+             "clientes": clientes_de.get(f["id"], [])}
             for f in filas]
 
 

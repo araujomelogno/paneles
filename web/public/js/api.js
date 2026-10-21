@@ -475,7 +475,7 @@ export const cargas = {
      ella, no copiados en cada persona. */
   crear: (nombre, descripcion, {
     fechaEstudio, publicoObjetivo, tipoDatosOrigen, tipoDatosOrigenOtro,
-    modoRelevamiento, modoRelevamientoOtro,
+    modoRelevamiento, modoRelevamientoOtro, clientes,
   } = {}) =>
     POST('/cargas', {
       nombre, descripcion,
@@ -487,6 +487,8 @@ export const cargas = {
       tipo_datos_origen_otro: tipoDatosOrigenOtro || null,
       modo_relevamiento: modoRelevamiento || null,
       modo_relevamiento_otro: modoRelevamientoOtro || null,
+      // R-CLI.1 — para quién se hizo el estudio; nombres, los nuevos se crean.
+      clientes: clientes || [],
     }),
   /* R-CAR.1 — sin consulta, todas (los selectores); la sección Cargas
      filtra por temática (`tematica_id`) y busca por nombre (`q`). */
@@ -521,6 +523,12 @@ export const cargas = {
 
 /* R-TEM — el vocabulario compartido de temáticas, con cuántas cargas usa
    cada una: el autocompletado del editor y el filtro de la sección Cargas. */
+/* R-CLI — el vocabulario de clientes, para autocompletar. Confidencial: no
+   llega al portal ni a COLOQUIO. */
+export const clientes = {
+  listar: (q) => GET('/clientes', q ? { q } : undefined),
+};
+
 export const tematicas = {
   listar: () => GET('/tematicas'),
   /* R-TEM.12 / R-TEM.14 — lo que ofrece el filtro de Consultas: por área,
