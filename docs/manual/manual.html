@@ -1241,12 +1241,24 @@
       carga del mismo estudio ya no lo necesite.</td></tr>
     <tr><td class="destacado">El correo</td>
       <td>Igual que el documento. No distingue mayúsculas.</td></tr>
+    <tr><td class="destacado">El celular</td>
+      <td>Para un panel que trabaja por teléfono o WhatsApp, cuando el celular
+      es el único dato que trae la base. Se compara en formato internacional,
+      así que da igual «099 123 456», «99123456» o «+598 99 123 456». Con las
+      mismas cautelas que al crear personas: si el número lo tiene
+      <strong>más de una persona</strong> —un celular puede ser de un hogar—,
+      la fila no se asigna a ninguna. Una celda con palabras alrededor del
+      número («solo WhatsApp 095…») no se toma como celular. A diferencia
+      del documento y el correo, no deja registrado el identificador de la
+      plataforma: cada carga vuelve a comprobar que el número tenga una sola
+      titular.</td></tr>
   </table>
 
   <p>Cuando alguna fila no se puede vincular, el resultado dice <strong>por
-  qué</strong>: si el valor no tiene la forma de un identificador del sistema,
-  si el identificador no existe en la bóveda, o si esa plataforma no tiene
-  registrado ese número. Las tres se corrigen de forma distinta.</p>
+  qué</strong>: si el valor no tiene la forma del identificador elegido (un
+  id_persona, un celular), si no existe en la bóveda, si esa plataforma no
+  tiene registrado ese número, o si el celular lo comparten varias personas.
+  Cada una se corrige de forma distinta.</p>
 
   <h4>Qué es cada variable: preguntas y demográficos</h4>
 
@@ -1726,6 +1738,12 @@
     no aparece como «posibles datos personales», y ninguna acción del panel
     puede quitarla. Si se le saca la marca, sus hallazgos vuelven a
     aparecer.</p>
+    <p>Lo mismo la <strong>columna que identifica al respondente</strong>
+    (paso 2): resuelve a la persona y nunca se embebe, así que no recibe la
+    advertencia aunque tenga teléfonos o correos. Si se elige otra columna
+    como identificador, la anterior vuelve a revisarse. El resumen de la
+    revisión sigue la misma regla y la lista entre las excluidas, con el
+    motivo.</p>
   </div>
 
   <table class="parte">

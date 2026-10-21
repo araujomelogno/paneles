@@ -756,6 +756,16 @@ function origenDe(idPersona) {
   };
 }
 
+/* El celular en un formato comparable: dígitos, sin el 598 ni el 0 de
+   larga distancia. Una celda con palabras no es un identificador. */
+function celularDemo(valor) {
+  const texto = String(valor || '').trim();
+  if (!/^\+?[\d\s().-]+$/.test(texto)) return null;
+  const digitos = texto.replace(/\D/g, '').replace(/^00/, '').replace(/^598/, '')
+    .replace(/^0/, '');
+  return digitos.length >= 8 ? digitos : null;
+}
+
 function ingestarEn(encuesta, cuerpo, { sinPanel }) {
   const encuestaId = encuesta.id;
   const columnaId = cuerpo.columna_id || 'id_en_origen';
@@ -792,6 +802,15 @@ function ingestarEn(encuesta, cuerpo, { sinPanel }) {
     filas.forEach((fila) => {
       const valor = String(fila[columnaId] || '').trim();
       if (!valor) return;
+      if (tipo === 'celular') {
+        // Lo mismo que `ingesta._resolver_por_celular`, en chico: se compara
+        // normalizado y solo con una titular.
+        const numero = celularDemo(valor);
+        const titulares = numero
+          ? bd.personas.filter((p) => celularDemo(p.celular) === numero) : [];
+        if (titulares.length === 1) mapa[valor] = titulares[0].id_persona;
+        return;
+      }
       const persona = tipo === 'id_persona'
         ? bd.personas.find((p) => p.id_persona === valor)
         : tipo === 'documento'
@@ -840,8 +859,12 @@ function ingestarEn(encuesta, cuerpo, { sinPanel }) {
       if (idOrigen) {
         sinMapear.push(idOrigen);
         motivos[idOrigen] = tipo === 'alias' ? 'sin_alias_para_ese_origen'
-          : tipo === 'id_persona' && !/^[0-9a-f-]{36}$/i.test(idOrigen)
-            ? 'formato_invalido' : 'no_encontrado';
+          : (tipo === 'id_persona' && !/^[0-9a-f-]{36}$/i.test(idOrigen))
+            || (tipo === 'celular' && !celularDemo(idOrigen))
+            ? 'formato_invalido'
+            : tipo === 'celular' && bd.personas.filter(
+              (p) => celularDemo(p.celular) === celularDemo(idOrigen)).length > 1
+              ? 'celular_compartido' : 'no_encontrado';
       }
       return;
     }

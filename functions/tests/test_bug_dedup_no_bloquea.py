@@ -131,7 +131,11 @@ def test_el_panel_de_calidad_no_le_propone_nada_a_una_demografica():
     `aplicarPropuesta` no toca una fila con rol demográfico."""
     assert "export function soloSemanticas" in CALIDAD_JS
     pintar = _cuerpo_de_la_funcion(ENCUESTAS_JS, "pintarCalidad")
-    assert "calidad.soloSemanticas(diagnostico, esDemografica)" in pintar
+    # Desde el PEDIDO del celular el filtro saca también la columna que
+    # identifica (`noSeEmbebe` = demográfica o columna de identidad).
+    assert "calidad.soloSemanticas(diagnostico, noSeEmbebe)" in pintar
+    assert re.search(r"const noSeEmbebe = \(codigo\) => esDemografica\(codigo\)",
+                     ENCUESTAS_JS)
     assert "calidad.panelHtml(visible" in pintar
     assert "calidad.activarPanel(destino, visible" in pintar
 

@@ -284,6 +284,18 @@ def resumir(plan, filas, *, panel=None, evidencia=None, destino_tipo="encuesta",
     for pregunta in preguntas:
         codigo = pregunta.get("codigo")
         marca = demograficas.get(codigo)
+        if marca is None and codigo == columna_id:
+            # La columna que identifica no se embebe nunca —el despivote la
+            # saltea—, aunque esté en la lista de variables (con un `.sav`,
+            # cuando se elige otra columna después de cargarlo). Listarla
+            # como «al store semántico» era falso, y el diagnóstico de calidad
+            # la revisaba como una abierta: el falso positivo de datos
+            # personales del PEDIDO del celular.
+            excluidas.append({
+                "codigo": codigo, "texto": texto_de.get(codigo),
+                "motivo": "es la columna que identifica al respondente: "
+                          "resuelve a la persona y no va al store semántico"})
+            continue
         if marca is None:
             al_semantico.append({
                 "codigo": codigo,
@@ -320,8 +332,14 @@ def resumir(plan, filas, *, panel=None, evidencia=None, destino_tipo="encuesta",
     # que corre al ingestar: con las decisiones de normalización (solo lo
     # marcado de una batería, sin los valores de no respuesta) el número que
     # se muestra es el que se va a escribir, no el de celdas con algo.
+    # Lo que se va a embeber, y nada más: ni las marcadas como demográficas
+    # o de identidad y contacto (R3.9.d), ni la columna que identifica. El
+    # diagnóstico de calidad mira esto; mirar el archivo entero producía
+    # advertencias sobre columnas que el flujo ya descartó, y una alarma que
+    # salta de más enseña a no leerla.
     semanticas = [p for p in preguntas
-                  if demograficas.get(p.get("codigo")) is None and p.get("codigo")]
+                  if demograficas.get(p.get("codigo")) is None and p.get("codigo")
+                  and p.get("codigo") != columna_id]
     descartes = {}
     respuestas = len(ingesta.despivotar(
         filas, [dict(p, texto=p.get("texto") or p.get("codigo"))
