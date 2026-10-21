@@ -183,6 +183,16 @@ la contradiga y con nombre compatible; si no, revisión. Se compara en E.164
 (`preferencias.normalizar_celular`), y su índice (`boveda/0022`) **no es
 único** a propósito: no le agreguen `unique`.
 
+Desde el PEDIDO del celular (D78) también **encuentra** personas: es un tipo
+de identificador del modo «ya existen» (`ingesta.POR_CELULAR`), con las
+mismas reglas —E.164, una sola titular; si no, `celular_compartido`—. No
+registra alias de la plataforma: cada carga vuelve a preguntar si el número
+sigue teniendo una sola titular. Y el detector de datos personales mira **lo
+que se va a ingestar**: ni la columna que identifica ni las demográficas o de
+identidad (`resumen_ingesta.resumir` y `noSeEmbebe` en la pantalla). Un
+chequeo que analiza el archivo entero avisa de columnas que el flujo ya
+descartó, y una alarma que salta de más deja de leerse.
+
 Y una que parece un descuido y no lo es: **`motivo_reidentificacion` no
 tiene clave foránea**. `registrar_reidentificacion` documenta que nunca
 pierde el rastro por una etiqueta desconocida, y una FK invertiría ese
@@ -445,6 +455,16 @@ Desde R-TEM / R-CAR (D74, D75, D76, `boveda/0027` y `0028`) cada carga tiene sus
 - **La lista de panelistas de una carga es `GET /panelistas?carga_id=…`**, la
   misma ruta y permiso que la sección Panelistas. No agreguen una ruta bajo
   `/cargas/` que liste personas; hay una prueba que lo vigila.
+- **Borrar una carga deshace lo que trajo**, no todo lo que aparece en ella
+  (D78, `cargas_borrado.py`, `boveda/0030`): todas las respuestas de su
+  estudio, y las personas que **creó y no tienen otra vida** se dan de baja
+  **por `bajas.retirar()`** (así COLOQUIO recibe su `borrado_pendiente`); las
+  demás se conservan sin el vínculo. No lo reemplacen por un `delete from
+  carga`. Corre por la vía diferida (`plan.operacion = 'borrado_carga'`):
+  semántico primero en cada lote, la carga al final, y volver a pedirlo lo
+  reanuda. «Sin otra vida» lo decide `_clasificar`, una sola vez para la
+  vista previa y los lotes; si suman un vínculo nuevo de una persona (una
+  tabla nueva que la referencie), agréguenlo ahí.
 
 Desde la ampliación (D76, `boveda/0028`) hay **taxonomía**: área → temática,
 exactamente dos niveles.

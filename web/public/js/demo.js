@@ -1835,6 +1835,33 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     return resumenCarga(carga);
   }
 
+  // D78 — borrar una carga: la vista previa, en chico (creadas sin otro
+  // vínculo se van; el resto se conserva). Borrar de verdad no: la demo no
+  // guarda nada que valga la pena perder, pero tampoco lo simula.
+  if (metodo === 'POST' && partes[0] === 'cargas' && partes[2] === 'borrado') {
+    const carga = bd.cargas.find((c) => c.id === Number(partes[1]));
+    if (!carga) throw new ErrorDemo('No existe la carga.', 404);
+    if (!cuerpo?.solo_revisar) {
+      throw new ErrorDemo('En el modo demo no se borran cargas.', 400);
+    }
+    const suyos = bd.vinculos.filter((v) => v.carga_id === carga.id);
+    const conOtra = (v) => bd.vinculos.some(
+      (o) => o.id_persona === v.id_persona && o.carga_id !== carga.id);
+    const seVan = suyos.filter((v) => v.origen === 'creada' && !conOtra(v)).length;
+    const reutilizadas = suyos.filter((v) => v.origen !== 'creada').length;
+    return {
+      carga: { id: carga.id, nombre: carga.nombre, ref_estudio: carga.ref_estudio },
+      personas: suyos.length, se_dan_de_baja: seVan, se_conservan: suyos.length - seVan,
+      conservadas_por_motivo: [
+        ...(reutilizadas ? [{ motivo: 'reutilizada', etiqueta: 'ya existía: la carga la reutilizó', personas: reutilizadas }] : []),
+        ...(suyos.length - seVan - reutilizadas
+          ? [{ motivo: 'otra_carga', etiqueta: 'también vino en otra carga', personas: suyos.length - seVan - reutilizadas }] : []),
+      ],
+      respuestas_a_borrar: suyos.length, unidades_que_se_borran: 0,
+      irreversible: true, borrado_en_curso: null,
+    };
+  }
+
   if (metodo === 'POST' && partes[0] === 'cargas' && partes[2] === 'ingesta') {
     return ingestarCarga(Number(partes[1]), cuerpo);
   }

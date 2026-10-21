@@ -121,7 +121,8 @@ def _confirmar_borrado_semantica(conn, id_persona, error=None):
 
 
 def retirar(conn_boveda, id_persona, finalidad=TODAS, actor=None,
-            conn_semantica=None, credenciales=None):
+            conn_semantica=None, credenciales=None,
+            motivo="retiro_consentimiento"):
     """Retira el consentimiento y ejecuta la cascada que corresponda.
 
     R6.1.e — una baja total **corta el acceso al portal**, y eso vive acá y
@@ -158,7 +159,10 @@ def retirar(conn_boveda, id_persona, finalidad=TODAS, actor=None,
         conn_boveda, id_persona, None if finalidad == TODAS else finalidad)
 
     if borra_pii:
-        _lapida(conn_boveda, id_persona, "retiro_consentimiento", finalidad, actor)
+        # `motivo` dice por qué se borró en la lápida: el retiro de siempre, o
+        # el borrado de la carga que la trajo (`cargas_borrado`), que pasa
+        # por acá para que COLOQUIO reciba el pendiente igual que en una baja.
+        _lapida(conn_boveda, id_persona, motivo, finalidad, actor)
 
     # R-TEM.6 — las temáticas de la persona se derivan del contenido de sus
     # respuestas: si ese contenido se borra, lo que se dedujo de él se va

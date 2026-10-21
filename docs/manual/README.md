@@ -14,6 +14,15 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Celular como identificador, falso positivo de datos personales y borrar
+> una carga · 2026-10-21.** PEDIDO del celular (D78). La 5.4 suma **El
+> celular** a la tabla de qué identificador trae la columna, y el motivo
+> «celular compartido». La 5.8 aclara que la columna que identifica no recibe
+> la advertencia de datos personales. La 15 suma la **15.10, Borrar una
+> carga**: qué se borra y qué no, la vista previa, la confirmación por
+> nombre, y que se reanuda. Dos preguntas frecuentes nuevas. **Captura nueva,
+> la 111**, sacada de la app en modo demo.
+
 > **Taxonomía de temáticas y correcciones del filtro · 2026-10-21.**
 > Ampliación del spec (D76). La 15 suma la **15.8, La taxonomía: áreas**
 > (arranque, cómo crece con cada carga, la taxonomía guardada, reorganizar,

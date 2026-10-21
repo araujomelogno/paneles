@@ -2280,6 +2280,16 @@ function mostrarResumenDeIngesta(resultado, esCarga, titulo = 'Ingesta terminada
   resultado = resultado || {};
   // R8.9 — un reproceso corre por la misma vía y se sigue igual, pero su
   // resumen es otro: qué se re-embebió, qué quedó igual y qué se borró.
+  // D78 — borrar una carga también corre por la vía diferida.
+  if (resultado.operacion === 'borrado_carga') {
+    mostrarResultado('Carga borrada', [
+      ['Personas dadas de baja', resultado.personas_dadas_de_baja || 0],
+      ['Personas conservadas', resultado.personas_conservadas || 0],
+    ], 'Se borraron todas las respuestas del estudio. Las personas conservadas '
+      + 'perdieron el vínculo con la carga y sus respuestas de ella; las bajas '
+      + 'se avisaron a los otros sistemas que usan la bóveda.');
+    return;
+  }
   if (resultado.operacion === 'reproceso') {
     mostrarResultado('Reproceso terminado', [
       ['Re-embebidas', resultado.reembebidas || 0],
@@ -2403,8 +2413,10 @@ async function seguirIngesta(trabajoId, { avance, esCarga, alTerminar,
   for (;;) {
     estado = await api.ingestas.ver(trabajoId);
     const restante = estado.segundos_restantes;
+    // Un borrado de carga reparte personas, no filas del archivo.
+    const unidad = estado.operacion === 'borrado_carga' ? 'persona(s)' : 'fila(s)';
     avance.medido(
-      `${estado.estado_etiqueta} · ${estado.filas_procesadas} de ${estado.filas_total} fila(s)`
+      `${estado.estado_etiqueta} · ${estado.filas_procesadas} de ${estado.filas_total} ${unidad}`
       + (restante ? ` · faltan ~${duracion(restante)}` : ''),
       (estado.porcentaje || 0) / 100);
     if (estado.terminal) break;

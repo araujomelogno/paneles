@@ -21,7 +21,7 @@
 import * as api from '../api.js';
 import {
   $, $$, esc, encabezado, consentimientos, vacio, cargando, toast, alerta,
-  fechaCorta, fechaHora,
+  fechaCorta, fechaHora, modal, cerrarModal,
 } from '../ui.js';
 import { editorDeTematicas, chipsDeTematicas } from '../tematicas.js';
 
@@ -36,6 +36,8 @@ const puedeEditar = () => ['admin', 'operaciones', 'analista'].includes(contexto
 // Quitarle la marca de especial a una temática es de quien administra los
 // atributos (`gestionar_atributos`). Misma salvedad: decide el servidor.
 const puedeDesmarcarEspecial = () => contexto.actor?.rol === 'admin';
+// Borrar una carga es de administración (`borrar_carga`). Misma salvedad.
+const puedeBorrar = () => contexto.actor?.rol === 'admin';
 
 const ORIGEN_EN_CARGA = {
   creada: { texto: 'creada', clase: 'est-cerrada', titulo: 'Esta carga la dio de alta.' },
@@ -158,6 +160,8 @@ async function renderDetalle(main, cargaId) {
     <div class="toolbar" style="margin-bottom:1rem">
       <button class="btn btn-outline btn-sm" id="volver">← Todas las cargas</button>
       <button class="btn btn-outline btn-sm" id="composicion">Ver su composición</button>
+      ${puedeBorrar() ? `<span class="toolbar-spacer"></span>
+        <button class="btn btn-outline btn-sm texto-peligro" id="borrar-carga">Borrar la carga…</button>` : ''}
     </div>
 
     <div class="grid-2" style="margin-bottom:1.25rem">
@@ -214,6 +218,7 @@ async function renderDetalle(main, cargaId) {
     </div>`;
 
   $('#volver').onclick = () => contexto.irA('cargas');
+  if (puedeBorrar()) $('#borrar-carga').onclick = () => abrirBorrado(carga);
   // El ámbito «una carga» de la composición (R-ORG) ya existe: se abre ahí.
   $('#composicion').onclick = () => contexto.irA('composicion', { cargaId: carga.id });
 
@@ -317,4 +322,119 @@ async function cargarPanelistas(cargaId, desde) {
   });
   $('#anterior', contenedor).onclick = () => cargarPanelistas(cargaId, Math.max(0, desde - POR_PAGINA));
   $('#siguiente', contenedor).onclick = () => cargarPanelistas(cargaId, desde + POR_PAGINA);
+}
+
+
+/* ── Borrar una carga (PEDIDO del celular, parte 3; D78) ─────────────
+
+   Lo que se borra es **lo que la carga trajo**: todas las respuestas de su
+   estudio y las personas que creó y no tienen otra vida en el sistema. Las
+   demás se conservan, sin el vínculo ni esas respuestas. La vista previa
+   lo dice con números y motivos, y sale de la misma ruta que borra.
+
+   Confirmación fuerte: hay que escribir el nombre de la carga. Es
+   irreversible, y lo dice. Con una ingesta en curso no se puede; con un
+   borrado a medias, confirmar lo reanuda. */
+async function abrirBorrado(carga) {
+  const caja = modal({
+    titulo: `Borrar la carga — ${carga.nombre}`,
+    ancho: '640px',
+    cuerpo: `<div id="borrado-cuerpo">${cargando('8vh')}</div>`,
+  });
+  const cuerpo$ = $('#borrado-cuerpo', caja);
+  const enCurso = async (error) => {
+    const { seguirTrabajo } = await import('./encuestas.js');
+    cuerpo$.innerHTML = `<div class="alert alert-info">${esc(error.message)}
+      <div style="margin-top:.5rem"><button class="btn btn-orange btn-sm"
+        id="ver-en-curso">Ver su avance</button></div></div>`;
+    $('#ver-en-curso', caja).onclick = () => {
+      cerrarModal();
+      seguirTrabajo(error.detalle.trabajo_id, { esCarga: true });
+    };
+  };
+
+  let previa;
+  try {
+    previa = await api.cargas.previaDeBorrado(carga.id);
+  } catch (error) {
+    if (error.codigo === 'ingesta_en_curso' && error.detalle?.trabajo_id) {
+      await enCurso(error);
+      return;
+    }
+    cuerpo$.innerHTML = alerta(error.message);
+    return;
+  }
+
+  const motivos = previa.conservadas_por_motivo || [];
+  cuerpo$.innerHTML = `
+    <div class="alert alert-error"><strong>Es irreversible.</strong> Lo que se
+      borra no se puede recuperar. Antes de borrar una carga real con muchos
+      panelistas, conviene tener un respaldo reciente de las dos bases.</div>
+    ${previa.borrado_en_curso ? alerta(
+      'Esta carga tiene un borrado que quedó a medias. Confirmar lo reanuda '
+      + 'desde donde quedó.', 'info') : ''}
+    <table class="tabla-borrado">
+      <tr><td>Personas vinculadas a la carga</td><td class="num">${previa.personas}</td></tr>
+      <tr class="peligro"><td><strong>Se dan de baja</strong> — las creó esta
+        carga y no tienen otra vida en el sistema</td>
+        <td class="num"><strong>${previa.se_dan_de_baja}</strong></td></tr>
+      <tr><td><strong>Se conservan</strong>, sin el vínculo ni sus respuestas
+        de esta carga${motivos.length ? `<ul class="small">${motivos.map((m) =>
+          `<li>${m.personas} · ${esc(m.etiqueta)}</li>`).join('')}</ul>` : ''}</td>
+        <td class="num">${previa.se_conservan}</td></tr>
+      <tr class="peligro"><td>Respuestas del estudio que se borran (de todas las
+        personas)</td><td class="num">${previa.respuestas_a_borrar}</td></tr>
+      <tr><td>Textos embebidos que se van con ellas (los compartidos con otro
+        estudio se conservan)</td><td class="num">${previa.unidades_que_se_borran}</td></tr>
+    </table>
+    <p class="small">Las bajas siguen el camino de siempre: se avisa a los otros
+      sistemas que usan la bóveda (COLOQUIO) para que borren lo suyo. El borrado
+      queda registrado con quién lo hizo y estos números.</p>
+    <div class="form-group">
+      <label for="confirmar-nombre" class="etiqueta-literal">Para confirmar, escribí el nombre de la carga:
+        <strong>${esc(carga.nombre)}</strong></label>
+      <input type="text" class="finput" id="confirmar-nombre" autocomplete="off" />
+    </div>
+    <div id="borrado-alerta"></div>
+    <div class="toolbar">
+      <button class="btn btn-outline" id="cancelar-borrado">Cancelar</button>
+      <span class="toolbar-spacer"></span>
+      <button class="btn btn-danger" id="confirmar-borrado" disabled>Borrar la carga</button>
+    </div>`;
+
+  const nombre$ = $('#confirmar-nombre', caja);
+  const boton$ = $('#confirmar-borrado', caja);
+  nombre$.oninput = () => {
+    boton$.disabled = nombre$.value.trim() !== carga.nombre.trim();
+  };
+  nombre$.focus();
+  $('#cancelar-borrado', caja).onclick = cerrarModal;
+  boton$.onclick = async () => {
+    boton$.disabled = true;
+    nombre$.disabled = true;
+    $('#borrado-alerta', caja).innerHTML = `<div class="procesando" role="status">
+      <span class="spinner spinner-sm"></span><div class="procesando-texto">
+      <strong class="procesando-titulo">Borrando…</strong></div></div>`;
+    try {
+      const salida = await api.cargas.borrar(carga.id, nombre$.value);
+      cerrarModal();
+      if (salida.estado === 'terminado') {
+        toast(`Se borró la carga «${carga.nombre}».`, 'ok');
+        contexto.irA('cargas');
+        return;
+      }
+      // Por la vía diferida: el avance por lotes, y al terminar, el listado.
+      const { seguirTrabajo } = await import('./encuestas.js');
+      contexto.irA('cargas');
+      seguirTrabajo(salida.trabajo_id, { esCarga: true });
+    } catch (error) {
+      if (error.codigo === 'ingesta_en_curso' && error.detalle?.trabajo_id) {
+        await enCurso(error);
+        return;
+      }
+      $('#borrado-alerta', caja).innerHTML = alerta(error.message);
+      nombre$.disabled = false;
+      boton$.disabled = nombre$.value.trim() !== carga.nombre.trim();
+    }
+  };
 }

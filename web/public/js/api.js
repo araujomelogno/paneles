@@ -502,6 +502,11 @@ export const cargas = {
      la carga que se les pueden asociar. */
   tematicas: (cargaId) => GET(`/cargas/${cargaId}/tematicas`),
   editar: (cargaId, cambios) => PATCH(`/cargas/${cargaId}`, cambios),
+  // PEDIDO del celular, parte 3 — borrar una carga. La vista previa sale de
+  // la misma ruta que borra (`solo_revisar`), como la revisión de una carga.
+  previaDeBorrado: (cargaId) => POST(`/cargas/${cargaId}/borrado`, { solo_revisar: true }),
+  borrar: (cargaId, confirmacion) =>
+    POST(`/cargas/${cargaId}/borrado`, { confirmacion }),
   analizar: (cargaId, archivoBase64, opciones) =>
     subir(`/cargas/${cargaId}/analizar`,
           { archivo_base64: archivoBase64, ...(opciones?.extra || {}) }, opciones),

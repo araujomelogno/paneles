@@ -18,6 +18,7 @@ from . import (
     calidad,
     calidad_dato,
     cargas,
+    cargas_borrado,
     composicion,
     consentimiento,
     consulta_completa,
@@ -1783,6 +1784,24 @@ def editar_carga(ctx, actor, params, cuerpo, consulta):
     if "fecha_estudio" in cuerpo:
         ctx.semantica.commit()
     return 200, salida
+
+
+@ruta("POST", "/cargas/<carga_id>/borrado", "borrar_carga",
+      requisito="PEDIDO celular · borrar una carga")
+def borrar_carga(ctx, actor, params, cuerpo, consulta):
+    """Borra una carga con lo que trajo, o muestra qué haría.
+
+    `solo_revisar: true` devuelve la vista previa —de la misma ruta que
+    borra, como la revisión de una importación: un endpoint aparte empezaría
+    igual y divergiría—. Sin eso, exige `confirmacion` con el nombre exacto
+    de la carga y responde `202` con el trabajo diferido (o `200` si no
+    había personas). Con un borrado a medias, lo reanuda. Qué se borra y qué
+    no, en `cargas_borrado` (D78)."""
+    cuerpo = cuerpo or {}
+    return cargas_borrado.lanzar(
+        ctx.boveda, ctx.semantica, _entero(params["carga_id"]),
+        confirmacion=cuerpo.get("confirmacion"), actor=actor,
+        encolador=ctx.encolador, solo_revisar=_revision_pedida(cuerpo))
 
 
 @ruta("POST", "/cargas/<carga_id>/analizar", "ingestar", requisito="R3.13")
