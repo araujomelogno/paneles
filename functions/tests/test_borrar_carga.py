@@ -103,6 +103,11 @@ def _registro(conn):
 
 @pytest.fixture
 def coloquio_activo(conn_boveda):
+    """COLOQUIO activo durante la prueba, y sin dejar rastro: el borrado
+    commitea (es su naturaleza), así que los pendientes que genera quedarían
+    abiertos en la base de pruebas, y `conftest` no vacía `borrado_pendiente`.
+    La batería de COLOQUIO (`verificar_coloquio`, «la cascada de baja llega y
+    se cierra») cuenta los pendientes abiertos y fallaría por estos."""
     db.ejecutar(conn_boveda,
                 "update sistema_consumidor set activo = true where codigo = 'coloquio'")
     conn_boveda.commit()
@@ -110,6 +115,7 @@ def coloquio_activo(conn_boveda):
     conn_boveda.rollback()
     db.ejecutar(conn_boveda,
                 "update sistema_consumidor set activo = false where codigo = 'coloquio'")
+    db.ejecutar(conn_boveda, "delete from borrado_pendiente where sistema = 'coloquio'")
     conn_boveda.commit()
 
 
