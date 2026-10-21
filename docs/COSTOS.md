@@ -339,6 +339,12 @@ No entran en la base fija y dependen de la actividad:
   hace. Las **temáticas de cada panelista** (R-TEM.6) cuestan US$ 0: se
   calculan en la ingesta con datos en memoria y se recalculan en la bóveda,
   sin ninguna API.
+- **Taxonomía de temáticas (D76):** el arranque es **una** llamada, una vez
+  (la lista de temáticas son frases cortas: aun con 500, unos pocos miles de
+  tokens); la reorganización, una llamada cada vez que se pide. Ubicar las
+  temáticas de una carga nueva no agrega llamadas: va en la que ya proponía
+  sus temáticas. Abrir el filtro o consultar: US$ 0, la taxonomía está
+  guardada.
 - **WhatsApp (Meta):** por conversación iniciada por el negocio. Escala con el
   tamaño de las convocatorias.
 

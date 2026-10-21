@@ -261,8 +261,8 @@ function pintarCriterios() {
          <span class="small muted">peso ${c.peso ?? 1}</span>`
       : c.dimension === 'tematica'
         ? `<span class="badge badge-user">temática</span>
-           Con información sobre
-           <strong>${esc(Array.isArray(c.valor) ? c.valor.join(' o ') : c.valor)}</strong>`
+           ${c.etiqueta ? `<strong>${esc(c.etiqueta)}</strong>` : `Con información sobre
+           <strong>${esc(Array.isArray(c.valor) ? c.valor.join(' o ') : c.valor)}</strong>`}`
       : `<span class="badge badge-user">demográfico</span>
          <strong>${esc(catalogo.etiquetaDe(catalogoDeAtributos, c.dimension))}</strong>
          ${esc(OPERADORES[c.operador] || c.operador)}
@@ -324,20 +324,28 @@ function abrirCriterioSemantico() {
   });
 }
 
-/* R-TEM.6 — «panelistas con información sobre…»: quienes respondieron al
-   menos una pregunta de esa temática en alguna carga. Se resuelve en la
-   bóveda, como cualquier filtro demográfico, y se puede combinar con un
-   criterio semántico. Las especiales se ofrecen marcadas: filtrar por ellas
-   lo puede quien tiene el permiso, y el servidor lo controla. */
+/* R-TEM.6 y R-TEM.12 — «panelistas con información sobre…»: quienes
+   respondieron al menos una pregunta de esa temática en alguna carga. Se
+   resuelve en la bóveda, como cualquier filtro demográfico, y se puede
+   combinar con un criterio semántico.
+
+   La lista viene agrupada por área, plegable, con cuántas **personas**
+   tienen cada temática (no cuántas cargas) y sin las que no tiene nadie
+   (R-TEM.14). Un área se puede elegir entera. Todo va por id: renombrar un
+   área o una temática no rompe una consulta guardada. Las especiales solo
+   llegan si el rol puede filtrarlas; el servidor lo vuelve a controlar.
+   La taxonomía es la guardada: abrir esto no llama a Claude. */
 async function abrirCriterioTematica() {
-  const { items } = await api.tematicas.listar();
-  const conCargas = items.filter((t) => t.cargas > 0);
-  if (!conCargas.length) {
-    toast('Todavía no hay temáticas: se agregan a las cargas desde la sección Cargas.', 'err');
+  const { areas } = await api.tematicas.filtro();
+  if (!areas.length) {
+    toast('Todavía nadie tiene temáticas: se calculan al cargar, a partir de lo que '
+      + 'respondió cada persona.', 'err');
     return;
   }
-  modal({
+  const marca = (x) => (x.es_especial ? ' <span class="chip-marca especial">especial</span>' : '');
+  const caja = modal({
     titulo: 'Filtrar por temática',
+    ancho: '640px',
     cuerpo: `
       <div class="alert alert-info">
         Deja a quienes <strong>respondieron sobre ese tema</strong> en alguna carga
@@ -345,29 +353,78 @@ async function abrirCriterioTematica() {
         carga que lo cubría no alcanza. Para saber qué opinan, sumá un criterio
         semántico.
       </div>
-      <div class="form-group"><label>Con información sobre</label>
-        <div class="tematicas-elegir">${conCargas.map((t) => `
-          <label class="check"><input type="checkbox" value="${esc(t.nombre)}" />
-            ${esc(t.nombre)}${t.es_especial
-              ? ' <span class="chip-marca especial">especial · restringida</span>' : ''}
-            <span class="small muted">(${t.cargas} carga${t.cargas === 1 ? '' : 's'})</span>
-          </label>`).join('')}</div>
-        <div class="field-hint">Con más de una, alcanza con tener cualquiera.</div></div>`,
+      <input type="text" class="finput" id="buscar-tematica"
+             placeholder="Buscar un área o una temática…" />
+      <div class="tematicas-elegir" id="arbol-tematicas">${areas.map((a) => `
+        <details class="area-filtro" data-area-grupo="${a.id ?? ''}">
+          <summary>
+            ${a.id != null ? `<label class="check" onclick="event.stopPropagation()">
+              <input type="checkbox" data-area="${a.id}" />
+              <strong>${esc(a.nombre)}</strong>${marca(a)}</label>`
+              : `<strong>${esc(a.nombre)}</strong>`}
+            <span class="small muted">${a.personas ?? a.tematicas.reduce((n, t) => Math.max(n, t.personas), 0)} persona(s)</span>
+          </summary>
+          <div class="area-filtro-tematicas">${a.tematicas.map((t) => `
+            <label class="check" data-texto="${esc(t.nombre)} ${esc(a.nombre)}">
+              <input type="checkbox" data-tematica="${t.id}" data-nombre="${esc(t.nombre)}" />
+              ${esc(t.nombre)}${marca(t)}
+              <span class="small muted">(${t.personas} persona${t.personas === 1 ? '' : 's'})</span>
+            </label>`).join('')}</div>
+        </details>`).join('')}</div>
+      <div class="field-hint">Elegir un área entera equivale a tener cualquiera de sus
+        temáticas. Con varias elegidas, alcanza con tener cualquiera.</div>`,
     acciones: [
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
       { texto: 'Agregar', clase: 'btn-orange', onClick: (c) => {
-          const elegidas = $$('input[type=checkbox]:checked', c).map((x) => x.value);
-          if (!elegidas.length) { toast('Elegí al menos una temática.', 'err'); return; }
+          const areasElegidas = $$('[data-area]:checked', c).map((x) => Number(x.dataset.area));
+          const elegidas = $$('[data-tematica]:checked', c)
+            // Si el área entera ya está elegida, sus temáticas sobran.
+            .filter((x) => !areasElegidas.includes(
+              Number(x.closest('[data-area-grupo]').dataset.areaGrupo)))
+            .map((x) => ({ id: Number(x.dataset.tematica), nombre: x.dataset.nombre }));
+          if (!elegidas.length && !areasElegidas.length) {
+            toast('Elegí al menos un área o una temática.', 'err');
+            return;
+          }
+          const nombres = [
+            ...areas.filter((a) => areasElegidas.includes(a.id)).map((a) => `el área ${a.nombre}`),
+            ...elegidas.map((t) => t.nombre)];
           definicion.criterios.push({
             tipo: 'demografico', dimension: 'tematica',
-            operador: elegidas.length > 1 ? 'in' : 'eq',
-            valor: elegidas.length > 1 ? elegidas : elegidas[0],
+            operador: elegidas.length + areasElegidas.length > 1 ? 'in' : 'eq',
+            valor: elegidas.map((t) => t.id),
+            ...(areasElegidas.length ? { areas: areasElegidas } : {}),
+            etiqueta: `Con información sobre ${nombres.join(' o ')}`,
           });
           cerrarModal();
           pintarCriterios();
         } },
     ],
   });
+  // Elegir el área marca (y bloquea) sus temáticas: es lo mismo.
+  $$('[data-area]', caja).forEach((x) => {
+    x.onchange = () => {
+      $$('[data-tematica]', x.closest('details')).forEach((t) => {
+        t.checked = x.checked;
+        t.disabled = x.checked;
+      });
+    };
+  });
+  // La búsqueda filtra temáticas y abre las áreas donde hay algo.
+  $('#buscar-tematica', caja).oninput = (e) => {
+    const q = e.target.value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    $$('[data-area-grupo]', caja).forEach((grupo) => {
+      let visibles = 0;
+      $$('[data-texto]', grupo).forEach((fila) => {
+        const texto = fila.dataset.texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+        const ve = !q || texto.includes(q);
+        fila.style.display = ve ? '' : 'none';
+        visibles += ve ? 1 : 0;
+      });
+      grupo.style.display = visibles ? '' : 'none';
+      grupo.open = Boolean(q) && visibles > 0;
+    });
+  };
 }
 
 function abrirCriterioDemografico() {

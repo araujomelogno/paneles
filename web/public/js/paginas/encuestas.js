@@ -644,6 +644,10 @@ function abrirIngesta(destino, alTerminar) {
      lo que el analista ya editó. */
   let tematicasElegidas = null;
   let firmaDeLaPropuesta = null;
+  // R-TEM.13 — lo que se guarda al confirmar: las vigentes del editor. Las
+  // retiradas por una variable marcada como demográfica se conservan en
+  // `tematicasElegidas` para volver si se desmarca, pero no se guardan.
+  let tematicasAGuardar = null;
 
   const caja = modal({
     titulo: `${esCarga ? 'Cargar panelistas' : 'Ingestar respuestas'} — ${encuesta.nombre}`,
@@ -1670,15 +1674,17 @@ function abrirIngesta(destino, alTerminar) {
   async function revisarAntesDeImportar(cuerpo) {
     let resumen;
     // R-TEM.2 — en una carga, la revisión trae además la propuesta de
-    // temáticas. Solo se pide si cambiaron las preguntas o sus marcas desde
-    // la última: si no, se sigue con la lista ya editada.
-    const firma = JSON.stringify([
-      (cuerpo.preguntas || []).map((p) => [p.codigo, p.texto]), cuerpo.demograficas]);
+    // temáticas. Solo se pide a Claude si cambiaron las preguntas (código o
+    // texto) desde la última. Si solo cambió qué variables son demográficas,
+    // el servidor ajusta la lista ya editada sin llamar a nadie (R-TEM.13):
+    // retira las temáticas que salían solo de las variables marcadas.
+    const firma = JSON.stringify((cuerpo.preguntas || []).map((p) => [p.codigo, p.texto]));
     const proponer = esCarga && (tematicasElegidas === null || firma !== firmaDeLaPropuesta);
     try {
       resumen = await enviarIngesta({
         ...cuerpo, solo_revisar: true,
         ...(esCarga ? { proponer_tematicas: proponer } : {}),
+        ...(esCarga && !proponer ? { tematicas_editadas: tematicasElegidas || [] } : {}),
       });
     } catch (error) {
       avisarEnIngesta(alerta(error.message));
@@ -1702,6 +1708,11 @@ function abrirIngesta(destino, alTerminar) {
           + 'semántico (ni respuestas ni demográficos): aceptá, quitá o agregá.'
         : 'Las que dejaste en la revisión anterior.'} Se guardan al confirmar, y se
         pueden editar después desde la sección Cargas.</p>
+      ${resumen.tematicas?.retiradas?.length ? alerta(
+        `Se retiraron ${resumen.tematicas.retiradas.length} temática(s) que salían solo de `
+        + 'variables marcadas como demográficas o de identidad: '
+        + `${resumen.tematicas.retiradas.join(', ')}. Vuelven si desmarcás esas variables.`,
+        'info') : ''}
       <div id="rev-tematicas">${cargando('6vh')}</div>` : '') + `
       <div class="modal-foot pie-revision" style="padding-left:0;padding-right:0">
         <button class="btn btn-outline" id="volver-a-corregir">${sinClave
@@ -1720,16 +1731,24 @@ function abrirIngesta(destino, alTerminar) {
     caja.scrollTop = 0;
 
     let editorTematicas = null;
+    let retiradasAhora = [];
     if (esCarga) {
-      const { items: vocabulario } = await api.tematicas.listar().catch(() => ({ items: [] }));
+      const [{ items: vocabulario }, { areas }] = await Promise.all([
+        api.tematicas.listar().catch(() => ({ items: [] })),
+        api.tematicas.taxonomia().catch(() => ({ areas: [] })),
+      ]);
       const propuesta = resumen.tematicas;
+      const retiradas = new Set(propuesta?.retiradas || []);
+      retiradasAhora = (tematicasElegidas || []).filter((t) => retiradas.has(t.nombre));
       editorTematicas = editorDeTematicas($('#rev-tematicas', revision$), {
         vocabulario,
+        areas,
         // R-TEM.6 — las preguntas que se pueden asociar son las que van al
         // store semántico: las mismas que vio Claude.
         preguntasDisponibles: resumen.al_store_semantico?.variables || [],
         puedeDesmarcar: false,
-        iniciales: proponer ? [] : (tematicasElegidas || []),
+        iniciales: proponer ? [] : (propuesta?.editadas || tematicasElegidas || [])
+          .map((t) => ({ ...t, nueva: t.nueva })),
         propuesta: proponer ? (propuesta?.propuesta || []) : [],
         aviso: proponer ? propuesta?.aviso : null,
       });
@@ -1738,7 +1757,12 @@ function abrirIngesta(destino, alTerminar) {
 
     return new Promise((resolver) => {
       const cerrar = (confirmado) => {
-        if (editorTematicas) tematicasElegidas = editorTematicas.valor();
+        if (editorTematicas) {
+          tematicasAGuardar = editorTematicas.valor();
+          const vigentes = new Set(tematicasAGuardar.map((t) => t.nombre));
+          tematicasElegidas = [...tematicasAGuardar,
+            ...retiradasAhora.filter((t) => !vigentes.has(t.nombre))];
+        }
         revision$.classList.add('hidden');
         revision$.innerHTML = '';
         formulario$.classList.remove('hidden');
@@ -2064,9 +2088,9 @@ function abrirIngesta(destino, alTerminar) {
        mismo camino con el que se editan después. Si no se pudieran guardar,
        la carga sigue igual: las temáticas no son razón para frenarla, y se
        completan desde la sección Cargas. */
-    if (esCarga && tematicasElegidas) {
+    if (esCarga && tematicasAGuardar) {
       try {
-        await api.cargas.guardarTematicas(encuesta.id, tematicasElegidas);
+        await api.cargas.guardarTematicas(encuesta.id, tematicasAGuardar);
       } catch (error) {
         toast(`No se guardaron las temáticas (${error.message}). La carga sigue; `
           + 'agregalas desde la sección Cargas.', 'err');

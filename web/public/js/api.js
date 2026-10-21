@@ -518,6 +518,19 @@ export const cargas = {
    cada una: el autocompletado del editor y el filtro de la sección Cargas. */
 export const tematicas = {
   listar: () => GET('/tematicas'),
+  /* R-TEM.12 / R-TEM.14 — lo que ofrece el filtro de Consultas: por área,
+     con cuántas personas, y sin las que no tiene nadie. Solo lee. */
+  filtro: () => GET('/tematicas/filtro'),
+  /* R-TEM.14 — las temáticas de cada carga que no tiene nadie. */
+  sinPersonas: () => GET('/tematicas/sin-personas'),
+  /* R-TEM.7 a R-TEM.10 — la taxonomía: se lee guardada; Claude propone y
+     nada se guarda sin que el analista lo confirme. */
+  taxonomia: () => GET('/tematicas/taxonomia'),
+  proponerTaxonomia: () => POST('/tematicas/taxonomia/propuesta', {}),
+  guardarTaxonomia: (areas) => PUT('/tematicas/taxonomia', { areas }),
+  proponerReorganizacion: () => POST('/tematicas/taxonomia/reorganizacion', {}),
+  aplicarOperacion: (operacion) => POST('/tematicas/taxonomia/operaciones', { operacion }),
+  cambios: () => GET('/tematicas/taxonomia/cambios'),
 };
 
 /* Fase 8 — calidad del dato semántico. Todo lo de acá **propone**: las

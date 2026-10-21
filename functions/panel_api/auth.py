@@ -110,6 +110,12 @@ PERMISOS = {
     # puede reidentificar, más el dpo, que revisa el cumplimiento. El
     # analista consulta, pero no segmenta por estos temas.
     "tematicas_especiales": {"admin", "operaciones", "dpo"},
+
+    # R-TEM.8 y R-TEM.10 — arrancar y reorganizar la taxonomía de temáticas
+    # (áreas). Es quien ya edita las temáticas de una carga: el analista
+    # revisa y confirma lo que propone Claude. El dpo no: no es su trabajo y
+    # una fusión reapunta referencias sin vuelta atrás.
+    "gestionar_taxonomia": {"admin", "operaciones", "analista"},
 }
 
 

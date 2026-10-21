@@ -71,7 +71,7 @@
       <ul><li>El listado y sus filtros · El detalle de una carga · Editar las
       temáticas · Proponer temáticas para una carga anterior · Un vocabulario
       que no se duplica · Las temáticas de cada panelista · Temáticas
-      especiales</li></ul></li>
+      especiales · La taxonomía: áreas · Temáticas sin personas</li></ul></li>
     <li><a href="#s13"><span><span class="num">16</span> Preguntas frecuentes</span></a></li>
     <li><a href="#s14"><span><span class="num">17</span> Glosario</span></a></li>
   </ol>
@@ -161,7 +161,8 @@
     <tr>
       <td class="destacado">Analista</td>
       <td>Crear encuestas, convocar, ingestar respuestas, editar las temáticas
-      de una carga y ejecutar consultas.</td>
+      de una carga, arrancar y reorganizar la taxonomía de temáticas y ejecutar
+      consultas.</td>
       <td>Enrolar panelistas, gestionar paneles, resolver identificadores a
       personas, filtrar o ver temáticas especiales y gestionar usuarios.</td>
     </tr>
@@ -633,9 +634,18 @@
     <li>Si la propuesta <strong>falla o tarda</strong>, la revisión llega
     igual, con un aviso y la lista vacía: la carga se confirma normalmente y
     las temáticas se agregan a mano, ahí o después.</li>
+    <li>La columna <strong>Área</strong> dice en qué área de la taxonomía va
+    cada temática (sección 15.8). Una temática que ya existía conserva la suya;
+    para una nueva, Claude elige un área existente o propone una nueva, marcada
+    <i>área nueva</i>, y el analista puede cambiarla.</li>
     <li>Si se vuelve a corregir y se revisa otra vez sin cambiar las
     preguntas, se conserva la lista ya editada: no se pide otra
     propuesta.</li>
+    <li>Si al volver a corregir se marca una variable como
+    <strong>demográfica o de identidad</strong>, las temáticas que salían
+    <strong>solo</strong> de ella se retiran en el momento, con un aviso, sin
+    volver a llamar a Claude; las que tienen otras preguntas se quedan.
+    Desmarcar la variable las devuelve.</li>
   </ul>
 
   <p>Las temáticas se guardan al apretar <strong>Confirmar e importar</strong>,
@@ -2552,11 +2562,30 @@
 
   <p>El botón <strong>+ Temática</strong>, junto a <i>+ Criterio
   demográfico</i>, agrega el filtro «con información sobre…»: deja a quienes
-  respondieron sobre ese tema en alguna carga (sección 15.6). Con varias
-  temáticas elegidas alcanza con tener cualquiera. Se resuelve en la bóveda
-  como cualquier filtro demográfico, se puede combinar con atributos y con
-  criterios semánticos, y es la forma más barata de contestar «¿de cuántos
-  del panel sabemos algo sobre este tema?».</p>
+  respondieron sobre ese tema en alguna carga (sección 15.6). Se resuelve en
+  la bóveda como cualquier filtro demográfico, se puede combinar con atributos
+  y con criterios semánticos, y es la forma más barata de contestar «¿de
+  cuántos del panel sabemos algo sobre este tema?».</p>
+
+  <ul class="puntos">
+    <li>Las temáticas vienen <strong>agrupadas por área</strong> (sección
+    15.8); cada área se abre y se cierra, y el buscador de arriba filtra por
+    área o temática.</li>
+    <li>Al lado de cada una, <strong>cuántas personas</strong> tienen
+    información sobre ella. Una temática que no tiene nadie <strong>no
+    aparece</strong>: no serviría para filtrar.</li>
+    <li>Se puede elegir un <strong>área entera</strong>: equivale a tener
+    cualquiera de sus temáticas. Con varias elegidas, alcanza con tener
+    cualquiera.</li>
+    <li>El filtro guarda áreas y temáticas por su identificador: renombrar un
+    área no rompe una consulta guardada.</li>
+  </ul>
+
+  <figure>
+    <img class="recorte" src="capturas/106-filtro-por-area.jpg" alt="Filtro de temáticas agrupado por área" />
+    <figcaption><b>El filtro, por área.</b> Con cuántas personas tiene cada
+    temática; «telecomunicaciones y conectividad» elegida entera.</figcaption>
+  </figure>
 
   <figure>
     <img src="capturas/103-consulta-filtro-tematica.jpg" alt="Consulta filtrada por temática" />
@@ -2566,8 +2595,10 @@
     consulta.</figcaption>
   </figure>
 
-  <p>Las temáticas especiales aparecen marcadas como restringidas: filtrar por
-  ellas lo pueden hacer administración y responsable de panel. La columna
+  <p>Las temáticas especiales —propias o por su área— solo se ofrecen a
+  administración y responsable de panel. Un área común que tiene adentro una
+  temática especial, elegida por otro rol, no trae a quien solo tiene la
+  especial. La columna
   <strong>Temáticas con información</strong> del selector de columnas nunca
   muestra una especial, y ninguna exportación las incluye.</p>
 
@@ -4001,6 +4032,12 @@
   <strong>recalcula</strong> las temáticas de todos los panelistas de la carga:
   sacar una pregunta puede hacer que alguien deje de tener la temática.</p>
 
+  <p>La tabla tiene también la columna <strong>Área</strong> (sección 15.8).
+  Una temática con <strong>cero panelistas</strong> se marca «sin personas ·
+  probablemente sobrante», con un botón <b>Quitar</b>: suele ser una que salía
+  de una variable que después se marcó como demográfica. Si la carga todavía
+  se está procesando, esperar a que termine antes de quitar nada.</p>
+
   <figure>
     <img src="capturas/99-carga-detalle.jpg" alt="Detalle de una carga con sus temáticas" />
     <figcaption><b>Las temáticas en el detalle.</b> Cada una con sus preguntas
@@ -4101,6 +4138,106 @@
   <strong>quitarle la marca</strong> lo puede hacer solo administración, porque
   la vuelve a exponer. La marca es de la temática y vale en todas las
   cargas.</p>
+
+  <p>Un <strong>área</strong> también puede ser especial (sección 15.8): todas
+  sus temáticas reciben el mismo tratamiento. La herencia suma y no resta: una
+  temática especial en un área común sigue siendo especial.</p>
+
+  <h3><span class="n">15.8</span> La taxonomía: áreas</h3>
+
+  <p>Con cada carga la lista de temáticas crece. Para que siga siendo
+  manejable, las temáticas se agrupan en <strong>áreas</strong> («telecomunicaciones
+  y conectividad», «consumo masivo», «finanzas y medios de pago»).
+  Exactamente dos niveles: área y temática. Se ve y se administra en Cargas →
+  <strong>Taxonomía de temáticas</strong>.</p>
+
+  <p>La taxonomía la propone Claude, pero <strong>se guarda</strong>: solo
+  cambia cuando alguien aprueba un cambio. Abrir el filtro o consultar no
+  la recalcula, así que el filtro no se reorganiza solo ni una consulta
+  guardada deja de coincidir.</p>
+
+  <h4>El arranque</h4>
+
+  <p><strong>Proponer la taxonomía</strong> le pide a Claude, en una sola
+  llamada, entre 8 y 20 áreas para las temáticas existentes, con una
+  descripción corta y cuáles podrían ser especiales. La propuesta se revisa en
+  la misma pantalla: se renombran áreas, se edita la descripción, se mueve una
+  temática a otra área, se unen dos áreas y se marcan las especiales.
+  <strong>Nada se guarda hasta «Confirmar y guardar».</strong></p>
+
+  <figure>
+    <img src="capturas/107-taxonomia-propuesta.jpg" alt="Propuesta de taxonomía para revisar" />
+    <figcaption><b>La propuesta de arranque.</b> Cada área con su nombre, su
+    descripción, la marca especial y sus temáticas, todo editable antes de
+    guardar.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Conviene hacerlo con varias cargas cargadas</div>
+    <p>Con tres temáticas Claude no tiene material para proponer áreas con
+    sentido. Y la primera taxonomía condiciona las siguientes: las cargas
+    nuevas se clasifican contra lo que exista. Vale la pena revisarla con
+    cuidado.</p>
+  </div>
+
+  <h4>Cómo crece</h4>
+
+  <p>Al revisar una carga nueva (sección 3.6), la misma llamada que propone
+  sus temáticas ubica cada una en un área existente, o propone una nueva. Lo
+  ya clasificado no se mueve desde una carga. Si después de la primera
+  taxonomía quedan temáticas sin área, el botón dice <i>Proponer área para N
+  temáticas sin área</i>.</p>
+
+  <h4>La taxonomía guardada</h4>
+
+  <p>Cada área muestra sus temáticas con cuántas cargas y cuántas personas
+  tiene cada una. <strong>Mover a…</strong> pasa una temática a otra área (o a
+  una nueva) y la casilla <strong>Especial</strong> marca el área entera.
+  Quitarle la marca a un área lo puede hacer solo administración.</p>
+
+  <figure>
+    <img src="capturas/108-taxonomia-actual.jpg" alt="La taxonomía guardada" />
+    <figcaption><b>La taxonomía guardada.</b> Las temáticas de un área especial
+    dicen «por su área».</figcaption>
+  </figure>
+
+  <h4>Reorganizar</h4>
+
+  <p><strong>Reorganizar taxonomía</strong> le pasa a Claude toda la taxonomía y
+  le pide operaciones: fusionar temáticas que significan lo mismo, mover una
+  temática de área, renombrar un área, fusionar o dividir áreas. Cada
+  operación se <strong>aprueba o se descarta por separado</strong>; nunca se
+  aplica nada sola. Conviene pedirla cada tanto, no solo cuando la lista ya se
+  volvió inmanejable.</p>
+
+  <figure>
+    <img src="capturas/109-reorganizacion.jpg" alt="Reorganización propuesta" />
+    <figcaption><b>Reorganización.</b> Una fusión de dos temáticas y un cambio
+    de nombre, cada una con su motivo y sus botones.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Fusionar temáticas no tiene vuelta atrás</div>
+    <p>Al fusionar, las cargas, las preguntas y los panelistas de la temática
+    que se va pasan a la que queda, y las temáticas de esos panelistas se
+    recalculan. El historial dice qué pasó, pero no lo deshace.</p>
+  </div>
+
+  <p>El <strong>historial de cambios</strong>, al pie, registra cada operación
+  aplicada: cuándo, quién y qué, con los nombres de ese momento. Sirve para
+  entender después por qué una temática está donde está.</p>
+
+  <p>Arrancar y reorganizar la taxonomía lo pueden hacer administración,
+  responsable de panel y analista; verla, todos los roles.</p>
+
+  <h3><span class="n">15.9</span> Temáticas sin personas</h3>
+
+  <p>La pantalla de la taxonomía lista, en <strong>Temáticas sin
+  personas</strong>, las temáticas que están en una carga y que nadie de esa
+  carga tiene. Son candidatas a quitar: lo habitual es que salieran de una
+  variable que después se marcó como demográfica («nivel educativo»), o que
+  sus preguntas estén mal elegidas. <strong>Ir a la carga</strong> abre el
+  detalle, donde se quitan o se corrigen sus preguntas.</p>
 </section>
 
 <section id="s13">
@@ -4132,6 +4269,17 @@
   «No sabe». La temática de la persona dice sobre qué respondió, no en qué
   estudio estuvo (15.6). Si la temática tiene mal elegidas sus preguntas,
   corregilas en el detalle de la carga y guardá: se recalcula.</p>
+
+  <h4>Una temática que está en una carga no aparece en el filtro de Consultas</h4>
+  <p>Nadie la tiene: el filtro solo ofrece temáticas sobre las que hay
+  personas (6.10). Aparece en <i>Temáticas sin personas</i> (15.9) y, en el
+  detalle de la carga, marcada «probablemente sobrante».</p>
+
+  <h4>¿Por qué la taxonomía no se actualiza sola?</h4>
+  <p>Porque está guardada a propósito (15.8): si se regenerara, los nombres y
+  las agrupaciones cambiarían cada vez y una consulta guardada dejaría de
+  coincidir. Crece con cada carga y se reorganiza cuando alguien lo pide y
+  aprueba cada cambio.</p>
 
   <h4>No veo una temática en la ficha, pero la carga la tiene</h4>
   <p>Puede ser de categoría especial: con tu rol no se muestra, y la tarjeta
@@ -4387,6 +4535,11 @@
       «consumo de tabaco»). Es compartida entre cargas, se guarda en
       minúsculas y la puede proponer Claude (<i>IA</i>) o agregar el analista.
       Un panelista la tiene si respondió al menos una de sus preguntas.</td></tr>
+    <tr><td class="destacado">Área (de temáticas)</td>
+      <td>El nivel de arriba de la taxonomía: agrupa temáticas afines
+      («telecomunicaciones y conectividad»). La propone Claude, la confirma el
+      analista y queda guardada. Un área especial vuelve especiales a sus
+      temáticas.</td></tr>
     <tr><td class="destacado">Temática especial</td>
       <td>Una temática sobre salud, sustancias, ideología política, religión o
       vida sexual. No sale como columna ni en exportaciones, y filtrarla o

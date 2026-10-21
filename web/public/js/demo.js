@@ -1708,6 +1708,40 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     return { items, opciones: OPCIONES_CARGA };
   }
 
+  /* R-TEM.7 a R-TEM.14 — en el modo demo no hay Claude ni taxonomía
+     guardada: las temáticas se muestran sin área, y proponer o reorganizar
+     avisan que no están disponibles. */
+  if (clave === 'GET /tematicas/taxonomia') {
+    return {
+      areas: [], arrancada: false,
+      sin_area: [...bd.tematicas].sort((a, b) => a.nombre.localeCompare(b.nombre)).map((t) => ({
+        id: t.id, nombre: t.nombre, es_especial: Boolean(t.es_especial),
+        es_especial_propia: Boolean(t.es_especial),
+        cargas: bd.cargaTematicas.filter((v) => v.tematica_id === t.id).length, personas: null,
+      })),
+    };
+  }
+  if (clave === 'GET /tematicas/filtro') {
+    const tematicasConCargas = bd.tematicas.filter((t) => !t.es_especial
+      && bd.cargaTematicas.some((v) => v.tematica_id === t.id));
+    return {
+      areas: tematicasConCargas.length ? [{
+        id: null, nombre: 'Sin área', es_especial: false, personas: null,
+        tematicas: tematicasConCargas.map((t) => ({
+          id: t.id, nombre: t.nombre, es_especial: false,
+          personas: bd.vinculos.filter((v) => bd.cargaTematicas.some(
+            (c) => c.tematica_id === t.id && c.carga_id === v.carga_id)).length,
+        })),
+      }] : [],
+    };
+  }
+  if (clave === 'GET /tematicas/sin-personas' || clave === 'GET /tematicas/taxonomia/cambios') {
+    return { items: [] };
+  }
+  if (partes[0] === 'tematicas' && partes[1] === 'taxonomia' && metodo !== 'GET') {
+    throw new ErrorDemo('La taxonomía con Claude no está disponible en el modo demo.', 400);
+  }
+
   if (clave === 'GET /tematicas') {
     return {
       items: [...bd.tematicas].sort((a, b) => a.nombre.localeCompare(b.nombre)).map((t) => ({

@@ -48,6 +48,11 @@ const ORIGEN_EN_CARGA = {
 export async function render(main, ctx) {
   contexto = ctx;
   if (ctx.contexto?.cargaId) return renderDetalle(main, ctx.contexto.cargaId);
+  // R-TEM.7 — la taxonomía de temáticas se abre desde acá.
+  if (ctx.contexto?.vista === 'taxonomia') {
+    const { renderTaxonomia } = await import('./taxonomia.js');
+    return renderTaxonomia(main, ctx);
+  }
   return renderListado(main);
 }
 
@@ -77,6 +82,11 @@ async function renderListado(main) {
     </div>
     <p class="small muted">Una carga nueva se abre desde <strong>Panelistas →
       Cargar panelistas</strong>; al revisarla, el sistema propone sus temáticas.</p>`;
+  // R-TEM.7 — la taxonomía (áreas → temáticas), en su propia vista.
+  $('.cargas-filtros, .card-header .toolbar', main)?.insertAdjacentHTML('beforeend',
+    '<span class="toolbar-spacer"></span><button class="btn btn-outline btn-sm" '
+    + 'id="ver-taxonomia">Taxonomía de temáticas</button>');
+  $('#ver-taxonomia').onclick = () => contexto.irA('cargas', { vista: 'taxonomia' });
 
   let temporizador;
   $('#buscar').oninput = (e) => {
@@ -130,9 +140,11 @@ async function cargarTabla() {
 /* ── R-CAR.2 · El detalle ────────────────────────────────────────── */
 
 async function renderDetalle(main, cargaId) {
-  const [carga, { items: vocabulario }] = await Promise.all([
+  const [carga, { items: vocabulario }, { areas }] = await Promise.all([
     api.cargas.ver(cargaId),
     api.tematicas.listar().catch(() => ({ items: [] })),
+    // R-TEM.9 — las áreas, para ubicar las temáticas que no tienen.
+    api.tematicas.taxonomia().catch(() => ({ areas: [] })),
   ]);
   // R-TEM.6 — las preguntas guardadas de la carga, para asociarlas a cada
   // temática. Si el store semántico no responde, el editor sigue andando
@@ -206,7 +218,7 @@ async function renderDetalle(main, cargaId) {
   $('#composicion').onclick = () => contexto.irA('composicion', { cargaId: carga.id });
 
   if (puedeEditar()) {
-    const opciones = { preguntasDisponibles, puedeDesmarcar: puedeDesmarcarEspecial() };
+    const opciones = { preguntasDisponibles, areas, puedeDesmarcar: puedeDesmarcarEspecial() };
     let editor = editorDeTematicas($('#tematicas'), {
       ...opciones, vocabulario, iniciales: carga.tematicas,
     });

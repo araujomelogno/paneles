@@ -176,15 +176,19 @@ def listar(conn):
     """
     return [
         {"id": f["id"], "nombre": f["nombre"], "es_especial": f["es_especial"],
-         "cargas": f["cargas"]}
+         "es_especial_propia": f["es_especial_propia"],
+         "area_id": f["area_id"], "area": f["area"],
+         "cargas": f["cargas"], "personas": f["personas"]}
         for f in db.todas(
             conn,
             """
-            select t.id, t.nombre, t.es_especial,
-                   count(ct.carga_id)::int as cargas
-              from tematica t
-              left join carga_tematica ct on ct.tematica_id = t.id
-             group by t.id
+            select t.id, t.nombre, t.es_especial, t.es_especial_propia,
+                   t.area_id, t.area,
+                   (select count(*)::int from carga_tematica ct
+                     where ct.tematica_id = t.id) as cargas,
+                   (select count(distinct pt.id_persona)::int from persona_tematica pt
+                     where pt.tematica_id = t.id) as personas
+              from v_tematica t
              order by t.nombre
             """)
     ]
@@ -193,6 +197,8 @@ def listar(conn):
 def _fila(f):
     return {"id": f["tematica_id"], "nombre": f["nombre"],
             "origen": f["origen"], "es_especial": f["es_especial"],
+            "es_especial_propia": f["es_especial_propia"],
+            "area_id": f["area_id"], "area": f["area"],
             "preguntas": list(f["preguntas"] or []),
             "personas": f["personas"],
             "creado_en": f["creado_en"].isoformat()}
@@ -212,7 +218,8 @@ def de_cargas(conn, ids_carga):
     for f in db.todas(
         conn,
         """
-        select ct.carga_id, ct.tematica_id, t.nombre, t.es_especial, ct.origen,
+        select ct.carga_id, ct.tematica_id, t.nombre, t.es_especial,
+               t.es_especial_propia, t.area_id, t.area, ct.origen,
                ct.creado_en,
                array(select tp.codigo_pregunta from tematica_pregunta tp
                       where tp.carga_id = ct.carga_id
@@ -222,7 +229,7 @@ def de_cargas(conn, ids_carga):
                  where pt.carga_id = ct.carga_id
                    and pt.tematica_id = ct.tematica_id) as personas
           from carga_tematica ct
-          join tematica t on t.id = ct.tematica_id
+          join v_tematica t on t.id = ct.tematica_id
          where ct.carga_id = any(%s)
          order by ct.carga_id, t.nombre
         """,
@@ -268,14 +275,18 @@ def _item(crudo):
         origen = (crudo.get("origen") or MANUAL).strip().lower()
         preguntas = _codigos(crudo.get("preguntas"))
         especial = crudo.get("es_especial")
+        area = {"id": crudo.get("area_id"), "nombre": crudo.get("area"),
+                "descripcion": crudo.get("area_descripcion")}
     else:
         nombre, origen, preguntas, especial = crudo, MANUAL, None, None
+        area = {}
     if origen not in ORIGENES:
         raise DatosInvalidos(
             f"Origen de temática desconocido: {origen!r}. Puede ser "
             f"{', '.join(ORIGENES)}.", {"campo": "tematicas"})
     return {"nombre": _validar(nombre), "origen": origen, "preguntas": preguntas,
-            "es_especial": None if especial is None else bool(especial)}
+            "es_especial": None if especial is None else bool(especial),
+            "area": area if (area.get("id") or area.get("nombre")) else None}
 
 
 def _marcar_especiales(conn, especiales, puede_desmarcar):
@@ -352,6 +363,15 @@ def guardar(conn, carga_id, items, conn_semantica=None, puede_desmarcar=False):
     _marcar_especiales(
         conn, {t: i["es_especial"] for t, i in vinculos.items()
                if i["es_especial"] is not None}, puede_desmarcar)
+
+    # R-TEM.9 — el área de cada temática **que todavía no tiene**. Lo ya
+    # clasificado no se toca desde una carga: moverlo es una operación de la
+    # taxonomía, que se aprueba y queda registrada (R-TEM.10).
+    from . import taxonomia
+
+    for tematica_id, item in vinculos.items():
+        if item.get("area"):
+            taxonomia.ubicar_si_falta(conn, tematica_id, item["area"], item["origen"])
 
     db.ejecutar(
         conn,
@@ -517,10 +537,10 @@ def de_persona(conn, id_persona, incluir_especiales=False):
     filas = db.todas(
         conn,
         """
-        select t.id, t.nombre, t.es_especial, c.id as carga_id,
+        select t.id, t.nombre, t.es_especial, t.area, c.id as carga_id,
                c.nombre as carga, c.fecha_estudio, pt.preguntas_respondidas
           from persona_tematica pt
-          join tematica t on t.id = pt.tematica_id
+          join v_tematica t on t.id = pt.tematica_id
           join carga c on c.id = pt.carga_id
          where pt.id_persona = %s
            and (%s or not t.es_especial)
@@ -532,13 +552,13 @@ def de_persona(conn, id_persona, incluir_especiales=False):
         ocultas = db.una(
             conn,
             """select count(distinct pt.tematica_id)::int as n
-                 from persona_tematica pt join tematica t on t.id = pt.tematica_id
+                 from persona_tematica pt join v_tematica t on t.id = pt.tematica_id
                 where pt.id_persona = %s and t.es_especial""",
             (str(id_persona),))["n"]
     return {
         "items": [
             {"id": f["id"], "nombre": f["nombre"], "es_especial": f["es_especial"],
-             "carga_id": f["carga_id"], "carga": f["carga"],
+             "area": f["area"], "carga_id": f["carga_id"], "carga": f["carga"],
              "fecha_estudio": (f["fecha_estudio"].isoformat()
                                if f["fecha_estudio"] else None),
              "preguntas_respondidas": f["preguntas_respondidas"]}
@@ -564,7 +584,7 @@ def columna_de_varias(conn, ids_persona):
         select pt.id_persona::text as id_persona,
                array_agg(distinct t.nombre order by t.nombre) as nombres
           from persona_tematica pt
-          join tematica t on t.id = pt.tematica_id
+          join v_tematica t on t.id = pt.tematica_id
          where pt.id_persona = any(%s::uuid[]) and not t.es_especial
          group by pt.id_persona
         """,
@@ -577,33 +597,77 @@ def columna_de_varias(conn, ids_persona):
     }
 
 
-def especiales_entre(conn, nombres):
-    """Los nombres (normalizados) que son de temáticas especiales."""
-    nombres = [n for n in dict.fromkeys(normalizar(x) for x in nombres or []) if n]
-    if not nombres:
-        return []
-    return [f["nombre"] for f in db.todas(
-        conn, "select nombre from tematica where nombre = any(%s) and es_especial "
-              "order by nombre", (nombres,))]
+def _separar(valores):
+    """`[3, "telefonía móvil", "7"]` → `([3, 7], ["telefonía móvil"])`."""
+    ids, nombres = [], []
+    for v in valores if isinstance(valores, list) else [valores]:
+        if isinstance(v, bool) or v is None:
+            continue
+        if isinstance(v, int) or (isinstance(v, str) and v.strip().isdigit()):
+            ids.append(int(v))
+        else:
+            nombre = normalizar(v)
+            if nombre:
+                nombres.append(nombre)
+    return ids, nombres
+
+
+def especiales_entre(conn, valores, areas=None):
+    """Las temáticas especiales (por id o nombre) y las áreas especiales
+    entre las pedidas. La marca es la **efectiva** (`v_tematica`)."""
+    ids, nombres = _separar(valores)
+    salida = []
+    if ids or nombres:
+        salida += [f["nombre"] for f in db.todas(
+            conn,
+            "select nombre from v_tematica where es_especial "
+            "and (id = any(%s::bigint[]) or nombre = any(%s::text[])) order by nombre",
+            (ids, nombres))]
+    area_ids, _ = _separar(areas or [])
+    if area_ids:
+        salida += [f"área {f['nombre']}" for f in db.todas(
+            conn, "select nombre from area_tematica where es_especial "
+                  "and id = any(%s::bigint[]) order by nombre", (area_ids,))]
+    return salida
 
 
 def exigir_permiso_para_criterios(conn, criterios, actor):
-    """Una consulta que filtra por una temática especial exige el permiso
-    `tematicas_especiales`. Se chequea antes de correr nada."""
-    nombres = []
+    """Una consulta que filtra por una temática o un área especial exige el
+    permiso `tematicas_especiales`. Se chequea antes de correr nada.
+
+    Y fija en cada criterio de temática si puede alcanzar especiales
+    (`incluir_especiales`), **siempre**, pisando lo que haya mandado el
+    cuerpo: un área que no es especial puede tener temáticas que sí lo son,
+    y «con información sobre esa área» no puede devolver por la puerta de
+    atrás a quien solo tiene la especial. Sin el campo, el filtro las
+    excluye (`demografia.condiciones`).
+    """
+    puede = actor.puede("tematicas_especiales")
+    valores, areas = [], []
     for c in criterios or []:
-        if isinstance(c, dict) and str(c.get("dimension") or "").strip().lower() == DIMENSION:
-            valor = c.get("valor")
-            nombres += valor if isinstance(valor, list) else [valor]
-    especiales = especiales_entre(conn, nombres)
-    if especiales and not actor.puede("tematicas_especiales"):
+        if not isinstance(c, dict):
+            continue
+        dimension = str(c.get("dimension") or "").strip().lower()
+        if dimension not in (DIMENSION, DIMENSION_AREA):
+            continue
+        c["incluir_especiales"] = puede
+        if dimension == DIMENSION_AREA:
+            areas += c.get("valor") if isinstance(c.get("valor"), list) else [c.get("valor")]
+        else:
+            valores += c.get("valor") if isinstance(c.get("valor"), list) else [c.get("valor")]
+            areas += c.get("areas") or []
+    especiales = especiales_entre(conn, valores, areas)
+    if especiales and not puede:
         raise SinPermiso(
             f"Filtrar por {', '.join('«' + e + '»' for e in especiales)} no está "
-            f"habilitado para tu rol: es una temática de categoría especial.",
+            f"habilitado para tu rol: es de categoría especial.",
             {"permiso": "tematicas_especiales", "tematicas": especiales})
 
 
 DIMENSION = "tematica"
+# R-TEM.12 — «con información sobre el área entera»: atajo de un criterio de
+# temática con `areas`.
+DIMENSION_AREA = "area_tematica"
 
 
 def composicion(conn, universo, total, incluir_especiales=False):
@@ -618,21 +682,21 @@ def composicion(conn, universo, total, incluir_especiales=False):
     filas = db.todas(
         conn,
         f"""
-        select t.id, t.nombre, t.es_especial,
+        select t.id, t.nombre, t.es_especial, t.area,
                count(distinct p.id_persona)::int as personas
           {desde}
           join persona_tematica pt on pt.id_persona = p.id_persona
-          join tematica t on t.id = pt.tematica_id
+          join v_tematica t on t.id = pt.tematica_id
          where {donde} and (%s or not t.es_especial)
-         group by t.id
-         order by 4 desc, t.nombre
+         group by t.id, t.nombre, t.es_especial, t.area
+         order by 5 desc, t.nombre
         """,
         params + (bool(incluir_especiales),))
     return {
         "total": total,
         "items": [
             {"id": f["id"], "nombre": f["nombre"], "es_especial": f["es_especial"],
-             "personas": f["personas"],
+             "area": f["area"], "personas": f["personas"],
              "proporcion": (f["personas"] / total) if total else None}
             for f in filas],
         "especiales_ocultas": not incluir_especiales,
@@ -679,7 +743,7 @@ INSTRUCCIONES = """\
 Vas a recibir las preguntas de un cuestionario de investigación de mercado, \
 en español rioplatense. Tu tarea es identificar los temas que el \
 cuestionario cubre: no clasificar cada pregunta, sino decir de qué trata \
-el estudio.
+el estudio. Y ubicar cada tema en un área de la taxonomía.
 
 Reglas:
 - Entre 3 y 10 temáticas por cuestionario (menos si el cuestionario es muy \
@@ -690,11 +754,12 @@ de compra de ropa».
 - Preferí el nivel de tema de investigación y no el de pregunta: \
 «servicios de streaming» y no «Netflix».
 - No propongas temáticas demográficas (edad, sexo, nivel socioeconómico, \
-lugar de residencia) ni de datos de contacto o identificación.
-- Te paso la lista de temáticas que ya existen en el sistema. Si alguna \
-corresponde a lo que cubren las preguntas, reutilizala textualmente, \
-escrita exactamente igual, con es_nueva = false. Proponé una nueva \
-(es_nueva = true) solo si ninguna existente corresponde. No inventes \
+nivel educativo, lugar de residencia) ni de datos de contacto o \
+identificación.
+- Te paso las temáticas que ya existen en el sistema, agrupadas por área. \
+Si alguna corresponde a lo que cubren las preguntas, reutilizala \
+textualmente, escrita exactamente igual, con es_nueva = false. Proponé una \
+nueva (es_nueva = true) solo si ninguna existente corresponde. No inventes \
 variantes de una existente («telefonía celular» si ya está «telefonía \
 móvil»).
 - En preguntas_relacionadas poné los códigos de las preguntas de las que \
@@ -703,6 +768,12 @@ sale cada temática, tal como aparecen en la lista.
 especial de datos personales: salud (física o mental), consumo de \
 sustancias (alcohol, tabaco, drogas), ideología u opinión política, \
 religión o creencias, vida u orientación sexual. El analista lo confirma.
+- En area poné el área a la que pertenece cada temática. Elegila de la \
+lista de áreas existentes, escrita exactamente igual, con area_es_nueva = \
+false: clasificá por el contenido de sus temáticas, no solo por el nombre. \
+Proponé un área nueva (area_es_nueva = true) solo si ninguna corresponde: \
+dos a cuatro palabras en minúsculas, a nivel de sector o ámbito de \
+investigación («telecomunicaciones y conectividad», «consumo masivo»).
 
 Registrá tu propuesta con la herramienta proponer_tematicas."""
 
@@ -739,9 +810,20 @@ HERRAMIENTA = {
                                            "ideología política, religión o "
                                            "vida sexual.",
                         },
+                        "area": {
+                            "type": "string",
+                            "description": "El área de la taxonomía: una de "
+                                           "las existentes, escrita igual, o "
+                                           "una nueva.",
+                        },
+                        "area_es_nueva": {
+                            "type": "boolean",
+                            "description": "false si es una de las áreas "
+                                           "existentes.",
+                        },
                     },
                     "required": ["tematica", "es_nueva", "preguntas_relacionadas",
-                                 "podria_ser_especial"],
+                                 "podria_ser_especial", "area", "area_es_nueva"],
                 },
             },
         },
@@ -751,10 +833,27 @@ HERRAMIENTA = {
 
 
 def mensaje(existentes, preguntas):
-    """El texto que va a Claude: las existentes y las preguntas, nada más."""
-    lineas = ["Temáticas existentes en el sistema "
+    """El texto que va a Claude: la taxonomía existente y las preguntas.
+
+    `existentes` es `[(área o None, [temáticas])]` (ver `taxonomia_para_prompt`)
+    o, por compatibilidad, una lista plana de nombres. Las áreas van **con
+    sus temáticas**: así la ubicación es por contenido y no solo por nombre
+    (R-TEM.9).
+    """
+    if existentes and isinstance(existentes[0], str):
+        existentes = [(None, list(existentes))]
+    areas = [a for a, _ in existentes or [] if a]
+    lineas = ["Temáticas existentes en el sistema, agrupadas por área "
               "(reutilizalas textualmente cuando correspondan):"]
-    lineas += [f"- {n}" for n in existentes] or ["(todavía no hay ninguna)"]
+    if not any(ts for _, ts in existentes or []):
+        lineas.append("(todavía no hay ninguna)")
+    for area, nombres in existentes or []:
+        if not nombres:
+            continue
+        lineas.append(f"Área «{area}»:" if area else "Sin área todavía:")
+        lineas += [f"- {n}" for n in nombres]
+    lineas += ["", "Áreas existentes (elegí una de estas para cada temática):"]
+    lineas += [f"- {a}" for a in areas] or ["(todavía no hay ninguna: proponé las necesarias)"]
     lineas += ["", "Preguntas del cuestionario (código: texto):"]
     lineas += [f"{p['codigo']}: {p['texto']}" for p in preguntas]
     return "\n".join(lineas)
@@ -764,15 +863,19 @@ class Claude:
     """La propuesta con la API de Claude, con la herramienta forzada.
 
     Comparte con la verificación la clave, el modelo y la API, y no el
-    resto: acá es **una** llamada por carga, sin lotes ni reintentos. Si
+    resto: acá es **una** llamada por pedido, sin lotes ni reintentos. Si
     falla, la carga sigue y las temáticas se cargan a mano; un reintento
     solo alargaría la espera de quien está mirando la revisión.
+
+    `llamar` es la llamada genérica que usan también el arranque y la
+    reorganización de la taxonomía (`taxonomia.py`), con su propia
+    herramienta: mismo control de `stop_reason`, misma forma de fallar.
     """
 
     nombre = "claude"
     disponible = True
 
-    def __init__(self, api_key, modelo, tiempo_s, max_tokens=2048, transporte=None):
+    def __init__(self, api_key, modelo, tiempo_s, max_tokens=4096, transporte=None):
         if not api_key:
             raise FalloPropuesta("falta CLAUDE_API_KEY")
         self.api_key = api_key
@@ -783,14 +886,14 @@ class Claude:
         # `status_code` y `text`. En producción es `requests.post`.
         self._transporte = transporte
 
-    def cuerpo(self, existentes, preguntas):
+    def cuerpo(self, sistema, contenido, herramienta):
         return {
             "model": self.modelo,
             "max_tokens": self.max_tokens,
-            "system": INSTRUCCIONES,
-            "messages": [{"role": "user", "content": mensaje(existentes, preguntas)}],
-            "tools": [HERRAMIENTA],
-            "tool_choice": {"type": "tool", "name": HERRAMIENTA["name"]},
+            "system": sistema,
+            "messages": [{"role": "user", "content": contenido}],
+            "tools": [herramienta],
+            "tool_choice": {"type": "tool", "name": herramienta["name"]},
         }
 
     def _enviar(self, cuerpo):
@@ -806,19 +909,16 @@ class Claude:
                      "content-type": "application/json"},
             data=cuerpo.encode("utf-8"), timeout=self.tiempo_s)
 
-    def proponer(self, existentes, preguntas):
-        """`[{tematica, es_nueva, preguntas_relacionadas}]` tal como vino.
+    def llamar(self, sistema, contenido, herramienta, etiqueta="tematicas"):
+        """La entrada de la herramienta, tal como vino (un dict).
 
         Levanta `FalloPropuesta` con el motivo —sin contenido— ante
         cualquier cosa que no sea una herramienta completa: error HTTP, red,
         timeout, respuesta truncada (`stop_reason` se mira **antes** de leer
         la herramienta, como en la verificación) o ilegible.
         """
-        # Tripwire, como en la verificación: lo que sale no lleva claves de
-        # PII. Hoy son código y texto de preguntas; si alguien agrega un
-        # campo al payload, salta acá y no en producción.
-        pii.validar_sin_pii({"preguntas": preguntas}, contexto="tematicas")
-        cuerpo = json.dumps(self.cuerpo(existentes, preguntas), ensure_ascii=False)
+        cuerpo = json.dumps(self.cuerpo(sistema, contenido, herramienta),
+                            ensure_ascii=False)
         arranque = time.monotonic()
         try:
             respuesta = self._enviar(cuerpo)
@@ -839,15 +939,28 @@ class Claude:
         bloque = next(
             (b for b in datos.get("content") or []
              if isinstance(b, dict) and b.get("type") == "tool_use"
-             and b.get("name") == HERRAMIENTA["name"]), None)
+             and b.get("name") == herramienta["name"]), None)
         entrada = (bloque or {}).get("input")
-        crudas = entrada.get("tematicas") if isinstance(entrada, dict) else None
+        if not isinstance(entrada, dict):
+            raise FalloPropuesta(f"la respuesta no trae la herramienta {herramienta['name']}")
+        # Números, nunca contenido: como `[verificacion]`.
+        log.info("[%s] ms=%d entrada=%s salida=%s", etiqueta, ms,
+                 uso.get("input_tokens"), uso.get("output_tokens"))
+        return entrada
+
+    def proponer(self, existentes, preguntas):
+        """`[{tematica, es_nueva, preguntas_relacionadas, area, …}]` tal como
+        vino. Ver `llamar` para cómo falla."""
+        # Tripwire, como en la verificación: lo que sale no lleva claves de
+        # PII. Hoy son código y texto de preguntas; si alguien agrega un
+        # campo al payload, salta acá y no en producción.
+        pii.validar_sin_pii({"preguntas": preguntas}, contexto="tematicas")
+        entrada = self.llamar(INSTRUCCIONES, mensaje(existentes, preguntas),
+                              HERRAMIENTA)
+        crudas = entrada.get("tematicas")
         if not isinstance(crudas, list):
             raise FalloPropuesta("la respuesta no trae la herramienta de temáticas")
-        # Números, nunca contenido: como `[verificacion]`.
-        log.info("[tematicas] preguntas=%d existentes=%d propuestas=%d ms=%d "
-                 "entrada=%s salida=%s", len(preguntas), len(existentes),
-                 len(crudas), ms, uso.get("input_tokens"), uso.get("output_tokens"))
+        log.info("[tematicas] preguntas=%d propuestas=%d", len(preguntas), len(crudas))
         return crudas
 
 
@@ -861,6 +974,9 @@ class NoDisponible:
         self.motivo = motivo
 
     def proponer(self, existentes, preguntas):
+        raise FalloPropuesta(self.motivo)
+
+    def llamar(self, sistema, contenido, herramienta, etiqueta=None):
         raise FalloPropuesta(self.motivo)
 
 
@@ -904,7 +1020,8 @@ def crear(cfg=None, entorno=None):
         return NoDisponible(str(error))
 
 
-def _limpiar(crudas, preguntas, vocabulario, especiales=frozenset()):
+def _limpiar(crudas, preguntas, vocabulario, especiales=frozenset(),
+             areas=None, area_de=None):
     """La salida del modelo → la propuesta que ve el analista.
 
     - El nombre se normaliza y se resuelve contra el vocabulario: si difiere
@@ -917,7 +1034,16 @@ def _limpiar(crudas, preguntas, vocabulario, especiales=frozenset()):
     - Sin repetidas, y como mucho `MAX_PROPUESTAS`.
     - `podria_ser_especial` es lo que dijo Claude **o** que la existente ya
       está marcada: una especial no deja de serlo porque el modelo no lo vio.
+    - R-TEM.9 — el área: si la temática ya existe y tiene área, **es esa**
+      (lo clasificado no se toca, diga lo que diga el modelo). Si no, el
+      área que propuso Claude se resuelve contra las existentes como un
+      nombre de temática (mayúsculas, espacios, tildes); `area_es_nueva` lo
+      decide la base.
     """
+    from . import taxonomia
+
+    areas = areas or ({}, {})
+    area_de = area_de or {}
     por_codigo = {p["codigo"]: p for p in preguntas}
     salida, vistas = [], set()
     for cruda in crudas:
@@ -935,10 +1061,21 @@ def _limpiar(crudas, preguntas, vocabulario, especiales=frozenset()):
             por_codigo[c] for c in dict.fromkeys(
                 str(c).strip() for c in (cruda.get("preguntas_relacionadas") or []))
             if c in por_codigo]
+        fija = area_de.get(nombre)
+        if fija:
+            area_id, area, area_nueva = fija[0], fija[1], False
+        else:
+            area = normalizar(cruda.get("area"))
+            area_id = taxonomia.resolver_area(area, areas) if area else None
+            if area_id is not None:
+                area = taxonomia.nombre_de_area(area_id, areas)
+            area_nueva = bool(area) and area_id is None
         salida.append({"nombre": nombre, "es_nueva": existente is None,
                        "preguntas_relacionadas": relacionadas,
                        "podria_ser_especial": bool(cruda.get("podria_ser_especial"))
-                                              or nombre in especiales})
+                                              or nombre in especiales,
+                       "area": area, "area_id": area_id,
+                       "area_es_nueva": area_nueva, "area_fija": bool(fija)})
         if len(salida) >= MAX_PROPUESTAS:
             break
     return salida
@@ -957,24 +1094,75 @@ def proponer(conn, proponente, preguntas):
     if not preguntas:
         return {**base, "estado": SIN_PREGUNTAS, "aviso": AVISO_SIN_PREGUNTAS,
                 "propuesta": []}
+    from . import taxonomia
+
     vocabulario = _vocabulario(conn)
-    existentes = sorted(vocabulario[0])
     try:
-        crudas = proponente.proponer(existentes, preguntas)
+        crudas = proponente.proponer(taxonomia.para_prompt(conn), preguntas)
     except FalloPropuesta as error:
         log.warning("[tematicas] sin propuesta: %s", error)
         estado = NO_DISPONIBLE if not getattr(proponente, "disponible", True) else FALLO
         return {**base, "estado": estado,
                 "aviso": AVISO_FALLO.format(motivo=str(error)), "propuesta": []}
+    # La marca **efectiva**: una temática de un área especial ya lo es.
     especiales = {f["nombre"] for f in db.todas(
-        conn, "select nombre from tematica where es_especial")}
-    propuesta = _limpiar(crudas, preguntas, vocabulario, especiales)
+        conn, "select nombre from v_tematica where es_especial")}
+    area_de = {f["nombre"]: (f["area_id"], f["area"]) for f in db.todas(
+        conn, "select nombre, area_id, area from v_tematica where area_id is not null")}
+    propuesta = _limpiar(crudas, preguntas, vocabulario, especiales,
+                         areas=taxonomia.vocabulario_de_areas(conn), area_de=area_de)
     if not propuesta:
         return {**base, "estado": FALLO,
                 "aviso": AVISO_FALLO.format(motivo="la respuesta no trajo "
                                                    "ninguna temática válida"),
                 "propuesta": []}
     return {**base, "estado": OK, "aviso": None, "propuesta": propuesta}
+
+
+def _codigos_de(item):
+    crudos = item.get("preguntas")
+    if crudos is None:
+        crudos = item.get("preguntas_relacionadas") or []
+    return [str(c.get("codigo") if isinstance(c, dict) else c) for c in crudos]
+
+
+def ajustar_a_preguntas(items, preguntas_disponibles):
+    """R-TEM.13 — la propuesta sigue a la marca de demográficas.
+
+    Cuando en la revisión se marca una variable como demográfica o de
+    identidad, deja de ir al store semántico y ninguna persona puede tener
+    una temática que salía **solo** de ella. Esta función retira esas
+    temáticas —las que tenían preguntas y ya no les queda ninguna
+    disponible— y a las demás les recorta las preguntas excluidas. Es pura:
+    trabaja con lo que ya trae la propuesta (`preguntas_relacionadas`), **sin
+    volver a llamar a Claude**, y la pantalla conserva las retiradas para
+    devolverlas si la variable se desmarca.
+
+    Una temática sin ninguna pregunta (agregada a mano) se mantiene: no salía
+    de ninguna variable.
+
+    Devuelve `(vigentes, retiradas)`.
+    """
+    disponibles = {str(p.get("codigo") if isinstance(p, dict) else p)
+                   for p in preguntas_disponibles or []}
+    vigentes, retiradas = [], []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        codigos = _codigos_de(item)
+        quedan = [c for c in codigos if c in disponibles]
+        if codigos and not quedan:
+            retiradas.append(item)
+            continue
+        recortado = dict(item)
+        if "preguntas" in item and item["preguntas"] is not None:
+            recortado["preguntas"] = quedan
+        if "preguntas_relacionadas" in item:
+            recortado["preguntas_relacionadas"] = [
+                p for p in item["preguntas_relacionadas"]
+                if str(p.get("codigo") if isinstance(p, dict) else p) in disponibles]
+        vigentes.append(recortado)
+    return vigentes, retiradas
 
 
 def preguntas_guardadas(conn_semantica, ref_estudio):

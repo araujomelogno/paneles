@@ -4373,3 +4373,85 @@ persona, temática y carga.
 `web/public/js/tematicas.js`, `web/public/js/paginas/consultas.js`,
 `web/public/js/paginas/composicion.js`, `web/public/js/paginas/panelistas.js`,
 `functions/tests/test_tematicas_de_panelistas.py`.
+
+## D76 · La taxonomía de temáticas se propone, se aprueba y se guarda; el filtro cuenta personas
+
+**El problema.** La ampliación del spec de temáticas (2026-10-20). Con cada
+carga la lista plana crece y el filtro se vuelve una columna larga y sin orden;
+y en producción apareció «nivel educativo» en el filtro con «(1 carga)» sin que
+nadie la tuviera: Claude la propuso viendo todas las preguntas, la variable se
+marcó después como demográfica, el cálculo por persona la excluyó (bien) y el
+filtro contaba cargas (mal).
+
+**La decisión.**
+
+- **Dos niveles, área → temática** (`area_tematica`, `tematica.area_id`,
+  boveda/0028), todo por id. Tres o más niveles parecen más ordenados y
+  terminan inconsistentes.
+- **Se calcula una vez y se guarda.** Claude propone el arranque (una
+  llamada, `proponer_taxonomia`), ubica cada temática nueva en la **misma
+  llamada** que ya proponía las de la carga (`area`, `area_es_nueva` en
+  `proponer_tematicas`, con las áreas existentes y sus temáticas en el
+  prompt) y sugiere reorganizaciones a pedido (`proponer_operaciones`).
+  **Ninguna de las tres escribe.** El arranque se guarda al confirmarlo; cada
+  operación de la reorganización se aprueba por separado y se aplica de a una
+  (`POST /tematicas/taxonomia/operaciones`). Abrir el filtro o consultar lee
+  lo guardado: una taxonomía regenerada cambiaría nombres y agrupaciones cada
+  vez y rompería las consultas guardadas.
+- **Lo clasificado no se toca desde una carga.** La revisión de una carga
+  solo ubica temáticas sin área (`taxonomia.ubicar_si_falta`); el área de una
+  existente es la suya aunque el modelo diga otra. Moverla es una operación.
+  `area_es_nueva` lo decide la base, como `es_nueva`.
+- **Cada operación queda registrada** (`taxonomia_cambio`): tipo, objetos con
+  sus nombres de ese momento, quién. Sirve para entender, no para deshacer.
+- **La fusión de temáticas reapunta sin duplicar**: `carga_tematica`,
+  `tematica_pregunta` y `persona_tematica` pasan a la que queda con `on
+  conflict`, y después se recalculan las temáticas de las cargas afectadas
+  desde el store semántico (dos temáticas fusionadas no suman preguntas a
+  ciegas). La marca especial suma.
+- **La marca especial efectiva vive en una vista** (`v_tematica`): la propia
+  o la del área. Todo lo que decide columna, exportación, filtro, ficha y
+  composición la lee de ahí. La herencia suma y no resta. Desmarcar un área
+  exige `gestionar_atributos`, como una temática. Un área común con una
+  temática especial adentro no la alcanza por la puerta de atrás: el criterio
+  lleva `incluir_especiales`, que **fija la ruta** según el rol y pisa lo que
+  mande el cuerpo.
+- **El filtro agrupa por área, permite el área entera y cuenta personas**
+  (`GET /tematicas/filtro`, desde `persona_tematica`). Una temática con cero
+  personas **no se ofrece**; en el detalle de la carga se marca «sin
+  personas, probablemente sobrante» con la acción de quitarla, y
+  `GET /tematicas/sin-personas` es la revisión general.
+- **La propuesta sigue a la marca de demográficas sin llamar a Claude**
+  (`tematicas.ajustar_a_preguntas`): al volver a revisar con otra marca, la
+  pantalla manda la lista que tenía y el servidor retira las temáticas cuyas
+  preguntas quedaron todas excluidas (y recorta las demás). La pantalla
+  conserva las retiradas y las devuelve si la variable se desmarca. Solo
+  cambiar el texto o los códigos de las preguntas pide una propuesta nueva.
+- **Permiso nuevo** `gestionar_taxonomia` (admin, operaciones, analista):
+  quien edita las temáticas de una carga revisa y confirma la taxonomía.
+
+**Lo que cuesta.** Centavos una vez para el arranque, centavos cada
+reorganización pedida, nada por carga (va en la llamada de siempre) y nada al
+abrir el filtro.
+
+**Lo que se descartó.**
+
+- *Generar las áreas en cada apertura del filtro*: inestable, lento y con
+  costo por apertura.
+- *Una lista fija de áreas escrita a mano*: el spec pide que crezca con las
+  temáticas.
+- *Recalcular la propuesta llamando de nuevo a Claude al marcar una
+  demográfica*: más lento, con costo, y perdía lo que el analista ya había
+  editado.
+- *Contar cargas en el filtro*: dice qué cubrió el estudio, no si hay gente
+  sobre la que filtrar.
+- *Deshacer operaciones*: una fusión reapunta referencias; el registro
+  explica, no revierte.
+
+**Dónde vive.** `db/boveda/0028_taxonomia_de_tematicas.sql`,
+`db/revertir/boveda_0028.sql`, `functions/panel_api/taxonomia.py`,
+`functions/panel_api/tematicas.py` (`Claude.llamar`, `ajustar_a_preguntas`,
+`_limpiar`, lecturas sobre `v_tematica`), `demografia.py`, `ruteo.py`,
+`auth.py`, `web/public/js/paginas/taxonomia.js`, `web/public/js/tematicas.js`,
+`web/public/js/paginas/consultas.js`, `web/public/js/paginas/encuestas.js`,
+`functions/tests/test_taxonomia_de_tematicas.py`.

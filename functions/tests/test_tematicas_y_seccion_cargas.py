@@ -159,7 +159,7 @@ def test_la_respuesta_se_pide_con_la_herramienta_forzada(ctx, actor, carga):
     assert [h["name"] for h in enviado["tools"]] == ["proponer_tematicas"]
     esquema = enviado["tools"][0]["input_schema"]["properties"]["tematicas"]["items"]
     assert set(esquema["required"]) == {"tematica", "es_nueva", "preguntas_relacionadas",
-                                        "podria_ser_especial"}
+                                        "podria_ser_especial", "area", "area_es_nueva"}
     assert enviado["model"] == "modelo-x"
 
 
@@ -417,12 +417,9 @@ def test_borrar_la_carga_se_lleva_sus_vinculos_pero_no_la_tematica(conn_boveda, 
 def test_el_vocabulario_se_lista_con_su_uso(ctx, actor, carga):
     tematicas.guardar(ctx.boveda, carga["id"], ["telefonía móvil", "streaming"])
     _, salida = ruteo.despachar("GET", "/tematicas", {}, {}, actor("dpo"), ctx)
-    assert salida["items"] == [
-        {"id": salida["items"][0]["id"], "nombre": "streaming",
-         "es_especial": False, "cargas": 1},
-        {"id": salida["items"][1]["id"], "nombre": "telefonía móvil",
-         "es_especial": False, "cargas": 1},
-    ]
+    assert [(t["nombre"], t["es_especial"], t["cargas"], t["personas"], t["area"])
+            for t in salida["items"]] == [
+        ("streaming", False, 1, 0, None), ("telefonía móvil", False, 1, 0, None)]
 
 
 # ════════════════════════════════════════════════════════════════════

@@ -327,3 +327,225 @@ Migración aditiva. Sin cambios en el store semántico.
   información hay en el panel. Si después se quiere saber **cuántas personas**
   tienen datos sobre cada temática, la base ya va a estar: temáticas y
   preguntas relacionadas.
+
+
+---
+
+# Ampliación — Taxonomía de temáticas y correcciones del filtro
+
+**Estado:** Para desarrollo · sobre lo ya desplegado de este spec
+**Fecha:** 2026-10-20
+
+## T1. Por qué
+
+Con tres temáticas, una lista plana alcanza. Con cada carga nueva la lista crece,
+y en poco tiempo el filtro de temáticas se vuelve una columna larga, sin orden, y
+con casi-duplicados difíciles de ver. Hace falta un nivel arriba que agrupe.
+
+La decisión es que esa taxonomía **no sea una lista fija definida a mano**: la
+propone y la hace crecer Claude a partir de las temáticas que van apareciendo.
+Pero **se calcula una vez y se guarda**, y solo cambia con aprobación del
+analista.
+
+> **Por qué no generarla en cada consulta.** Claude no responde dos veces
+> exactamente igual: un día el área se llama «telecomunicaciones» y al otro
+> «comunicaciones», o agrupa distinto. El analista encontraría el filtro
+> reorganizado cada vez, y cualquier consulta guardada que use un área dejaría de
+> coincidir. Además sumaría segundos de espera y un costo por cada vez que alguien
+> abre el filtro. **Dinámica en cómo crece; estable en cómo se ve.**
+
+## T2. Requirements
+
+### R-TEM.7 — Dos niveles: área y temática (P0)
+
+- Dada una temática, entonces pertenece a **un área**.
+- Dada un área, entonces agrupa varias temáticas; tiene **nombre**, una
+  **descripción corta** y la marca **`es_especial`**.
+- [ ] Exactamente **dos niveles**. Tres o más parecen más ordenados, pero en la
+      práctica nadie sabe en qué rama va cada cosa y la clasificación se vuelve
+      inconsistente.
+- [ ] Todo se referencia **por id**: renombrar un área no rompe filtros ni
+      consultas guardadas.
+
+### R-TEM.8 — Arranque de la taxonomía (P0)
+
+- Dadas las temáticas existentes, entonces **una sola llamada** a Claude propone
+  las áreas y ubica cada temática en una.
+- Dada la propuesta, entonces el analista la **revisa** en una pantalla —puede
+  renombrar áreas, mover temáticas, unir dos áreas— y recién al confirmar se
+  guarda.
+- [ ] Guía para Claude: **entre 8 y 20 áreas**, nombres de dos a cuatro palabras
+      en minúsculas, nivel de sector o ámbito de investigación (*«telecomunicaciones
+      y conectividad»*, *«consumo masivo»*, *«finanzas y medios de pago»*).
+- [ ] Claude indica qué áreas **podrían ser especiales** (salud, sustancias,
+      ideología política, religión, vida sexual); el analista confirma.
+
+### R-TEM.9 — Crecimiento con cada carga (P0)
+
+- Dada una carga nueva, entonces **en la misma llamada que ya propone sus
+  temáticas** (R-TEM.2), Claude ubica cada temática en un **área existente**.
+- Dado que ninguna área existente corresponde, entonces Claude propone una
+  **nueva**, marcada como tal en la revisión.
+- [ ] El prompt recibe la lista de áreas existentes **con sus temáticas**, para
+      que la ubicación sea por contenido y no solo por nombre.
+- [ ] La herramienta `proponer_tematicas` agrega, en cada temática, `area` y
+      `area_es_nueva`.
+- [ ] **No se regenera nada**: lo ya clasificado no se toca.
+
+> **Clasificar es más estable que generar.** Con las áreas ya existentes, Claude
+> **elige** de una lista en vez de inventar un nombre. Eso es lo que hace que el
+> primer nivel se mantenga consistente aunque las temáticas de abajo varíen.
+
+### R-TEM.10 — Reorganización a pedido (P1)
+
+- Dado un botón **«Reorganizar taxonomía»**, entonces Claude recibe toda la
+  taxonomía y propone **operaciones**: fusionar temáticas, mover una temática de
+  área, renombrar un área, fusionar áreas, dividir un área.
+- Dada la propuesta, entonces cada operación se **aprueba o descarta por
+  separado**.
+- Dada una **fusión de temáticas**, entonces se reapuntan todas sus referencias
+  —`carga_tematica`, `tematica_pregunta`, `persona_tematica`— a la que queda, sin
+  duplicar filas.
+- [ ] **Nunca se aplica nada automáticamente.**
+- [ ] Cada cambio aplicado queda registrado (quién, cuándo, qué), para poder
+      entender después por qué una temática está donde está.
+
+### R-TEM.11 — Sensibilidad en el área (P1)
+
+- Dada un área **especial**, entonces todas sus temáticas **heredan** el
+  tratamiento especial de R-TEM.6: sin columna en resultados, sin exportación con
+  datos, consulta restringida por rol.
+- Dada una temática especial en un área que no lo es, entonces conserva su propia
+  marca: la herencia **suma**, no resta.
+
+### R-TEM.12 — El filtro, agrupado por área (P0)
+
+- Dado el filtro de temáticas en la consulta, entonces se muestra **agrupado por
+  área**, cada área plegable.
+- Dada un área, entonces se puede seleccionar **entera**: «con información sobre
+  *telecomunicaciones y conectividad*» equivale a tener cualquiera de sus
+  temáticas.
+- [ ] Una búsqueda por texto sobre áreas y temáticas, para cuando la lista sea
+      larga.
+
+---
+
+## T3. Correcciones del filtro (lo que reveló «nivel educativo»)
+
+### Qué pasó
+
+La temática **«nivel educativo»** aparece en el filtro con «(1 carga)», pero
+**ninguna persona la tiene**. La secuencia:
+
+1. Al analizar el SAV, Claude propuso las temáticas viendo **todas** las
+   preguntas, incluida la de nivel educativo.
+2. Después, en la revisión, esa variable se marcó como **demográfica**.
+3. El cálculo por persona (R-TEM.6) ya la excluyó —las demográficas no cuentan—,
+   así que nadie quedó con esa temática.
+4. Pero la temática **siguió asociada a la carga**, y el filtro cuenta **cargas**,
+   no personas: la muestra igual.
+
+Hay dos defectos: uno de orden (la propuesta no se actualiza al marcar
+demográficas) y uno del filtro (cuenta lo que no corresponde).
+
+### R-TEM.13 — La propuesta sigue a la marca de demográficas (P0)
+
+- Dada una variable que se marca como **demográfica o de identidad** en la
+  revisión, entonces las temáticas propuestas cuyas **preguntas relacionadas
+  quedaron todas excluidas** se **retiran de la propuesta**, en el momento.
+- Dada una temática que todavía tiene otras preguntas relacionadas no excluidas,
+  entonces se mantiene.
+- [ ] Se resuelve con los datos que ya trae la propuesta (`preguntas_relacionadas`),
+      **sin volver a llamar a Claude**.
+- [ ] Desmarcar la variable vuelve a mostrar la temática.
+
+### R-TEM.14 — El filtro cuenta personas (P0)
+
+- Dado el filtro, entonces cada temática y cada área muestran **cuántas
+  personas** tienen información sobre ellas (desde `persona_tematica`), no
+  cuántas cargas.
+- Dada una temática con **cero personas**, entonces **no se ofrece** en el filtro
+  de consulta. Sigue visible en el detalle de la carga, marcada «sin personas»,
+  para poder quitarla.
+- [ ] En el detalle de una carga, una temática con cero personas se señala como
+      **probablemente sobrante**, con la acción de quitarla.
+
+> **Por qué personas y no cargas.** El filtro sirve para encontrar **gente**. Que
+> una temática esté en una carga dice qué cubrió el estudio; cuántas personas la
+> tienen dice si vale la pena filtrar por ella.
+
+### Limpieza de lo ya cargado
+
+«Nivel educativo» se puede quitar ya, sin esperar el arreglo:
+
+```sql
+-- Bóveda. Quita la temática de las cargas y, si no la usa nadie más, la borra.
+delete from carga_tematica
+ where tematica_id = (select id from tematica where nombre = 'nivel educativo');
+delete from tematica_pregunta
+ where tematica_id = (select id from tematica where nombre = 'nivel educativo');
+delete from tematica t
+ where t.nombre = 'nivel educativo'
+   and not exists (select 1 from persona_tematica pt where pt.tematica_id = t.id);
+```
+
+- [ ] Después del arreglo, correr una revisión general: listar las temáticas con
+      **cero personas** en todas las cargas, que son las candidatas a quitar.
+
+---
+
+## T4. Cambios de esquema
+
+- **`area_tematica`**: `id`, `nombre` (normalizado, único), `descripcion`,
+  `es_especial boolean`, `origen` (`propuesta_ia` | `manual`), `creado_en`.
+- **`tematica`**: agregar `area_id` → `area_tematica(id)`. Nulo permitido solo
+  hasta el arranque (R-TEM.8); después, toda temática tiene área.
+- **`taxonomia_cambio`**: registro de las operaciones aplicadas (R-TEM.10):
+  tipo de operación, objetos afectados, actor, fecha.
+
+## T5. Definition of Done
+
+- [ ] El arranque propone áreas para las temáticas existentes y se guarda solo al
+      confirmar (test con respuesta simulada).
+- [ ] Una carga nueva ubica sus temáticas en áreas existentes, en la misma
+      llamada que ya se hacía (test).
+- [ ] Si ninguna área corresponde, se propone una nueva marcada como tal (test).
+- [ ] La taxonomía **no cambia** al abrir el filtro ni al consultar (test).
+- [ ] La reorganización propone operaciones y no aplica ninguna sin aprobación
+      (test).
+- [ ] Fusionar dos temáticas reapunta cargas, preguntas y personas sin duplicar
+      (test).
+- [ ] Un área especial vuelve especiales a sus temáticas (test).
+- [ ] El filtro agrupa por área, permite seleccionar un área entera y muestra
+      cantidad de **personas** (test).
+- [ ] Una temática con cero personas no aparece en el filtro de consulta (test).
+- [ ] Marcar una variable como demográfica retira de la propuesta las temáticas
+      que salían solo de ella, sin llamar a Claude (test).
+- [ ] «Nivel educativo» ya no aparece en el filtro.
+
+## T6. Costos
+
+| Concepto | Costo |
+|---|---|
+| Arranque de la taxonomía | **Centavos**, una vez: una llamada con la lista de temáticas (frases cortas; aun con 500, unos pocos miles de tokens). |
+| Crecimiento por carga | **Sin llamadas adicionales**: va en la llamada que ya propone las temáticas; el prompt crece un poco con la lista de áreas. |
+| Reorganización a pedido | **Centavos** cada vez que se pide. |
+| Abrir el filtro, consultar | **US$ 0**: la taxonomía está guardada. |
+| Esquema e interfaz | **US$ 0** de infraestructura. |
+
+> **Lo que se evita:** generar la taxonomía en cada consulta habría multiplicado
+> esos centavos por cada apertura del filtro, sumado segundos de espera y
+> producido una agrupación distinta cada vez.
+
+## T7. Riesgos y preguntas abiertas
+
+- **[producto]** La primera taxonomía condiciona las siguientes: R-TEM.9 clasifica
+  contra lo que ya existe. Conviene que el arranque se revise con cuidado, y
+  hacerlo cuando haya **varias cargas** cargadas —con tres temáticas, Claude no
+  tiene material para proponer áreas con sentido—.
+- **[producto]** Las áreas nuevas propuestas en el crecimiento tienden a
+  multiplicarse si cada carga trae un tema distinto. La reorganización periódica
+  es lo que lo contiene; conviene pedirla cada tanto, no solo cuando la lista ya
+  se volvió inmanejable.
+- **[datos]** Fusionar temáticas es irreversible en la práctica: las referencias
+  se reapuntan. El registro de cambios permite saber qué pasó, no deshacerlo.

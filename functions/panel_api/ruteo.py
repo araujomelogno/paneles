@@ -46,6 +46,7 @@ from . import (
     sav,
     semantica,
     series,
+    taxonomia,
     tematicas,
     usuarios,
     verificacion as mod_verificacion,
@@ -1628,6 +1629,84 @@ def listar_tematicas(ctx, actor, params, cuerpo, consulta):
     return 200, {"items": tematicas.listar(ctx.boveda)}
 
 
+# ── R-TEM.7 a R-TEM.14 · La taxonomía y el filtro ───────────────────
+
+@ruta("GET", "/tematicas/taxonomia", "leer", requisito="R-TEM.7, R-TEM.8")
+def ver_taxonomia(ctx, actor, params, cuerpo, consulta):
+    """La taxonomía guardada: áreas con sus temáticas y las sin área, con
+    cargas y personas. Solo lee: no llama a Claude ni cambia nada."""
+    return 200, taxonomia.listar(
+        ctx.boveda, incluir_especiales=actor.puede("tematicas_especiales"))
+
+
+@ruta("POST", "/tematicas/taxonomia/propuesta", "gestionar_taxonomia",
+      requisito="R-TEM.8")
+def proponer_taxonomia(ctx, actor, params, cuerpo, consulta):
+    """R-TEM.8 — una llamada a Claude: áreas para las temáticas sin área.
+    No guarda nada: la pantalla la muestra para revisar y confirmar."""
+    return 200, taxonomia.proponer_arranque(ctx.boveda, ctx.proponente_tematicas)
+
+
+@ruta("PUT", "/tematicas/taxonomia", "gestionar_taxonomia", requisito="R-TEM.8")
+def guardar_taxonomia(ctx, actor, params, cuerpo, consulta):
+    """R-TEM.8 — guarda la taxonomía que confirmó el analista (solo ubica
+    temáticas sin área) y la registra."""
+    salida = taxonomia.guardar_arranque(
+        ctx.boveda, cuerpo.get("areas"), actor=actor,
+        puede_desmarcar=actor.puede("gestionar_atributos"))
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("POST", "/tematicas/taxonomia/reorganizacion", "gestionar_taxonomia",
+      requisito="R-TEM.10")
+def proponer_reorganizacion(ctx, actor, params, cuerpo, consulta):
+    """R-TEM.10 — Claude propone operaciones sobre la taxonomía. No aplica
+    ninguna: cada una se aprueba por separado."""
+    return 200, taxonomia.proponer_reorganizacion(
+        ctx.boveda, ctx.proponente_tematicas)
+
+
+@ruta("POST", "/tematicas/taxonomia/operaciones", "gestionar_taxonomia",
+      requisito="R-TEM.10, R-TEM.11")
+def aplicar_operacion_de_taxonomia(ctx, actor, params, cuerpo, consulta):
+    """Aplica **una** operación aprobada (propuesta o del analista) y la
+    registra. Una fusión de temáticas abre el store semántico para
+    recalcular las de los panelistas de las cargas afectadas."""
+    operacion = cuerpo.get("operacion") or cuerpo
+    salida = taxonomia.aplicar(
+        ctx.boveda, operacion, actor=actor,
+        conn_semantica=(ctx.semantica
+                        if operacion.get("tipo") == taxonomia.FUSIONAR_TEMATICAS
+                        else None),
+        puede_desmarcar=actor.puede("gestionar_atributos"))
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("GET", "/tematicas/taxonomia/cambios", "leer", requisito="R-TEM.10")
+def cambios_de_taxonomia(ctx, actor, params, cuerpo, consulta):
+    """Quién cambió qué en la taxonomía, y cuándo."""
+    return 200, {"items": taxonomia.historial(
+        ctx.boveda, _entero(consulta.get("limite"), 50))}
+
+
+@ruta("GET", "/tematicas/filtro", "leer", requisito="R-TEM.12, R-TEM.14")
+def filtro_de_tematicas(ctx, actor, params, cuerpo, consulta):
+    """Lo que ofrece el filtro: por área, con cuántas **personas** tienen
+    cada temática, y sin las que no tiene nadie. Las especiales, solo con el
+    permiso. Solo lee lo guardado."""
+    return 200, taxonomia.filtro(
+        ctx.boveda, incluir_especiales=actor.puede("tematicas_especiales"))
+
+
+@ruta("GET", "/tematicas/sin-personas", "leer", requisito="R-TEM.14")
+def tematicas_sin_personas(ctx, actor, params, cuerpo, consulta):
+    """Las temáticas de cada carga que no tiene nadie: candidatas a
+    quitar."""
+    return 200, {"items": taxonomia.sin_personas(ctx.boveda)}
+
+
 @ruta("PUT", "/cargas/<carga_id>/tematicas", "ingestar",
       requisito="R-TEM.4, R-TEM.6")
 def guardar_tematicas_de_carga(ctx, actor, params, cuerpo, consulta):
@@ -1695,7 +1774,7 @@ def analizar_sav_de_carga(ctx, actor, params, cuerpo, consulta):
                              cuerpo.get("valores_no_respuesta"))
 
 
-@ruta("POST", "/cargas/<carga_id>/ingesta", "ingestar", requisito="R3.13, R-TEM.2")
+@ruta("POST", "/cargas/<carga_id>/ingesta", "ingestar", requisito="R3.13, R-TEM.2, R-TEM.13")
 def ingestar_carga(ctx, actor, params, cuerpo, consulta):
     """Incorpora los individuos del archivo y sus respuestas. Sin panel.
 
@@ -1737,13 +1816,29 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
         # aviso: la carga no se frena por esto. `proponer_tematicas: false`
         # la omite (la pantalla ya tiene una lista editada para estas
         # mismas preguntas y no tiene por qué pagar ni esperar otra).
-        resumen["tematicas"] = (
-            tematicas.proponer(
-                ctx.boveda, ctx.proponente_tematicas,
-                tematicas.preguntas_para_proponer(
-                    resumen["al_store_semantico"]["variables"],
-                    demograficas, columna_id))
-            if cuerpo.get("proponer_tematicas", True) is not False else None)
+        disponibles = tematicas.preguntas_para_proponer(
+            resumen["al_store_semantico"]["variables"], demograficas, columna_id)
+        if cuerpo.get("proponer_tematicas", True) is not False:
+            resumen["tematicas"] = tematicas.proponer(
+                ctx.boveda, ctx.proponente_tematicas, disponibles)
+        elif cuerpo.get("propuesta_previa") is not None \
+                or cuerpo.get("tematicas_editadas") is not None:
+            # R-TEM.13 — se marcó (o desmarcó) una variable como demográfica:
+            # la propuesta que ya estaba se ajusta a las preguntas que siguen
+            # yendo al store semántico, **sin volver a llamar a Claude**. Las
+            # temáticas que salían solo de las variables marcadas se retiran;
+            # la pantalla las guarda para devolverlas si se desmarcan.
+            propuesta, retiradas = tematicas.ajustar_a_preguntas(
+                cuerpo.get("propuesta_previa") or [], disponibles)
+            editadas, retiradas_editadas = tematicas.ajustar_a_preguntas(
+                cuerpo.get("tematicas_editadas") or [], disponibles)
+            resumen["tematicas"] = {
+                "estado": "ajustada", "aviso": None,
+                "propuesta": propuesta, "editadas": editadas,
+                "retiradas": [t.get("nombre") for t in retiradas + retiradas_editadas],
+            }
+        else:
+            resumen["tematicas"] = None
         return 200, resumen
 
     creacion = None

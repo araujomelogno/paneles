@@ -380,7 +380,7 @@ resultados se agrega ahí, una vez.
 
 ## De qué trata una carga: temáticas, y la sección Cargas
 
-Desde R-TEM / R-CAR (D74, D75, `boveda/0027`) cada carga tiene sus
+Desde R-TEM / R-CAR (D74, D75, D76, `boveda/0027` y `0028`) cada carga tiene sus
 **temáticas incorporadas**, cada panelista las suyas, y hay una sección
 «Cargas» que la mira entera. Lo que no hay que deshacer:
 
@@ -424,6 +424,25 @@ Desde R-TEM / R-CAR (D74, D75, `boveda/0027`) cada carga tiene sus
 - **La lista de panelistas de una carga es `GET /panelistas?carga_id=…`**, la
   misma ruta y permiso que la sección Panelistas. No agreguen una ruta bajo
   `/cargas/` que liste personas; hay una prueba que lo vigila.
+
+Desde la ampliación (D76, `boveda/0028`) hay **taxonomía**: área → temática,
+exactamente dos niveles.
+
+- **Se propone, se aprueba y se guarda.** Claude propone el arranque, ubica
+  las temáticas nuevas en la llamada de siempre y sugiere reorganizaciones;
+  `taxonomia.proponer_*` **no escriben**. Se guarda el arranque confirmado y
+  cada operación aprobada (`taxonomia.aplicar`), de a una y registrada en
+  `taxonomia_cambio`. Abrir el filtro o consultar no llama a nadie: no
+  agreguen una taxonomía calculada al vuelo.
+- **Lo clasificado no se mueve desde una carga** (`ubicar_si_falta`); se
+  mueve con una operación.
+- **La marca especial efectiva es `v_tematica`** (propia o del área). Lean
+  esa vista, no `tematica.es_especial`, para decidir columna, exportación,
+  filtro, ficha o composición. El criterio de temática lleva
+  `incluir_especiales`, que fija la ruta según el rol y nunca el cuerpo.
+- **El filtro cuenta personas** (`taxonomia.filtro`) y no ofrece las que no
+  tiene nadie. Y la propuesta de la revisión sigue a la marca de demográficas
+  **sin llamar a Claude** (`tematicas.ajustar_a_preguntas`).
 
 ## Reglas de negocio que el código debe respetar
 
