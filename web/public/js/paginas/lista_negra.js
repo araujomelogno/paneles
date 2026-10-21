@@ -27,7 +27,7 @@ export async function render(main, ctx) {
       <div class="card-header">
         <div class="toolbar" style="flex:1">
           <div class="buscador">
-            <input type="text" id="q" placeholder="Buscar por nombre, email o documento…"
+            <input type="text" id="q" placeholder="Nombre, email o documento…"
                    value="${esc(filtro.q)}" />
           </div>
           <label class="check"><input type="checkbox" id="removidas"

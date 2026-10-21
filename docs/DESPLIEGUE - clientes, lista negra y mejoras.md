@@ -144,10 +144,33 @@ Qué hace:
 Salida en el ensayo:
 
 ```
-ENSAYO_0031
+BEGIN
+CREATE TABLE
+COMMENT
+CREATE TABLE
+CREATE INDEX
+COMMENT
+CREATE VIEW
+COMMENT
+CREATE TABLE
+CREATE INDEX
+COMMENT
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+REVOKE
+CREATE FUNCTION
+COMMENT
+COMMIT
 ```
 
-Se puede correr dos veces. Se ensayó revertirla y volver a aplicarla.
+Se puede correr dos veces: la segunda avisa que las tablas ya existen
+(`NOTICE … already exists, skipping`) y termina en `COMMIT`.
+
+Se ensayó sobre una copia de la base de pruebas: revertirla, comprobar que
+no quedaron las tablas y que la función volvió a la `0021`, y aplicarla dos
+veces. Después de cada pasada, `coloquio_app` seguía con `EXECUTE` sobre
+`f_persona_convocable()` y `SELECT` sobre `v_persona_convocable`.
 
 ## Paso 3 · Verificar el esquema y la superficie de COLOQUIO
 

@@ -119,14 +119,17 @@ export async function render(main, ctx) {
         <span class="small muted">quién vio los datos de quién, cuándo y por qué</span>
       </div>
       <div class="card-body">
-        <div class="toolbar" id="reid-filtros">
-          <input type="text" class="finput" name="actor" placeholder="Usuario (correo)"
-                 style="max-width:220px" />
-          <input type="text" class="finput" name="panelista"
-                 placeholder="Panelista: documento, correo o id" style="max-width:260px" />
-          <label class="small">Desde <input type="date" name="desde" /></label>
-          <label class="small">Hasta <input type="date" name="hasta" /></label>
-          <button class="btn btn-outline btn-sm" id="reid-filtrar">Filtrar</button>
+        <div id="reid-filtros" style="display:flex;flex-wrap:wrap;gap:.75rem;align-items:flex-end">
+          <div class="form-group" style="margin:0;flex:1 1 180px"><label>Usuario</label>
+            <input type="text" class="finput" name="actor" placeholder="correo" /></div>
+          <div class="form-group" style="margin:0;flex:1 1 220px"><label>Panelista</label>
+            <input type="text" class="finput" name="panelista"
+                   placeholder="documento, correo o id" /></div>
+          <div class="form-group" style="margin:0;flex:0 1 170px"><label>Desde</label>
+            <input type="date" name="desde" /></div>
+          <div class="form-group" style="margin:0;flex:0 1 170px"><label>Hasta</label>
+            <input type="date" name="hasta" /></div>
+          <button class="btn btn-outline" id="reid-filtrar">Filtrar</button>
         </div>
       </div>
       <div class="card-body tight"><div id="reidentificaciones">${cargando('12vh')}</div></div>
