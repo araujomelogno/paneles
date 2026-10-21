@@ -362,20 +362,75 @@ function mostrarResultado(titulo, filas, nota) {
 
 /* ── R3.12.a · Exportar la muestra ──────────────────────────────── */
 
-/* Mientras corre algo largo, el pie del modal queda inutilizable.
+/* R-ING.1 — mientras se prepara o se encola una carga, el modal entero
+   queda inutilizable: el pie, la × del encabezado y **también el mapeo**.
 
    Sin esto, el usuario que no ve avance vuelve a apretar Ingestar —es lo
    razonable si parece que no pasó nada— y dispara una segunda carga encima
-   de la primera. La barra de avance y esto resuelven el mismo problema desde
-   los dos lados. */
+   de la primera. Y si el mapeo siguiera editable, lo que se ve al volver no
+   sería lo que se mandó. La guarda de verdad está en la base (R-ING.2, un
+   índice único por destino); esto es lo que hace que no haga falta llegar
+   a ella.
+
+   Recuerda qué controles ya estaban deshabilitados —el texto de una
+   variable demográfica, por ejemplo— para no habilitarlos al soltar. */
 function bloquearModal(caja) {
-  // El pie y la × del encabezado. No las × de cada fila de variable, que
-  // comparten la clase: esas quedan inertes igual porque el modal entero
-  // está esperando.
-  const botones = $$('.modal-foot .btn, .modal-head .modal-close', caja);
-  botones.forEach((b) => { b.disabled = true; });
+  const controles = $$('button, input, select, textarea', caja)
+    .filter((c) => !c.disabled);
+  controles.forEach((c) => { c.disabled = true; });
+  caja.setAttribute('aria-busy', 'true');
+  caja.classList.add('procesando-modal');
   return {
-    soltar() { botones.forEach((b) => { b.disabled = false; }); },
+    soltar() {
+      controles.forEach((c) => { c.disabled = false; });
+      caja.removeAttribute('aria-busy');
+      caja.classList.remove('procesando-modal');
+    },
+  };
+}
+
+/* R-ING.1 — el aviso de que el servidor está trabajando. Aparece en el
+   momento del clic, antes de que el servidor conteste, arriba y junto al
+   botón: con una lista larga de variables, quien apretó «Ingestar» está
+   mirando el pie. Si tarda más de unos segundos lo dice, para que no
+   parezca colgado. */
+const SIGUE_PROCESANDO_MS = 8000;
+const PREPARANDO = 'Preparando la carga…';
+const NOTA_PREPARANDO = 'Puede tardar unos segundos con bases grandes. '
+  + 'No cierres esta ventana.';
+const SIGUE_PROCESANDO = 'Sigue procesando…';
+const NOTA_SIGUE_PROCESANDO = 'Con bases grandes la preparación puede tardar '
+  + 'varios minutos: se leen las filas y se resuelve a cada persona. '
+  + 'No cierres esta ventana.';
+
+function indicarProcesando(destinos, titulo = PREPARANDO, nota = NOTA_PREPARANDO) {
+  const html = `<div class="procesando" role="status" aria-live="polite">
+      <span class="spinner spinner-sm"></span>
+      <div class="procesando-texto">
+        <strong class="procesando-titulo">${esc(titulo)}</strong>
+        <div class="small procesando-nota">${esc(nota)}</div>
+      </div>
+      <span class="procesando-tiempo"></span>
+    </div>`;
+  destinos.forEach((d) => { d.innerHTML = html; });
+  const desde = Date.now();
+  const reloj = setInterval(() => {
+    const ms = Date.now() - desde;
+    destinos.forEach((d) => {
+      const tiempo = $('.procesando-tiempo', d);
+      if (!tiempo) return;
+      tiempo.textContent = `${Math.floor(ms / 1000)} s`;
+      if (ms >= SIGUE_PROCESANDO_MS) {
+        $('.procesando-titulo', d).textContent = SIGUE_PROCESANDO;
+        $('.procesando-nota', d).textContent = NOTA_SIGUE_PROCESANDO;
+      }
+    });
+  }, 1000);
+  return {
+    quitar() {
+      clearInterval(reloj);
+      destinos.forEach((d) => { if ($('.procesando', d)) d.innerHTML = ''; });
+    },
   };
 }
 
@@ -510,8 +565,14 @@ function panelDeAvance(destino, archivo) {
       texto.textContent = nombre;
       const desde = Date.now();
       const tic = () => {
-        const s = Math.round((Date.now() - desde) / 1000);
+        const ms = Date.now() - desde;
+        const s = Math.round(ms / 1000);
         cifra.textContent = s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`;
+        // R-ING.1 — pasado un rato lo dice, para que no parezca colgado.
+        if (ms >= SIGUE_PROCESANDO_MS) {
+          texto.textContent = `${nombre} ${SIGUE_PROCESANDO.toLowerCase()}`;
+          $('.avance-pie', destino).textContent = NOTA_SIGUE_PROCESANDO;
+        }
       };
       tic();
       reloj = setInterval(tic, 1000);
@@ -644,6 +705,11 @@ function abrirIngesta(destino, alTerminar) {
      lo que el analista ya editó. */
   let tematicasElegidas = null;
   let firmaDeLaPropuesta = null;
+  // R-TEM.13 — lo que se guarda al confirmar: las vigentes del editor. Las
+  // retiradas por una variable marcada como demográfica se conservan en
+  // `tematicasElegidas` para volver si se desmarca, pero no se guardan.
+  let tematicasAGuardar = null;
+  let corriendo = false;
 
   const caja = modal({
     titulo: `${esCarga ? 'Cargar panelistas' : 'Ingestar respuestas'} — ${encuesta.nombre}`,
@@ -805,9 +871,17 @@ function abrirIngesta(destino, alTerminar) {
       // Ninguna acción sin respuesta visible: si `correr` revienta por algo
       // que nadie previó, el motivo aparece junto al botón y no queda como
       // «uncaught in promise» en una consola que nadie mira.
+      // R-ING.1 — y una sola vez: entre el clic y el bloqueo del modal hay
+      // validaciones y quizá una confirmación, y un segundo clic ahí
+      // arrancaría otra corrida.
       { texto: 'Ingestar', clase: 'btn-orange',
-        onClick: () => correr().catch((error) => avisarEnIngesta(alerta(
-          `No se pudo continuar: ${error.message}`))) },
+        onClick: () => {
+          if (corriendo) return;
+          corriendo = true;
+          correr().catch((error) => avisarEnIngesta(alerta(
+            `No se pudo continuar: ${error.message}`)))
+            .finally(() => { corriendo = false; });
+        } },
     ],
   });
 
@@ -1662,6 +1736,25 @@ function abrirIngesta(destino, alTerminar) {
     return alerta$;
   }
 
+  /* R-ING.2 — si el servidor dice que ya hay una ingesta en curso para
+     este destino, no es un error para corregir: se dice y se ofrece ir a
+     su avance. Cualquier otro error, con su motivo junto al botón. */
+  function mostrarErrorDeIngesta(error) {
+    if (error.codigo !== 'ingesta_en_curso' || !error.detalle?.trabajo_id) {
+      avisarEnIngesta(alerta(error.message));
+      return;
+    }
+    avisarEnIngesta(`<div class="alert alert-info">${esc(error.message)}
+      <div style="margin-top:.5rem"><button class="btn btn-orange btn-sm"
+        data-ver-en-curso>Ver su avance</button></div></div>`);
+    $$('[data-ver-en-curso]', caja).forEach((boton) => {
+      boton.onclick = () => {
+        cerrarModal();
+        reanudarIngesta(error.detalle.trabajo_id, { esCarga, alTerminar });
+      };
+    });
+  }
+
   /* R7.2 · El paso de revisión ─────────────────────────────────────
 
      Devuelve `true` si se confirmó, `false` si se volvió a corregir. Volver
@@ -1670,20 +1763,33 @@ function abrirIngesta(destino, alTerminar) {
   async function revisarAntesDeImportar(cuerpo) {
     let resumen;
     // R-TEM.2 — en una carga, la revisión trae además la propuesta de
-    // temáticas. Solo se pide si cambiaron las preguntas o sus marcas desde
-    // la última: si no, se sigue con la lista ya editada.
-    const firma = JSON.stringify([
-      (cuerpo.preguntas || []).map((p) => [p.codigo, p.texto]), cuerpo.demograficas]);
+    // temáticas. Solo se pide a Claude si cambiaron las preguntas (código o
+    // texto) desde la última. Si solo cambió qué variables son demográficas,
+    // el servidor ajusta la lista ya editada sin llamar a nadie (R-TEM.13):
+    // retira las temáticas que salían solo de las variables marcadas.
+    const firma = JSON.stringify((cuerpo.preguntas || []).map((p) => [p.codigo, p.texto]));
     const proponer = esCarga && (tematicasElegidas === null || firma !== firmaDeLaPropuesta);
+    // R-ING.1 — en el momento del clic, antes de que conteste el servidor:
+    // preparar la revisión lee el archivo entero y, en una carga, le pide
+    // las temáticas a Claude. Sin esto el modal quedaba quieto y no había
+    // forma de distinguir «está procesando» de «no hizo nada».
+    const bloqueo = bloquearModal(caja);
+    const indicador = indicarProcesando([$('#ing-alerta', caja), alertaPie$]);
+    caja.scrollTop = 0;
     try {
       resumen = await enviarIngesta({
         ...cuerpo, solo_revisar: true,
         ...(esCarga ? { proponer_tematicas: proponer } : {}),
+        ...(esCarga && !proponer ? { tematicas_editadas: tematicasElegidas || [] } : {}),
       });
     } catch (error) {
-      avisarEnIngesta(alerta(error.message));
+      indicador.quitar();
+      bloqueo.soltar();
+      mostrarErrorDeIngesta(error);
       return false;
     }
+    indicador.quitar();
+    bloqueo.soltar();
     /* Dentro del mismo modal y no en uno nuevo: `modal()` cierra el
        anterior, así que un modal encima destruiría el formulario y «volver
        a corregir» no tendría a qué volver. Acá el formulario sigue intacto
@@ -1702,6 +1808,11 @@ function abrirIngesta(destino, alTerminar) {
           + 'semántico (ni respuestas ni demográficos): aceptá, quitá o agregá.'
         : 'Las que dejaste en la revisión anterior.'} Se guardan al confirmar, y se
         pueden editar después desde la sección Cargas.</p>
+      ${resumen.tematicas?.retiradas?.length ? alerta(
+        `Se retiraron ${resumen.tematicas.retiradas.length} temática(s) que salían solo de `
+        + 'variables marcadas como demográficas o de identidad: '
+        + `${resumen.tematicas.retiradas.join(', ')}. Vuelven si desmarcás esas variables.`,
+        'info') : ''}
       <div id="rev-tematicas">${cargando('6vh')}</div>` : '') + `
       <div class="modal-foot pie-revision" style="padding-left:0;padding-right:0">
         <button class="btn btn-outline" id="volver-a-corregir">${sinClave
@@ -1720,16 +1831,24 @@ function abrirIngesta(destino, alTerminar) {
     caja.scrollTop = 0;
 
     let editorTematicas = null;
+    let retiradasAhora = [];
     if (esCarga) {
-      const { items: vocabulario } = await api.tematicas.listar().catch(() => ({ items: [] }));
+      const [{ items: vocabulario }, { areas }] = await Promise.all([
+        api.tematicas.listar().catch(() => ({ items: [] })),
+        api.tematicas.taxonomia().catch(() => ({ areas: [] })),
+      ]);
       const propuesta = resumen.tematicas;
+      const retiradas = new Set(propuesta?.retiradas || []);
+      retiradasAhora = (tematicasElegidas || []).filter((t) => retiradas.has(t.nombre));
       editorTematicas = editorDeTematicas($('#rev-tematicas', revision$), {
         vocabulario,
+        areas,
         // R-TEM.6 — las preguntas que se pueden asociar son las que van al
         // store semántico: las mismas que vio Claude.
         preguntasDisponibles: resumen.al_store_semantico?.variables || [],
         puedeDesmarcar: false,
-        iniciales: proponer ? [] : (tematicasElegidas || []),
+        iniciales: proponer ? [] : (propuesta?.editadas || tematicasElegidas || [])
+          .map((t) => ({ ...t, nueva: t.nueva })),
         propuesta: proponer ? (propuesta?.propuesta || []) : [],
         aviso: proponer ? propuesta?.aviso : null,
       });
@@ -1738,7 +1857,12 @@ function abrirIngesta(destino, alTerminar) {
 
     return new Promise((resolver) => {
       const cerrar = (confirmado) => {
-        if (editorTematicas) tematicasElegidas = editorTematicas.valor();
+        if (editorTematicas) {
+          tematicasAGuardar = editorTematicas.valor();
+          const vigentes = new Set(tematicasAGuardar.map((t) => t.nombre));
+          tematicasElegidas = [...tematicasAGuardar,
+            ...retiradasAhora.filter((t) => !vigentes.has(t.nombre))];
+        }
         revision$.classList.add('hidden');
         revision$.innerHTML = '';
         formulario$.classList.remove('hidden');
@@ -2060,32 +2184,37 @@ function abrirIngesta(destino, alTerminar) {
     // antes de crear miles de duplicados.
     if (!(await revisarAntesDeImportar(cuerpo))) return;
 
+    // R-ING.1 — desde el «Confirmar», el modal queda bloqueado y dice que
+    // trabaja, antes de cualquier pedido (las temáticas incluidas). Avance
+    // para los dos caminos, no solo para el `.sav`: la espera larga es la
+    // del servidor —crear y resolver a cada individuo— y esa la tiene igual
+    // un `.csv`.
+    const enCurso = bloquearModal(caja);
+    const avance = panelDeAvance(
+      alerta$,
+      datosArchivo.savBase64
+        ? { name: 'archivo .sav', size: datosArchivo.savBase64.length * 0.75 }
+        : { name: `${datosArchivo.filas.length} fila(s)`, size: 0 });
+    avance.abierto(PREPARANDO, NOTA_PREPARANDO);
+    const indicadorPie = indicarProcesando([alertaPie$]);
+    caja.scrollTop = 0;
+
     /* R-TEM.4 — las temáticas revisadas se guardan antes de encolar, por el
        mismo camino con el que se editan después. Si no se pudieran guardar,
        la carga sigue igual: las temáticas no son razón para frenarla, y se
        completan desde la sección Cargas. */
-    if (esCarga && tematicasElegidas) {
+    if (esCarga && tematicasAGuardar) {
       try {
-        await api.cargas.guardarTematicas(encuesta.id, tematicasElegidas);
+        await api.cargas.guardarTematicas(encuesta.id, tematicasAGuardar);
       } catch (error) {
         toast(`No se guardaron las temáticas (${error.message}). La carga sigue; `
           + 'agregalas desde la sección Cargas.', 'err');
       }
     }
 
-    // Avance para los dos caminos, no solo para el `.sav`. La espera larga
-    // es la del servidor —resolver cada individuo y calcular embeddings— y
-    // esa la tiene igual un `.csv`: sin panel, el modal se quedaba quieto y
-    // no había forma de distinguir «está trabajando» de «no responde».
-    const avance = panelDeAvance(
-      alerta$,
-      datosArchivo.savBase64
-        ? { name: 'archivo .sav', size: datosArchivo.savBase64.length * 0.75 }
-        : { name: `${datosArchivo.filas.length} fila(s)`, size: 0 });
-    caja.scrollTop = 0;
-    const enCurso = bloquearModal(caja);
     try {
       const resultado = await enviarIngesta(cuerpo, avance);
+      indicadorPie.quitar();
       avance.medido('Encolada', 0);
       enCurso.soltar();
       cerrarModal();
@@ -2118,8 +2247,9 @@ function abrirIngesta(destino, alTerminar) {
       }
     } catch (error) {
       avance.cerrar();
+      indicadorPie.quitar();
       enCurso.soltar();
-      avisarEnIngesta(alerta(error.message));
+      mostrarErrorDeIngesta(error);
     }
   }
 }

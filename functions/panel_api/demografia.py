@@ -49,6 +49,8 @@ OPERADORES_TEXTO = {"contiene"}
 # `atributos.CLAVES_RESERVADAS`. Filtrar por una especial exige permiso, y
 # eso lo controla la ruta (`tematicas.exigir_permiso_para_criterios`).
 DIMENSION_TEMATICA = "tematica"
+# R-TEM.12 — un área entera: atajo de un criterio de temática con `areas`.
+DIMENSION_AREA_TEMATICA = "area_tematica"
 OPERADORES_TEMATICA = {"eq", "in"}
 
 # Qué dimensiones se comparan como número y no como texto. `edad` siempre lo
@@ -99,10 +101,10 @@ def normalizar_criterio(crudo, dimensiones=None, catalogo_por_clave=None):
     if not isinstance(crudo, dict):
         raise DatosInvalidos(f"Criterio demográfico mal formado: {crudo!r}.")
     dimension = (crudo.get("dimension") or "").strip().lower()
-    if dimension == DIMENSION_TEMATICA:
+    if dimension in (DIMENSION_TEMATICA, DIMENSION_AREA_TEMATICA):
         return _criterio_tematica(crudo)
     validas = (set(dimensiones) if dimensiones else set(DIMENSIONES_BASE)) \
-        | {DIMENSION_TEMATICA}
+        | {DIMENSION_TEMATICA, DIMENSION_AREA_TEMATICA}
     if dimension not in validas:
         raise DatosInvalidos(
             f"Dimensión demográfica desconocida: {dimension!r}.",
@@ -147,8 +149,18 @@ def normalizar_criterio(crudo, dimensiones=None, catalogo_por_clave=None):
 
 
 def _criterio_tematica(crudo):
-    """R-TEM.6 — un criterio por temática, en forma canónica: nombres
-    normalizados como los guarda `tematicas.normalizar`."""
+    """R-TEM.6 y R-TEM.12 — un criterio de temática, en forma canónica.
+
+    `valor` lleva temáticas **por id** (lo que manda la pantalla desde
+    R-TEM.7: renombrar no rompe el filtro) o por nombre (las consultas
+    guardadas antes de las áreas); `areas`, áreas enteras por id. Tener
+    cualquiera alcanza. `dimension: area_tematica` es el atajo de un criterio
+    con solo áreas.
+
+    `incluir_especiales` no lo decide quien manda el cuerpo: lo fija la ruta
+    según el rol (`tematicas.exigir_permiso_para_criterios`). Sin él, el
+    filtro no alcanza temáticas especiales.
+    """
     from . import tematicas
 
     operador = (crudo.get("operador") or "eq").strip().lower()
@@ -156,20 +168,28 @@ def _criterio_tematica(crudo):
         raise DatosInvalidos(
             f"Sobre una temática se puede filtrar con {sorted(OPERADORES_TEMATICA)}, "
             f"no con {operador!r}: «tiene información sobre…».")
-    crudos = crudo.get("valor")
-    crudos = crudos if isinstance(crudos, list) else [crudos]
-    nombres = [n for n in dict.fromkeys(tematicas.normalizar(v) for v in crudos) if n]
-    if not nombres:
-        raise DatosInvalidos("Falta la temática del criterio.")
-    return {
+    if str(crudo.get("dimension")).strip().lower() == DIMENSION_AREA_TEMATICA:
+        valores, areas = [], crudo.get("valor")
+    else:
+        valores, areas = crudo.get("valor"), crudo.get("areas")
+    ids, nombres = tematicas._separar(valores if valores is not None else [])
+    area_ids, _ = tematicas._separar(areas or [])
+    if not ids and not nombres and not area_ids:
+        raise DatosInvalidos("Falta la temática o el área del criterio.")
+    valor = list(dict.fromkeys(ids)) + list(dict.fromkeys(nombres))
+    criterio = {
         "tipo": "demografico",
         "dimension": DIMENSION_TEMATICA,
-        "operador": "in" if len(nombres) > 1 or operador == "in" else "eq",
-        "valor": nombres if len(nombres) > 1 or operador == "in" else nombres[0],
+        "operador": "in" if len(valor) + len(area_ids) > 1 or operador == "in" else "eq",
+        "valor": valor if len(valor) != 1 or area_ids or operador == "in" else valor[0],
         "duro": True,
+        "incluir_especiales": crudo.get("incluir_especiales") is True,
         "etiqueta": crudo.get("etiqueta")
-                    or f"Con información sobre {' o '.join(nombres)}",
+                    or f"Con información sobre {' o '.join(str(v) for v in valor + area_ids)}",
     }
+    if area_ids:
+        criterio["areas"] = list(dict.fromkeys(area_ids))
+    return criterio
 
 
 def condiciones(criterios, alias="p", catalogo_por_clave=None, momento=None):
@@ -193,15 +213,23 @@ def condiciones(criterios, alias="p", catalogo_por_clave=None, momento=None):
     for criterio in criterios:
         dimension = criterio["dimension"]
         if dimension == DIMENSION_TEMATICA:
-            # Tiene la temática en **alguna** de sus cargas. Va por el
-            # nombre, que es único y normalizado.
-            valor = criterio["valor"]
+            # Tiene alguna de las temáticas (o de las de esas áreas) en
+            # **alguna** de sus cargas. Por id; los nombres son de las
+            # consultas guardadas antes de R-TEM.7. La marca especial es la
+            # efectiva (`v_tematica`): sin permiso, un área que no es
+            # especial no alcanza a quien solo tiene una especial de ella.
+            from . import tematicas
+
+            ids, nombres = tematicas._separar(criterio["valor"])
             fragmentos.append(
                 f"exists (select 1 from persona_tematica pt "
-                f"join tematica t on t.id = pt.tematica_id "
+                f"join v_tematica t on t.id = pt.tematica_id "
                 f"where pt.id_persona = {alias}.id_persona "
-                f"and t.nombre = any(%s::text[]))")
-            parametros.append(valor if isinstance(valor, list) else [valor])
+                f"and (t.id = any(%s::bigint[]) or t.nombre = any(%s::text[]) "
+                f"or t.area_id = any(%s::bigint[])) "
+                f"and (%s or not t.es_especial))")
+            parametros.extend([ids, nombres, list(criterio.get("areas") or []),
+                               bool(criterio.get("incluir_especiales"))])
             continue
         numerica = _es_numerica(dimension, catalogo_por_clave)
         columna = "va.valor_num" if numerica else "va.valor"

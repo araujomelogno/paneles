@@ -51,6 +51,15 @@ jobs:
           python3 -m pip install -r functions/requirements.txt
           python3 -m pip install pytest
 
+      # R-ING.1 — el estado de procesando del modal de ingesta se prueba en un
+      # Chromium de verdad (`test_modal_de_ingesta_procesando.py`). Sin esto
+      # esas pruebas se omiten, y el bug que vinieron a cubrir —un modal que
+      # no dice que está trabajando— volvería sin que nada se ponga rojo.
+      - name: Navegador para las pruebas de pantalla
+        run: |
+          python3 -m pip install playwright
+          python3 -m playwright install --with-deps chromium
+
       # `pg_pruebas.sh` levanta el cluster, crea los roles que las migraciones
       # esperan y aplica todas las migraciones. Hay que hacerle `source`: el
       # script exporta los DSN, y un subshell se los lleva.

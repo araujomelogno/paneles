@@ -23,7 +23,7 @@ identificador (R3.12.b), el gate de `uso_semantico` y el guardrail de PII
 (R1.6)—. Lo que cambia es el contexto, no el pipeline.
 """
 
-from . import db, encuestas, ingesta as mod_ingesta, personas, sav
+from . import db, encuestas, ingesta as mod_ingesta, personas, sav, semantica
 from .errores import DatosInvalidos, NoEncontrado
 
 # La finalidad que una fila tiene que evidenciar para que se cree la persona.
@@ -234,7 +234,45 @@ def crear(conn, nombre, descripcion=None, actor=None, fecha_estudio=None,
     return _serializar(fila)
 
 
-def editar(conn, carga_id, cambios):
+def sincronizar_fecha(conn_boveda, conn_semantica, carga_id, solo_si_vacia=False):
+    """Lleva la fecha del estudio de la carga a su cuestionario semántico.
+
+    Es una fecha del estudio, no de nadie: no es PII. Se copia porque la
+    ficha pagina y ordena las respuestas por esa fecha **en** el store
+    semántico, y la serie longitudinal y los atributos «al momento de la
+    respuesta» se anclan en ella. Al editar se pisa (vaciarla también se
+    propaga); al completar cargas anteriores, `solo_si_vacia`.
+
+    Devuelve si el cuestionario cambió: una carga que todavía no se ingestó
+    no tiene cuestionario, y no es un error.
+    """
+    estudio = mod_ingesta.estudio_del_destino(conn_boveda, "carga", carga_id)
+    return semantica.fechar_cuestionario(
+        conn_semantica, estudio["ref_estudio"], estudio["fecha_campo"],
+        solo_si_vacia=solo_si_vacia)
+
+
+def completar_fechas(conn_boveda, conn_semantica):
+    """Operación única: las cargas ingestadas antes de la corrección quedaron
+    con el cuestionario sin fecha. Copia la del estudio **solo donde esté
+    vacía**; una fecha que ya tenga el cuestionario no se toca.
+
+    Devuelve cuántas cargas con fecha se revisaron y cuáles se completaron.
+    No hace `commit`: lo decide quien llama (el script, con `--aplicar`).
+    """
+    con_fecha = db.todas(
+        conn_boveda,
+        "select id, nombre from carga where fecha_estudio is not null order by id")
+    completadas = [
+        {"id": c["id"], "nombre": c["nombre"]}
+        for c in con_fecha
+        if sincronizar_fecha(conn_boveda, conn_semantica, c["id"],
+                             solo_si_vacia=True)
+    ]
+    return {"revisadas": len(con_fecha), "completadas": completadas}
+
+
+def editar(conn, carga_id, cambios, conn_semantica=None):
     """Corrige los datos del estudio. Se ve en todas las fichas a la vez.
 
     Es la razón de guardarlos en la carga: corregir la fecha de un estudio
@@ -282,6 +320,8 @@ def editar(conn, carga_id, cambios):
     )
     if not fila:
         raise NoEncontrado(f"No existe la carga {carga_id}.")
+    if "fecha_estudio" in cambios and conn_semantica is not None:
+        sincronizar_fecha(conn, conn_semantica, carga_id)
     return obtener(conn, carga_id)
 
 
@@ -519,8 +559,7 @@ def ingestar(conn_boveda, conn_semantica, carga_id, preguntas, filas,
         conn_semantica,
         # Frente al store semántico una carga es un estudio como cualquier
         # otro: lo único que mira es `ref_estudio`, el nombre y la fecha.
-        {"ref_estudio": carga["ref_estudio"], "nombre": carga["nombre"],
-         "fecha_campo": None, "panel_id": None},
+        mod_ingesta.estudio_del_destino(conn_boveda, "carga", carga_id),
         preguntas,
         filas,
         columna_id=columna_id,

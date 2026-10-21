@@ -56,6 +56,9 @@ TABLAS_BOVEDA = [
     # temática sobrevive a sus cargas, a propósito): sin truncarlo, una
     # prueba vería las temáticas de las anteriores.
     "tematica",
+    # R-TEM.7 — las áreas no cascadean desde la temática (es al revés), y el
+    # registro de cambios no tiene FK a nadie.
+    "area_tematica", "taxonomia_cambio",
 ]
 
 # R3.14 — el catálogo de atributos **no** se trunca: `sexo`, `localidad`,

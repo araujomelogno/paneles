@@ -44,6 +44,14 @@ class Conflicto(ErrorApi):
     codigo = "conflicto"
 
 
+class IngestaEnCurso(Conflicto):
+    """R-ING.2 — ya hay una ingesta (o un reproceso) encolada o procesando
+    para ese destino. El `detalle` lleva el `trabajo_id`, para que la
+    pantalla vaya a su seguimiento en vez de mostrar un error genérico."""
+
+    codigo = "ingesta_en_curso"
+
+
 class ConsentimientoFaltante(ErrorApi):
     """Gate de consentimiento: la operación exige una finalidad vigente."""
 

@@ -110,6 +110,27 @@ persiste, se parte en lotes y Cloud Tasks procesa uno por tarea
   síntoma es una barra que miente. No agreguen `lotes_terminados` a
   `ingesta_trabajo`.
 
+Desde el PEDIDO del indicador de ingesta (D77, `boveda/0029`), tres más:
+
+- **Una sola ingesta en curso por destino, y lo garantiza la base**: el
+  índice único parcial `ingesta_trabajo_uno_activo_por_destino`.
+  `diferida.encolar` traduce la violación a `IngestaEnCurso` con el
+  `trabajo_id` del que existe, y la pantalla lleva a su seguimiento.
+  `exigir_sin_trabajo_activo` en las rutas es una cortesía para rechazar
+  antes de leer el archivo; no la conviertan en la guarda ni le saquen el
+  índice. Una terminada o fallida no bloquea.
+- **El modal dice que trabaja en el momento del clic** y bloquea el botón y
+  todo el mapeo (`bloquearModal`, `indicarProcesando` en `encuestas.js`).
+  Lo prueba un Chromium de verdad (`test_modal_de_ingesta_procesando.py`):
+  un pedido nuevo del modal pasa por ahí.
+- **Lo que la ingesta sabe del estudio sale de `ingesta.estudio_del_destino`**,
+  para encuesta y carga. Leer el dict de una con los nombres de la otra
+  devolvía `None` sin error: así se quedaban sin fecha los cuestionarios de
+  las cargas. No armen ese dict a mano. Y cada pedido mide sus partes
+  (`diferida.Cronometro` → `ingesta_trabajo.preparacion`): lo que crece con
+  la base es `crear_individuos`; pasarlo a lotes paralelos puede duplicar
+  personas en el dedup, así que no se hace sin serializarlo.
+
 Y lo de siempre con las funciones nuevas: Postgres le da `execute` a `public`,
 así que cada una necesita su `revoke` o `scripts/verificar_coloquio.py` rompe.
 
@@ -380,7 +401,7 @@ resultados se agrega ahí, una vez.
 
 ## De qué trata una carga: temáticas, y la sección Cargas
 
-Desde R-TEM / R-CAR (D74, D75, `boveda/0027`) cada carga tiene sus
+Desde R-TEM / R-CAR (D74, D75, D76, `boveda/0027` y `0028`) cada carga tiene sus
 **temáticas incorporadas**, cada panelista las suyas, y hay una sección
 «Cargas» que la mira entera. Lo que no hay que deshacer:
 
@@ -424,6 +445,25 @@ Desde R-TEM / R-CAR (D74, D75, `boveda/0027`) cada carga tiene sus
 - **La lista de panelistas de una carga es `GET /panelistas?carga_id=…`**, la
   misma ruta y permiso que la sección Panelistas. No agreguen una ruta bajo
   `/cargas/` que liste personas; hay una prueba que lo vigila.
+
+Desde la ampliación (D76, `boveda/0028`) hay **taxonomía**: área → temática,
+exactamente dos niveles.
+
+- **Se propone, se aprueba y se guarda.** Claude propone el arranque, ubica
+  las temáticas nuevas en la llamada de siempre y sugiere reorganizaciones;
+  `taxonomia.proponer_*` **no escriben**. Se guarda el arranque confirmado y
+  cada operación aprobada (`taxonomia.aplicar`), de a una y registrada en
+  `taxonomia_cambio`. Abrir el filtro o consultar no llama a nadie: no
+  agreguen una taxonomía calculada al vuelo.
+- **Lo clasificado no se mueve desde una carga** (`ubicar_si_falta`); se
+  mueve con una operación.
+- **La marca especial efectiva es `v_tematica`** (propia o del área). Lean
+  esa vista, no `tematica.es_especial`, para decidir columna, exportación,
+  filtro, ficha o composición. El criterio de temática lleva
+  `incluir_especiales`, que fija la ruta según el rol y nunca el cuerpo.
+- **El filtro cuenta personas** (`taxonomia.filtro`) y no ofrece las que no
+  tiene nadie. Y la propuesta de la revisión sigue a la marca de demográficas
+  **sin llamar a Claude** (`tematicas.ajustar_a_preguntas`).
 
 ## Reglas de negocio que el código debe respetar
 

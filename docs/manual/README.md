@@ -14,6 +14,33 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Taxonomía de temáticas y correcciones del filtro · 2026-10-21.**
+> Ampliación del spec (D76). La 15 suma la **15.8, La taxonomía: áreas**
+> (arranque, cómo crece con cada carga, la taxonomía guardada, reorganizar,
+> historial) y la **15.9, Temáticas sin personas**; la 15.7, que un área
+> especial vuelve especiales a sus temáticas; la 15.3, la columna Área y la
+> marca «sin personas · probablemente sobrante». La 6.10 reescribe el filtro:
+> agrupado por área, con personas, área entera, búsqueda, y sin las temáticas
+> que no tiene nadie. La 3.6 suma la columna Área de la revisión y que marcar
+> una demográfica retira las temáticas que salían solo de ella. La 1.2, quién
+> administra la taxonomía. Dos preguntas frecuentes y el término **Área (de
+> temáticas)** nuevos.
+>
+> **Capturas nuevas, de la 106 a la 109, y recapturada la 99**, con el método
+> de siempre (servidor mínimo contra el ruteo real, Postgres de pruebas,
+> Firebase simulado) y un Claude doble que propone la taxonomía y una
+> reorganización por reglas a la vista.
+>
+> **Y el PEDIDO del indicador de ingesta y la fecha del estudio** (D77), en
+> la misma entrega. La 5.4 suma **Mientras el sistema prepara la carga**: el
+> aviso de procesando, el modal bloqueado y que no se acepta una segunda
+> ingesta del mismo destino mientras hay una en curso. La 3.5, que cada
+> estudio de las respuestas procesadas lleva su fecha (la del estudio, en una
+> carga); la 3.6, que corregirla se ve en la ficha. Tres preguntas frecuentes
+> nuevas. **Captura nueva, la 110**, sacada con la página de prueba de
+> `test_modal_de_ingesta_procesando.py` (el modal de verdad, en Chromium, con
+> el servidor detenido a propósito antes de contestar).
+
 > **Temáticas de cada panelista y temáticas especiales · 2026-10-20.**
 > Segunda versión del spec (R-TEM.6). La 15 suma la **15.6, Las temáticas de
 > cada panelista** (quien respondió al menos una pregunta de la temática; no
