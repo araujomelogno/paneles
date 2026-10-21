@@ -648,7 +648,7 @@ def ingestar(conn_boveda, conn_semantica, encuesta_id, preguntas, filas,
     resultado = mod_ingesta.ingestar(
         conn_boveda,
         conn_semantica,
-        encuesta,
+        mod_ingesta.estudio_del_destino(conn_boveda, "encuesta", encuesta_id),
         preguntas,
         filas,
         columna_id=columna_id,

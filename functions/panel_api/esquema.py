@@ -174,6 +174,10 @@ MIGRACIONES_BOVEDA = (
     ("0028_taxonomia_de_tematicas.sql", (
         "area_tematica", "tematica.area_id", "taxonomia_cambio", "v_tematica",
     )),
+    # ── R-ING.2 y R-ING.3 ── una sola ingesta activa por destino (un índice,
+    # que se declara como el de la 0022) y los tiempos de la preparación.
+    ("0029_una_ingesta_activa_por_destino.sql",
+     ("ingesta_trabajo_uno_activo_por_destino", "ingesta_trabajo.preparacion")),
 )
 
 MIGRACIONES_SEMANTICA = (
@@ -328,6 +332,8 @@ PARA_QUE = {
     "area_tematica": "las áreas que agrupan las temáticas; sin ella el filtro es una lista plana",
     "tematica.area_id": "en qué área está cada temática",
     "taxonomia_cambio": "el registro de lo que se cambió en la taxonomía, quién y cuándo",
+    "ingesta_trabajo_uno_activo_por_destino": "la guarda contra el doble envío: sin ella un segundo clic en «Ingestar» encola otra ingesta de la misma carga y se procesa todo dos veces",
+    "ingesta_trabajo.preparacion": "cuánto tardó cada parte del pedido de ingesta; sin ella no hay cómo saber qué parte de la preparación crece con la base",
     "v_tematica": "la marca especial efectiva de cada temática (la propia o la de su área); sin ella una temática de un área especial saldría como columna",
 }
 

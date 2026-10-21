@@ -452,12 +452,15 @@ def test_el_progreso_sale_de_la_base_y_no_del_cliente(
 
 
 def test_las_cargas_de_un_destino_se_pueden_listar(
-        conn_boveda, ola, encolador):
-    """Es lo que deja volver mañana y encontrar la carga de hoy."""
+        conn_boveda, conn_semantica, proveedor, ola, encolador):
+    """Es lo que deja volver mañana y encontrar la carga de hoy. Cada una
+    termina antes de la siguiente: dos en curso a la vez ya no se puede
+    (R-ING.2)."""
     for _ in range(2):
         diferida.encolar(conn_boveda, "encuesta", ola["encuesta"]["id"],
                          _plan(), _filas(2), tamano_lote=2,
                          encolador=encolador)
+        _procesar_todo(conn_boveda, conn_semantica, proveedor, encolador)
 
     items = diferida.listar(conn_boveda, destino_tipo="encuesta",
                             destino_id=ola["encuesta"]["id"])

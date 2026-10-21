@@ -30,6 +30,16 @@ optimizador.
 > de siempre (servidor mínimo contra el ruteo real, Postgres de pruebas,
 > Firebase simulado) y un Claude doble que propone la taxonomía y una
 > reorganización por reglas a la vista.
+>
+> **Y el PEDIDO del indicador de ingesta y la fecha del estudio** (D77), en
+> la misma entrega. La 5.4 suma **Mientras el sistema prepara la carga**: el
+> aviso de procesando, el modal bloqueado y que no se acepta una segunda
+> ingesta del mismo destino mientras hay una en curso. La 3.5, que cada
+> estudio de las respuestas procesadas lleva su fecha (la del estudio, en una
+> carga); la 3.6, que corregirla se ve en la ficha. Tres preguntas frecuentes
+> nuevas. **Captura nueva, la 110**, sacada con la página de prueba de
+> `test_modal_de_ingesta_procesando.py` (el modal de verdad, en Chromium, con
+> el servidor detenido a propósito antes de contestar).
 
 > **Temáticas de cada panelista y temáticas especiales · 2026-10-20.**
 > Segunda versión del spec (R-TEM.6). La 15 suma la **15.6, Las temáticas de

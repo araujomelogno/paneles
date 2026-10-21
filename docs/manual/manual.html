@@ -451,6 +451,12 @@
   puede filtrar por estudio, buscar por texto y activar <strong>Ver el texto
   embebido</strong>, que muestra exactamente lo que se vectorizó.</p>
 
+  <p>Cada estudio lleva su <strong>fecha</strong>: la de campo de la encuesta
+  o la <strong>fecha del estudio</strong> de la carga. Es lo que ordena las
+  respuestas en el tiempo. Si una carga no declaró fecha, sus respuestas
+  dicen <em>sin fecha de campo</em>; se completa desde <i>Datos del
+  estudio</i> (sección 3.6) y la ficha la muestra enseguida.</p>
+
   <figure>
     <img class="recorte" src="capturas/70-respuestas-procesadas.jpg" alt="Tabla de respuestas procesadas de un panelista" />
     <figcaption><b>Respuestas procesadas.</b> Con el texto embebido a la vista
@@ -711,7 +717,8 @@
   estudio</strong>. Abre el nombre, la fecha, el público objetivo y la
   descripción, junto con cuántas personas creó y reutilizó la carga. Lo que se
   guarda ahí se refleja de inmediato en la ficha de cada una de esas
-  personas. Hace falta el permiso de ingestar.</p>
+  personas, incluida la fecha de sus respuestas procesadas. Hace falta el
+  permiso de ingestar.</p>
 
   <figure>
     <img class="recorte" src="capturas/78-datos-del-estudio.jpg" alt="Datos del estudio de una carga" />
@@ -1056,6 +1063,35 @@
     abajo.</li>
     <li>Confirmar con <strong>Ingestar</strong>.</li>
   </ol>
+
+  <h4>Mientras el sistema prepara la carga</h4>
+
+  <p>Al presionar <strong>Ingestar</strong> el sistema lee el archivo entero
+  y, en una carga, le pide a Claude las temáticas: con bases grandes tarda.
+  Desde el momento del clic el modal lo dice —<em>Preparando la carga…</em>,
+  arriba y junto al botón, con un contador de segundos— y queda bloqueado: el
+  botón y todo el mapeo se deshabilitan hasta que llega la respuesta, así lo
+  que se ve es lo que se mandó. Si pasan unos segundos, el aviso cambia a
+  <em>Sigue procesando…</em>. No hace falta volver a presionar nada, y
+  conviene no cerrar la ventana.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/110-ingesta-preparando.jpg" alt="Modal de ingesta en estado de procesando" />
+    <figcaption><b>Preparando la carga.</b> El aviso aparece en el momento del
+    clic; el botón <i>Ingestar</i> y el mapeo quedan deshabilitados. Si hay un
+    error, el motivo aparece en el mismo lugar y el botón vuelve a
+    habilitarse.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Una carga por vez en cada encuesta o carga</div>
+    <p>Mientras una ingesta está encolada o procesándose, el sistema no
+    acepta otra para el mismo destino: dos a la vez procesarían todo dos
+    veces. Si alguien lo intenta —desde otra pestaña, por ejemplo—, el modal
+    dice que ya hay una en curso y ofrece <strong>Ver su avance</strong>. Una
+    ingesta terminada, o que falló, no bloquea: se puede cargar otra o
+    reintentar.</p>
+  </div>
 
   <h4>Antes de importar, el sistema muestra un resumen para revisar</h4>
 
@@ -4247,6 +4283,23 @@
     <h2>Preguntas frecuentes</h2>
     <p>Situaciones habituales y su explicación.</p>
   </div>
+
+  <h4>Las respuestas de una carga dicen «sin fecha de campo»</h4>
+  <p>La carga no tiene fecha del estudio. Completala desde Panelistas →
+  <i>Datos del estudio</i> (3.6) y la ficha la muestra enseguida. Las cargas
+  ingestadas antes de la corrección de octubre de 2026 se completaron una vez,
+  con la fecha que tenían declarada.</p>
+
+  <h4>Al cargar, el sistema dice que ya hay una ingesta en curso</h4>
+  <p>Hay otra ingesta de esa misma carga o encuesta encolada o procesándose
+  —desde otra pestaña, u otra persona—. <strong>Ver su avance</strong> lleva
+  a su seguimiento. Cuando termine, se puede cargar otra (5.4).</p>
+
+  <h4>«Preparando la carga…» tarda mucho</h4>
+  <p>Con bases grandes la preparación puede llevar minutos, sobre todo cuando
+  se dan de alta muchas personas. El aviso cambia a <em>Sigue
+  procesando…</em> para que se sepa que no se colgó. No hace falta volver a
+  presionar <i>Ingestar</i>, y conviene no cerrar la ventana.</p>
 
   <h4>La revisión de una carga dice que no se pudieron proponer temáticas</h4>
   <p>La llamada a Claude falló o tardó demasiado (el aviso dice el motivo). No

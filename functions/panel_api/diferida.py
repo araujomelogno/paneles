@@ -34,11 +34,15 @@ misma carga podrían usar mapeos distintos y el estudio quedaría con la mitad
 de las respuestas teniendo una pregunta que la otra mitad no.
 """
 
+import contextlib
 import json
 import os
+import time
+
+import psycopg
 
 from . import db
-from .errores import Conflicto, DatosInvalidos, NoEncontrado
+from .errores import Conflicto, DatosInvalidos, IngestaEnCurso, NoEncontrado
 
 # ── Parámetros ───────────────────────────────────────────────────────
 
@@ -178,19 +182,107 @@ def crear_encolador(cfg=None):
 
 # ── R-ASYNC.1 · Confirmar encola ─────────────────────────────────────
 
+# ── R-ING.2 · Una sola ingesta en curso por destino ─────────────────
+
+# Estados en los que un trabajo bloquea a otro del mismo destino. Espeja el
+# `where` del índice único de la `0029`, que es la guarda de verdad.
+ACTIVOS = (ENCOLADA, PROCESANDO)
+INDICE_UNO_ACTIVO = "ingesta_trabajo_uno_activo_por_destino"
+
+
+def trabajo_activo(conn, destino_tipo, destino_id):
+    """El trabajo encolado o procesando de ese destino, o None."""
+    return db.una(
+        conn,
+        """select id as trabajo_id, estado, creado_en
+             from ingesta_trabajo
+            where destino_tipo = %s and destino_id = %s
+              and estado = any(%s)
+            order by creado_en desc limit 1""",
+        (destino_tipo, destino_id, list(ACTIVOS)))
+
+
+def _en_curso(destino_tipo, destino_id, trabajo):
+    que = "esta carga" if destino_tipo == "carga" else "esta encuesta"
+    return IngestaEnCurso(
+        f"Ya hay una ingesta de {que} en curso. Se muestra su avance: "
+        f"cuando termine se puede cargar otra.",
+        {"trabajo_id": trabajo["trabajo_id"] if trabajo else None,
+         "estado": trabajo["estado"] if trabajo else None,
+         "destino": {"tipo": destino_tipo, "id": destino_id}})
+
+
+def exigir_sin_trabajo_activo(conn, destino_tipo, destino_id):
+    """Rechaza temprano —antes de leer el archivo o de crear individuos— un
+    pedido para un destino que ya tiene un trabajo en curso.
+
+    Es una cortesía, no la guarda: entre este `select` y el `insert` de
+    `encolar` puede entrar otro pedido. La garantía es el índice único de
+    la `0029`, que `encolar` traduce al mismo error.
+    """
+    trabajo = trabajo_activo(conn, destino_tipo, destino_id)
+    if trabajo:
+        raise _en_curso(destino_tipo, destino_id, trabajo)
+
+
+# ── R-ING.3 · Cuánto tarda cada parte de la preparación ──────────────
+
+# A partir de cuánto la preparación se avisa en el log. La API corta a los
+# 300 s (`timeout_sec` de `api` en `main.py`); a 120 s todavía hay margen,
+# pero ya es la carga que conviene mirar. Medido en local (D77): todo es
+# despreciable salvo `crear_individuos`, que crece con las filas.
+AVISO_PREPARACION_MS = 120_000
+
+
+class Cronometro:
+    """Mide las partes del pedido que crea un trabajo.
+
+    Confirmar debería responder en segundos —el trabajo pesado es de los
+    lotes—. Si no, alguna parte sigue siendo sincrónica y crece con la base,
+    y esto dice cuál. Los tiempos van al log (`[ingesta]`, solo números) y
+    a `ingesta_trabajo.preparacion`.
+    """
+
+    def __init__(self):
+        self._inicio = time.monotonic()
+        self.partes = {}
+
+    @contextlib.contextmanager
+    def parte(self, nombre):
+        desde = time.monotonic()
+        try:
+            yield
+        finally:
+            self.partes[nombre] = self.partes.get(nombre, 0) + round(
+                (time.monotonic() - desde) * 1000)
+
+    def resumen(self):
+        return {**self.partes,
+                "total": round((time.monotonic() - self._inicio) * 1000)}
+
+
 def _lotes_de(filas, tamano):
     for inicio in range(0, len(filas), tamano):
         yield filas[inicio : inicio + tamano]
 
 
 def encolar(conn, destino_tipo, destino_id, plan, filas, actor=None,
-            tamano_lote=None, encolador=None):
+            tamano_lote=None, encolador=None, cronometro=None):
     """Persiste el trabajo, lo parte en lotes y los encola. No procesa nada.
 
     `plan` es el mapeo ya resuelto: preguntas, demográficas, `columna_id`,
     `origen`, tipo de identificador y lo que cada destino necesite. Se guarda
     tal cual y las tareas lo usan sin reinterpretarlo.
+
+    R-ING.2 — si el destino ya tiene un trabajo encolado o procesando,
+    levanta `IngestaEnCurso` con el `trabajo_id` del que existe. Lo decide
+    el índice único de la `0029`, así que vale también para dos pedidos que
+    llegan a la vez.
+
+    R-ING.3 — `cronometro` trae lo que la ruta ya midió; acá se suman
+    guardar el plan, persistir los lotes y encolar.
     """
+    cronometro = cronometro or Cronometro()
     if destino_tipo not in DESTINOS:
         raise DatosInvalidos(f"Destino de ingesta desconocido: {destino_tipo!r}.",
                              {"destinos": list(DESTINOS)})
@@ -203,38 +295,58 @@ def encolar(conn, destino_tipo, destino_id, plan, filas, actor=None,
         raise DatosInvalidos("El tamaño de lote tiene que ser al menos 1.")
     lotes = list(_lotes_de(filas, tamano))
 
-    trabajo = db.una(
-        conn,
-        """insert into ingesta_trabajo
-                  (destino_tipo, destino_id, plan, estado, lotes_total,
-                   filas_total, creado_por)
-           values (%s, %s, %s::jsonb, %s, %s, %s, %s)
-        returning id""",
-        (destino_tipo, destino_id, json.dumps(plan, default=str), ENCOLADA,
-         len(lotes), len(filas), getattr(actor, "uid", None)))
+    with cronometro.parte("guardar_plan"):
+        # En un savepoint de la transacción en curso: si el índice lo
+        # rechaza, lo que la ruta ya hizo no se pierde por eso. Y no en
+        # `conn.transaction()`, que sin una transacción abierta haría commit
+        # del trabajo solo, antes que sus lotes: un trabajo sin lotes
+        # quedaría «encolado» bloqueando el destino.
+        db.ejecutar(conn, "savepoint antes_del_trabajo")
+        try:
+            trabajo = db.una(
+                conn,
+                """insert into ingesta_trabajo
+                          (destino_tipo, destino_id, plan, estado, lotes_total,
+                           filas_total, creado_por)
+                   values (%s, %s, %s::jsonb, %s, %s, %s, %s)
+                returning id""",
+                (destino_tipo, destino_id, json.dumps(plan, default=str),
+                 ENCOLADA, len(lotes), len(filas),
+                 getattr(actor, "uid", None)))
+        except psycopg.errors.UniqueViolation as error:
+            db.ejecutar(conn, "rollback to savepoint antes_del_trabajo")
+            if getattr(error.diag, "constraint_name", None) != INDICE_UNO_ACTIVO:
+                raise
+            raise _en_curso(destino_tipo, destino_id,
+                            trabajo_activo(conn, destino_tipo, destino_id)) from None
     trabajo_id = trabajo["id"]
 
-    for indice, lote in enumerate(lotes):
-        db.ejecutar(
-            conn,
-            """insert into ingesta_lote (trabajo_id, indice, filas, filas_total)
-               values (%s, %s, %s::jsonb, %s)""",
-            (trabajo_id, indice, json.dumps(lote, default=str), len(lote)))
+    with cronometro.parte("persistir_lotes"):
+        for indice, lote in enumerate(lotes):
+            db.ejecutar(
+                conn,
+                """insert into ingesta_lote (trabajo_id, indice, filas, filas_total)
+                   values (%s, %s, %s::jsonb, %s)""",
+                (trabajo_id, indice, json.dumps(lote, default=str), len(lote)))
 
-    # El commit va **antes** de encolar, y el orden importa: una tarea que
-    # arranca antes de que su lote esté guardado no encuentra nada y falla.
-    # Al revés —guardado y sin encolar— el trabajo queda esperando, que es
-    # recuperable con el reintento manual.
-    conn.commit()
+        # El commit va **antes** de encolar, y el orden importa: una tarea que
+        # arranca antes de que su lote esté guardado no encuentra nada y falla.
+        # Al revés —guardado y sin encolar— el trabajo queda esperando, que es
+        # recuperable con el reintento manual.
+        conn.commit()
 
     encolador = encolador or crear_encolador()
     encoladas, sin_encolar = 0, []
-    for indice in range(len(lotes)):
-        try:
-            encolador.encolar(trabajo_id, indice)
-            encoladas += 1
-        except Exception as error:  # noqa: BLE001
-            sin_encolar.append({"indice": indice, "error": str(error)})
+    with cronometro.parte("encolar"):
+        for indice in range(len(lotes)):
+            try:
+                encolador.encolar(trabajo_id, indice)
+                encoladas += 1
+            except Exception as error:  # noqa: BLE001
+                sin_encolar.append({"indice": indice, "error": str(error)})
+
+    _registrar_preparacion(conn, trabajo_id, destino_tipo, destino_id,
+                           len(filas), len(lotes), cronometro.resumen())
 
     salida = estado(conn, trabajo_id)
     salida["encoladas"] = encoladas
@@ -246,6 +358,25 @@ def encolar(conn, destino_tipo, destino_id, plan, filas, actor=None,
             f"{len(sin_encolar)} lote(s) no se pudieron encolar. La carga "
             f"quedó guardada: se los puede reintentar desde la pantalla.")
     return salida
+
+
+def _registrar_preparacion(conn, trabajo_id, destino_tipo, destino_id,
+                           filas, lotes, tiempos):
+    """Deja los tiempos en el trabajo y en el log. Solo números: ni filas,
+    ni nombres de variables, ni nada que diga de quién son los datos."""
+    db.ejecutar(conn,
+                "update ingesta_trabajo set preparacion = %s::jsonb where id = %s",
+                (json.dumps(tiempos), trabajo_id))
+    conn.commit()
+    partes = " ".join(f"{nombre}={ms}ms" for nombre, ms in tiempos.items())
+    print(f"[ingesta] preparación trabajo={trabajo_id} "
+          f"destino={destino_tipo}:{destino_id} filas={filas} lotes={lotes} "
+          f"{partes}", flush=True)
+    if tiempos.get("total", 0) >= AVISO_PREPARACION_MS:
+        mayor = max((n for n in tiempos if n != "total"), key=tiempos.get)
+        print(f"[ingesta] aviso: la preparación del trabajo {trabajo_id} tardó "
+              f"{tiempos['total'] // 1000} s ({mayor} = {tiempos[mayor] // 1000} s) "
+              f"y la API corta a los 300 s", flush=True)
 
 
 # ── R-ASYNC.3 · Estado y progreso ────────────────────────────────────
@@ -293,12 +424,14 @@ def estado(conn, trabajo_id, con_lotes=False):
 
     resumen = db.una(
         conn,
-        "select resumen, plan->>'operacion' as operacion, "
+        "select resumen, preparacion, plan->>'operacion' as operacion, "
         "       coalesce((plan->>'sin_clave_de_dedup')::boolean, false) "
         "         as sin_clave_de_dedup "
         "  from ingesta_trabajo where id = %s",
         (trabajo_id,))
     salida["resumen"] = (resumen or {}).get("resumen")
+    # R-ING.3 — cuánto tardó cada parte del pedido que lo creó.
+    salida["preparacion"] = (resumen or {}).get("preparacion")
     # Fase 8 — un reproceso (R8.9) es un trabajo diferido como una carga, y
     # la pantalla los tiene que poder distinguir.
     salida["operacion"] = (resumen or {}).get("operacion") or "ingesta"

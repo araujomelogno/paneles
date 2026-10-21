@@ -634,3 +634,12 @@ tr.fila-problema td { background: var(--red-light); }
 .area-propuesta .chip select { width: auto; }
 #tax-aviso:not(:empty), #tax-propuesta:not(:empty), #tax-actual:not(:empty),
 #tax-sin-personas:not(:empty) { margin-bottom: 1.25rem; }
+
+/* R-ING.1 — el modal de ingesta mientras el servidor prepara la carga. */
+.procesando { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; margin-bottom: 0.75rem; border: 1px solid var(--border); border-left: 3px solid var(--orange); border-radius: 4px; background: var(--gray-xlight); }
+.procesando-texto { flex: 1 1 auto; }
+.procesando-titulo { font-size: 0.85rem; color: var(--dark); }
+.procesando-tiempo { white-space: nowrap; font-size: 0.8rem; font-weight: 700; color: var(--orange); font-variant-numeric: tabular-nums; }
+.spinner-sm { width: 18px; height: 18px; border-width: 2px; margin: 0; flex: 0 0 auto; }
+.procesando-modal .modal-body { cursor: progress; }
+.alerta-pie .procesando { margin: 0 0 0.5rem; }

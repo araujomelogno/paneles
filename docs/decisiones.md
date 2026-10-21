@@ -4455,3 +4455,88 @@ abrir el filtro.
 `auth.py`, `web/public/js/paginas/taxonomia.js`, `web/public/js/tematicas.js`,
 `web/public/js/paginas/consultas.js`, `web/public/js/paginas/encuestas.js`,
 `functions/tests/test_taxonomia_de_tematicas.py`.
+
+## D77 · Una ingesta en curso por destino, lo garantiza la base; el modal dice que trabaja; la fecha del estudio sale de un solo lugar
+
+**El problema.** El PEDIDO del 2026-10-20
+(`docs/PEDIDO_indicador_ingesta_y_doble_envio.md`). Al apretar «Ingestar»,
+el modal quedaba quieto mientras el servidor preparaba la revisión —leer el
+archivo entero y, en una carga, pedirle las temáticas a Claude— y lo natural
+era volver a apretar. Y nada impedía encolar una segunda ingesta del mismo
+destino: el índice de trabajos abiertos de la `0019` sirve para listar, no
+es único. La ingesta es idempotente, así que el resultado no se corrompía,
+pero se procesaba y se pagaba dos veces sin que nadie se enterara.
+
+Además, la ficha mostraba «sin fecha de campo» en todo lo que vino de una
+carga: `ingesta.ingestar` lee la fecha como `fecha_campo`, el nombre de las
+encuestas, y la carga le pasaba `None` porque la suya se llama
+`fecha_estudio`.
+
+**La decisión.**
+
+- **La guarda está en la base**: índice único parcial
+  `ingesta_trabajo_uno_activo_por_destino` sobre `(destino_tipo,
+  destino_id)` donde el estado es `encolada` o `procesando` (boveda/0029).
+  Un `select` previo en Python entre dos pedidos simultáneos les contesta
+  «no hay ninguna» a los dos; el índice no. `diferida.encolar` traduce la
+  violación a `IngestaEnCurso` (409, `ingesta_en_curso`) con el
+  `trabajo_id` del que existe, en un savepoint para no perder lo que la ruta
+  ya hizo. Un trabajo terminado o fallido no bloquea: reintentar sigue
+  siendo posible. Cubre también el reproceso, que usa el mismo destino.
+- **El rechazo temprano es una cortesía**
+  (`diferida.exigir_sin_trabajo_activo`): las rutas lo llaman antes de leer
+  el archivo, de pedir temáticas o de crear a nadie, también en la revisión.
+  La garantía sigue siendo el índice.
+- **El rechazo lleva al seguimiento**: la pantalla no lo trata como un error
+  para corregir; dice que hay una en curso y ofrece «Ver su avance».
+- **El modal dice que trabaja en el momento del clic** —antes de que
+  conteste el servidor—, arriba y junto al botón, con «No cierres esta
+  ventana», y a los 8 s pasa a «Sigue procesando…». El botón y **todo el
+  mapeo** quedan deshabilitados (recordando lo que ya lo estaba), y el botón
+  ignora un segundo clic mientras corre. Se prueba en un Chromium de verdad
+  (`functions/tests/test_modal_de_ingesta_procesando.py`), con el resumen de
+  revisión sacado de la ruta real.
+- **El pedido mide cada parte de la preparación** (`diferida.Cronometro`):
+  despivotar, crear individuos, armar y guardar el plan, persistir lotes,
+  encolar. Va a `ingesta_trabajo.preparacion` y al log (`[ingesta]`, solo
+  números), con un aviso si pasa de `AVISO_PREPARACION_MS` (120 s; la API
+  corta a los 300).
+- **El estudio de cada destino sale de un solo lugar**
+  (`ingesta.estudio_del_destino`): `{ref_estudio, nombre, fecha_campo,
+  panel_id}` para encuesta y para carga. Ninguna ingesta arma ese dict a
+  mano, y hay una prueba que lo vigila. Editar la fecha del estudio la lleva
+  al cuestionario (también vaciarla), y
+  `scripts/completar_fechas_de_cargas.py` completa una vez lo ya ingestado,
+  solo donde está vacía.
+
+**Lo que mostró la medición.** En local, con 1.000, 5.000 y 20.000 filas,
+todo es despreciable salvo `crear_individuos`, que crece lineal: unos 1,3 ms
+por fila contra un Postgres sin red (26 s con 20.000). En Cloud SQL, con la
+latencia de cada consulta, es varias veces más. Las cargas de hoy (miles de
+filas) entran holgadas; una de decenas de miles se acerca a los 300 s.
+
+**Lo que se descartó.**
+
+- *Pasar ya `crear_individuos` a la vía diferida.* Es lo que crece, pero
+  repartirlo en lotes paralelos puede crear dos veces a la misma persona: el
+  dedup por celular no es único a propósito (D64) y dos lotes con la misma
+  persona no se ven entre sí. Hacerlo bien es un lote de alta serializado
+  antes de los de respuestas, con su propio seguimiento. Queda medido y con
+  aviso, para decidirlo con números de producción.
+- *Solo el aviso en la pantalla.* Un doble clic rápido o dos pestañas pasan
+  por encima.
+- *Solo la guarda.* Deja al usuario sin saber qué pasa.
+- *Una fecha de reemplazo (la de creación de la carga) cuando falta la del
+  estudio.* Anclaría las respuestas en una fecha que nadie declaró, y la
+  edad «al momento de la respuesta» saldría mal sin que nada lo diga.
+
+**Dónde vive.** `db/boveda/0029_una_ingesta_activa_por_destino.sql`,
+`db/revertir/boveda_0029.sql`, `functions/panel_api/diferida.py`,
+`functions/panel_api/errores.py`, `functions/panel_api/ingesta.py`
+(`estudio_del_destino`), `functions/panel_api/cargas.py`
+(`sincronizar_fecha`, `completar_fechas`), `functions/panel_api/semantica.py`
+(`fechar_cuestionario`), `functions/panel_api/ruteo.py`,
+`web/public/js/paginas/encuestas.js`,
+`scripts/completar_fechas_de_cargas.py`,
+`functions/tests/test_pedido_indicador_ingesta_y_doble_envio.py`,
+`functions/tests/test_modal_de_ingesta_procesando.py`.

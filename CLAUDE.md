@@ -110,6 +110,27 @@ persiste, se parte en lotes y Cloud Tasks procesa uno por tarea
   síntoma es una barra que miente. No agreguen `lotes_terminados` a
   `ingesta_trabajo`.
 
+Desde el PEDIDO del indicador de ingesta (D77, `boveda/0029`), tres más:
+
+- **Una sola ingesta en curso por destino, y lo garantiza la base**: el
+  índice único parcial `ingesta_trabajo_uno_activo_por_destino`.
+  `diferida.encolar` traduce la violación a `IngestaEnCurso` con el
+  `trabajo_id` del que existe, y la pantalla lleva a su seguimiento.
+  `exigir_sin_trabajo_activo` en las rutas es una cortesía para rechazar
+  antes de leer el archivo; no la conviertan en la guarda ni le saquen el
+  índice. Una terminada o fallida no bloquea.
+- **El modal dice que trabaja en el momento del clic** y bloquea el botón y
+  todo el mapeo (`bloquearModal`, `indicarProcesando` en `encuestas.js`).
+  Lo prueba un Chromium de verdad (`test_modal_de_ingesta_procesando.py`):
+  un pedido nuevo del modal pasa por ahí.
+- **Lo que la ingesta sabe del estudio sale de `ingesta.estudio_del_destino`**,
+  para encuesta y carga. Leer el dict de una con los nombres de la otra
+  devolvía `None` sin error: así se quedaban sin fecha los cuestionarios de
+  las cargas. No armen ese dict a mano. Y cada pedido mide sus partes
+  (`diferida.Cronometro` → `ingesta_trabajo.preparacion`): lo que crece con
+  la base es `crear_individuos`; pasarlo a lotes paralelos puede duplicar
+  personas en el dedup, así que no se hace sin serializarlo.
+
 Y lo de siempre con las funciones nuevas: Postgres le da `execute` a `public`,
 así que cada una necesita su `revoke` o `scripts/verificar_coloquio.py` rompe.
 

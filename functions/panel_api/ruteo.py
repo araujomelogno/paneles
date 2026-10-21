@@ -512,7 +512,7 @@ def ver_participacion(ctx, actor, params, cuerpo, consulta):
 
 
 @ruta("POST", "/encuestas/<encuesta_id>/ingesta", "ingestar",
-      requisito="R1.5, R-ASYNC.1")
+      requisito="R1.5, R-ASYNC.1, R-ING.2, R-ING.3")
 def ingestar_encuesta(ctx, actor, params, cuerpo, consulta):
     """Confirma la carga: la guarda, la parte en lotes y los encola.
 
@@ -523,7 +523,11 @@ def ingestar_encuesta(ctx, actor, params, cuerpo, consulta):
     """
     encuesta_id = _entero(params["encuesta_id"])
     encuesta = encuestas.obtener(ctx.boveda, encuesta_id)   # que exista, antes de guardar nada
-    plan = _plan_de(cuerpo)
+    # R-ING.2 — antes de nada: con una ingesta en curso no hay qué revisar.
+    diferida.exigir_sin_trabajo_activo(ctx.boveda, "encuesta", encuesta_id)
+    cronometro = diferida.Cronometro()
+    with cronometro.parte("armar_plan"):
+        plan = _plan_de(cuerpo)
     filas = cuerpo.get("filas") or []
     if _revision_pedida(cuerpo):
         return 200, resumen_ingesta.resumir(
@@ -532,7 +536,7 @@ def ingestar_encuesta(ctx, actor, params, cuerpo, consulta):
             destino_tipo="encuesta", nombre_destino=encuesta.get("nombre"))
     salida = diferida.encolar(
         ctx.boveda, "encuesta", encuesta_id, plan, filas,
-        actor=actor, encolador=ctx.encolador)
+        actor=actor, encolador=ctx.encolador, cronometro=cronometro)
     return 202, salida
 
 
@@ -1470,7 +1474,8 @@ def analizar_sav(ctx, actor, params, cuerpo, consulta):
                              cuerpo.get("valores_no_respuesta"))
 
 
-@ruta("POST", "/encuestas/<encuesta_id>/sav/ingesta", "ingestar", requisito="R3.9")
+@ruta("POST", "/encuestas/<encuesta_id>/sav/ingesta", "ingestar",
+      requisito="R3.9, R-ING.2, R-ING.3")
 def ingestar_sav(ctx, actor, params, cuerpo, consulta):
     """Ingesta el `.sav` con la metadata ya confirmada por el analista."""
     encuesta_id = int(params["encuesta_id"])
@@ -1484,14 +1489,18 @@ def ingestar_sav(ctx, actor, params, cuerpo, consulta):
     columna_id = (cuerpo.get("columna_id") or "").strip()
     if not columna_id:
         raise DatosInvalidos("Falta indicar qué variable identifica al individuo.")
+    # R-ING.2 — antes de leer el archivo, que es lo que más tarda.
+    diferida.exigir_sin_trabajo_activo(ctx.boveda, "encuesta", encuesta_id)
+    cronometro = diferida.Cronometro()
 
-    filas = sav.filas_de(contenido)
-    # El marcado demográfico vale para los dos modos y es la única fuente del
-    # mapeo a campos de `persona`: `mapeo_patronimico` quedó como alias de
-    # compatibilidad para las llamadas viejas, no como un mecanismo aparte.
-    demograficas = sav.normalizar_demograficas(
-        cuerpo.get("demograficas"), {c for fila in filas for c in fila},
-        campos_validos=sav.campos_demograficos(ctx.boveda), conn=ctx.boveda)
+    with cronometro.parte("despivotar"):
+        filas = sav.filas_de(contenido)
+        # El marcado demográfico vale para los dos modos y es la única fuente del
+        # mapeo a campos de `persona`: `mapeo_patronimico` quedó como alias de
+        # compatibilidad para las llamadas viejas, no como un mecanismo aparte.
+        demograficas = sav.normalizar_demograficas(
+            cuerpo.get("demograficas"), {c for fila in filas for c in fila},
+            campos_validos=sav.campos_demograficos(ctx.boveda), conn=ctx.boveda)
     mapeo = sav.mapeo_por_campo(demograficas) or (
         cuerpo.get("mapeo_patronimico") or {})
     # Los value labels de cada variable, para traducir el código del archivo
@@ -1529,13 +1538,14 @@ def ingestar_sav(ctx, actor, params, cuerpo, consulta):
         # la importación entera se rechaza sin haber escrito una respuesta.
         # Al revés —ingestar primero y fallar al crear— dejaría el store
         # semántico con respuestas de gente que no existe en la bóveda.
-        creacion = sav.crear_individuos(
-            ctx.boveda, filas, mapeo,
-            origen=(cuerpo.get("origen") or "sav"), columna_id=columna_id,
-            evidencia_consentimiento=cuerpo.get("evidencia_consentimiento"),
-            actor=actor, panel_id=cuerpo.get("panel_id"),
-            opciones_por_variable=opciones_por_variable,
-        )
+        with cronometro.parte("crear_individuos"):
+            creacion = sav.crear_individuos(
+                ctx.boveda, filas, mapeo,
+                origen=(cuerpo.get("origen") or "sav"), columna_id=columna_id,
+                evidencia_consentimiento=cuerpo.get("evidencia_consentimiento"),
+                actor=actor, panel_id=cuerpo.get("panel_id"),
+                opciones_por_variable=opciones_por_variable,
+            )
         # Antes de encolar: las personas tienen que existir cuando la primera
         # tarea busque a quién corresponde cada fila, y las tareas corren en
         # otro proceso que no ve esta transacción.
@@ -1549,13 +1559,14 @@ def ingestar_sav(ctx, actor, params, cuerpo, consulta):
     # cuerpo: normalizarlas consulta el catálogo de atributos, y hacerlo una
     # vez por lote sería re-resolver el mapeo, que es justo lo que R-ASYNC.1
     # prohíbe.
-    plan = _con_constancia_de_dedup(
-        _plan_de(cuerpo, columna_id=columna_id,
-                 origen=(cuerpo.get("origen") or "sav"),
-                 preguntas=preguntas, demograficas=demograficas), filas)
+    with cronometro.parte("armar_plan"):
+        plan = _con_constancia_de_dedup(
+            _plan_de(cuerpo, columna_id=columna_id,
+                     origen=(cuerpo.get("origen") or "sav"),
+                     preguntas=preguntas, demograficas=demograficas), filas)
     salida = diferida.encolar(
         ctx.boveda, "encuesta", encuesta_id, plan,
-        filas, actor=actor, encolador=ctx.encolador)
+        filas, actor=actor, encolador=ctx.encolador, cronometro=cronometro)
     salida["sin_clave_de_dedup"] = plan["sin_clave_de_dedup"]
 
     # Lo que se puede decir sin procesar nada se dice ya: son chequeos sobre
@@ -1760,9 +1771,17 @@ def proponer_tematicas_de_carga(ctx, actor, params, cuerpo, consulta):
 @ruta("PATCH", "/cargas/<carga_id>", "ingestar", requisito="R-ORG.4")
 def editar_carga(ctx, actor, params, cuerpo, consulta):
     """Corrige los datos del estudio. Se refleja en todas las fichas que
-    provienen de esa carga sin tocar ninguna persona."""
-    salida = cargas.editar(ctx.boveda, _entero(params["carga_id"]), cuerpo)
+    provienen de esa carga sin tocar ninguna persona.
+
+    La fecha del estudio, además, se lleva al cuestionario del store
+    semántico: es la que muestran las respuestas en la ficha."""
+    cuerpo = cuerpo or {}
+    salida = cargas.editar(
+        ctx.boveda, _entero(params["carga_id"]), cuerpo,
+        conn_semantica=ctx.semantica if "fecha_estudio" in cuerpo else None)
     ctx.boveda.commit()
+    if "fecha_estudio" in cuerpo:
+        ctx.semantica.commit()
     return 200, salida
 
 
@@ -1774,7 +1793,8 @@ def analizar_sav_de_carga(ctx, actor, params, cuerpo, consulta):
                              cuerpo.get("valores_no_respuesta"))
 
 
-@ruta("POST", "/cargas/<carga_id>/ingesta", "ingestar", requisito="R3.13, R-TEM.2, R-TEM.13")
+@ruta("POST", "/cargas/<carga_id>/ingesta", "ingestar",
+      requisito="R3.13, R-TEM.2, R-TEM.13, R-ING.2, R-ING.3")
 def ingestar_carga(ctx, actor, params, cuerpo, consulta):
     """Incorpora los individuos del archivo y sus respuestas. Sin panel.
 
@@ -1787,15 +1807,20 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
     columna_id = (cuerpo.get("columna_id") or "").strip()
     if not columna_id:
         raise DatosInvalidos("Falta indicar qué variable identifica al individuo.")
+    # R-ING.2 — antes de leer el archivo, de pedir temáticas a Claude o de
+    # crear a nadie: con una ingesta en curso no hay qué revisar.
+    diferida.exigir_sin_trabajo_activo(ctx.boveda, "carga", carga_id)
+    cronometro = diferida.Cronometro()
 
-    # Las filas llegan del `.sav` o ya despivotadas, igual que en R3.9.
-    filas = (sav.filas_de(_archivo_de(cuerpo))
-             if cuerpo.get("archivo_base64") or cuerpo.get("archivo")
-             else (cuerpo.get("filas") or []))
+    with cronometro.parte("despivotar"):
+        # Las filas llegan del `.sav` o ya despivotadas, igual que en R3.9.
+        filas = (sav.filas_de(_archivo_de(cuerpo))
+                 if cuerpo.get("archivo_base64") or cuerpo.get("archivo")
+                 else (cuerpo.get("filas") or []))
 
-    demograficas = sav.normalizar_demograficas(
-        cuerpo.get("demograficas"), {c for fila in filas for c in fila},
-        campos_validos=sav.campos_demograficos(ctx.boveda), conn=ctx.boveda)
+        demograficas = sav.normalizar_demograficas(
+            cuerpo.get("demograficas"), {c for fila in filas for c in fila},
+            campos_validos=sav.campos_demograficos(ctx.boveda), conn=ctx.boveda)
     opciones_por_variable = {
         p.get("codigo"): (p.get("opciones") or {}) for p in preguntas
     }
@@ -1846,25 +1871,27 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
         # Igual que en R3.9: la evidencia se valida **antes** de ingestar
         # nada. Al revés dejaría el store semántico con respuestas de gente
         # que no existe en la bóveda.
-        creacion = cargas.crear_individuos(
-            ctx.boveda, filas, sav.mapeo_por_campo(demograficas),
-            origen=(cuerpo.get("origen") or "carga"), columna_id=columna_id,
-            evidencia_consentimiento=cuerpo.get("evidencia_consentimiento"),
-            actor=actor, opciones_por_variable=opciones_por_variable,
-            carga_id=carga_id,
-        )
+        with cronometro.parte("crear_individuos"):
+            creacion = cargas.crear_individuos(
+                ctx.boveda, filas, sav.mapeo_por_campo(demograficas),
+                origen=(cuerpo.get("origen") or "carga"), columna_id=columna_id,
+                evidencia_consentimiento=cuerpo.get("evidencia_consentimiento"),
+                actor=actor, opciones_por_variable=opciones_por_variable,
+                carga_id=carga_id,
+            )
         # Igual que en R3.9: las personas tienen que estar commiteadas antes
         # de que arranque la primera tarea.
         ctx.boveda.commit()
 
     cargas.obtener(ctx.boveda, carga_id)   # que exista, antes de guardar nada
-    plan = _con_constancia_de_dedup(
-        _plan_de(cuerpo, columna_id=columna_id,
-                 origen=(cuerpo.get("origen") or "carga"),
-                 preguntas=preguntas, demograficas=demograficas), filas)
+    with cronometro.parte("armar_plan"):
+        plan = _con_constancia_de_dedup(
+            _plan_de(cuerpo, columna_id=columna_id,
+                     origen=(cuerpo.get("origen") or "carga"),
+                     preguntas=preguntas, demograficas=demograficas), filas)
     salida = diferida.encolar(
         ctx.boveda, "carga", carga_id, plan,
-        filas, actor=actor, encolador=ctx.encolador)
+        filas, actor=actor, encolador=ctx.encolador, cronometro=cronometro)
     salida["sin_clave_de_dedup"] = plan["sin_clave_de_dedup"]
 
     salida["duplicados_en_el_archivo"] = calidad.detectar_duplicados_en_filas(

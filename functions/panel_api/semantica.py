@@ -57,6 +57,26 @@ def asegurar_cuestionario(conn, ref_estudio, nombre, fecha_campo=None, metadata=
     return fila["id"]
 
 
+def fechar_cuestionario(conn, ref_estudio, fecha_campo, solo_si_vacia=False):
+    """Fija la fecha del cuestionario de un estudio.
+
+    `asegurar_cuestionario` no pisa una fecha con `None`, y está bien para
+    una re-ingesta; pero la fecha de una carga se corrige, y la corrección
+    tiene que llegar. Con `solo_si_vacia` no pisa la que haya: es lo que
+    usa completar las cargas anteriores. Devuelve si cambió algo.
+    """
+    fila = db.una(
+        conn,
+        """update cuestionario set fecha_campo = %s::date
+            where ref_estudio = %s
+              and (not %s or fecha_campo is null)
+              and fecha_campo is distinct from %s::date
+        returning id""",
+        (fecha_campo, str(ref_estudio), solo_si_vacia, fecha_campo),
+    )
+    return fila is not None
+
+
 def asegurar_individuos(conn, ids_persona):
     """Crea los `individuo` que falten y devuelve `{id_persona: individuo_id}`.
 

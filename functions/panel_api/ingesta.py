@@ -21,7 +21,7 @@ el `id_persona`. La PII se queda de este lado.
 import re
 
 from . import consentimiento, db, embeddings as mod_embeddings, semantica
-from .errores import DatosInvalidos
+from .errores import DatosInvalidos, NoEncontrado
 
 
 def _etiqueta(valor, opciones):
@@ -294,6 +294,41 @@ def _por_que_no_entro_nada(ids_origen, sin_mapear, motivos, bloqueadas):
         f"semántico.")
 
 
+# ── El estudio, según el destino ─────────────────────────────────────
+
+# Lo que la ingesta le dice al store semántico de un estudio, por tipo de
+# destino. Una encuesta y una carga guardan lo mismo con nombres distintos
+# —la fecha es `fecha_campo` en una y `fecha_estudio` en la otra—, y leer el
+# dict de una con los nombres de la otra devuelve `None` sin error: así se
+# quedaban sin fecha los cuestionarios de las cargas. La traducción vive acá
+# y en ningún otro lado.
+_ESTUDIO_POR_DESTINO = {
+    "encuesta": """select ref_estudio, nombre, fecha_campo, panel_id
+                     from encuesta where id = %s""",
+    "carga": """select ref_estudio, nombre, fecha_estudio as fecha_campo,
+                       null::bigint as panel_id
+                  from carga where id = %s""",
+}
+
+
+def estudio_del_destino(conn_boveda, destino_tipo, destino_id):
+    """`{ref_estudio, nombre, fecha_campo, panel_id}` del destino de una
+    ingesta, que es todo lo que `ingestar` mira del estudio."""
+    consulta = _ESTUDIO_POR_DESTINO.get(destino_tipo)
+    if consulta is None:
+        raise DatosInvalidos(f"Destino de ingesta desconocido: {destino_tipo!r}.",
+                             {"destinos": list(_ESTUDIO_POR_DESTINO)})
+    fila = db.una(conn_boveda, consulta, (destino_id,))
+    if not fila:
+        raise NoEncontrado(f"No existe la {destino_tipo} {destino_id}.")
+    return {
+        "ref_estudio": str(fila["ref_estudio"]),
+        "nombre": fila["nombre"],
+        "fecha_campo": fila["fecha_campo"],
+        "panel_id": fila["panel_id"],
+    }
+
+
 def ingestar(
     conn_boveda,
     conn_semantica,
@@ -308,8 +343,9 @@ def ingestar(
     normalizacion=None,
     con_respuestas=False,
 ):
-    """Corre la ingesta de un estudio. `encuesta` es el dict del store de bóveda
-    (necesita `ref_estudio`, `nombre`, `fecha_campo`).
+    """Corre la ingesta de un estudio. `encuesta` es lo que devuelve
+    `estudio_del_destino` (`ref_estudio`, `nombre`, `fecha_campo`,
+    `panel_id`), sea el destino una encuesta o una carga.
 
     Aplica el gate de `uso_semantico`: quien no lo tenga vigente queda fuera
     de la ingesta, y se informa en el resultado. No es un error del lote.

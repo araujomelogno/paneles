@@ -292,8 +292,11 @@ def test_toda_salida_temprana_de_correr_dice_por_que():
 def test_ingestar_no_deja_un_error_sin_mostrar():
     """Si `correr` revienta por algo que nadie previó, el motivo aparece
     junto al botón en vez de perderse como «uncaught in promise»."""
+    # Desde R-ING.1 el `onClick` además ignora un segundo clic mientras
+    # corre (`corriendo`), así que la llamada ya no es lo primero del cuerpo.
     assert re.search(
-        r"onClick: \(\) => correr\(\)\.catch\(\(error\) => avisarEnIngesta\(",
+        r"onClick: \(\) => \{\s*if \(corriendo\) return;\s*corriendo = true;\s*"
+        r"correr\(\)\.catch\(\(error\) => avisarEnIngesta\(",
         ENCUESTAS_JS)
 
 
