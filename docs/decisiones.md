@@ -4684,3 +4684,99 @@ nueva, da la que él tenía antes.
 **Dónde vive.** `functions/panel_api/semantica.py` (`upsert_respuestas`,
 `_sin_repetidas`, `_exigir_unidades_con_vector`, `RespuestaSinVector`),
 `functions/tests/test_bug_embedding_nulo_un_texto.py`.
+
+## D80 · Clientes por carga; la lista negra corta el contacto en la base y no el consentimiento; mejoras de Cargas, ficha y auditoría
+
+**El pedido.** `specs/SPEC_clientes_lista_negra_y_mejoras.md`: los clientes
+de cada estudio (R-CLI), una lista negra (R-LN), paginar Panelistas
+(R-PAN.1), el desglose de los reutilizados de una carga (R-CAR.3), las
+cargas en la ficha (R-CAR.4) y las reidentificaciones en la auditoría
+(R-AUD.1). Esquema en `boveda/0031`.
+
+### Clientes
+
+- **Viven en la carga** (`cliente`, `carga_cliente`), como entidad
+  compartida con el nombre normalizado y un `check` que lo hace valer. Una
+  variante que difiere solo en tildes reutiliza la existente, igual que las
+  temáticas. A diferencia de ellas, la puntuación se conserva («antel s.a.»).
+- **Los de cada panelista se derivan** (`v_persona_cliente`, por
+  `persona_carga`) y no se copian: corregir la carga se ve en todas las
+  fichas. Con las temáticas es al revés a propósito (D75): una temática es
+  sobre qué respondió; un cliente, para quién fue el estudio en que estuvo.
+- **El filtro excluye entero.** «No participó en estudios para X» niega el
+  `exists` completo: quien estuvo en una carga de X queda afuera aunque esa
+  carga tenga también otro cliente.
+- **Confidencial.** Ni portal, ni COLOQUIO (sin `grant`, y la batería lo
+  confirma), ni exportaciones (columnas fijas). En pantalla es una columna
+  más de resultados y figura en la ficha de la bóveda, no en la seudónima.
+
+### Lista negra
+
+- **Una fila por entrada** (`lista_negra`): activa es sin `removido_en`, a lo
+  sumo una por persona (índice único parcial). Sacar a alguien completa la
+  remoción con su motivo y no borra nada. El motivo es obligatorio en la base
+  y en la ruta.
+- **El corte del contacto es la base.** `v_persona_convocable` excluye a
+  quien tiene una entrada activa. Por eso no se convoca desde Encuestas,
+  muestreo y optimizador (que ya leían la vista), ni desde COLOQUIO, sin
+  tocar ninguno. El pedido no mencionaba a COLOQUIO; sin esto, alguien
+  excluido de las encuestas podía ser invitado a un focus group.
+- **No toca el consentimiento.** El gate de las finalidades que no son de
+  contacto (`uso_semantico`) pasa a leer `v_persona_finalidad_vigente`, que
+  tiene la misma regla de persona activa y sin lápida pero no mira la lista
+  negra. Si se hubiera dejado todo en `v_persona_convocable`, la lista negra
+  habría bloqueado la ingesta semántica de esa persona y el reproceso habría
+  borrado sus respuestas. También la habría sacado de los resultados, que
+  el pedido dice marcar y no ocultar. Las estadísticas de consentimiento
+  cuentan desde la misma vista, para no informar la lista negra como falta
+  de consentimiento.
+- **Los efectos que son de la aplicación**:
+  - la convocatoria la separa antes del gate y la cuenta aparte
+    (`en_lista_negra`);
+  - al agregarla se cancelan sus invitaciones pendientes: convocatorias sin
+    respuesta de encuestas no cerradas. Se borran las filas y quedan
+    anotadas en la entrada (`invitaciones_canceladas`);
+  - «crear panel desde consulta» la deja afuera por defecto y dice cuántos.
+    Incluirla es de quien gestiona la lista;
+  - WhatsApp la excluye con motivo propio;
+  - la landing: si el dedup la reconoce, la inscripción va a revisión,
+    marcada, y no se aprueba sin elegir a la persona.
+- **Quién ve qué.** `gestionar_lista_negra` (admin, operaciones) agrega y
+  saca. `ver_lista_negra` (más dpo, que contesta los pedidos de acceso) ve
+  el motivo y el historial. Los demás ven la marca en resultados y fichas,
+  sin el motivo.
+- **R-LN.4.** El panelista no ve nada (`portal.py` no la lee, y una prueba
+  lo vigila). El historial de la persona es lo que corresponde entregarle en
+  un pedido de acceso. La baja se la lleva por cascada. Si hay que conservar
+  algo después de la baja, se resuelve con asesoría y con otra decisión.
+
+### Cargas, ficha y auditoría
+
+- **Reutilizados.** Para cada **otra** carga en la que la persona ya estaba
+  antes que en esta (por el momento del vínculo; a igual momento, la carga
+  más vieja), cuántos. La suma puede superar el total, y el modal lo dice.
+  Quien no estaba en ninguna va en «sin carga previa». Son conteos: la ruta
+  vive bajo `/cargas/` y no lista personas.
+- **Cargas en la ficha.** `cargas.cargas_de_persona`: la más reciente
+  primero, con los clientes de la carga y las temáticas que respondió en
+  ella (de `persona_tematica`, que ya guarda la carga). Aparte, los otros
+  ingresos: inscripción aprobada (landing), archivo de campo de una encuesta
+  (`participacion.origen = 'importacion'`), o alta manual si no hay rastro de
+  nada. No se reconstruye el pasado: sin vínculo, la ficha lo explica.
+- **Reidentificaciones.** Se siguen guardando una fila por persona. El
+  evento se arma al leer, agrupando las filas de una misma llamada (mismo
+  actor, motivo, contexto y momento). No se agregó un id de evento a la
+  tabla. Filtra por usuario, fechas y panelista (id, documento o correo).
+  Lo muestra Cumplimiento, porque Configuración no la ve el dpo.
+- **Panelistas pagina en la pantalla.** La ruta ya paginaba: la pantalla
+  pedía 100 y no ofrecía más.
+
+**Dónde vive.** `db/boveda/0031_clientes_y_lista_negra.sql`,
+`functions/panel_api/clientes.py`, `lista_negra.py`, `consentimiento.py`
+(`_gate`), `cargas.py` (`cargas_de_persona`, `reutilizados`), `auditoria.py`
+(`eventos_de_reidentificacion`), `web/public/js/clientes.js`,
+`web/public/js/lista_negra.js`, `web/public/js/paginas/lista_negra.js`.
+Pruebas: `functions/tests/test_clientes.py`,
+`functions/tests/test_lista_negra.py`,
+`functions/tests/test_cargas_ficha_y_auditoria.py`,
+`functions/tests/test_pantallas_clientes_lista_negra.py`.

@@ -119,6 +119,15 @@ PERMISOS = {
     # PEDIDO del celular, parte 3 — borrar una carga da de baja a las
     # personas que trajo y no tiene vuelta atrás: solo administración.
     "borrar_carga": {"admin"},
+    # R-LN.1 — agregar a alguien a la lista negra o sacarlo. Lo deja fuera de
+    # toda convocatoria, la de COLOQUIO incluida: es de quien decide a quién
+    # se invita.
+    "gestionar_lista_negra": {"admin", "operaciones"},
+    # R-LN.2 / R-LN.3 / R-LN.4 — ver el motivo y el historial. Es un dato
+    # sobre una persona identificada: lo ve quien la gestiona, más el dpo,
+    # que contesta los pedidos de acceso. El analista ve la marca en los
+    # resultados, no el motivo.
+    "ver_lista_negra": {"admin", "operaciones", "dpo"},
 }
 
 

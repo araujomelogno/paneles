@@ -161,7 +161,10 @@ def filtrar_contactables(conn, ids_persona, canal,
                exists (select 1 from preferencia_canal pc
                         where pc.id_persona = p.id_persona
                           and pc.canal = %s and pc.estado = 'activa')
-                                                        as tiene_preferencia
+                                                        as tiene_preferencia,
+               exists (select 1 from lista_negra ln
+                        where ln.id_persona = p.id_persona
+                          and ln.removido_en is null)  as en_lista_negra
           from persona p
          where p.id_persona = any(%s::uuid[])
         """,
@@ -176,6 +179,11 @@ def filtrar_contactables(conn, ids_persona, canal,
     for fila in filas:
         id_persona = str(fila["id_persona"])
         encontrados.add(id_persona)
+        # R-LN.2 — antes que nada: a quien está en la lista negra no se le
+        # escribe, tenga lo que tenga.
+        if fila["en_lista_negra"]:
+            excluir(id_persona, "lista_negra")
+            continue
         if not fila["tiene_finalidad"]:
             excluir(id_persona, "sin_consentimiento")
             continue

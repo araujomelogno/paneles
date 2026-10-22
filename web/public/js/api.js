@@ -475,7 +475,7 @@ export const cargas = {
      ella, no copiados en cada persona. */
   crear: (nombre, descripcion, {
     fechaEstudio, publicoObjetivo, tipoDatosOrigen, tipoDatosOrigenOtro,
-    modoRelevamiento, modoRelevamientoOtro,
+    modoRelevamiento, modoRelevamientoOtro, clientes,
   } = {}) =>
     POST('/cargas', {
       nombre, descripcion,
@@ -487,11 +487,15 @@ export const cargas = {
       tipo_datos_origen_otro: tipoDatosOrigenOtro || null,
       modo_relevamiento: modoRelevamiento || null,
       modo_relevamiento_otro: modoRelevamientoOtro || null,
+      // R-CLI.1 — para quién se hizo el estudio; nombres, los nuevos se crean.
+      clientes: clientes || [],
     }),
   /* R-CAR.1 — sin consulta, todas (los selectores); la sección Cargas
      filtra por temática (`tematica_id`) y busca por nombre (`q`). */
   listar: (consulta) => GET('/cargas', consulta),
   ver: (cargaId) => GET(`/cargas/${cargaId}`),
+  /* R-CAR.3 — de qué otras cargas vienen sus reutilizados (conteos). */
+  reutilizados: (cargaId) => GET(`/cargas/${cargaId}/reutilizados`),
   /* R-TEM.4 — deja a la carga con esa lista: `[{ nombre, origen }]`. Es el
      único camino que las escribe, antes y después de confirmar. */
   guardarTematicas: (cargaId, tematicas) =>
@@ -521,6 +525,23 @@ export const cargas = {
 
 /* R-TEM — el vocabulario compartido de temáticas, con cuántas cargas usa
    cada una: el autocompletado del editor y el filtro de la sección Cargas. */
+/* R-LN — la lista negra. Agregar y sacar piden motivo; el historial es lo
+   que corresponde en un pedido de acceso. El panelista no ve nada de esto. */
+export const listaNegra = {
+  agregar: (idPersona, categoria, detalle) =>
+    POST(`/panelistas/${idPersona}/lista-negra`, { categoria, detalle }),
+  sacar: (idPersona, motivo) =>
+    POST(`/panelistas/${idPersona}/lista-negra/remocion`, { motivo }),
+  historial: (idPersona) => GET(`/panelistas/${idPersona}/lista-negra`),
+  listar: (consulta) => GET('/lista-negra', consulta),
+};
+
+/* R-CLI — el vocabulario de clientes, para autocompletar. Confidencial: no
+   llega al portal ni a COLOQUIO. */
+export const clientes = {
+  listar: (q) => GET('/clientes', q ? { q } : undefined),
+};
+
 export const tematicas = {
   listar: () => GET('/tematicas'),
   /* R-TEM.12 / R-TEM.14 — lo que ofrece el filtro de Consultas: por área,
@@ -567,8 +588,13 @@ export const exportacion = {
     }),
 };
 
-export const panelDesdeConsulta = (nombre, resultado, definicion, descripcion) =>
-  POST('/paneles/desde-consulta', { nombre, resultado, definicion, descripcion });
+export const panelDesdeConsulta = (nombre, resultado, definicion, descripcion,
+  { incluirListaNegra = false } = {}) =>
+  POST('/paneles/desde-consulta', {
+    nombre, resultado, definicion, descripcion,
+    // R-LN.2 — afuera por defecto; incluirlos lo decide quien gestiona la lista.
+    incluir_lista_negra: incluirListaNegra,
+  });
 
 /* ── Fase 4 · 4B — Inteligencia ─────────────────────────────────────── */
 

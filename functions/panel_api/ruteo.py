@@ -19,6 +19,7 @@ from . import (
     calidad_dato,
     cargas,
     cargas_borrado,
+    clientes,
     composicion,
     consentimiento,
     consulta_completa,
@@ -30,6 +31,7 @@ from . import (
     esquema,
     estadisticas,
     inscripciones,
+    lista_negra,
     longitudinal,
     muestreo,
     optimizador,
@@ -281,12 +283,93 @@ def ficha_panelista(ctx, actor, params, cuerpo, consulta):
     ficha["tematicas"] = tematicas.de_persona(
         ctx.boveda, params["id_persona"],
         incluir_especiales=actor.puede("tematicas_especiales"))
+    ficha["lista_negra"] = _lista_negra_para(ctx, actor, params["id_persona"])
+    # R-CAR.4 — en qué cargas aparece, con sus clientes y lo que respondió
+    # en cada una; y si entró por la landing, un alta manual o una encuesta.
+    ficha["cargas"] = cargas.cargas_de_persona(
+        ctx.boveda, params["id_persona"],
+        incluir_especiales=actor.puede("tematicas_especiales"))
     auditoria.registrar_reidentificacion(
         ctx.boveda, [params["id_persona"]], actor=actor, motivo="ficha",
         contexto={"ruta": "GET /panelistas/{id_persona}"},
     )
     ctx.boveda.commit()
     return 200, ficha
+
+
+def _fecha_iso(valor):
+    """`AAAA-MM-DD` o nada. Lo demás es un error del pedido, no un filtro
+    que se ignora en silencio."""
+    valor = (valor or "").strip()
+    if not valor:
+        return None
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", valor):
+        raise DatosInvalidos("La fecha va como AAAA-MM-DD.", {"valor": valor})
+    return valor
+
+
+def _id_persona(valor):
+    valor = (valor or "").strip()
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", valor):
+        raise DatosInvalidos("No es un identificador de persona.")
+    return valor
+
+
+def _lista_negra_para(ctx, actor, id_persona):
+    """R-LN.2 — la entrada activa, con el motivo solo para quien puede
+    verlo; para el resto, la marca. `None` si no está."""
+    entrada = lista_negra.activa_de(ctx.boveda, id_persona)
+    if not entrada or actor.puede("ver_lista_negra"):
+        return entrada
+    return {"en_lista_negra": True}
+
+
+# ── R-LN · Lista negra ──────────────────────────────────────────────
+
+@ruta("POST", "/panelistas/<id_persona>/lista-negra", "gestionar_lista_negra",
+      requisito="R-LN.1, R-LN.2")
+def agregar_a_lista_negra(ctx, actor, params, cuerpo, consulta):
+    """Agrega a la persona, con el motivo (categoría y detalle de hechos).
+    Cancela sus invitaciones pendientes. No se le avisa (R-LN.4)."""
+    entrada = lista_negra.agregar(
+        ctx.boveda, _id_persona(params["id_persona"]), cuerpo.get("categoria"),
+        cuerpo.get("detalle"), actor=actor.email or actor.uid)
+    ctx.boveda.commit()
+    return 201, entrada
+
+
+@ruta("POST", "/panelistas/<id_persona>/lista-negra/remocion", "gestionar_lista_negra",
+      requisito="R-LN.3")
+def sacar_de_lista_negra(ctx, actor, params, cuerpo, consulta):
+    """Saca a la persona, con el motivo. La entrada queda en el historial."""
+    entrada = lista_negra.sacar(
+        ctx.boveda, _id_persona(params["id_persona"]), cuerpo.get("motivo"),
+        actor=actor.email or actor.uid)
+    ctx.boveda.commit()
+    return 200, entrada
+
+
+@ruta("GET", "/panelistas/<id_persona>/lista-negra", "ver_lista_negra",
+      requisito="R-LN.3, R-LN.4")
+def historial_de_lista_negra(ctx, actor, params, cuerpo, consulta):
+    """Todas las entradas de la persona, activas y removidas. Es lo que
+    corresponde entregar en un pedido de acceso (R-LN.4)."""
+    return 200, {"items": lista_negra.historial(ctx.boveda, _id_persona(params["id_persona"]))}
+
+
+@ruta("GET", "/lista-negra", "ver_lista_negra", requisito="R-LN.3")
+def listar_lista_negra(ctx, actor, params, cuerpo, consulta):
+    """La sección: quiénes están, con su motivo, quién y cuándo. Paginada y
+    con búsqueda; `removidas=1` suma las entradas ya cerradas."""
+    return 200, {
+        **lista_negra.listar(
+            ctx.boveda, busqueda=consulta.get("q"),
+            limite=min(_entero(consulta.get("limite"), 50), 200),
+            desde=_entero(consulta.get("desde"), 0),
+            incluir_removidas=_bandera(consulta.get("removidas"))),
+        "categorias": [{"clave": k, "etiqueta": v}
+                       for k, v in lista_negra.CATEGORIAS.items()],
+    }
 
 
 @ruta("PATCH", "/panelistas/<id_persona>", "enrolar")
@@ -659,6 +742,9 @@ def correr_consulta(ctx, actor, params, cuerpo, consulta):
             "degradaciones": resultado["degradaciones"],
             "diagnostico": resultado["diagnostico"],
         }
+    # R-LN.2 — marcados, no ocultos; el motivo, para quien puede verlo.
+    lista_negra.marcar(ctx.boveda, resultado.get("items"),
+                       con_motivo=actor.puede("ver_lista_negra"))
     return 200, resultado
 
 
@@ -681,9 +767,12 @@ def ver_ejecucion_completa(ctx, actor, params, cuerpo, consulta):
         resultado = consulta_completa.resultado(ctx, ejecucion_id, todas=True)
         return 200, {"formato": "csv", "nombre_archivo": "consulta-completa.csv",
                      "filas": resultado["total"], "csv": consultas.a_csv(resultado)}
-    return 200, consulta_completa.resultado(
+    resultado = consulta_completa.resultado(
         ctx, ejecucion_id, pagina=_entero(consulta.get("pagina"), 1),
         por_pagina=_entero(consulta.get("por_pagina")))
+    lista_negra.marcar(ctx.boveda, resultado.get("items"),
+                       con_motivo=actor.puede("ver_lista_negra"))
+    return 200, resultado
 
 
 @ruta("POST", "/consultas/ejecuciones/<ejecucion_id>/reintentar", "consulta_completa",
@@ -793,10 +882,22 @@ def reidentificar(ctx, actor, params, cuerpo, consulta):
     return 200, resultado
 
 
-@ruta("GET", "/reidentificacion", "cumplimiento", requisito="P1")
+@ruta("GET", "/reidentificacion", "cumplimiento", requisito="P1, R-AUD.1")
 def listar_reidentificaciones(ctx, actor, params, cuerpo, consulta):
     """El registro de reidentificaciones. Lo lee cumplimiento (admin / dpo):
-    es la evidencia de que el puente entre stores se usa y se controla."""
+    es la evidencia de que el puente entre stores se usa y se controla.
+
+    R-AUD.1 — con `eventos=1`, agrupado por evento (quién, cuándo, motivo y
+    a cuántas personas), paginado y con filtros por usuario (`actor`), fecha
+    (`desde`, `hasta`) y panelista (`panelista`). Es lo que muestra la
+    pantalla de Cumplimiento; sin la bandera, la lista por fila de siempre."""
+    if _bandera(consulta.get("eventos")):
+        return 200, auditoria.eventos_de_reidentificacion(
+            ctx.boveda, actor=consulta.get("actor"),
+            desde=_fecha_iso(consulta.get("desde")), hasta=_fecha_iso(consulta.get("hasta")),
+            panelista=consulta.get("panelista"),
+            limite=min(_entero(consulta.get("limite"), 50) or 50, 200),
+            desplazamiento=_entero(consulta.get("desde_fila"), 0) or 0)
     return 200, {
         "items": auditoria.listar_reidentificaciones(
             ctx.boveda,
@@ -1059,6 +1160,10 @@ def columnas_disponibles(ctx, actor, params, cuerpo, consulta):
         # una especial (ver `tematicas.columna_de_varias`).
         {"clave": tematicas.COLUMNA, "etiqueta": tematicas.ETIQUETA_COLUMNA,
          "tipo": "tematica"},
+        # R-CLI.3 — para qué clientes participó. En pantalla; no va en
+        # ninguna exportación (R-CLI.4).
+        {"clave": clientes.COLUMNA, "etiqueta": clientes.ETIQUETA_COLUMNA,
+         "tipo": "cliente"},
     ]}
 
 
@@ -1079,6 +1184,9 @@ def atributos_de_resultados(ctx, actor, params, cuerpo, consulta):
         valores.setdefault(id_persona, {}).update(columnas)
     # R-TEM.6 — las temáticas, sin las especiales, en la misma ida.
     for id_persona, columnas in tematicas.columna_de_varias(ctx.boveda, ids).items():
+        valores.setdefault(id_persona, {}).update(columnas)
+    # R-CLI.3 — los clientes, en la misma ida.
+    for id_persona, columnas in clientes.columna_de_varias(ctx.boveda, ids).items():
         valores.setdefault(id_persona, {}).update(columnas)
     return 200, {"items": valores}
 
@@ -1123,6 +1231,11 @@ def ficha_seudonima(ctx, actor, params, cuerpo, consulta):
     if ids:
         salida["evidencia"] = ficha.evidencia(
             ctx.semantica, params["id_persona"], ids)
+    # R-LN.2 — la marca, y el motivo para quien puede verlo. Es desde esta
+    # ficha que se agrega a alguien visto en un resultado (R-LN.1).
+    salida["lista_negra"] = lista_negra.marcar(
+        ctx.boveda, [{"id_persona": params["id_persona"]}],
+        con_motivo=actor.puede("ver_lista_negra"))[0]["lista_negra"]
     return 200, salida
 
 
@@ -1602,7 +1715,9 @@ def crear_carga(ctx, actor, params, cuerpo, consulta):
         tipo_datos_origen_otro=cuerpo.get("tipo_datos_origen_otro"),
         modo_relevamiento=cuerpo.get("modo_relevamiento"),
         modo_relevamiento_otro=cuerpo.get("modo_relevamiento_otro"),
-        exigir_origen=True)
+        exigir_origen=True,
+        # R-CLI.1 — para quién se hizo el estudio, al abrir la carga.
+        clientes=cuerpo.get("clientes"))
     ctx.boveda.commit()
     return 201, carga
 
@@ -1630,6 +1745,26 @@ def ver_carga(ctx, actor, params, cuerpo, consulta):
     sección Panelistas. Una segunda ruta que listara personas tendría que
     volver a demostrar que no muestra más de lo que esa muestra."""
     return 200, cargas.obtener(ctx.boveda, _entero(params["carga_id"]))
+
+
+@ruta("GET", "/cargas/<carga_id>/reutilizados", "leer", requisito="R-CAR.3")
+def desglose_de_reutilizados(ctx, actor, params, cuerpo, consulta):
+    """De qué otras cargas vienen los reutilizados, con cuántos de cada una,
+    y cuántos no venían de ninguna (landing, alta manual o encuesta). Son
+    conteos: no lista a nadie."""
+    return 200, cargas.reutilizados(ctx.boveda, _entero(params["carga_id"]))
+
+
+# ── R-CLI · Clientes ─────────────────────────────────────────────────
+
+@ruta("GET", "/clientes", "leer", requisito="R-CLI.1")
+def listar_clientes(ctx, actor, params, cuerpo, consulta):
+    """El vocabulario de clientes, para autocompletar al cargar o editar una
+    carga y al filtrar una consulta. Confidencial: no es parte de la
+    superficie de COLOQUIO ni del portal (R-CLI.4)."""
+    return 200, {"items": clientes.listar(
+        ctx.boveda, busqueda=consulta.get("q"),
+        limite=_entero(consulta.get("limite"), 50))}
 
 
 # ── R-TEM · Temáticas incorporadas ──────────────────────────────────
@@ -2115,11 +2250,17 @@ def exportar_identificado(ctx, actor, params, cuerpo, consulta):
 
 @ruta("POST", "/paneles/desde-consulta", "gestionar_paneles", requisito="R3.11")
 def panel_desde_consulta(ctx, actor, params, cuerpo, consulta):
+    # R-LN.2 — los de la lista negra quedan afuera por defecto. Incluirlos
+    # es una decisión de quien gestiona la lista.
+    incluir = _bandera(cuerpo.get("incluir_lista_negra"))
+    if incluir:
+        actor.exigir("gestionar_lista_negra")
     return 201, paneles.desde_consulta(
         ctx.boveda, cuerpo.get("nombre"), cuerpo.get("resultado") or {},
         definicion=cuerpo.get("definicion"),
         descripcion=cuerpo.get("descripcion"),
         actor=actor, consulta_id=cuerpo.get("consulta_id"),
+        incluir_lista_negra=incluir,
     )
 
 

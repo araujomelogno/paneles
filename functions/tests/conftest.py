@@ -58,7 +58,7 @@ TABLAS_BOVEDA = [
     "tematica",
     # R-TEM.7 — las áreas no cascadean desde la temática (es al revés), y el
     # registro de cambios no tiene FK a nadie.
-    "area_tematica", "taxonomia_cambio", "carga_borrado",
+    "area_tematica", "taxonomia_cambio", "carga_borrado", "carga_cliente", "cliente",
 ]
 
 # R3.14 — el catálogo de atributos **no** se trunca: `sexo`, `localidad`,

@@ -6,8 +6,8 @@ se resuelve por `ref_estudio` y por `id_persona`, y nada más.
 """
 
 from . import (
-    consentimiento, db, dedup, ingesta as mod_ingesta, personas, sav,
-    semantica)
+    consentimiento, db, dedup, ingesta as mod_ingesta, lista_negra, personas,
+    sav, semantica)
 from .errores import Conflicto, DatosInvalidos, NoEncontrado
 
 ESTADOS = ("borrador", "en_campo", "cerrada")
@@ -132,6 +132,13 @@ def convocar(conn, encuesta_id, ids_persona=None, todo_el_panel=False):
     if not ids_persona:
         raise DatosInvalidos("No hay a quién convocar.")
 
+    # R-LN.2 — quien está en la lista negra no se convoca. El gate ya lo deja
+    # afuera (`v_persona_convocable`, boveda/0031); se separa antes para que
+    # el resumen diga por qué, y no lo cuente como falta de consentimiento.
+    en_lista_negra = sorted(lista_negra.activas_de(conn, ids_persona))
+    excluidas = set(en_lista_negra)
+    ids_persona = [i for i in ids_persona if i not in excluidas]
+
     habilitadas, bloqueadas = consentimiento.filtrar_con_consentimiento(
         conn, ids_persona, consentimiento.CONTACTO
     )
@@ -155,6 +162,7 @@ def convocar(conn, encuesta_id, ids_persona=None, todo_el_panel=False):
         "convocados_nuevos": nuevas,
         "convocados_total": len(habilitadas),
         "sin_consentimiento": bloqueadas,
+        "en_lista_negra": len(en_lista_negra),
     }
 
 

@@ -14,6 +14,35 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Clientes, lista negra y mejoras · 2026-10-21.** Spec de clientes y
+> lista negra (D80). Cambios por sección:
+>
+> - 3.1: Panelistas se recorre por páginas.
+> - 3.5: la tarjeta **Cargas** reemplaza a *Origen*, con clientes y
+>   temáticas por carga y por dónde entró la persona; también el bloque de
+>   lista negra de la ficha.
+> - 3.6: el campo **Clientes** de la carga.
+> - 3.8: la reinscripción de alguien en la lista negra.
+> - **3.9, La lista negra**, nueva.
+> - 5.2: el conteo *En lista negra* de la convocatoria.
+> - 6.3: la marca en los resultados y *Crear panel*.
+> - 6.10: **Filtrar por cliente**.
+> - 11.3: **Reidentificaciones**.
+> - 15.1 y 15.2: clientes y reutilizados.
+> - **15.11, Los clientes de una carga** y **15.12, De dónde vienen los
+>   reutilizados**, nuevas.
+> - 1.2: roles.
+>
+> Cuatro preguntas frecuentes y tres términos nuevos.
+>
+> **Capturas nuevas, de la 112 a la 119.** Salen de la copia en modo demo
+> (`preparar_demo.sh`), sembrada desde la página con la API de la demo:
+> panelistas de más para que haya páginas, clientes en las cargas, tres
+> entradas en la lista negra y dos reidentificaciones. Dos capturas
+> completan la respuesta con un caso como el de producción, porque la demo
+> no tiene personas en dos cargas con temáticas: la 113 (la tarjeta
+> Cargas) y la 116 (el desglose de reutilizados, con los números del spec).
+
 > **Celular como identificador, falso positivo de datos personales y borrar
 > una carga · 2026-10-21.** PEDIDO del celular (D78). La 5.4 suma **El
 > celular** a la tabla de qué identificador trae la columna, y el motivo

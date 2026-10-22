@@ -20,6 +20,7 @@ import * as api from '../api.js';
 import * as catalogo from '../catalogo.js';
 import * as respuestas from '../respuestas.js';
 import { pintarOrigen } from '../origen.js';
+import * as listaNegra from '../lista_negra.js';
 import {
   $, $$, esc, encabezado, token, vacio, cargando, toast, modal, cerrarModal,
   leerFormulario, alerta, activarTokens, fechaCorta, confirmar,
@@ -158,6 +159,8 @@ export async function render(main, ctx) {
           <button class="btn btn-outline btn-sm" id="agregar-demografico">+ Criterio demográfico</button>
           <button class="btn btn-outline btn-sm" id="agregar-tematica"
                   title="Panelistas con información sobre un tema">+ Temática</button>
+          <button class="btn btn-outline btn-sm" id="agregar-cliente"
+                  title="Quienes participaron (o no) en estudios para un cliente">+ Cliente</button>
           <span class="toolbar-spacer"></span>
           <button class="btn btn-outline btn-sm" id="parametros">Parámetros</button>
         </div>
@@ -217,6 +220,7 @@ export async function render(main, ctx) {
   $('#agregar-semantico').onclick = () => abrirCriterioSemantico();
   $('#agregar-demografico').onclick = () => abrirCriterioDemografico();
   $('#agregar-tematica').onclick = () => abrirCriterioTematica();
+  $('#agregar-cliente').onclick = () => abrirCriterioCliente();
   $('#parametros').onclick = abrirParametros;
   $('#correr').onclick = correr;
   $('#guardar').onclick = abrirGuardar;
@@ -259,6 +263,10 @@ function pintarCriterios() {
       ? `<span class="badge badge-on">semántico</span> <strong>${esc(c.texto)}</strong>
          ${c.duro ? '<span class="badge">duro</span>' : ''}
          <span class="small muted">peso ${c.peso ?? 1}</span>`
+      : c.dimension === 'cliente'
+        ? `<span class="badge badge-user">cliente</span>
+           <strong>${esc(c.etiqueta || `${c.operador === 'not_in' ? 'No participó' : 'Participó'}
+             en estudios para ${(Array.isArray(c.valor) ? c.valor : [c.valor]).join(' o ')}`)}</strong>`
       : c.dimension === 'tematica'
         ? `<span class="badge badge-user">temática</span>
            ${c.etiqueta ? `<strong>${esc(c.etiqueta)}</strong>` : `Con información sobre
@@ -425,6 +433,56 @@ async function abrirCriterioTematica() {
       grupo.open = Boolean(q) && visibles > 0;
     });
   };
+}
+
+/* R-CLI.3 — participó (o no) en estudios para un cliente. Los clientes de
+   cada persona salen de sus cargas; «no participó» deja afuera a quien
+   estuvo en **alguna** carga de ese cliente. */
+async function abrirCriterioCliente() {
+  const { items } = await api.clientes.listar();
+  if (!items.length) {
+    toast('Todavía ninguna carga tiene clientes: se indican al crear la carga o '
+      + 'desde su detalle, en Cargas.', 'err');
+    return;
+  }
+  modal({
+    titulo: 'Filtrar por cliente',
+    ancho: '560px',
+    cuerpo: `
+      <div class="form-group"><label>Quiénes</label>
+        <select class="fselect" name="operador">
+          <option value="in">Participaron en estudios para…</option>
+          <option value="not_in">No participaron en estudios para…</option>
+        </select>
+        <div class="field-hint">Se mira de qué cargas viene cada persona. «No
+          participaron» excluye a quien estuvo en alguna carga de ese cliente.</div>
+      </div>
+      <div class="form-group"><label>Clientes</label>
+        <div class="tematicas-elegir">${items.map((c) => `
+          <label class="check">
+            <input type="checkbox" data-cliente="${c.id}" data-nombre="${esc(c.nombre)}" />
+            ${esc(c.nombre)} <span class="small muted">(${c.cargas} carga${c.cargas === 1 ? '' : 's'})</span>
+          </label>`).join('')}</div>
+        <div class="field-hint">Con varios elegidos, alcanza con cualquiera.</div>
+      </div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Agregar', clase: 'btn-orange', onClick: (c) => {
+          const elegidos = $$('[data-cliente]:checked', c)
+            .map((x) => ({ id: Number(x.dataset.cliente), nombre: x.dataset.nombre }));
+          if (!elegidos.length) { toast('Elegí al menos un cliente.', 'err'); return; }
+          const operador = $('[name="operador"]', c).value;
+          const nombres = elegidos.map((x) => x.nombre).join(' o ');
+          definicion.criterios.push({
+            tipo: 'demografico', dimension: 'cliente', operador,
+            valor: elegidos.map((x) => x.id),
+            etiqueta: `${operador === 'not_in' ? 'No participó' : 'Participó'} en estudios para ${nombres}`,
+          });
+          cerrarModal();
+          pintarCriterios();
+        } },
+    ],
+  });
 }
 
 function abrirCriterioDemografico() {
@@ -1017,10 +1075,10 @@ function tablaDemografica(resultado) {
 
 function filaDemografica(item, indice, columnas) {
   const nombre = nombresResueltos[item.id_persona]?.nombre;
-  return `<tr>
+  return `<tr class="${item.lista_negra ? 'en-lista-negra' : ''}">
     <td class="mono">${indice + 1}</td>
     <td>${nombre ? `<div class="td-strong">${esc(nombre)}</div>` : ''}
-        ${token(item.id_persona)}
+        ${token(item.id_persona)} ${listaNegra.marca(item.lista_negra)}
         <button class="btn btn-outline btn-sm" data-ficha="${indice}"
                 style="margin-top:.35rem">Ficha</button></td>
     ${columnas.map((c) => `<td>${celdaDemografica(item, c)}</td>`).join('')}
@@ -1055,10 +1113,11 @@ function estadoHtml(item) {
 function filaItem(item, indice) {
   const nombre = nombresResueltos[item.id_persona]?.nombre;
   const mejor = item.evidencias[0];
-  return `<tr>
+  // R-LN.2 — marcada, no oculta; el motivo va en el `title` si llegó.
+  return `<tr class="${item.lista_negra ? 'en-lista-negra' : ''}">
     <td class="mono">${indice + 1}</td>
     <td>${nombre ? `<div class="td-strong">${esc(nombre)}</div>` : ''}
-        ${token(item.id_persona)}
+        ${token(item.id_persona)} ${listaNegra.marca(item.lista_negra)}
         <button class="btn btn-outline btn-sm" data-ficha="${indice}"
                 style="margin-top:.35rem">Ficha</button></td>
     ${columnasElegidas.map((c) => `<td>${celdaDeColumna(item.id_persona, c)}</td>`).join('')}
@@ -1205,7 +1264,17 @@ async function abrirFicha(item) {
         ? { respuestas: idsEvidencia.join(',') } : {}),
       respuestas.estudiosDe(idPersona),
     ]);
-    $('.modal-body', caja).innerHTML = fichaHtml(ficha, item, estudios);
+    // R-LN.1 — desde acá se agrega a alguien visto en un resultado. Al
+    // cambiar, la ficha se vuelve a abrir y la fila del resultado se
+    // actualiza con lo que diga el servidor.
+    item.lista_negra = ficha.lista_negra ?? null;
+    $('.modal-body', caja).innerHTML = listaNegra.bloqueDeFicha({
+      idPersona, entrada: ficha.lista_negra, actor: contexto.actor,
+      alCambiar: async () => {
+        await abrirFicha(item);
+        if (ultimoResultado) pintarResultado(ultimoResultado);
+      },
+    }) + fichaHtml(ficha, item, estudios);
     activarTokens(caja);
     respuestas.activar(caja, idPersona, estudios, { prefijo: 'ficha-resp' });
     const quien = $('#ficha-quien', caja);
@@ -1693,6 +1762,9 @@ async function crearPanelDesdeConsulta() {
     toast('El resultado está vacío: no hay panel que crear.', 'err');
     return;
   }
+  // R-LN.2 — los de la lista negra quedan afuera por defecto; quien
+  // gestiona la lista puede incluirlos (igual no se los puede convocar).
+  const enListaNegra = ultimoResultado.items.filter((i) => i.lista_negra).length;
   modal({
     titulo: `Crear un panel con estas ${ultimoResultado.items.length} personas`,
     cuerpo: `
@@ -1700,6 +1772,13 @@ async function crearPanelDesdeConsulta() {
       individuo del resultado. Quien ya sea miembro no se duplica. El panel
       queda con la definición de esta consulta anotada, como una foto: no se
       actualiza solo.</p>
+      ${enListaNegra ? `<div class="aviso">
+        <p><strong>${enListaNegra} persona(s) del resultado están en la lista negra</strong>
+        y quedan afuera del panel.</p>
+        ${listaNegra.puedeGestionar(contexto.actor) ? `<label class="check">
+          <input type="checkbox" name="incluir_lista_negra" /> Incluirlas igual (no se
+          las puede convocar)</label>` : ''}
+      </div>` : ''}
       <div class="form-group"><label>Nombre del panel</label>
         <input class="finput" name="nombre" placeholder="Tomadores de fernet — set A"></div>
       <div class="form-group"><label>Descripción</label>
@@ -1713,9 +1792,12 @@ async function crearPanelDesdeConsulta() {
           if (!datos.nombre?.trim()) { toast('El panel necesita un nombre.', 'err'); return; }
           try {
             const panel = await api.panelDesdeConsulta(
-              datos.nombre.trim(), ultimoResultado, definicion, datos.descripcion);
+              datos.nombre.trim(), ultimoResultado, definicion, datos.descripcion,
+              { incluirListaNegra: Boolean($('[name="incluir_lista_negra"]', contenedor)?.checked) });
             cerrarModal();
-            toast(`Panel «${panel.nombre}» creado con ${panel.miembros} miembros.`, 'ok');
+            toast(`Panel «${panel.nombre}» creado con ${panel.miembros} miembros.`
+              + (panel.excluidos_lista_negra
+                ? ` ${panel.excluidos_lista_negra} quedaron afuera por estar en la lista negra.` : ''), 'ok');
             if (panel.aviso) toast(panel.aviso.mensaje, 'aviso');
           } catch (error) { toast(error.message, 'err'); }
         },

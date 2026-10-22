@@ -34,7 +34,7 @@ la plataforma sin login:
 
 import json
 
-from . import (consentimiento as consent, db, dedup, preferencias,
+from . import (consentimiento as consent, db, dedup, lista_negra, preferencias,
                verificacion_contacto as verificacion)
 from .errores import Conflicto, DatosInvalidos, NoEncontrado
 
@@ -271,9 +271,15 @@ def inscribir(conn, cuerpo):
     # La resolución de identidad de R1.2, igual que un alta interna. El
     # resultado se guarda para que quien apruebe lo vea; afuera no se dice.
     resolucion = dedup.resolver(conn, datos)
+    accion = resolucion.accion
     id_previa = None
     if resolucion.accion == dedup.REUTILIZA:
         id_previa = str(resolucion.id_persona)
+        # R-LN.2 — si el dedup la reconoce y está en la lista negra, la
+        # inscripción va a revisión, marcada (`en_lista_negra` se deriva al
+        # leer). Afuera no cambia nada: el acuse es el mismo.
+        if lista_negra.activa_de(conn, id_previa):
+            accion = dedup.REVISION
 
     # R4.4 — los canales que la persona eligió de primera mano. Es el único
     # camino donde el opt-in lo da el titular en el momento, que es la forma
@@ -299,7 +305,7 @@ def inscribir(conn, cuerpo):
         (datos["nombre"], datos.get("documento"), datos.get("email"),
          datos.get("celular"), datos.get("fecha_nacimiento"), datos.get("sexo"),
          datos.get("localidad"), list(finalidades), version,
-         resolucion.accion, id_previa, cuerpo.get("panel_id"),
+         accion, id_previa, cuerpo.get("panel_id"),
          (cuerpo.get("origen") or "landing"),
          canales, (cuerpo.get("version_texto_canales") or "").strip() or version,
          verificado_celular, verificado_email),
@@ -347,7 +353,15 @@ def _serializar(fila):
         "motivo_rechazo": fila["motivo_rechazo"],
         "origen": fila["origen"],
         "creado_en": fila["creado_en"].isoformat(),
+        # R-LN.2 — derivado al leer: si la sacan de la lista, la marca se va.
+        "en_lista_negra": bool(fila.get("en_lista_negra")),
     }
+
+
+# R-LN.2 — ¿la persona que el dedup reconoció está hoy en la lista negra?
+_EN_LISTA_NEGRA = """exists (select 1 from lista_negra ln
+                            where ln.id_persona = i.id_persona_previa
+                              and ln.removido_en is null) as en_lista_negra"""
 
 
 def candidatos_parecidos(conn, inscripcion):
@@ -438,8 +452,8 @@ def candidatos_parecidos(conn, inscripcion):
 def listar(conn, estado=PENDIENTE, limite=200):
     filas = db.todas(
         conn,
-        """
-        select * from inscripcion
+        f"""
+        select i.*, {_EN_LISTA_NEGRA} from inscripcion i
          where (%s::text is null or estado = %s::text)
          order by creado_en desc, id desc
          limit %s
@@ -450,7 +464,8 @@ def listar(conn, estado=PENDIENTE, limite=200):
 
 
 def obtener(conn, inscripcion_id, con_candidatos=True):
-    fila = db.una(conn, "select * from inscripcion where id = %s", (inscripcion_id,))
+    fila = db.una(conn, f"select i.*, {_EN_LISTA_NEGRA} from inscripcion i where id = %s",
+                  (inscripcion_id,))
     if not fila:
         raise NoEncontrado(f"No existe la inscripción {inscripcion_id}.")
     salida = _serializar(fila)
@@ -458,6 +473,11 @@ def obtener(conn, inscripcion_id, con_candidatos=True):
         # R4.3 — quien aprueba ve los parecidos sin tener que buscarlos a
         # mano, que es la única forma de que efectivamente los mire.
         salida["candidatos"] = candidatos_parecidos(conn, salida)
+        # R-LN.2 — y cuáles de ellos están en la lista negra.
+        activas = lista_negra.activas_de(
+            conn, [c["id_persona"] for c in salida["candidatos"]])
+        for candidato in salida["candidatos"]:
+            candidato["en_lista_negra"] = candidato["id_persona"] in activas
     return salida
 
 
@@ -511,6 +531,18 @@ def aprobar(conn, inscripcion_id, actor, panel_id=None, id_persona=None,
             f"La inscripción {inscripcion_id} ya está «{fila['estado']}».",
             {"estado": fila["estado"]},
         )
+
+    # R-LN.2 — la reinscripción de alguien en la lista negra no se aprueba
+    # sola: quien aprueba tiene que decir de quién es (o rechazarla). Aun
+    # aprobada sigue en la lista: no se la convoca.
+    if (not id_persona and fila["id_persona_previa"]
+            and lista_negra.activa_de(conn, fila["id_persona_previa"])):
+        raise Conflicto(
+            "Esta inscripción es de alguien que está en la lista negra. Para "
+            "aprobarla, elegí a la persona entre los candidatos (sigue en la "
+            "lista negra y no se la convoca), o rechazala.",
+            {"motivo": "en_lista_negra",
+             "id_persona_previa": str(fila["id_persona_previa"])})
 
     # `fecha_nacimiento` es una columna `date` y vuelve como `datetime.date`;
     # el dedup y el alta trabajan con texto. Convertir acá y no allá evita

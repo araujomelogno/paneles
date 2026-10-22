@@ -32,11 +32,11 @@
     <li><a href="#s2"><span><span class="num">2</span> Entrar al sistema</span></a>
       <ul><li>Ingreso · Recuperación de contraseña · Cuentas sin habilitar</li></ul></li>
     <li><a href="#s3"><span><span class="num">3</span> Panelistas</span></a>
-      <ul><li>Buscar · Enrolar · Duplicados · Revisión de altas · La ficha y
-      sus respuestas procesadas · El origen de cada persona · Otorgar una
-      finalidad · Cargar panelistas sin panel · Los datos del estudio ·
-      Las temáticas en la revisión ·
-      Filtrar por carga · Canales de contacto</li></ul></li>
+      <ul><li>Buscar y recorrer por páginas · Enrolar · Duplicados · Revisión
+      de altas · La ficha y sus respuestas procesadas · Las cargas de cada
+      persona · Otorgar una finalidad · Cargar panelistas sin panel · Los
+      datos del estudio y sus clientes · Las temáticas en la revisión ·
+      Filtrar por carga · Canales de contacto · La lista negra</li></ul></li>
     <li><a href="#s4"><span><span class="num">4</span> Paneles</span></a>
       <ul><li>Crear · Agregar miembros · Dar de baja una membresía</li></ul></li>
     <li><a href="#s5"><span><span class="num">5</span> Encuestas</span></a>
@@ -45,7 +45,8 @@
       <ul><li>Buscar por significado · El ranking y la evidencia · Columnas ·
       La ficha desde un resultado · Exclusiones · Verificación incompleta ·
       Reidentificación · Modos · Consultas guardadas · Diagnóstico e
-      intercambio con el verificador · Consultas solo demográficas</li></ul></li>
+      intercambio con el verificador · Consultas solo demográficas · Filtrar
+      por cliente</li></ul></li>
     <li><a href="#s7"><span><span class="num">7</span> Composición</span></a>
       <ul><li>El ámbito: todos, un panel o una carga · Universo de referencia ·
       Brecha · Cruce de dos dimensiones</li></ul></li>
@@ -59,7 +60,7 @@
       Cuando la cuota no se puede cerrar · Los pesos</li></ul></li>
     <li><a href="#s11"><span><span class="num">11</span> Cumplimiento</span></a>
       <ul><li>Retiro de consentimiento · Baja total · Auditoría de privacidad ·
-      Envío de correos y correo de prueba</li></ul></li>
+      Reidentificaciones · Envío de correos y correo de prueba</li></ul></li>
     <li><a href="#s12"><span><span class="num">12</span> Configuración</span></a>
       <ul><li>Alta de usuarios · Roles · Desactivación · Auditoría ·
       Atributos demográficos</li></ul></li>
@@ -72,7 +73,8 @@
       temáticas · Proponer temáticas para una carga anterior · Un vocabulario
       que no se duplica · Las temáticas de cada panelista · Temáticas
       especiales · La taxonomía: áreas · Temáticas sin personas · Borrar una
-      carga</li></ul></li>
+      carga · Los clientes de una carga · De dónde vienen los
+      reutilizados</li></ul></li>
     <li><a href="#s13"><span><span class="num">16</span> Preguntas frecuentes</span></a></li>
     <li><a href="#s14"><span><span class="num">17</span> Glosario</span></a></li>
   </ol>
@@ -155,8 +157,9 @@
     <tr>
       <td class="destacado">Responsable de panel</td>
       <td>Enrolar panelistas, armar paneles y membresías, crear encuestas,
-      convocar, ingestar respuestas, consultar, cargar el universo de referencia
-      y resolver a qué persona corresponde cada identificador.</td>
+      convocar, ingestar respuestas, consultar, cargar el universo de referencia,
+      resolver a qué persona corresponde cada identificador y agregar o sacar
+      a alguien de la lista negra.</td>
       <td>Retirar consentimientos, dar de baja y gestionar usuarios.</td>
     </tr>
     <tr>
@@ -165,15 +168,18 @@
       de una carga, arrancar y reorganizar la taxonomía de temáticas y ejecutar
       consultas.</td>
       <td>Enrolar panelistas, gestionar paneles, resolver identificadores a
-      personas, filtrar o ver temáticas especiales y gestionar usuarios.</td>
+      personas, filtrar o ver temáticas especiales, ver el motivo de la lista
+      negra (ve la marca) y gestionar usuarios.</td>
     </tr>
     <tr>
       <td class="destacado">Cumplimiento / DPO</td>
       <td>Consultar toda la información, atender retiros de consentimiento y
-      bajas, y revisar el registro de accesos a datos personales.</td>
+      bajas, revisar el registro de accesos a datos personales
+      (reidentificaciones) y ver la lista negra con su historial.</td>
       <td>Enrolar, gestionar paneles, ingestar o editar las temáticas de una
-      carga, ejecutar consultas semánticas y gestionar usuarios. (Sí ve las
-      temáticas especiales en fichas y composición.)</td>
+      carga, ejecutar consultas semánticas, agregar o sacar de la lista negra
+      y gestionar usuarios. (Sí ve las temáticas especiales en fichas y
+      composición.)</td>
     </tr>
   </table>
 
@@ -268,6 +274,20 @@
   <p>Ese mismo desplegable tiene una opción <strong>— Sin panel —</strong>, que
   aísla a las personas que no pertenecen a ningún panel. Son, típicamente, las
   incorporadas mediante una carga externa (sección 3.6).</p>
+
+  <p>La lista se recorre <strong>por páginas</strong>. Debajo de la tabla, la
+  barra dice en qué página se está y cuántas personas hay en total («Página 2
+  de 14 · 683 panelistas»). Tiene <strong>← Anterior</strong> y
+  <strong>Siguiente →</strong>, y un desplegable para ver 25, 50 o 100 por
+  página. Pasar de página conserva la búsqueda y los filtros; cambiar
+  cualquiera de ellos vuelve a la primera página, porque la segunda de otra
+  búsqueda es otra lista.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/112-panelistas-paginas.jpg" alt="Barra de páginas del listado de panelistas" />
+    <figcaption><b>Páginas.</b> Página 1 de 3, de a 25. Las filas en rojo son
+    personas que están en la lista negra (sección 3.9).</figcaption>
+  </figure>
 
   <h3><span class="n">3.2</span> Enrolar un panelista</h3>
 
@@ -476,12 +496,22 @@
     ninguna consulta por concepto.</p>
   </div>
 
-  <h4>El origen: de qué estudios proviene</h4>
+  <h4>Las cargas: en cuáles aparece y por dónde entró</h4>
 
-  <p>La tarjeta <strong>Origen</strong> lista las cargas de las que proviene
-  la persona, cada una con su <strong>nombre</strong>, la <strong>fecha del
-  estudio</strong> y el <strong>público objetivo</strong> (sección 3.6). La
-  última columna dice qué pasó con la persona en esa carga:</p>
+  <p>La tarjeta <strong>Cargas</strong> lista las cargas en las que aparece
+  la persona, <strong>la más reciente primero</strong>. Para cada una
+  muestra:</p>
+
+  <ul class="puntos">
+    <li>el <strong>nombre</strong>, que lleva al detalle de esa carga
+    (sección 15.2), y la <strong>fecha del estudio</strong>;</li>
+    <li>sus <strong>clientes</strong> (sección 15.11);</li>
+    <li>las <strong>temáticas que respondió en esa carga</strong>, no las que
+    la carga cubría.</li>
+  </ul>
+
+  <p>La columna <i>En esta carga</i> dice qué pasó con la persona en
+  ella:</p>
 
   <ul class="puntos">
     <li><strong>creada</strong>: la carga la dio de alta; antes no existía en
@@ -492,11 +522,27 @@
   </ul>
 
   <figure>
-    <img class="recorte" src="capturas/79-ficha-origen.jpg" alt="Tarjeta Origen de la ficha de un panelista" />
-    <figcaption><b>Origen.</b> Esta persona entró con el ómnibus de agosto y el
-    estudio de bebidas la volvió a encontrar: se ven los dos estudios, cada uno
-    con sus datos.</figcaption>
+    <img class="recorte" src="capturas/113-ficha-cargas.jpg" alt="Tarjeta Cargas de la ficha de un panelista" />
+    <figcaption><b>Cargas.</b> Esta persona se enroló a mano, y después dos
+    cargas la volvieron a encontrar. Cada carga muestra sus clientes y las
+    temáticas que respondió en ella.</figcaption>
   </figure>
+
+  <p>Si la persona <strong>no entró por una carga</strong>, debajo de la tabla
+  se indica por dónde lo hizo:</p>
+
+  <ul class="puntos">
+    <li><strong>Se inscribió por la landing</strong>: tiene una inscripción
+    aprobada.</li>
+    <li><strong>Llegó en el archivo de campo de una encuesta</strong>: se dio
+    de alta al ingestar las respuestas de una ola (sección 5.5).</li>
+    <li><strong>Alta manual</strong>: no hay rastro de ninguna de las otras
+    vías.</li>
+  </ul>
+
+  <p>La ficha que se abre desde un resultado de consulta conserva la versión
+  anterior, <i>Origen</i>, sin los clientes: es una ficha seudónima y los
+  clientes son información comercial.</p>
 
   <p>Los datos del estudio se leen de la carga en el momento de abrir la
   ficha: si alguien corrige la fecha de un estudio, la corrección se ve en
@@ -516,7 +562,7 @@
 
   <h4>Las temáticas con información</h4>
 
-  <p>Debajo del origen, la tarjeta <strong>Temáticas con información</strong>
+  <p>Debajo de las cargas, la tarjeta <strong>Temáticas con información</strong>
   dice <strong>sobre qué temas respondió</strong> la persona y en qué carga:
   una fila por temática y carga, con cuántas de sus preguntas respondió. Una
   persona tiene una temática si respondió al menos una de las preguntas que la
@@ -529,6 +575,14 @@
     dos estudios. Las de categoría especial solo se muestran a los roles
     habilitados; para los demás, la tarjeta dice cuántas quedaron fuera.</figcaption>
   </figure>
+
+  <h4>La lista negra</h4>
+
+  <p>Arriba de todo, debajo del nombre, la ficha dice si la persona está en la
+  <strong>lista negra</strong>. Si está, se ven el motivo, quién la agregó y
+  cuándo. Quien puede gestionarla tiene ahí el botón <strong>Agregar a la
+  lista negra…</strong> o <strong>Sacar de la lista negra…</strong>. Se
+  explica en la sección 3.9.</p>
 
   <h4>Otorgar una finalidad</h4>
 
@@ -581,6 +635,10 @@
     reclutamiento u otro, y <strong>modo de relevamiento</strong>
     (obligatorio): cara a cara, telefónico, WhatsApp, web u otro. Si se elige
     <i>Otro</i>, hay que especificar cuál.</li>
+    <li><strong>Clientes</strong>: para quién se hizo el estudio. Se escribe un
+    nombre y <b>Enter</b>, con autocompletado sobre los que ya existen; puede
+    haber varios. Se pueden cambiar después desde el detalle de la carga
+    (sección 15.11).</li>
   </ul>
 
   <p>Estos datos se guardan <strong>en la carga, no en cada persona</strong>.
@@ -879,6 +937,98 @@
     se completan los datos que faltaban en su ficha y se le registran el
     consentimiento y los canales que declaró en el formulario.</p>
   </div>
+
+  <h4>Una inscripción de alguien que está en la lista negra</h4>
+
+  <p>Si quien se inscribe ya estaba en el sistema y está en la lista negra
+  (sección 3.9), la inscripción <strong>no se aprueba sola</strong>. En la
+  bandeja figura como ambigua, con la marca <i>lista negra</i>. Al abrirla,
+  un aviso en rojo lo explica y el candidato aparece señalado. Para
+  aprobarla hay que elegir a esa persona: sigue en la lista negra y no se la
+  convoca. Si no corresponde, se rechaza. A quien se inscribió no se le dice
+  nada distinto.</p>
+
+  <h3><span class="n">3.9</span> La lista negra</h3>
+
+  <p>La lista negra es para quien <strong>no se debe volver a convocar</strong>:
+  alguien que respondió sin leer, que se inscribió dos veces con datos
+  distintos o que tuvo un comportamiento inadecuado con el equipo de campo.
+  Agregar y sacar a alguien es de <strong>Administración</strong> y
+  <strong>Responsable de panel</strong>. La sección y el motivo los ven
+  además los de <strong>Cumplimiento</strong>.</p>
+
+  <h4>Agregar a alguien</h4>
+
+  <p>Desde su ficha —en Panelistas, o la que se abre desde un resultado de
+  consulta—, <strong>Agregar a la lista negra…</strong>. El motivo es
+  obligatorio: una <strong>categoría</strong> (calidad de respuestas, fraude
+  o duplicación, comportamiento, otro) y <strong>qué pasó</strong>, en una
+  frase.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/114-lista-negra-agregar.jpg" alt="Agregar a la lista negra" />
+    <figcaption><b>Agregar a la lista negra.</b> Sin categoría o sin detalle no
+    se agrega.</figcaption>
+  </figure>
+
+  <div class="aviso">
+    <div class="t">Hechos, no juicios</div>
+    <p>El motivo lo van a leer otras personas del equipo, y es un dato sobre
+    alguien identificado: si lo pide, se le entrega (sección 11). Conviene
+    escribir lo que pasó —«respondió en 40 segundos un cuestionario de 15
+    minutos»— y no una opinión sobre la persona.</p>
+  </div>
+
+  <h4>Qué cambia para esa persona</h4>
+
+  <table class="tabla">
+    <thead><tr><th>Dónde</th><th>Qué pasa</th></tr></thead>
+    <tbody>
+      <tr><td>Encuestas</td><td>No se la convoca. Si tenía invitaciones sin
+      responder en encuestas abiertas, se cancelan al agregarla. El resumen de
+      la convocatoria la cuenta aparte (sección 5.2).</td></tr>
+      <tr><td>Muestreo</td><td>No entra en ninguna muestra.</td></tr>
+      <tr><td>COLOQUIO</td><td>Tampoco la ve: no la puede invitar a un grupo
+      ni a una entrevista.</td></tr>
+      <tr><td>Consultas</td><td>Sigue apareciendo, <strong>marcada</strong>
+      con <i>lista negra</i>. Sus respuestas siguen contando: el
+      consentimiento no cambia. El motivo aparece al pasar el mouse, solo
+      para los roles que lo pueden ver.</td></tr>
+      <tr><td>Crear un panel desde una consulta</td><td>Queda afuera, y se
+      avisa cuántas personas quedaron afuera (sección 6.3).</td></tr>
+      <tr><td>Inscripción pública</td><td>Si se vuelve a inscribir, la
+      inscripción va a revisión, marcada (sección 3.8).</td></tr>
+    </tbody>
+  </table>
+
+  <p>La persona <strong>no recibe ningún aviso</strong> y no lo ve en su
+  portal.</p>
+
+  <h4>La sección Lista negra</h4>
+
+  <p>En el menú, <strong>Lista negra</strong> lista a quienes están hoy, con
+  el motivo, quién los agregó y cuándo. Se busca por nombre, correo o
+  documento, y se recorre por páginas.</p>
+
+  <figure>
+    <img src="capturas/115-lista-negra-seccion.jpg" alt="La sección Lista negra" />
+    <figcaption><b>Lista negra.</b> Desde cada fila se abre la ficha, el
+    historial de la persona o, para quien gestiona, <i>Sacar…</i>.</figcaption>
+  </figure>
+
+  <p><strong>Sacar…</strong> pide un motivo. La entrada <strong>no se
+  borra</strong>: queda registrado quién la sacó, cuándo y por qué, y si la
+  persona vuelve a entrar se ve la historia completa en
+  <strong>Historial</strong>. <strong>Incluir las removidas</strong> muestra
+  también las entradas ya cerradas.</p>
+
+  <div class="aviso info">
+    <div class="t">Si la persona pide la baja</div>
+    <p>La baja borra sus datos, y con ellos su historial en la lista negra. Si
+    después se vuelve a inscribir, el sistema no la reconoce. Evitarlo
+    exigiría conservar algún dato suyo después de la baja, y eso se tiene que
+    resolver con quien asesora en protección de datos.</p>
+  </div>
 </section>
 
 <!-- ════════════════ 4 ════════════════ -->
@@ -1004,6 +1154,10 @@
   correspondiente. Esa diferencia no es un error del sistema: es la regla
   funcionando, y conviene revisarla cuando el número de convocados resulta menor
   al esperado.</p>
+
+  <p>Quien está en la <strong>lista negra</strong> (sección 3.9) tampoco
+  entra, y se cuenta en su propia fila, <i>En lista negra</i>: no es una falta
+  de consentimiento y se resuelve de otra forma.</p>
 
   <figure>
     <img class="recorte" src="capturas/18-convocatoria-resultado.jpg" alt="Resultado de la convocatoria" />
@@ -2001,6 +2155,20 @@
     del registro de la respuesta y no la redacta el sistema.</figcaption>
   </figure>
 
+  <h4>Quien está en la lista negra</h4>
+
+  <p>Aparece igual, con la fila en rojo y la marca <i>lista negra</i> junto a
+  su identificador: no se oculta, porque sus respuestas siguen siendo
+  evidencia. Para Administración, Responsable de panel y Cumplimiento, el
+  motivo aparece al pasar el mouse sobre la marca. Desde su ficha se la puede
+  agregar o sacar (sección 3.9).</p>
+
+  <p><strong>Crear panel</strong> la deja afuera. El modal avisa cuántas
+  personas del resultado están en la lista negra, y el mensaje final dice
+  cuántas quedaron afuera. Quien gestiona la lista puede marcar
+  <i>Incluirlas igual</i>: entran al panel, pero tampoco se las puede
+  convocar.</p>
+
   <h3><span class="n">6.4</span> Quiénes quedaron fuera, y por qué</h3>
 
   <p>Debajo del ranking aparece la tabla de <strong>excluidos</strong>. No es una
@@ -2656,6 +2824,30 @@
   especial. La columna
   <strong>Temáticas con información</strong> del selector de columnas nunca
   muestra una especial, y ninguna exportación las incluye.</p>
+
+  <h4>Filtrar por cliente</h4>
+
+  <p>El botón <strong>+ Cliente</strong> filtra por los clientes de las cargas
+  en que estuvo cada persona (sección 15.11). Tiene dos formas:</p>
+
+  <ul class="puntos">
+    <li><strong>Participaron en estudios para…</strong>: quienes estuvieron
+    en alguna carga de esos clientes.</li>
+    <li><strong>No participaron en estudios para…</strong>: deja afuera a
+    quien estuvo en <strong>alguna</strong> carga de esos clientes, aunque
+    esa carga tuviera también otro cliente. Es la pregunta de «no quiero a
+    nadie que haya respondido para la competencia».</li>
+  </ul>
+
+  <figure>
+    <img class="recorte" src="capturas/117-criterio-cliente.jpg" alt="Filtrar por cliente" />
+    <figcaption><b>+ Cliente.</b> Con cuántas cargas tiene cada uno. Con varios
+    elegidos, alcanza con cualquiera.</figcaption>
+  </figure>
+
+  <p>En <strong>Columnas</strong> está también <i>Clientes</i>. Se ve en
+  pantalla y no va en ninguna exportación: para quién fue un estudio es
+  información comercial.</p>
 
 
   <h3><span class="n">6.11</span> Consulta completa: verificar todo, con presupuesto</h3>
@@ -3349,6 +3541,37 @@
   sección. La opción <strong>Reintentar</strong> vuelve a ejecutar el borrado
   pendiente. Una lista vacía indica que no quedó nada a medio hacer.</p>
 
+  <h4>Reidentificaciones</h4>
+
+  <p>Cada vez que alguien pasa de un identificador a los datos de una
+  persona, queda registrado. Eso incluye <i>Ver quiénes son</i>, abrir una
+  ficha, exportar con datos o crear un panel desde una consulta. La tarjeta
+  <strong>Reidentificaciones</strong>, al pie de la pantalla, lo muestra por
+  evento: <strong>quién</strong>, <strong>cuándo</strong>, el
+  <strong>motivo</strong> y <strong>a cuántas personas</strong> alcanzó.
+  <i>Ver cuáles</i> despliega sus identificadores; cada uno abre la ficha de
+  esa persona, y abrirla también queda registrado.</p>
+
+  <figure>
+    <img src="capturas/118-reidentificaciones.jpg" alt="Reidentificaciones en Cumplimiento" />
+    <figcaption><b>Reidentificaciones.</b> Un «Ver quiénes son» sobre un
+    resultado de tres personas es una sola fila.</figcaption>
+  </figure>
+
+  <p>Se filtra por <strong>usuario</strong> (su correo), por
+  <strong>fechas</strong> y por <strong>panelista</strong> (su documento,
+  correo o identificador). El filtro por panelista contesta la pregunta de
+  un pedido de acceso, «¿quién vio mis datos?». El evento se muestra
+  completo: a cuántas personas alcanzó, no solo a esa. La tarjeta la ven
+  Administración y Cumplimiento.</p>
+
+  <div class="aviso info">
+    <div class="t">Un pedido de acceso incluye la lista negra</div>
+    <p>Si la persona estuvo alguna vez en la lista negra, ese registro también
+    le corresponde. Está en su ficha, botón <strong>Historial</strong> del
+    bloque de lista negra (sección 3.9).</p>
+  </div>
+
   <h3><span class="n">11.4</span> El envío de correos</h3>
 
   <p>El sistema manda correos desde <code>notificaciones@equipos.com.uy</code>:
@@ -4003,7 +4226,8 @@
   <p>Cada fila es una carga, con su <strong>nombre</strong> (y la descripción,
   si la tiene), la <strong>fecha del estudio</strong>, el <strong>público
   objetivo</strong>, cuántos <strong>individuos</strong> trajo —separados en
-  creados y reutilizados— y sus <strong>temáticas</strong>. Están ordenadas por
+  creados y reutilizados—, sus <strong>clientes</strong> y sus
+  <strong>temáticas</strong>. Están ordenadas por
   fecha del estudio, la más reciente primero; una carga sin fecha declarada se
   ubica por el día en que se cargó.</p>
 
@@ -4039,7 +4263,9 @@
     Se corrigen desde Panelistas → <i>Datos del estudio</i> (sección 3.6).</li>
     <li><strong>Individuos</strong>: cuántos en total, cuántos
     <strong>creó</strong> esta carga y cuántos <strong>reutilizó</strong>
-    porque ya existían.</li>
+    porque ya existían. El de reutilizados abre el desglose de la sección
+    15.12.</li>
+    <li><strong>Clientes</strong>, editables (15.11).</li>
     <li><strong>Temáticas incorporadas</strong>, editables (15.3), con las
     preguntas que sustentan cada una y cuántos panelistas de la carga la
     tienen.</li>
@@ -4338,6 +4564,62 @@
   curso, ni cargar en una que se está borrando. Si el borrado se corta a mitad
   de camino, el detalle de la carga sigue ahí: volver a borrarla lo reanuda
   desde donde quedó, sin dejar respuestas sueltas.</p>
+
+  <h3><span class="n">15.11</span> Los clientes de una carga</h3>
+
+  <p>Los <strong>clientes</strong> de una carga dicen para quién se hizo el
+  estudio. Se indican al crearla (sección 3.6) y se cambian en su detalle,
+  tarjeta <strong>Clientes</strong>: se escribe un nombre y <b>Enter</b> (o
+  <i>+ Agregar</i>), se quita uno con <b>×</b>, y <strong>Guardar
+  clientes</strong>.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/119-carga-clientes.jpg" alt="Los clientes en el detalle de una carga" />
+    <figcaption><b>Clientes.</b> El autocompletado ofrece los que ya existen,
+    con cuántas cargas tiene cada uno.</figcaption>
+  </figure>
+
+  <ul class="puntos">
+    <li><strong>Un solo nombre por cliente.</strong> Se guarda en minúsculas y
+    con un espacio entre palabras: «Antel», «ANTEL» y «antel» son el mismo.
+    Una variante que difiere solo en las tildes reutiliza la que ya
+    existe.</li>
+    <li><strong>Cada panelista los hereda.</strong> Quien estuvo en una carga
+    hecha para Antel participó en un estudio para Antel, contestara lo que
+    contestara. A diferencia de las temáticas, no depende de qué respondió.
+    No se copian: corregir los clientes de una carga se ve enseguida en todas
+    sus fichas.</li>
+    <li><strong>Son confidenciales.</strong> El panelista no los ve en su
+    portal, COLOQUIO no los recibe y no van en las exportaciones. En las
+    consultas se pueden filtrar (sección 6.10) y ver como columna, en
+    pantalla.</li>
+  </ul>
+
+  <h3><span class="n">15.12</span> De dónde vienen los reutilizados</h3>
+
+  <p>En el listado y en el detalle, el número de <strong>reutilizados</strong>
+  es un enlace. Abre el desglose: para cada <strong>otra carga</strong> en la
+  que esas personas ya estaban, cuántas son, de mayor a menor, con la fecha
+  del estudio. Cada fila lleva al detalle de esa carga.</p>
+
+  <figure>
+    <img class="recorte" src="capturas/116-reutilizados.jpg" alt="De dónde vienen los reutilizados" />
+    <figcaption><b>Reutilizados.</b> La suma de las filas es mayor que el
+    total: varias personas estaban en dos cargas anteriores.</figcaption>
+  </figure>
+
+  <p>Para que los números cierren hay que tener en cuenta dos cosas:</p>
+
+  <ul class="puntos">
+    <li><strong>Una persona puede venir de varias cargas.</strong> Si estuvo
+    en dos cargas anteriores, cuenta en las dos filas. Por eso la suma puede
+    superar el total de reutilizados.</li>
+    <li><strong>No todo reutilizado viene de otra carga.</strong> Quien
+    entró por la landing, por un alta manual o por una encuesta va en la
+    última fila, <i>sin carga previa</i>. También va ahí quien vino de una
+    carga anterior a octubre de 2026, que no dejó constancia (sección
+    3.5).</li>
+  </ul>
 </section>
 
 <section id="s13">
@@ -4347,6 +4629,26 @@
     <h2>Preguntas frecuentes</h2>
     <p>Situaciones habituales y su explicación.</p>
   </div>
+
+  <h4>Agregué a alguien a la lista negra y sigue apareciendo en las consultas</h4>
+  <p>Es lo esperable. La lista negra impide convocarlo, no usar lo que ya
+  respondió: aparece marcado y su consentimiento no cambia. Si además no
+  querés sus respuestas, eso es un retiro de uso semántico, que es otra cosa
+  y la pide la persona (3.9, 11.1).</p>
+
+  <h4>La convocatoria trajo menos gente que el panel</h4>
+  <p>El resumen lo separa: <i>Sin consentimiento</i> son quienes no tienen
+  vigente el de contacto, y <i>En lista negra</i> quienes están en la lista.
+  Los segundos no se resuelven pidiendo un consentimiento (5.2).</p>
+
+  <h4>La suma del desglose de reutilizados da más que el total</h4>
+  <p>Porque una persona puede haber estado en más de una carga anterior, y
+  cuenta en cada una. Quien no venía de ninguna está en la fila <i>sin carga
+  previa</i> (15.12).</p>
+
+  <h4>¿Cómo sé quién vio los datos de una persona?</h4>
+  <p>En Cumplimiento, tarjeta <i>Reidentificaciones</i>, filtrando por su
+  documento o correo. Cada fila dice quién, cuándo y por qué (11.3).</p>
 
   <h4>Borré una carga y algunas de sus personas siguen en el sistema</h4>
   <p>Es lo esperable: el borrado da de baja solo a quienes la carga creó y no
@@ -4660,6 +4962,18 @@
     <tr><td class="destacado">Carga</td>
       <td>Un archivo de personas y respuestas incorporado sin panel, con los
       datos del estudio del que sale: nombre, fecha y público objetivo.</td></tr>
+    <tr><td class="destacado">Cliente</td>
+      <td>Para quién se hizo el estudio de una carga. Una carga puede tener
+      varios; cada panelista hereda los de las cargas en que estuvo.
+      Confidencial: no llega al portal ni a las exportaciones.</td></tr>
+    <tr><td class="destacado">Lista negra</td>
+      <td>Quienes no se convocan, ni desde el sistema ni desde COLOQUIO. Cada
+      entrada tiene motivo, quién y cuándo; sacar a alguien no la borra. No
+      cambia el consentimiento: sus respuestas siguen en las consultas,
+      marcadas.</td></tr>
+    <tr><td class="destacado">Reutilizado</td>
+      <td>Alguien que ya existía cuando entró una carga: el dedup lo encontró
+      y la carga le sumó respuestas en lugar de crear a otra persona.</td></tr>
     <tr><td class="destacado">Temática</td>
       <td>Un tema que cubren las preguntas de una carga («telefonía móvil»,
       «consumo de tabaco»). Es compartida entre cargas, se guarda en

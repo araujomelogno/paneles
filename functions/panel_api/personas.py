@@ -814,7 +814,11 @@ def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
                           and c.finalidad = 'uso_semantico'
                           and c.estado = 'vigente') as consiente_semantico,
                (select count(*) from membresia m
-                 where m.id_persona = p.id_persona and m.estado = 'activo')::int as paneles
+                 where m.id_persona = p.id_persona and m.estado = 'activo')::int as paneles,
+               -- R-LN.2 — la grilla la marca; el motivo está en la ficha.
+               exists (select 1 from lista_negra ln
+                        where ln.id_persona = p.id_persona
+                          and ln.removido_en is null) as en_lista_negra
                {origen_en_carga}
           from persona p left join v_demografia d on d.id_persona = p.id_persona
           {donde}
@@ -840,6 +844,7 @@ def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
                 "consiente_contacto": f["consiente_contacto"],
                 "consiente_semantico": f["consiente_semantico"],
                 "paneles": f["paneles"],
+                "en_lista_negra": f["en_lista_negra"],
                 **({"origen_en_carga": f["origen_en_carga"]} if carga_id else {}),
             }
             for f in filas

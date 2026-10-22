@@ -26,6 +26,7 @@ import {
   $, $$, esc, encabezado, vacio, cargando, alerta, token, toast, modal,
   cerrarModal, leerFormulario, fechaHora,
 } from '../ui.js';
+import * as listaNegra from '../lista_negra.js';
 
 let contexto = {};
 let solapa = 'pendientes';
@@ -169,7 +170,9 @@ async function pintarInscripciones(cuerpo, estadoPedido, textos) {
         <td>${esc(i.email ?? '—')}${i.celular ? `<div class="tenue">${esc(i.celular)}</div>` : ''}</td>
         <td>${token(i.version_texto)}<div class="tenue">${fechaHora(i.acepto_en)}</div></td>
         <td title="${esc(RESOLUCION[i.resolucion]?.[1] ?? '')}">
-            ${token(RESOLUCION[i.resolucion]?.[0] ?? i.resolucion)}</td>
+            ${token(RESOLUCION[i.resolucion]?.[0] ?? i.resolucion)}
+            ${i.en_lista_negra ? `<div>${listaNegra.marca({})}</div>
+              <div class="tenue">El dedup la reconoció: decidí a mano.</div>` : ''}</td>
         <td>${fechaHora(i.creado_en)}</td>
         <td>${i.estado === 'pendiente' ? `
           <button class="btn btn-sm btn-primary" data-aprobar="${i.id}">Aprobar</button>
@@ -212,6 +215,13 @@ async function aprobar(id, paneles) {
         <div class="small muted">Aceptó que la contacten por
         <strong>${inscripcion.canales.map(esc).join(', ')}</strong>, de primera
         mano en el formulario.</div>` : ''}
+      ${inscripcion.en_lista_negra || candidatos.some((c) => c.en_lista_negra) ? `
+        <div class="aviso grave" style="margin:1rem 0">
+          <h4>Es de alguien que está en la lista negra</h4>
+          <p>Por eso no se aprueba sola. Si la aprobás eligiendo a esa persona,
+          sigue en la lista negra y no se la convoca. Si no corresponde,
+          rechazala. El motivo está en su ficha.</p>
+        </div>` : ''}
       ${candidatos.length ? `
         <div class="aviso" style="margin:1rem 0">
           <h4>Hay ${candidatos.length} panelista(s) parecido(s)</h4>
@@ -229,6 +239,7 @@ async function aprobar(id, paneles) {
                 ${esc(c.nombre || c.id_persona.slice(0, 8))} —
                 coincide por ${c.coincide_por.map((m) => COINCIDENCIAS[m] || m).join(', ')}
                 ${c.paneles ? ` · ${c.paneles} panel(es)` : ''}
+                ${c.en_lista_negra ? ' · EN LISTA NEGRA' : ''}
               </option>`).join('')}
           </select>
           <div class="field-hint">Si elegís una, no se crea nadie nuevo: se

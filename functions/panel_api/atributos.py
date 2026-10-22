@@ -237,7 +237,10 @@ def mapa_por_clave(conn, solo_activos=True):
 # coincidan.
 CLAVES_RESERVADAS = frozenset(
     {"estudio_de_origen", "tipo_datos_origen", "modo_relevamiento",
-     "tematica", "tematicas"})
+     "tematica", "tematicas",
+     # D80 — `cliente` es la dimensión del filtro y `clientes` la columna;
+     # `lista_negra` es la marca de los resultados.
+     "cliente", "clientes", "lista_negra"})
 
 
 def _clave_valida(crudo, que="atributo"):

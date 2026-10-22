@@ -492,9 +492,36 @@ exactamente dos niveles.
   tiene nadie. Y la propuesta de la revisión sigue a la marca de demográficas
   **sin llamar a Claude** (`tematicas.ajustar_a_preguntas`).
 
+## Clientes y lista negra: lo que corta la base y lo que no
+
+Desde la spec de clientes y lista negra (D80, `boveda/0031`):
+
+- **La lista negra corta el contacto en `v_persona_convocable`, y en ningún
+  otro lado.** Encuestas, muestreo, optimizador y COLOQUIO dejan afuera a
+  quien está en ella sin una línea propia, porque ya leían la vista. No
+  agreguen un `not in lista_negra` en Python. Las excepciones son la
+  convocatoria, que la separa antes para contarla aparte, y WhatsApp, que
+  lee `consentimiento` directo.
+- **No le quita a nadie el consentimiento.** El gate de las finalidades que
+  no son de contacto lee `v_persona_finalidad_vigente`
+  (`consentimiento._gate`). Si `uso_semantico` volviera a pasar por la
+  convocable, la lista negra frenaría la ingesta y el reproceso borraría
+  sus respuestas. En los resultados se **marca** (`lista_negra.marcar`),
+  no se oculta. El motivo solo va a quien tiene `ver_lista_negra`.
+- **Una fila por entrada; sacar no borra.** Activa = sin `removido_en`. El
+  motivo es obligatorio (lo pide la base). El panelista no ve nada: hay una
+  prueba que falla si `portal.py` nombra la tabla.
+- **Los clientes de un panelista se derivan** de sus cargas
+  (`v_persona_cliente`); no se copian ni se heredan como las temáticas.
+  Son confidenciales: ni portal, ni COLOQUIO, ni exportaciones.
+- **Los eventos de reidentificación se arman al leer**
+  (`auditoria.eventos_de_reidentificacion`), agrupando las filas de una
+  misma llamada. No le agreguen un id de evento a `reidentificacion`.
+
 ## Reglas de negocio que el código debe respetar
 
 - No se puede convocar ni incluir en muestreo a una persona sin `consentimiento` **vigente** para la finalidad correspondiente.
+- Quien está en la **lista negra** no se convoca, ni desde `paneles` ni desde COLOQUIO; su consentimiento sigue intacto (D80).
 - El uso semántico entre estudios exige la finalidad `uso_semantico` vigente, **distinta** de `contacto_participacion`.
 - Baja / retiro de consentimiento ⇒ **borrado en cascada**: PII (bóveda) + embeddings (semántico) + salida del muestreo.
 - Saldo de puntos siempre **>= 0**; sin sobregiro en canje; puntos con vencimiento. (No hay constraint DDL: se valida en la app / trigger.)
