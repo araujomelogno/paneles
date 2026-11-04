@@ -10,10 +10,11 @@ import * as api from '../api.js';
 import * as consentimiento from '../consentimiento.js';
 import * as catalogo from '../catalogo.js';
 import * as calidad from '../calidad.js';
-import { editorDeTematicas } from '../tematicas.js';
+import { editorDeTematicas, chipsDeTematicas } from '../tematicas.js';
+import { editorDeClientes, chipsDeClientes } from '../clientes.js';
 import {
   $, $$, esc, encabezado, token, vacio, cargando, toast, modal, cerrarModal,
-  leerFormulario, activarTokens, fechaCorta, estado, alerta, confirmar,
+  leerFormulario, activarTokens, fechaCorta, fechaHora, estado, alerta, confirmar,
 } from '../ui.js';
 
 let contexto = {};
@@ -25,55 +26,74 @@ export async function render(main, ctx) {
   if (ctx.contexto?.encuestaId) return renderDetalle(main, ctx.contexto.encuestaId);
 
   const panelId = ctx.contexto?.panelId || null;
+  const tipo = ctx.contexto?.tipo || '';
   const [{ items }, { items: paneles }] = await Promise.all([
-    api.encuestas.listar(panelId), api.paneles.listar(),
+    api.encuestas.listar(panelId, tipo || undefined), api.paneles.listar(),
   ]);
 
-  main.innerHTML = encabezado('Encuestas', 'y olas',
-    'Cada encuesta nace con su ref_estudio: es la uuid que la ata a su cuestionario del lado semántico.') + `
+  main.innerHTML = encabezado('Encuestas', 'y estudios',
+    'Cada encuesta es un estudio: sus datos, su audiencia y sus cargas. Todas sus '
+    + 'cargas escriben en un mismo cuestionario.') + `
     <div class="card">
       <div class="card-header"><span class="card-header-title">
         ${panelId ? esc(paneles.find((p) => p.id === panelId)?.nombre || 'Panel') : 'Todas las encuestas'}
-      </span></div>
+      </span>
+        <select class="fselect" id="f-tipo" style="width:auto">
+          <option value="">De panel e independientes</option>
+          <option value="panel" ${tipo === 'panel' ? 'selected' : ''}>De panel</option>
+          <option value="independiente" ${tipo === 'independiente' ? 'selected' : ''}>Independientes</option>
+        </select></div>
       <div class="card-body tight">
         ${items.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>Encuesta</th><th>Panel</th><th>Campo</th><th>Estado</th>
-            <th>Convocados</th><th>Respondieron</th><th>ref_estudio</th><th></th></tr></thead>
+          <thead><tr><th>Encuesta</th><th>Audiencia</th><th>Clientes</th><th>Campo</th><th>Estado</th>
+            <th>Convocados</th><th>Respondieron</th><th>Cargas</th><th></th></tr></thead>
           <tbody>${items.map((e) => {
             const tasa = e.convocados ? Math.round((e.respondieron / e.convocados) * 100) : 0;
             return `<tr>
               <td class="td-strong">${esc(e.nombre)}</td>
-              <td class="small">${esc(e.panel || '—')}</td>
+              <td class="small">${e.tipo === 'independiente'
+                ? '<span class="badge">independiente</span>'
+                : `${esc(e.panel || '—')}${e.panel_estado === 'archivado' ? ' <span class="badge">archivado</span>' : ''}`}</td>
+              <td>${chipsDeClientes(e.clientes || [])}</td>
               <td class="small">${e.fecha_campo ? fechaCorta(e.fecha_campo) : '—'}</td>
               <td>${estado(e.estado, ESTADO_ETIQUETA[e.estado])}</td>
               <td class="mono">${e.convocados ?? 0}</td>
               <td><div style="display:flex;align-items:center;gap:0.5rem">
                 <span class="mono">${e.respondieron ?? 0}</span>
-                <span class="barra ${tasa >= 60 ? 'ok' : ''}"><span style="width:${tasa}%"></span></span>
-                <span class="small muted">${tasa}%</span></div></td>
-              <td>${token(e.ref_estudio)}</td>
+                ${e.convocados ? `<span class="barra ${tasa >= 60 ? 'ok' : ''}"><span style="width:${tasa}%"></span></span>
+                <span class="small muted">${tasa}%</span>` : ''}</div></td>
+              <td class="mono">${e.cargas ?? 0}</td>
               <td class="right"><button class="btn btn-outline btn-sm" data-encuesta="${e.id}">Abrir</button></td>
             </tr>`;
           }).join('')}</tbody></table></div>`
-          : vacio('Todavía no hay encuestas fieldeadas.', '📨')}
+          : vacio('Todavía no hay encuestas.', '📨')}
       </div>
-    </div>`;
+    </div>
+    <p class="small muted">Una encuesta <strong>independiente</strong> se crea desde el
+      resultado de una consulta («Crear encuesta con estos panelistas»), o sola al
+      cargar panelistas desde la sección Panelistas.</p>`;
 
   $('#ph-acciones').innerHTML = `
     ${panelId ? `<button class="btn btn-outline" id="todas">Ver todas</button>` : ''}
-    <button class="btn btn-orange" id="nueva">+ Nueva encuesta</button>`;
+    <button class="btn btn-orange" id="nueva">+ Nueva encuesta de panel</button>`;
   if (panelId) $('#todas').onclick = () => contexto.irA('encuestas');
   $('#nueva').onclick = () => abrirNueva(paneles, panelId);
+  $('#f-tipo').onchange = (e) => contexto.irA('encuestas',
+    { ...(panelId ? { panelId } : {}), tipo: e.target.value });
   activarTokens(main);
   $$('[data-encuesta]', main).forEach((boton) => {
     boton.onclick = () => contexto.irA('encuestas', { encuestaId: Number(boton.dataset.encuesta) });
   });
 }
 
+/* R-EU.2 — una encuesta de panel nace con los datos del estudio: sus cargas
+   no los vuelven a pedir. Los paneles archivados no se ofrecen (R-EU.8). */
 function abrirNueva(paneles, panelPreseleccionado) {
   const activos = paneles.filter((p) => p.estado === 'activo');
-  modal({
-    titulo: 'Nueva encuesta',
+  let clientes = null;
+  const caja = modal({
+    titulo: 'Nueva encuesta de panel',
+    ancho: '600px',
     cuerpo: `
       <div id="enc-alerta"></div>
       <div class="form-group"><label>Panel</label>
@@ -82,10 +102,19 @@ function abrirNueva(paneles, panelPreseleccionado) {
         </select></div>
       <div class="form-group"><label>Nombre de la encuesta</label>
         <input type="text" name="nombre" placeholder="Ola 3 — Consumo de bebidas" /></div>
-      <div class="form-group"><label>Fecha de campo</label>
-        <input type="date" name="fecha_campo" /></div>
+      <div class="form-row">
+        <div class="form-group"><label>Fecha de campo</label>
+          <input type="date" name="fecha_campo" /></div>
+        <div class="form-group"><label>Público objetivo</label>
+          <input type="text" name="publico_objetivo" placeholder="Panel nacional, adultos" /></div>
+      </div>
+      <div class="form-group"><label>Clientes</label><div data-clientes></div>
+        <div class="field-hint">Para quién es el estudio. Confidencial: el panelista no lo ve.</div></div>
+      <div class="form-group"><label>Descripción (opcional)</label>
+        <textarea class="finput" name="descripcion"></textarea></div>
       <div class="field-hint">Al crearla se genera su <code>ref_estudio</code>, que es lo que
-      después ata sus respuestas del lado semántico.</div>`,
+      después ata sus respuestas del lado semántico. Para un estudio a medida, sin panel,
+      armá la audiencia en Consultas y usá «Crear encuesta con estos panelistas».</div>`,
     acciones: [
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
       { texto: 'Crear', clase: 'btn-orange', onClick: async (caja) => {
@@ -96,7 +125,10 @@ function abrirNueva(paneles, panelPreseleccionado) {
           }
           try {
             const encuesta = await api.encuestas.crear(
-              Number(datos.panel_id), datos.nombre, datos.fecha_campo);
+              Number(datos.panel_id), datos.nombre, datos.fecha_campo, {
+                publicoObjetivo: datos.publico_objetivo, descripcion: datos.descripcion,
+                clientes: clientes.valor(),
+              });
             cerrarModal();
             toast('Encuesta creada.', 'ok');
             contexto.irA('encuestas', { encuestaId: encuesta.id });
@@ -106,39 +138,101 @@ function abrirNueva(paneles, panelPreseleccionado) {
         } },
     ],
   });
+  clientes = editorDeClientes($('[data-clientes]', caja));
 }
 
 /* ── Detalle ────────────────────────────────────────────────────── */
 
+const puedeEditarEstudio = () => ['admin', 'operaciones', 'analista'].includes(contexto.actor?.rol);
+const puedeBorrarEncuesta = () => ['admin', 'dpo'].includes(contexto.actor?.rol);
+
 async function renderDetalle(main, encuestaId) {
   main.innerHTML = cargando();
   const encuesta = await api.encuestas.ver(encuestaId);
+  const independiente = encuesta.tipo === 'independiente';
+  const cerrada = encuesta.estado === 'cerrada';
+  const panelArchivado = encuesta.panel_estado === 'archivado';
 
   main.innerHTML = encabezado(encuesta.nombre, '',
-    `Panel #${encuesta.panel_id} · campo ${encuesta.fecha_campo ? fechaCorta(encuesta.fecha_campo) : 'sin fecha'}`) + `
+    `${independiente ? 'Encuesta independiente' : `De panel · ${esc(encuesta.panel || `#${encuesta.panel_id}`)}`}`
+    + ` · campo ${encuesta.fecha_campo ? fechaCorta(encuesta.fecha_campo) : 'sin fecha'}`) + `
+    <div class="grid-2" style="margin-bottom:1.25rem">
+      <div class="card"><div class="card-header"><span class="card-header-title">Datos del estudio</span>
+          ${puedeEditarEstudio() ? '<button class="btn btn-outline btn-sm" id="editar-estudio">Editar</button>' : ''}</div>
+        <div class="card-body">
+          <dl class="kv">
+            <dt>Audiencia</dt><dd>${independiente
+              ? `Independiente${encuesta.convocados ? ' · la foto de una consulta' : ' · sin convocatoria'}`
+              : `De panel · ${esc(encuesta.panel || '')}${panelArchivado ? ' <span class="badge">archivado</span>' : ''}`}</dd>
+            <dt>Estado</dt><dd>${estado(encuesta.estado, ESTADO_ETIQUETA[encuesta.estado])}</dd>
+            <dt>Público objetivo</dt><dd>${esc(encuesta.publico_objetivo || '—')}</dd>
+            <dt>Clientes</dt><dd>${chipsDeClientes(encuesta.clientes || [])}</dd>
+            ${encuesta.descripcion ? `<dt>Descripción</dt><dd>${esc(encuesta.descripcion)}</dd>` : ''}
+            <dt>ref_estudio</dt>
+            <dd>${token(encuesta.ref_estudio, encuesta.ref_estudio)}
+              <div class="field-hint">La misma uuid identifica al cuestionario del lado semántico.
+              Todas las cargas de la encuesta escriben en él.</div></dd>
+          </dl>
+        </div></div>
+      <div class="card" style="margin-top:0"><div class="card-header"><span class="card-header-title">Participación</span>
+          <button class="btn btn-outline btn-sm" id="composicion">Convocados vs respondentes</button></div>
+        <div class="card-body">
+          <div class="grid-datos">
+            <div class="tarjeta-dato"><div class="valor">${encuesta.convocados ?? 0}</div>
+              <div class="etiqueta">convocados</div></div>
+            <div class="tarjeta-dato"><div class="valor">${encuesta.respondieron ?? 0}</div>
+              <div class="etiqueta">respondieron</div></div>
+            <div class="tarjeta-dato"><div class="valor">${encuesta.no_convocados ?? 0}</div>
+              <div class="etiqueta">respondieron sin estar convocados</div></div>
+          </div>
+        </div></div>
+    </div>
     <div class="card">
+      <div class="card-header"><span class="card-header-title">Cargas</span>
+        <div class="toolbar">
+          <button class="btn btn-orange btn-sm" id="ingestar">+ Ingestar respuestas</button>
+          <button class="btn btn-outline btn-sm" id="reprocesar"
+            title="Corregir textos, etiquetas o normalización de lo ya ingestado, sin volver a subir el archivo">
+            Corregir y reprocesar</button>
+        </div></div>
+      <div class="card-body tight">${(encuesta.cargas || []).length ? `<div class="table-wrap"><table>
+        <thead><tr><th>Carga</th><th>Cargada</th><th>Modo</th><th class="num">Personas</th><th></th></tr></thead>
+        <tbody>${encuesta.cargas.map((c) => `<tr>
+          <td class="td-strong">${esc(c.nombre)}</td>
+          <td class="small">${esc(fechaHora(c.creado_en))}</td>
+          <td class="small">${esc(c.modo_relevamiento_etiqueta || '—')}</td>
+          <td class="num">${c.personas ?? 0}<div class="td-muted small">${c.personas_creadas ?? 0} creadas ·
+            ${c.personas_reutilizadas ?? 0} reutilizadas</div></td>
+          <td class="right"><button class="btn btn-outline btn-sm" data-carga="${c.id}">Ver</button></td>
+        </tr>`).join('')}</tbody></table></div>`
+        : `<p class="small muted" style="padding:1rem 1.5rem">Todavía no se ingestó ningún
+           archivo. Cada archivo es una carga: un parcial y el final, o el telefónico y el
+           web, son dos cargas de la misma encuesta, y una persona queda con una sola
+           respuesta por pregunta (gana la última).</p>`}</div>
+    </div>
+    <div class="card">
+      <div class="card-header"><span class="card-header-title">Temáticas del estudio</span>
+        ${puedeEditarEstudio() && (encuesta.cargas || []).length
+          ? '<button class="btn btn-orange btn-sm" id="guardar-tematicas">Guardar temáticas</button>' : ''}</div>
       <div class="card-body">
-        <dl class="kv">
-          <dt>Estado</dt><dd>${estado(encuesta.estado, ESTADO_ETIQUETA[encuesta.estado])}</dd>
-          <dt>ref_estudio</dt>
-          <dd>${token(encuesta.ref_estudio, encuesta.ref_estudio)}
-            <div class="field-hint">La misma uuid identifica al cuestionario del lado semántico.
-            No hay clave foránea entre stores: el cruce es por esta uuid y por id_persona.</div></dd>
-        </dl>
+        <div id="tematicas-alerta"></div>
+        <div id="tematicas">${chipsDeTematicas(encuesta.tematicas || [])}</div>
+        <p class="small muted" style="margin-top:.6rem">Se proponen con la primera carga;
+          una carga posterior propone solo para las preguntas que trae nuevas.</p>
       </div>
     </div>
     <div class="card">
       <div class="card-header">
-        <span class="card-header-title">Convocatoria y participación</span>
+        <span class="card-header-title">Convocatoria</span>
         <div class="toolbar">
-          <button class="btn btn-outline btn-sm" id="convocar">Convocar al panel</button>
+          ${!independiente && !cerrada && !panelArchivado
+            ? '<button class="btn btn-outline btn-sm" id="convocar">Convocar al panel</button>' : ''}
           <button class="btn btn-outline btn-sm" id="muestra">Exportar muestra</button>
-          <button class="btn btn-orange btn-sm" id="ingestar">Ingestar respuestas</button>
-          <button class="btn btn-outline btn-sm" id="reprocesar"
-            title="Corregir textos, etiquetas o normalización de lo ya ingestado, sin volver a subir el archivo">
-            Corregir y reprocesar</button>
         </div>
       </div>
+      ${independiente ? `<p class="small muted" style="padding:.6rem 1.5rem 0">La audiencia de
+        una encuesta independiente es la foto de la consulta con que se creó: no se convoca a
+        ningún panel.</p>` : ''}
       <div class="card-body tight"><div id="participacion">${cargando('20vh')}</div></div>
     </div>
     <!-- R4.5 — el canal de WhatsApp. La tarjeta existe siempre, porque es
@@ -171,16 +265,13 @@ async function renderDetalle(main, encuestaId) {
         Verificá que lo que quedó del lado semántico se corresponde con lo convocado acá.
       </div></div>
     </div>
-    <!-- R-ASYNC.3 — dónde se pinta el avance de una carga en diferido. Vive
-         en la ficha y no en el modal porque el modal se cierra al confirmar:
-         la carga sigue sin él, y al volver mañana hay que poder encontrarla
-         en algún lado. -->
+    <!-- R-ASYNC.3 — dónde se pinta el avance de una carga en diferido. -->
     <div id="resultado"></div>`;
 
   $('#ph-acciones').innerHTML = `
     <button class="btn btn-outline" id="volver">‹ Encuestas</button>
-    ${encuesta.estado !== 'cerrada'
-      ? `<button class="btn btn-dark" id="cerrar">Cerrar encuesta</button>` : ''}`;
+    ${!cerrada ? `<button class="btn btn-dark" id="cerrar">Cerrar encuesta</button>` : ''}
+    ${puedeBorrarEncuesta() ? '<button class="btn btn-outline texto-peligro" id="borrar-encuesta">Borrar la encuesta…</button>' : ''}`;
   $('#volver').onclick = () => contexto.irA('encuestas');
   $('#configurar-flow').onclick = () => abrirConfiguracionFlow(encuesta);
   if ($('#enviar-wa')) $('#enviar-wa').onclick = () => abrirEnvioWhatsapp(encuesta);
@@ -188,7 +279,8 @@ async function renderDetalle(main, encuestaId) {
   $('#cerrar')?.addEventListener('click', async () => {
     const ok = await confirmar({
       titulo: 'Cerrar la encuesta',
-      cuerpo: '<p>Una encuesta cerrada no admite nuevas convocatorias.</p>',
+      cuerpo: '<p>Una encuesta cerrada no admite nuevas convocatorias. Se le pueden '
+        + 'seguir sumando cargas.</p>',
       textoOk: 'Cerrar', claseOk: 'btn-dark',
     });
     if (!ok) return;
@@ -196,11 +288,41 @@ async function renderDetalle(main, encuestaId) {
     toast('Encuesta cerrada.', 'ok');
     contexto.irA('encuestas', { encuestaId });
   });
+  $('#borrar-encuesta')?.addEventListener('click', () => abrirBorradoDeEncuesta(encuesta));
+  $('#editar-estudio')?.addEventListener('click', () => abrirDatosDeEncuesta(encuesta));
+  $('#composicion').onclick = () => contexto.irA('composicion', { encuestaId });
   activarTokens(main);
+  $$('[data-carga]', main).forEach((b) => {
+    b.onclick = () => contexto.irA('cargas', { cargaId: Number(b.dataset.carga) });
+  });
 
-  $('#convocar').onclick = () => convocar(encuestaId);
+  if (puedeEditarEstudio() && (encuesta.cargas || []).length) {
+    const [{ items: vocabulario }, { areas }] = await Promise.all([
+      api.tematicas.listar().catch(() => ({ items: [] })),
+      api.tematicas.taxonomia().catch(() => ({ areas: [] })),
+    ]);
+    let editor = editorDeTematicas($('#tematicas'), {
+      vocabulario, areas, iniciales: encuesta.tematicas || [], puedeDesmarcar: false,
+    });
+    $('#guardar-tematicas').onclick = async (e) => {
+      e.currentTarget.disabled = true;
+      try {
+        const { tematicas } = await api.encuestas.guardarTematicas(encuestaId, editor.valor());
+        editor = editorDeTematicas($('#tematicas'), {
+          vocabulario, areas, iniciales: tematicas, puedeDesmarcar: false });
+        $('#tematicas-alerta').innerHTML = '';
+        toast('Temáticas guardadas.', 'ok');
+      } catch (error) {
+        $('#tematicas-alerta').innerHTML = alerta(error.message);
+      } finally {
+        e.currentTarget.disabled = false;
+      }
+    };
+  }
+
+  $('#convocar')?.addEventListener('click', () => convocar(encuestaId));
   $('#muestra').onclick = () => exportarMuestra(encuestaId);
-  $('#ingestar').onclick = () => abrirIngesta(encuesta);
+  $('#ingestar').onclick = () => abrirNuevaCarga(encuesta);
   // R8.9 — corregir lo ya ingestado sin volver a subir el archivo. El avance
   // se sigue en esta misma ficha, como el de una carga.
   $('#reprocesar').onclick = async () => {
@@ -214,12 +336,173 @@ async function renderDetalle(main, encuestaId) {
   $('#verificar').onclick = () => verificarCruce(encuestaId);
 
   await cargarParticipacion(encuestaId);
-  // R-ASYNC.3 — si hay una carga en curso de esta encuesta, se retoma. El
-  // trabajo se busca **por su destino**, no por algo que esta pantalla
-  // hubiera guardado: por eso cerrar la pestaña no pierde nada y volver
-  // desde otra computadora tampoco.
-  await retomarCargaEnCurso('encuesta', encuestaId,
-                            { alTerminar: () => cargarParticipacion(encuestaId) });
+  // R-ASYNC.3 — si alguna carga de esta encuesta quedó a medias, se retoma.
+  // El trabajo se busca por su destino (la carga), no por algo que esta
+  // pantalla hubiera guardado.
+  for (const carga of encuesta.cargas || []) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await retomarCargaEnCurso('carga', carga.id,
+      { alTerminar: () => contexto.irA('encuestas', { encuestaId }) })) break;
+  }
+}
+
+/* R-EU.1 — ingestar en una encuesta es abrir una carga (un archivo) y seguir
+   el flujo de la sección Panelistas, el mismo modal. Los datos del estudio
+   no se piden (R-EU.2): solo los del archivo. */
+function abrirNuevaCarga(encuesta) {
+  const caja = modal({
+    titulo: `Ingestar respuestas — ${encuesta.nombre}`,
+    ancho: '560px',
+    cuerpo: `
+      <div id="carga-alerta"></div>
+      <p class="small muted">Cada archivo es una carga de esta encuesta. Los datos del
+        estudio (fecha, público objetivo, clientes, temáticas) ya están en la encuesta.</p>
+      <div class="form-group"><label>Nombre del archivo o de la carga</label>
+        <input type="text" name="nombre" placeholder="Parcial telefónico"
+               value="${esc(encuesta.nombre)}" /></div>
+      ${camposDeArchivo()}`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Continuar', clase: 'btn-orange', onClick: async (caja) => {
+          const datos = leerFormulario(caja);
+          try {
+            const carga = await api.encuestas.nuevaCarga(encuesta.id, {
+              nombre: datos.nombre, tipo_datos_origen: datos.tipo_datos_origen,
+              tipo_datos_origen_otro: datos.tipo_datos_origen_otro,
+              modo_relevamiento: datos.modo_relevamiento,
+              modo_relevamiento_otro: datos.modo_relevamiento_otro,
+            });
+            cerrarModal();
+            abrirCargaDePanelistas(carga,
+              () => contexto.irA('encuestas', { encuestaId: encuesta.id }));
+          } catch (error) {
+            $('#carga-alerta', caja).innerHTML = alerta(error.message);
+          }
+        } },
+    ],
+  });
+  activarCamposDeArchivo(caja);
+}
+
+let opcionesDeArchivo = null;
+/* El tipo de datos y el modo de relevamiento: los vocabularios vienen del
+   servidor (`GET /cargas`, `opciones`), no se repiten acá. */
+function camposDeArchivo() {
+  const campos = [
+    ['tipo_datos_origen', 'Tipo de datos de origen'],
+    ['modo_relevamiento', 'Modo de relevamiento'],
+  ];
+  return `<div class="form-row">${campos.map(([campo, etiqueta]) => `
+    <div class="form-group"><label>${etiqueta}</label>
+      <select class="fselect" name="${campo}" data-clasificacion="${campo}">
+        <option value="">— Elegir —</option></select>
+      <input type="text" name="${campo}_otro" placeholder="Especificar"
+             style="display:none;margin-top:.4rem" data-otro="${campo}" />
+    </div>`).join('')}</div>`;
+}
+
+async function activarCamposDeArchivo(caja) {
+  if (!opcionesDeArchivo) {
+    opcionesDeArchivo = (await api.cargas.listar().catch(() => ({}))).opciones || {};
+  }
+  $$('[data-clasificacion]', caja).forEach((select) => {
+    const campo = select.dataset.clasificacion;
+    select.innerHTML += (opcionesDeArchivo[campo] || []).map(
+      (o) => `<option value="${esc(o.clave)}">${esc(o.etiqueta)}</option>`).join('');
+    select.onchange = () => {
+      $(`[data-otro="${campo}"]`, caja).style.display = select.value === 'otro' ? '' : 'none';
+    };
+  });
+}
+
+/* R-EU.2 — corregir los datos del estudio: se ven en todas sus cargas y en
+   las fichas de sus panelistas sin tocar a nadie. */
+function abrirDatosDeEncuesta(encuesta) {
+  let clientes = null;
+  const caja = modal({
+    titulo: 'Datos del estudio',
+    ancho: '600px',
+    cuerpo: `
+      <div id="estudio-alerta"></div>
+      <div class="form-group"><label>Nombre</label>
+        <input type="text" name="nombre" value="${esc(encuesta.nombre)}" /></div>
+      <div class="form-row">
+        <div class="form-group"><label>Fecha de campo</label>
+          <input type="date" name="fecha_campo" value="${esc(encuesta.fecha_campo || '')}" /></div>
+        <div class="form-group"><label>Público objetivo</label>
+          <input type="text" name="publico_objetivo" value="${esc(encuesta.publico_objetivo || '')}" /></div>
+      </div>
+      <div class="form-group"><label>Clientes</label><div data-clientes></div></div>
+      <div class="form-group"><label>Descripción</label>
+        <textarea class="finput" name="descripcion">${esc(encuesta.descripcion || '')}</textarea></div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Guardar', clase: 'btn-orange', onClick: async (caja) => {
+          const datos = leerFormulario(caja);
+          try {
+            await api.encuestas.editar(encuesta.id, {
+              nombre: datos.nombre, fecha_campo: datos.fecha_campo || null,
+              publico_objetivo: datos.publico_objetivo, descripcion: datos.descripcion,
+              clientes: clientes.valor(),
+            });
+            cerrarModal();
+            toast('Datos del estudio actualizados.', 'ok');
+            contexto.irA('encuestas', { encuestaId: encuesta.id });
+          } catch (error) {
+            $('#estudio-alerta', caja).innerHTML = alerta(error.message);
+          }
+        } },
+    ],
+  });
+  clientes = editorDeClientes($('[data-clientes]', caja), { iniciales: encuesta.clientes || [] });
+}
+
+/* R-EU.9 — borrar un estudio: «estos datos no tienen que estar más». La vista
+   previa sale de la misma ruta que borra; las personas siempre quedan. */
+async function abrirBorradoDeEncuesta(encuesta) {
+  let previa;
+  try {
+    previa = await api.encuestas.previaDeBorrado(encuesta.id);
+  } catch (error) {
+    toast(error.message, 'err');
+    return;
+  }
+  const caja = modal({
+    titulo: 'Borrar la encuesta',
+    ancho: '600px',
+    cuerpo: `
+      <div id="borrado-alerta"></div>
+      <div class="aviso grave"><h4>Es irreversible</h4>
+        <p>Se borran sus <strong>${previa.respuestas_a_borrar}</strong> respuesta(s) del store
+        semántico, sus <strong>${previa.participaciones_a_borrar}</strong> participación(es) y
+        sus <strong>${previa.cargas_a_borrar}</strong> carga(s), con sus temáticas por
+        panelista. Conviene tener un respaldo reciente de las dos bases.</p></div>
+      <p>Las <strong>${previa.personas_que_se_conservan}</strong> persona(s) de sus cargas
+        <strong>se conservan</strong>, con sus datos demográficos. Para deshacer lo que trajo
+        un archivo, personas incluidas, se borra la carga, no la encuesta.</p>
+      <div class="form-group"><label>Para confirmar, escribí el nombre de la encuesta:
+        <span class="etiqueta-literal">${esc(encuesta.nombre)}</span></label>
+        <input type="text" name="confirmacion" autocomplete="off" /></div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Borrar la encuesta', clase: 'btn-danger', onClick: async (caja) => {
+          try {
+            const salida = await api.encuestas.borrar(
+              encuesta.id, leerFormulario(caja).confirmacion || '');
+            cerrarModal();
+            toast(`Encuesta borrada: ${salida.respuestas_borradas} respuesta(s), `
+              + `${salida.participaciones_borradas} participación(es).`, 'ok');
+            contexto.irA('encuestas');
+          } catch (error) {
+            $('#borrado-alerta', caja).innerHTML = alerta(error.message);
+          }
+        } },
+    ],
+  });
+  const boton = $('.modal-foot .btn-danger', caja);
+  const campo = $('[name="confirmacion"]', caja);
+  boton.disabled = true;
+  campo.oninput = () => { boton.disabled = campo.value.trim() !== encuesta.nombre.trim(); };
 }
 
 
@@ -697,14 +980,26 @@ function parsearOpciones(texto) {
    Todo lo demás —mapeo de variables, marcado de demográficos, tipo de
    identificador, dedup, guardrail de PII— es idéntico, y por eso es la misma
    pantalla y no una nueva que haya que aprender. */
+/* D81 — toda ingesta es una carga de una encuesta, y este es su único modal:
+   el de la sección Panelistas y el de Encuestas. Lo que cambia según el
+   estudio es el texto (una encuesta de panel suma a sus respondentes al
+   panel; una independiente, no) y lo decide el servidor. */
 export function abrirCargaDePanelistas(carga, alTerminar) {
   return abrirIngesta(
-    { tipo: 'carga', id: carga.id, nombre: carga.nombre }, alTerminar);
+    { tipo: 'carga', id: carga.id, nombre: carga.encuesta || carga.nombre,
+      carga: carga.nombre, encuesta_id: carga.encuesta_id,
+      encuesta_tipo: carga.encuesta_tipo || 'independiente' }, alTerminar);
 }
 
 function abrirIngesta(destino, alTerminar) {
-  const esCarga = destino.tipo === 'carga';
+  // Desde D81 el destino es siempre una carga. `esCarga` queda por claridad
+  // en los textos; `dePanel` dice si sus respondentes se suman a un panel.
+  const esCarga = true;
+  const dePanel = destino.encuesta_tipo === 'panel';
   const encuesta = destino;
+  // R-EU.3 / R-EU.4 — lo que la revisión le hace decidir al analista.
+  let confirmarRepetido = false;
+  let excluirNoConvocados = false;
   let datosArchivo = { encabezados: [], filas: [] };
   /* R-TEM.2 — las temáticas que el analista dejó en la revisión, y para qué
      preguntas se pidió la propuesta. Volver a corregir y revisar de nuevo
@@ -719,24 +1014,33 @@ function abrirIngesta(destino, alTerminar) {
   let corriendo = false;
 
   const caja = modal({
-    titulo: `${esCarga ? 'Cargar panelistas' : 'Ingestar respuestas'} — ${encuesta.nombre}`,
+    titulo: `${dePanel ? 'Ingestar respuestas' : 'Cargar panelistas'} — ${encuesta.nombre}`,
     ancho: '720px',
     cuerpo: `
       <div id="ing-alerta"></div>
       <div id="ing-revision" class="hidden"></div>
       <div id="ing-formulario">
-      ${esCarga ? `
+      ${destino.carga && destino.carga !== encuesta.nombre ? `<p class="small muted">Carga
+        <strong>${esc(destino.carga)}</strong> de la encuesta. Los datos del estudio ya están
+        en la encuesta: acá va solo el archivo.</p>` : ''}
+      ${dePanel ? `
+      <div class="aviso">
+        <h4>Quienes respondan quedan en el panel de la encuesta</h4>
+        <p>Cada persona del archivo queda registrada como que <strong>respondió</strong>
+        la encuesta; quien no estaba convocado se marca «no convocado» y la revisión
+        lo muestra antes de confirmar.</p>
+      </div>` : `
       <div class="aviso destacado">
         <h4>Esta gente no queda en ningún panel</h4>
         <p>Los individuos de esta carga <strong>no se incorporan a ningún
-        panel</strong>: no generan membresía ni participación, no se los puede
-        convocar y no entran en la composición, la brecha ni el muestreo de
-        ningún panel.</p>
+        panel</strong>: no generan membresía, no entran en la composición, la
+        brecha ni el muestreo de ningún panel. Quedan registrados como que
+        respondieron este estudio.</p>
         <p>Sus respuestas sí quedan consultables por concepto, y sus
         demográficos permiten filtrarlos. Si después se decide sumar a alguno
         de ellos a un panel, se hace desde el resultado de una consulta, sin
         volver a cargar nada.</p>
-      </div>` : ''}
+      </div>`}
       <div class="aviso">
         <h4>Qué cruza al store semántico</h4>
         <p>Solo el <code>id_persona</code>, el <code>ref_estudio</code>, el texto de la
@@ -1518,7 +1822,7 @@ function abrirIngesta(destino, alTerminar) {
       base64 = await leerBase64(archivo, (f) => avance.medido('Leyendo el archivo', f));
 
       avance.medido('Subiendo al servidor', 0);
-      analisis = await (esCarga ? api.cargas : api.sav).analizar(encuesta.id, base64, {
+      analisis = await api.cargas.analizar(encuesta.id, base64, {
         // Fase 8 — si el analista ya editó la lista de no respuesta (volvió a
         // cargar otro archivo en el mismo modal), se usa la suya.
         extra: diagnostico ? { valores_no_respuesta: listaNoRespuesta() } : {},
@@ -1731,8 +2035,7 @@ function abrirIngesta(destino, alTerminar) {
 
     return {
       modo: 'crear_individuos',
-      // En una carga no hay panel al que incorporar: es el punto.
-      ...(esCarga ? {} : { panel_id: encuesta.panel_id }),
+      // El panel (si lo hay) lo decide el servidor por la encuesta.
       evidencia_consentimiento: {
         contacto_participacion: contacto,
         uso_semantico: semantico,
@@ -1821,14 +2124,17 @@ function abrirIngesta(destino, alTerminar) {
     // nombre. «Confirmar e importar» a secas, debajo de un cartel rojo, se
     // lee como «no se puede», y es justo lo que el analista puede decidir.
     const sinClave = Boolean(resumen.sin_clave_de_dedup);
-    revision$.innerHTML = resumenHtml(resumen) + (esCarga ? `
-      <h4>Temáticas incorporadas</h4>
-      <p class="small">De qué trata esta carga, y qué preguntas sustentan cada
+    revision$.innerHTML = avisosDeLaCarga(resumen) + resumenHtml(resumen) + (esCarga ? `
+      <h4>Temáticas del estudio</h4>
+      <p class="small">De qué trata este estudio, y qué preguntas sustentan cada
         temática: un panelista la tiene si respondió al menos una. ${proponer
-        ? 'Claude las propuso a partir de los textos de las preguntas que van al store '
-          + 'semántico (ni respuestas ni demográficos): aceptá, quitá o agregá.'
+        ? (resumen.tematicas?.solo_preguntas_nuevas
+          ? 'El estudio ya tenía temáticas: Claude propuso solo para las preguntas '
+            + 'nuevas de este archivo. Aceptá, quitá o agregá.'
+          : 'Claude las propuso a partir de los textos de las preguntas que van al store '
+            + 'semántico (ni respuestas ni demográficos): aceptá, quitá o agregá.')
         : 'Las que dejaste en la revisión anterior.'} Se guardan al confirmar, y se
-        pueden editar después desde la sección Cargas.</p>
+        pueden editar después desde la encuesta o la sección Cargas.</p>
       ${resumen.tematicas?.retiradas?.length ? alerta(
         `Se retiraron ${resumen.tematicas.retiradas.length} temática(s) que salían solo de `
         + 'variables marcadas como demográficas o de identidad: '
@@ -1868,8 +2174,11 @@ function abrirIngesta(destino, alTerminar) {
         // store semántico: las mismas que vio Claude.
         preguntasDisponibles: resumen.al_store_semantico?.variables || [],
         puedeDesmarcar: false,
-        iniciales: proponer ? [] : (propuesta?.editadas || tematicasElegidas || [])
-          .map((t) => ({ ...t, nueva: t.nueva })),
+        // R-EU.2 — las del estudio son el punto de partida: lo que se
+        // guarda reemplaza la lista entera.
+        iniciales: proponer ? (propuesta?.actuales || [])
+          : (propuesta?.editadas || tematicasElegidas || [])
+            .map((t) => ({ ...t, nueva: t.nueva })),
         propuesta: proponer ? (propuesta?.propuesta || []) : [],
         aviso: proponer ? propuesta?.aviso : null,
       });
@@ -1891,7 +2200,18 @@ function abrirIngesta(destino, alTerminar) {
         resolver(confirmado);
       };
       $('#volver-a-corregir', revision$).onclick = () => cerrar(false);
-      $('#confirmar-importar', revision$).onclick = () => cerrar(true);
+      $('#confirmar-importar', revision$).onclick = () => {
+        // R-EU.3 — el mismo archivo otra vez: se confirma a propósito, en el
+        // mismo modal (uno nuevo cerraría este y se perdería el mapeo).
+        if (resumen.archivo_repetido && !$('#confirmar-repetido', revision$)?.checked) {
+          $('#aviso-repetido', revision$)?.scrollIntoView({ block: 'center' });
+          toast('Marcá que querés procesar otra vez el mismo archivo, o volvé atrás.', 'err');
+          return;
+        }
+        confirmarRepetido = Boolean(resumen.archivo_repetido);
+        excluirNoConvocados = Boolean($('#excluir-no-convocados', revision$)?.checked);
+        cerrar(true);
+      };
       // El resumen es el registro de qué se definió en esta carga: se copia
       // y se pega en el correo donde alguien pregunta «¿qué cargaste?».
       $('#copiar-resumen', revision$).onclick = () => {
@@ -1905,6 +2225,44 @@ function abrirIngesta(destino, alTerminar) {
     <tr><td><code>${esc(v.codigo)}</code></td>
         <td>${esc(v.texto || '—')}</td>
         <td>${extra}</td></tr>`;
+
+  /* D81 — lo que la revisión de una carga dice antes que todo lo demás:
+     el archivo repetido (R-EU.3), los no convocados (R-EU.4) y quiénes
+     quedan sin cada consentimiento y qué implica (R-EU.6). */
+  function avisosDeLaCarga(r) {
+    const partes = [];
+    if (r.archivo_repetido) {
+      partes.push(`<div class="alert alert-warn" id="aviso-repetido">
+        <strong>Este archivo ya se cargó</strong> en esta encuesta: es idéntico al de la
+        carga «${esc(r.archivo_repetido.nombre)}» (${esc(fechaHora(r.archivo_repetido.creado_en))}).
+        Procesarlo otra vez no duplica personas ni respuestas, pero vuelve a escribirlo todo.
+        <div style="margin-top:.4rem"><label class="check"><input type="checkbox"
+          id="confirmar-repetido" /> Sí, procesarlo otra vez</label></div></div>`);
+    }
+    const nc = r.no_convocados;
+    if (nc && nc.cuantos) {
+      partes.push(`<div class="aviso" id="aviso-no-convocados">
+        <h4>${nc.cuantos} persona(s) no estaban convocadas</h4>
+        <p>${esc(nc.mensaje)}</p>
+        <p class="small muted">${nc.existentes} ya existen en el sistema y
+          ${nc.sin_identificar} no se pudieron identificar. Ids en el archivo:
+          ${esc(nc.ids_en_origen.slice(0, 12).join(', '))}${nc.ids_en_origen.length > 12 || nc.mas ? '…' : ''}</p>
+        <label class="check"><input type="checkbox" id="excluir-no-convocados" />
+          Excluirlas de esta carga</label>
+      </div>`);
+    }
+    const sin = (r.consentimiento_por_finalidad || []).filter((c) => c.sin_consentimiento);
+    if (sin.length) {
+      partes.push(`<div class="aviso">
+        <h4>Quiénes quedan sin consentimiento</h4>
+        <ul class="puntos">${sin.map((c) => `<li><strong>${c.sin_consentimiento}</strong>
+          sin <code>${esc(c.finalidad)}</code> → ${esc(c.implica)}</li>`).join('')}</ul>
+        <p class="small muted">Se registra tal como vino. Quien no consiente no va a la
+          lista negra: la lista negra es para fraude, calidad o comportamiento.</p>
+      </div>`);
+    }
+    return partes.join('');
+  }
 
   function resumenHtml(r) {
     // Ninguna advertencia del resumen frena (`bloquea: false`): lo que frena
@@ -2143,17 +2501,12 @@ function abrirIngesta(destino, alTerminar) {
               'Se leen las respuestas, se resuelve cada individuo y se '
               + 'calculan los embeddings. Con archivos grandes tarda.')),
       };
-      // Las dos llamadas escritas enteras, y no `(esCarga ? a : b).ingestar`:
-      // así `test_rutas_con_pantalla` ve que la ruta de cada destino tiene
-      // pantalla.
-      return esCarga ? api.cargas.ingestar(encuesta.id, cuerpo, opciones)
-        : api.sav.ingestar(encuesta.id, cuerpo, opciones);
+      return api.cargas.ingestar(encuesta.id, cuerpo, opciones);
     }
     avance?.abierto('Ingestando en el servidor…',
       'Se resuelve cada individuo y se calculan los embeddings. '
       + 'Con archivos grandes tarda.');
-    return (esCarga ? api.cargas.ingestarFilas : api.encuestas.ingestar)(
-      encuesta.id, cuerpo);
+    return api.cargas.ingestarFilas(encuesta.id, cuerpo);
   }
 
   async function correr() {
@@ -2234,7 +2587,11 @@ function abrirIngesta(destino, alTerminar) {
     }
 
     try {
-      const resultado = await enviarIngesta(cuerpo, avance);
+      const resultado = await enviarIngesta({
+        ...cuerpo,
+        ...(confirmarRepetido ? { confirmar_archivo_repetido: true } : {}),
+        ...(excluirNoConvocados ? { excluir_no_convocados: true } : {}),
+      }, avance);
       indicadorPie.quitar();
       avance.medido('Encolada', 0);
       enCurso.soltar();
@@ -2258,14 +2615,9 @@ function abrirIngesta(destino, alTerminar) {
                                 size: 0 }),
         esCarga, alTerminar, creacion,
       });
-      if (esCarga) {
-        // La pantalla que abrió la carga es la de panelistas, y la gente
-        // recién incorporada tiene que aparecer ahí sin recargar a mano.
-        await alTerminar?.();
-      } else {
-        await cargarParticipacion(encuesta.id);
-        await verificarCruce(encuesta.id);
-      }
+      // La pantalla que abrió la carga (Panelistas o la encuesta) muestra
+      // enseguida a la gente recién incorporada.
+      await alTerminar?.();
     } catch (error) {
       avance.cerrar();
       indicadorPie.quitar();

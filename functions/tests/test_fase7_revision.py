@@ -18,7 +18,7 @@ import pytest
 from panel_api import db, encuestas, paneles, resumen_ingesta, ruteo, sav
 from panel_api.errores import DatosInvalidos
 
-from conftest import consentimientos
+from conftest import ingesta_de, consentimientos
 
 VERSION = "consentimiento-campo-2026-09"
 
@@ -207,7 +207,7 @@ def test_revisar_no_escribe_nada(ctx, actor, conn_boveda, tmp_path):
     enc = encuestas.crear(conn_boveda, panel["id"], "Ola")
 
     status, r = ruteo.despachar(
-        "POST", f"/encuestas/{enc['id']}/sav/ingesta",
+        "POST", ingesta_de(ctx.boveda, enc['id']),
         _cuerpo(_sav(tmp_path), panel["id"], solo_revisar=True), {},
         actor("operaciones"), ctx)
 
@@ -224,7 +224,7 @@ def test_el_resumen_por_la_ruta_trae_las_siete_secciones(
     panel = paneles.crear(conn_boveda, "Panel")
     enc = encuestas.crear(conn_boveda, panel["id"], "Ola")
     _, r = ruteo.despachar(
-        "POST", f"/encuestas/{enc['id']}/sav/ingesta",
+        "POST", ingesta_de(ctx.boveda, enc['id']),
         _cuerpo(_sav(tmp_path), panel["id"], solo_revisar=True), {},
         actor("operaciones"), ctx)
 
@@ -245,10 +245,10 @@ def test_confirmar_despues_de_revisar_si_escribe(
     enc = encuestas.crear(conn_boveda, panel["id"], "Ola")
     ruta = _sav(tmp_path)
 
-    ruteo.despachar("POST", f"/encuestas/{enc['id']}/sav/ingesta",
+    ruteo.despachar("POST", ingesta_de(ctx.boveda, enc['id']),
                     _cuerpo(ruta, panel["id"], solo_revisar=True), {},
                     actor("operaciones"), ctx)
-    status, r = ruteo.despachar("POST", f"/encuestas/{enc['id']}/sav/ingesta",
+    status, r = ruteo.despachar("POST", ingesta_de(ctx.boveda, enc['id']),
                                 _cuerpo(ruta, panel["id"]), {},
                                 actor("operaciones"), ctx)
     assert status == 202

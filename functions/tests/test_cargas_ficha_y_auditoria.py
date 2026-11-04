@@ -105,13 +105,15 @@ def test_las_tematicas_van_en_la_carga_en_que_las_respondio(ctx, tres_cargas):
     id_persona = _id(ctx.boveda, "20-1")
     tematica = db.una(ctx.boveda, "insert into tematica (nombre) values ('bebidas') "
                                   "returning id")["id"]
+    # D81 — las temáticas son del estudio: de la encuesta de la carga.
+    encuesta = tres_cargas["b"]["encuesta_id"]
     db.ejecutar(ctx.boveda,
-                "insert into carga_tematica (carga_id, tematica_id, origen) "
-                "values (%s, %s, 'manual')", (tres_cargas["b"]["id"], tematica))
+                "insert into encuesta_tematica (encuesta_id, tematica_id, origen) "
+                "values (%s, %s, 'manual')", (encuesta, tematica))
     db.ejecutar(ctx.boveda,
-                "insert into persona_tematica (id_persona, tematica_id, carga_id, "
+                "insert into persona_tematica (id_persona, tematica_id, encuesta_id, "
                 "preguntas_respondidas) values (%s, %s, %s, 1)",
-                (id_persona, tematica, tres_cargas["b"]["id"]))
+                (id_persona, tematica, encuesta))
     salida = cargas.cargas_de_persona(ctx.boveda, id_persona)
     por_carga = {f["nombre"]: [t["nombre"] for t in f["tematicas"]] for f in salida["cargas"]}
     assert por_carga == {"Centel": [], "Tracking julio": ["bebidas"], "Ómnibus junio": []}

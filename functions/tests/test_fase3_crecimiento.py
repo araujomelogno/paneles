@@ -450,8 +450,10 @@ def _rutas_registradas():
     ("GET", "/usuarios", "R3.8"),
     ("POST", "/usuarios", "R3.8"),
     ("PATCH", "/usuarios/<uid>", "R3.8"),
-    ("POST", "/encuestas/<encuesta_id>/sav/analizar", "R3.9"),
-    ("POST", "/encuestas/<encuesta_id>/sav/ingesta", "R3.9"),
+    # D81 — el `.sav` de una encuesta entra por una carga de esa encuesta:
+    # las rutas `/encuestas/<id>/sav/…` se reemplazaron por estas.
+    ("POST", "/cargas/<carga_id>/analizar", "R3.9"),
+    ("POST", "/cargas/<carga_id>/ingesta", "R3.9"),
     ("POST", "/consultas/csv-identificado", "R3.10"),
     ("POST", "/paneles/desde-consulta", "R3.11"),
 ])

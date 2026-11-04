@@ -21,6 +21,18 @@ Todo lo demás se reutiliza tal cual —el mapeo de variables a preguntas, el
 marcado de demográficos (R3.9.d), el dedup de identidad (R1.2), el tipo de
 identificador (R3.12.b), el gate de `uso_semantico` y el guardrail de PII
 (R1.6)—. Lo que cambia es el contexto, no el pipeline.
+
+**Desde D81 (`boveda/0032`) toda ingesta es una carga de una encuesta.** La
+encuesta es el estudio —nombre, fecha, público objetivo, clientes,
+temáticas, audiencia—; la carga es un archivo: cuándo, quién, modo de
+relevamiento, tipo de datos, su huella y el origen creado/reutilizado de cada
+persona. Una carga desde Panelistas crea su encuesta (independiente,
+cerrada, sin audiencia); una desde Encuestas se suma a la existente. Todas
+las cargas de una encuesta escriben en el **mismo** cuestionario (el
+`ref_estudio` de la carga es el de su encuesta, y lo garantiza la base), así
+que una persona tiene una sola respuesta por pregunta y gana la última carga
+(R-EU.3). Cada carga registra la participación de sus personas en la
+encuesta (`respondio`), marcando a quien no estaba convocado (R-EU.4).
 """
 
 from . import db, encuestas, ingesta as mod_ingesta, personas, sav, semantica
@@ -36,8 +48,11 @@ from .errores import DatosInvalidos, NoEncontrado
 FINALIDAD_OBLIGATORIA = sav.SEMANTICO
 
 
-_COLUMNAS = ("id, nombre, descripcion, ref_estudio, fecha_estudio, "
-             "publico_objetivo, tipo_datos_origen, tipo_datos_origen_otro, "
+# Lo que se lee de una carga: lo suyo y, por `v_carga_resumen`, los datos del
+# estudio de su encuesta (la fecha y el público objetivo son de la encuesta).
+_COLUMNAS = ("id, nombre, descripcion, ref_estudio, encuesta_id, encuesta, "
+             "encuesta_tipo, fecha_estudio, publico_objetivo, archivo_huella, "
+             "tipo_datos_origen, tipo_datos_origen_otro, "
              "modo_relevamiento, modo_relevamiento_otro, creado_en, creado_por")
 
 # boveda/0026 — qué tipo de datos dio origen a la carga y cómo se relevaron.
@@ -99,6 +114,10 @@ def _serializar(fila):
         "nombre": fila["nombre"],
         "descripcion": fila["descripcion"],
         "ref_estudio": str(fila["ref_estudio"]),
+        "encuesta_id": fila.get("encuesta_id"),
+        "encuesta": fila.get("encuesta"),
+        "encuesta_tipo": fila.get("encuesta_tipo"),
+        "archivo_huella": fila.get("archivo_huella"),
         "fecha_estudio": (fila["fecha_estudio"].isoformat()
                           if fila.get("fecha_estudio") else None),
         "publico_objetivo": fila.get("publico_objetivo"),
@@ -195,21 +214,25 @@ def _clasificacion(campo, valor, especificacion, exigir):
 def crear(conn, nombre, descripcion=None, actor=None, fecha_estudio=None,
           publico_objetivo=None, tipo_datos_origen=None,
           tipo_datos_origen_otro=None, modo_relevamiento=None,
-          modo_relevamiento_otro=None, exigir_origen=False, clientes=None):
-    """Abre una carga con los datos del estudio del que sale (R-ORG.4).
+          modo_relevamiento_otro=None, exigir_origen=False, clientes=None,
+          encuesta_id=None, archivo_huella=None):
+    """Abre una carga: una ingesta de una encuesta (R-EU.1).
 
-    `clientes` (R-CLI.1, D80): para quién se hizo el estudio, por nombre; los
-    que no existen se crean. Se pueden corregir después con `editar`.
+    Con `encuesta_id` la carga se suma a ese estudio y **no vuelve a pedir**
+    sus datos (R-EU.2): fecha, público objetivo y clientes ya están en la
+    encuesta, y los que vengan acá se ignoran.
 
-    Nombre, fecha, público objetivo, tipo de datos y modo de relevamiento se
-    guardan **en la carga**, no en cada persona: una persona que aparece en
-    tres cargas ve los tres estudios por el vínculo, y corregir la fecha es
-    una fila.
+    Sin `encuesta_id` —una carga desde la sección Panelistas— **crea su
+    encuesta**: independiente, cerrada, sin convocatoria, con los datos del
+    estudio (nombre, fecha, público objetivo, descripción y clientes).
 
-    `exigir_origen` lo pasa la ruta: una carga nueva abierta desde la
-    pantalla tiene que declarar tipo y modo. Las anteriores a la 0026 no los
-    tienen, y por eso la base los admite nulos.
+    Lo propio de la carga es lo del archivo: el tipo de datos de origen y el
+    modo de relevamiento (`exigir_origen` lo pasa la ruta: una carga nueva
+    abierta desde la pantalla los declara; las anteriores a la 0026 no los
+    tienen). El `ref_estudio` es el de la encuesta, y lo pone la base.
     """
+    from . import encuestas
+
     nombre = (nombre or "").strip()
     if not nombre:
         raise DatosInvalidos(
@@ -220,70 +243,81 @@ def crear(conn, nombre, descripcion=None, actor=None, fecha_estudio=None,
                           tipo_datos_origen_otro, exigir_origen)
     modo = _clasificacion("modo_relevamiento", modo_relevamiento,
                           modo_relevamiento_otro, exigir_origen)
+    if encuesta_id is None:
+        encuesta_id = encuestas.crear(
+            conn, None, nombre, fecha_campo=_fecha(fecha_estudio),
+            tipo=encuestas.INDEPENDIENTE, publico_objetivo=publico_objetivo,
+            descripcion=descripcion, clientes=clientes or [],
+            estado="cerrada")["id"]
+    else:
+        encuestas.obtener(conn, encuesta_id)
     fila = db.una(
         conn,
-        f"""
-        insert into carga (nombre, descripcion, fecha_estudio,
-                           publico_objetivo, tipo_datos_origen,
-                           tipo_datos_origen_otro, modo_relevamiento,
-                           modo_relevamiento_otro, creado_por)
+        """
+        insert into carga (nombre, descripcion, encuesta_id, archivo_huella,
+                           tipo_datos_origen, tipo_datos_origen_otro,
+                           modo_relevamiento, modo_relevamiento_otro, creado_por)
              values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-          returning {_COLUMNAS}
+          returning id
         """,
-        (nombre, (descripcion or "").strip() or None, _fecha(fecha_estudio),
-         _texto(publico_objetivo), *tipo, *modo,
+        (nombre, (descripcion or "").strip() or None, encuesta_id, archivo_huella,
+         *tipo, *modo,
          getattr(actor, "uid", None) or (actor if isinstance(actor, str) else None)),
     )
-    from . import clientes as mod_clientes
-
-    return {**_serializar(fila),
-            "clientes": mod_clientes.guardar_de_carga(conn, fila["id"], clientes or [])}
+    return obtener(conn, fila["id"])
 
 
 def sincronizar_fecha(conn_boveda, conn_semantica, carga_id, solo_si_vacia=False):
-    """Lleva la fecha del estudio de la carga a su cuestionario semántico.
+    """Lleva la fecha del estudio al cuestionario semántico. Desde D81 la
+    fecha es de la encuesta (`encuestas.sincronizar_fecha`)."""
+    from . import encuestas
 
-    Es una fecha del estudio, no de nadie: no es PII. Se copia porque la
-    ficha pagina y ordena las respuestas por esa fecha **en** el store
-    semántico, y la serie longitudinal y los atributos «al momento de la
-    respuesta» se anclan en ella. Al editar se pisa (vaciarla también se
-    propaga); al completar cargas anteriores, `solo_si_vacia`.
-
-    Devuelve si el cuestionario cambió: una carga que todavía no se ingestó
-    no tiene cuestionario, y no es un error.
-    """
-    estudio = mod_ingesta.estudio_del_destino(conn_boveda, "carga", carga_id)
-    return semantica.fechar_cuestionario(
-        conn_semantica, estudio["ref_estudio"], estudio["fecha_campo"],
+    return encuestas.sincronizar_fecha(
+        conn_boveda, conn_semantica, _encuesta_de(conn_boveda, carga_id),
         solo_si_vacia=solo_si_vacia)
 
 
 def completar_fechas(conn_boveda, conn_semantica):
-    """Operación única: las cargas ingestadas antes de la corrección quedaron
-    con el cuestionario sin fecha. Copia la del estudio **solo donde esté
-    vacía**; una fecha que ya tenga el cuestionario no se toca.
+    """Operación única: los estudios ingestados antes de la corrección
+    quedaron con el cuestionario sin fecha. Copia la de la encuesta **solo
+    donde esté vacía**; una fecha que ya tenga el cuestionario no se toca.
 
-    Devuelve cuántas cargas con fecha se revisaron y cuáles se completaron.
-    No hace `commit`: lo decide quien llama (el script, con `--aplicar`).
+    Devuelve cuántos estudios con fecha se revisaron y cuáles se
+    completaron. No hace `commit`: lo decide quien llama (el script).
     """
+    from . import encuestas
+
     con_fecha = db.todas(
         conn_boveda,
-        "select id, nombre from carga where fecha_estudio is not null order by id")
+        "select id, nombre from encuesta where fecha_campo is not null order by id")
     completadas = [
-        {"id": c["id"], "nombre": c["nombre"]}
-        for c in con_fecha
-        if sincronizar_fecha(conn_boveda, conn_semantica, c["id"],
-                             solo_si_vacia=True)
+        {"id": e["id"], "nombre": e["nombre"]}
+        for e in con_fecha
+        if encuestas.sincronizar_fecha(conn_boveda, conn_semantica, e["id"],
+                                       solo_si_vacia=True)
     ]
     return {"revisadas": len(con_fecha), "completadas": completadas}
 
 
-def editar(conn, carga_id, cambios, conn_semantica=None):
-    """Corrige los datos del estudio. Se ve en todas las fichas a la vez.
+def _encuesta_de(conn, carga_id):
+    fila = db.una(conn, "select encuesta_id from carga where id = %s", (carga_id,))
+    if not fila:
+        raise NoEncontrado(f"No existe la carga {carga_id}.")
+    return fila["encuesta_id"]
 
-    Es la razón de guardarlos en la carga: corregir la fecha de un estudio
-    no toca ninguna fila de `persona` ni de `persona_carga`.
+
+# R-EU.2 — lo que una edición de la carga cambia en su encuesta.
+_DEL_ESTUDIO = ("fecha_estudio", "publico_objetivo", "clientes")
+
+
+def editar(conn, carga_id, cambios, conn_semantica=None):
+    """Corrige una carga. Lo del archivo (nombre, descripción, tipo de datos,
+    modo de relevamiento) va a la carga; lo del estudio (fecha, público
+    objetivo, clientes) a su encuesta, y se ve en todas sus cargas y fichas
+    sin tocar a nadie.
     """
+    from . import encuestas
+
     cambios = cambios or {}
     columnas, valores = [], []
     if "nombre" in cambios:
@@ -295,12 +329,6 @@ def editar(conn, carga_id, cambios, conn_semantica=None):
     if "descripcion" in cambios:
         columnas.append("descripcion")
         valores.append(_texto(cambios.get("descripcion")))
-    if "fecha_estudio" in cambios:
-        columnas.append("fecha_estudio")
-        valores.append(_fecha(cambios.get("fecha_estudio")))
-    if "publico_objetivo" in cambios:
-        columnas.append("publico_objetivo")
-        valores.append(_texto(cambios.get("publico_objetivo")))
     for campo in _CLASIFICACIONES:
         if f"{campo}_otro" in cambios and campo not in cambios:
             # La especificación sola no se puede validar: depende de si el
@@ -313,35 +341,44 @@ def editar(conn, carga_id, cambios, conn_semantica=None):
             columnas += [campo, f"{campo}_otro"]
             valores += _clasificacion(campo, cambios.get(campo),
                                       cambios.get(f"{campo}_otro"), exigir=True)
-    if not columnas and "clientes" not in cambios:
+    del_estudio = {k: cambios[k] for k in _DEL_ESTUDIO if k in cambios}
+    if not columnas and not del_estudio:
         raise DatosInvalidos(
             "No hay nada que cambiar. Se pueden editar nombre, descripcion, "
             "fecha_estudio, publico_objetivo, tipo_datos_origen, "
             "modo_relevamiento y clientes.")
-    if "clientes" in cambios:
-        # R-CLI.1 — los clientes se corrigen acá, y se ven en todos los
-        # panelistas de la carga en el acto: se derivan, no se copiaron.
-        from . import clientes as mod_clientes
-
-        mod_clientes.guardar_de_carga(conn, carga_id, cambios.get("clientes") or [])
-    if not columnas:
-        return obtener(conn, carga_id)
-    fila = db.una(
-        conn,
-        f"update carga set {', '.join(c + ' = %s' for c in columnas)} "
-        f"where id = %s returning id",
-        tuple(valores) + (carga_id,),
-    )
-    if not fila:
-        raise NoEncontrado(f"No existe la carga {carga_id}.")
-    if "fecha_estudio" in cambios and conn_semantica is not None:
-        sincronizar_fecha(conn, conn_semantica, carga_id)
+    encuesta_id = _encuesta_de(conn, carga_id)
+    if columnas:
+        db.ejecutar(
+            conn,
+            f"update carga set {', '.join(c + ' = %s' for c in columnas)} "
+            f"where id = %s",
+            tuple(valores) + (carga_id,))
+    if del_estudio:
+        # Una carga creada desde Panelistas es la única de su estudio y lleva
+        # su nombre: renombrarla renombra el estudio, que es lo que se ve.
+        if "nombre" in cambios and _unica_de_su_encuesta(conn, carga_id):
+            del_estudio["nombre"] = cambios["nombre"]
+        encuestas.editar(conn, encuesta_id, del_estudio,
+                         conn_semantica=conn_semantica)
+    elif "nombre" in cambios and _unica_de_su_encuesta(conn, carga_id):
+        encuestas.editar(conn, encuesta_id, {"nombre": cambios["nombre"]})
     return obtener(conn, carga_id)
 
 
+def _unica_de_su_encuesta(conn, carga_id):
+    fila = db.una(
+        conn,
+        """select count(*)::int as n from carga
+            where encuesta_id = (select encuesta_id from carga where id = %s)""",
+        (carga_id,))
+    return fila["n"] == 1
+
+
 def obtener(conn, carga_id):
-    """La carga con sus conteos y sus temáticas incorporadas (R-TEM.1)."""
-    from . import tematicas
+    """La carga con sus conteos, los datos de su estudio y las temáticas y
+    clientes del estudio (R-TEM.1, R-CLI.1, D81)."""
+    from . import clientes as mod_clientes, tematicas
 
     fila = db.una(
         conn,
@@ -351,28 +388,31 @@ def obtener(conn, carga_id):
     )
     if not fila:
         raise NoEncontrado(f"No existe la carga {carga_id}.")
-    from . import clientes as mod_clientes
-
     return {**_serializar(fila),
-            "tematicas": tematicas.de_carga(conn, fila["id"]),
-            "clientes": mod_clientes.de_carga(conn, fila["id"])}
+            "tematicas": tematicas.de_encuesta(conn, fila["encuesta_id"]),
+            "clientes": mod_clientes.de_encuesta(conn, fila["encuesta_id"])}
 
 
-def listar(conn, busqueda=None, tematica_id=None):
-    """R-CAR.1 — las cargas, con sus conteos y sus temáticas.
+def listar(conn, busqueda=None, tematica_id=None, encuesta_id=None):
+    """R-CAR.1 — las cargas, con sus conteos y las temáticas y clientes de su
+    estudio.
 
     Ordenadas por **fecha del estudio**, la más reciente primero; la que no
     la declaró se ubica por la fecha en que se cargó. `busqueda` filtra por
-    nombre; `tematica_id`, a las que cubren esa temática.
+    nombre (de la carga o del estudio); `tematica_id`, a las de estudios que
+    cubren esa temática; `encuesta_id`, a las de un estudio.
     """
-    from . import tematicas
+    from . import clientes as mod_clientes, tematicas
 
     condiciones, params = [], []
     if tematica_id:
         condiciones.append(
-            "exists (select 1 from carga_tematica ct "
-            "where ct.carga_id = r.id and ct.tematica_id = %s)")
+            "exists (select 1 from encuesta_tematica et "
+            "where et.encuesta_id = r.encuesta_id and et.tematica_id = %s)")
         params.append(tematica_id)
+    if encuesta_id:
+        condiciones.append("r.encuesta_id = %s")
+        params.append(encuesta_id)
     donde = ("where " + " and ".join(condiciones)) if condiciones else ""
     filas = db.todas(
         conn,
@@ -389,13 +429,13 @@ def listar(conn, busqueda=None, tematica_id=None):
     clave = tematicas.clave_de_busqueda(busqueda)
     if clave:
         filas = [f for f in filas
-                 if clave in tematicas.clave_de_busqueda(f["nombre"])]
-    from . import clientes as mod_clientes
-
-    por_carga = tematicas.de_cargas(conn, [f["id"] for f in filas])
-    clientes_de = mod_clientes.de_cargas(conn, [f["id"] for f in filas])
-    return [{**_serializar(f), "tematicas": por_carga.get(f["id"], []),
-             "clientes": clientes_de.get(f["id"], [])}
+                 if clave in tematicas.clave_de_busqueda(f["nombre"])
+                 or clave in tematicas.clave_de_busqueda(f["encuesta"])]
+    estudios = [f["encuesta_id"] for f in filas]
+    por_estudio = tematicas.de_encuestas(conn, estudios)
+    clientes_de = mod_clientes.de_encuestas(conn, estudios)
+    return [{**_serializar(f), "tematicas": por_estudio.get(f["encuesta_id"], []),
+             "clientes": clientes_de.get(f["encuesta_id"], [])}
             for f in filas]
 
 
@@ -451,14 +491,15 @@ def origen_de(conn, id_persona):
     filas = db.todas(
         conn,
         """
-        select c.id, c.nombre, c.fecha_estudio, c.publico_objetivo,
+        select c.id, c.nombre, e.fecha_campo as fecha_estudio, e.publico_objetivo,
                c.tipo_datos_origen, c.tipo_datos_origen_otro,
                c.modo_relevamiento, c.modo_relevamiento_otro,
                pc.origen, pc.creado_en
           from persona_carga pc
           join carga c on c.id = pc.carga_id
+          join encuesta e on e.id = c.encuesta_id
          where pc.id_persona = %s
-         order by coalesce(c.fecha_estudio, c.creado_en::date), c.id
+         order by coalesce(e.fecha_campo, c.creado_en::date), c.id
         """,
         (str(id_persona),),
     )
@@ -514,6 +555,12 @@ def _otros_ingresos(conn, id_persona, creada_por_carga):
             """select pa.encuesta_id, e.nombre, pa.convocado_en
                  from participacion pa join encuesta e on e.id = pa.encuesta_id
                 where pa.id_persona = %s and pa.origen = 'importacion'
+                  -- D81: si llegó en una carga de esa encuesta, ya figura
+                  -- entre las cargas y no es «otro ingreso».
+                  and not exists (
+                      select 1 from persona_carga pc join carga c on c.id = pc.carga_id
+                       where pc.id_persona = pa.id_persona
+                         and c.encuesta_id = pa.encuesta_id)
                 order by pa.convocado_en""",
             (str(id_persona),))
     ]
@@ -539,25 +586,30 @@ def cargas_de_persona(conn, id_persona, incluir_especiales=False):
     filas = db.todas(
         conn,
         """
-        select c.id, c.nombre, c.fecha_estudio, c.creado_en as carga_creada_en,
+        select c.id, c.nombre, c.encuesta_id, e.nombre as encuesta,
+               e.fecha_campo as fecha_estudio, c.creado_en as carga_creada_en,
                pc.origen, pc.creado_en
           from persona_carga pc join carga c on c.id = pc.carga_id
+          join encuesta e on e.id = c.encuesta_id
          where pc.id_persona = %s
-         order by coalesce(c.fecha_estudio, c.creado_en::date) desc, c.id desc
+         order by coalesce(e.fecha_campo, c.creado_en::date) desc, c.id desc
         """,
         (str(id_persona),))
-    por_carga = mod_clientes.de_cargas(conn, [f["id"] for f in filas])
+    # Clientes y temáticas son del estudio (D81): los de la encuesta de cada
+    # carga, y las temáticas que la persona respondió en ese estudio.
+    por_estudio = mod_clientes.de_encuestas(conn, [f["encuesta_id"] for f in filas])
     tematicas = {}
     for t in mod_tematicas.de_persona(
             conn, id_persona, incluir_especiales=incluir_especiales)["items"]:
-        tematicas.setdefault(t["carga_id"], []).append(
+        tematicas.setdefault(t["encuesta_id"], []).append(
             {"id": t["id"], "nombre": t["nombre"], "es_especial": t["es_especial"]})
     cargas = [{
         "carga_id": f["id"], "nombre": f["nombre"],
+        "encuesta_id": f["encuesta_id"], "encuesta": f["encuesta"],
         "fecha_estudio": f["fecha_estudio"].isoformat() if f["fecha_estudio"] else None,
         "origen": f["origen"], "vinculado_en": f["creado_en"].isoformat(),
-        "clientes": por_carga.get(f["id"], []),
-        "tematicas": tematicas.get(f["id"], []),
+        "clientes": por_estudio.get(f["encuesta_id"], []),
+        "tematicas": tematicas.get(f["encuesta_id"], []),
     } for f in filas]
     return {
         "cargas": cargas,
@@ -587,7 +639,7 @@ def reutilizados(conn, carga_id):
     filas = db.todas(
         conn,
         """
-        select c.id, c.nombre, c.fecha_estudio, count(*)::int as personas
+        select c.id, c.nombre, e.fecha_campo as fecha_estudio, count(*)::int as personas
           from persona_carga esta
           join persona_carga otra
             on otra.id_persona = esta.id_persona
@@ -596,9 +648,10 @@ def reutilizados(conn, carga_id):
            -- transacción), la carga más vieja.
            and (otra.creado_en, otra.carga_id) < (esta.creado_en, esta.carga_id)
           join carga c on c.id = otra.carga_id
+          join encuesta e on e.id = c.encuesta_id
          where esta.carga_id = %s and esta.origen = 'reutilizada'
-         group by c.id
-         order by count(*) desc, coalesce(c.fecha_estudio, c.creado_en::date) desc, c.id
+         group by c.id, e.id
+         order by count(*) desc, coalesce(e.fecha_campo, c.creado_en::date) desc, c.id
         """,
         (carga_id,))
     sin_previa = db.una(
@@ -654,13 +707,14 @@ def origen_de_varias(conn, ids_persona):
     filas = db.todas(
         conn,
         """
-        select pc.id_persona, c.nombre, c.fecha_estudio,
+        select pc.id_persona, c.nombre, e.fecha_campo as fecha_estudio,
                c.tipo_datos_origen, c.tipo_datos_origen_otro,
                c.modo_relevamiento, c.modo_relevamiento_otro
           from persona_carga pc
           join carga c on c.id = pc.carga_id
+          join encuesta e on e.id = c.encuesta_id
          where pc.id_persona = any(%s::uuid[])
-         order by pc.id_persona, coalesce(c.fecha_estudio, c.creado_en::date), c.id
+         order by pc.id_persona, coalesce(e.fecha_campo, c.creado_en::date), c.id
         """,
         (ids,),
     )
@@ -687,14 +741,29 @@ def origen_de_varias(conn, ids_persona):
 def ingestar(conn_boveda, conn_semantica, carga_id, preguntas, filas,
              columna_id="id_en_origen", origen=None, proveedor=None,
              demograficas=None, tipo_identificador=None, normalizacion=None):
-    """Incorpora los individuos del archivo y sus respuestas. Sin panel.
+    """Incorpora el archivo de una carga a su encuesta. **La** ingesta (D81).
 
-    Es `encuestas.ingestar` menos las dos cosas que este flujo evita: no
-    incorpora a ningún panel (R3.9.a) y no registra participación (R3.9.b).
-    No hubo convocatoria ni encuesta fieldeada, así que no hay nada que
-    registrar de esas dos.
+    Es lo que hacían, por separado, la ingesta desde una encuesta y la carga
+    sin panel, ahora en un solo camino: el que usan la ruta, los lotes
+    diferidos y `encuestas.ingestar`.
+
+    - Resuelve la columna de identidad con las participaciones de la
+      encuesta y `alias_origen` (`encuestas.resolver_identidades`).
+    - Escribe en **el cuestionario de la encuesta** (su `ref_estudio`): una
+      sola respuesta por persona y pregunta, gana la última carga, y cada
+      respuesta guarda qué carga la escribió (`respuesta.carga_id`).
+    - Las temáticas de cada persona son las del estudio (R-TEM.6).
+    - Registra el vínculo persona ↔ carga (R-ORG.1) y la **participación**
+      de cada persona en la encuesta (`respondio`); quien no estaba
+      convocado queda con `convocado = false` (R-EU.4).
+    - Los demográficos van a la bóveda (R3.9.d) y, si la encuesta es de
+      panel, sus respondentes se incorporan al panel (R3.9.a). Una
+      independiente no tiene panel al que incorporar.
     """
+    from . import encuestas, tematicas
+
     carga = obtener(conn_boveda, carga_id)
+    encuesta = encuestas.obtener(conn_boveda, carga["encuesta_id"])
     demograficas = sav.normalizar_demograficas(
         demograficas, campos_validos=sav.campos_demograficos(conn_boveda),
         conn=conn_boveda)
@@ -716,17 +785,23 @@ def ingestar(conn_boveda, conn_semantica, carga_id, preguntas, filas,
             str(f.get(columna_id) or "").strip() for f in filas)
         if i
     ]
-    # R3.12.b — sin participaciones que consultar, la resolución es la del
-    # tipo declarado y nada más. Una carga no tiene convocados.
     tipo = tipo_identificador or mod_ingesta.POR_ALIAS
-    mapa, motivos = mod_ingesta.resolver_identificadores(
-        conn_boveda, tipo, ids_del_archivo, origen)
+    mapa, motivos = encuestas.resolver_identidades(
+        conn_boveda, encuesta["id"], tipo, ids_del_archivo, origen)
+    if not mapa and tipo == mod_ingesta.POR_ALIAS and not origen:
+        raise DatosInvalidos(
+            "No hay forma de saber a qué panelista corresponde cada fila del "
+            "archivo: registrá el `alias_origen` de los convocados, indicá "
+            "el `origen` de la plataforma de campo, o declará otro tipo de "
+            "identificador.",
+            {"tipos_validos": list(mod_ingesta.TIPOS_DE_IDENTIFICADOR)},
+        )
 
     resultado = mod_ingesta.ingestar(
         conn_boveda,
         conn_semantica,
-        # Frente al store semántico una carga es un estudio como cualquier
-        # otro: lo único que mira es `ref_estudio`, el nombre y la fecha.
+        # El estudio es la encuesta; la carga viaja para que cada respuesta
+        # diga cuál la escribió (R-EU.3).
         mod_ingesta.estudio_del_destino(conn_boveda, "carga", carga_id),
         preguntas,
         filas,
@@ -739,40 +814,54 @@ def ingestar(conn_boveda, conn_semantica, carga_id, preguntas, filas,
         con_respuestas=True,
     )
     resultado["carga_id"] = carga_id
+    resultado["encuesta_id"] = encuesta["id"]
 
     # R-TEM.6 — las temáticas de cada persona del lote, con lo que la
     # ingesta acaba de escribir: la fila del archivo y su `id_persona`, sin
-    # leer el store semántico. Las preguntas que sustentan cada temática se
-    # leen de la bóveda en cada lote, como el gate: si el analista las
-    # corrige mientras la carga avanza, el recálculo de esa edición y los
-    # lotes que faltan dicen lo mismo.
-    from . import tematicas
-
+    # leer el store semántico. Son las del estudio: las preguntas que las
+    # sustentan se leen de la bóveda en cada lote, como el gate.
     resultado["tematicas_de_panelistas"] = tematicas.registrar_de_lote(
-        conn_boveda, carga_id,
+        conn_boveda, encuesta["id"],
         resultado.pop("respuestas_escritas_detalle", None) or [],
         preguntas, resultado.get("ids_persona_ingestados") or [],
         (normalizacion or {}).get("valores_no_respuesta"))
     resultado["tipo_identificador"] = tipo
 
-    # R-ORG.1 — todos los que este lote resolvió participaron de la carga.
-    # Los que la ruta ya registró como `creada` no se pisan: el vínculo se
-    # fija la primera vez (ver `registrar_vinculos`). Corre en cada lote, así
-    # que el reintento de un lote no duplica nada.
+    # R3.12.c — una carga por llave natural deja sembrado el alias.
+    resultado["alias_registrados"] = encuestas._sembrar_alias(
+        conn_boveda, tipo, mapa, origen)
+
+    # R-ORG.1 — todos los que este lote resolvió vinieron de esta carga. Los
+    # que la ruta ya registró como `creada` no se pisan.
+    personas_del_lote = list(dict.fromkeys(
+        mapa[i] for i in ids_del_archivo if i in (mapa or {})))
     resultado["vinculos_con_la_carga"] = registrar_vinculos(
-        conn_boveda, carga_id, list((mapa or {}).values()), REUTILIZADA)
+        conn_boveda, carga_id, personas_del_lote, REUTILIZADA)
     resultado["excluidas_por_demografica"] = excluidas
 
-    # R3.9.d — los demográficos sí van a la bóveda, igual que en la ingesta
-    # desde encuesta: completar lo vacío, informar lo que discrepa, no pisar.
+    # R3.9.d — los demográficos van a la bóveda: completar lo vacío,
+    # informar lo que discrepa, no pisar.
     resultado.update(encuestas.completar_demograficos(
         conn_boveda, filas, demograficas, columna_id, mapa,
         opciones_por_variable=opciones_demograficas))
 
-    # Y acá termina. Ni `incorporar_al_panel` ni
-    # `registrar_participacion_importada`: es exactamente lo que este flujo
-    # existe para no hacer.
-    resultado["sin_panel"] = True
+    # R3.9.a — en una encuesta de panel, quien respondió pertenece al panel.
+    if encuesta["tipo"] == encuestas.DE_PANEL:
+        resultado.update(encuestas.incorporar_al_panel(
+            conn_boveda, encuesta, resultado.get("ids_persona_ingestados") or []))
+
+    # R-EU.1 — la participación de cada persona del archivo: respondió. Una
+    # sola por persona y encuesta, aunque aparezca en varias cargas.
+    resultado.update(encuestas.registrar_participacion_importada(
+        conn_boveda, encuesta["id"], personas_del_lote))
+    if encuestas.tiene_audiencia(conn_boveda, encuesta["id"]):
+        resultado["no_convocados"] = db.una(
+            conn_boveda,
+            """select count(*)::int as n from participacion
+                where encuesta_id = %s and not convocado
+                  and id_persona = any(%s::uuid[])""",
+            (encuesta["id"], personas_del_lote))["n"]
+    resultado["sin_panel"] = encuesta["tipo"] != encuestas.DE_PANEL
     return resultado
 
 
@@ -791,11 +880,23 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
     se dio de alta acá y `reutilizada` para quien el dedup encontró. Quien
     queda en revisión se vincula al resolverla (`revision.resolver`).
     """
+    finalidad, panel_id = FINALIDAD_OBLIGATORIA, None
+    if carga_id is not None:
+        # D81 — en una encuesta de panel la gente es panelista y se la va a
+        # seguir convocando: como en la ingesta de encuesta de siempre, la
+        # obligatoria es el contacto y se la da de alta en el panel.
+        estudio = db.una(
+            conn_boveda,
+            """select e.tipo, e.panel_id from carga c
+                 join encuesta e on e.id = c.encuesta_id where c.id = %s""",
+            (carga_id,))
+        if estudio and estudio["tipo"] == "panel":
+            finalidad, panel_id = sav.CONTACTO, estudio["panel_id"]
     resultado = sav.crear_individuos(
         conn_boveda, filas, mapeo, origen=origen, columna_id=columna_id,
         evidencia_consentimiento=evidencia_consentimiento, actor=actor,
-        panel_id=None, opciones_por_variable=opciones_por_variable,
-        finalidad_obligatoria=FINALIDAD_OBLIGATORIA, carga_id=carga_id,
+        panel_id=panel_id, opciones_por_variable=opciones_por_variable,
+        finalidad_obligatoria=finalidad, carga_id=carga_id,
     )
     if carga_id is not None:
         resultado["vinculos_con_la_carga"] = vincular_creacion(
@@ -811,3 +912,153 @@ def sin_panel(conn, limite=50, desplazamiento=0):
     """
     return personas.listar(
         conn, limite=limite, desplazamiento=desplazamiento, sin_panel=True)
+
+
+# ════════════════════════════════════════════════════════════════════
+#  D81 · Lo que la revisión de una carga dice antes de confirmar
+# ════════════════════════════════════════════════════════════════════
+
+def huella(contenido=None, filas=None):
+    """R-EU.3 — sha256 del archivo; si el archivo se leyó en el navegador
+    (`.csv`, `.xlsx`), de sus filas en forma canónica. Dos subidas del mismo
+    archivo dan la misma huella."""
+    import hashlib
+    import json
+
+    if contenido is not None:
+        datos = contenido if isinstance(contenido, bytes) else str(contenido).encode()
+    else:
+        datos = json.dumps(filas or [], sort_keys=True, ensure_ascii=False,
+                           default=str).encode()
+    return hashlib.sha256(datos).hexdigest()
+
+
+def archivo_repetido(conn, encuesta_id, huella_archivo, excepto=None):
+    """La carga de esa encuesta que ya trajo un archivo idéntico, o None."""
+    if not huella_archivo:
+        return None
+    fila = db.una(
+        conn,
+        """select id, nombre, creado_en from carga
+            where encuesta_id = %s and archivo_huella = %s
+              and (%s::bigint is null or id <> %s::bigint)
+            order by creado_en desc, id desc limit 1""",
+        (encuesta_id, huella_archivo, excepto, excepto))
+    if not fila:
+        return None
+    return {"carga_id": fila["id"], "nombre": fila["nombre"],
+            "creado_en": fila["creado_en"].isoformat()}
+
+
+def _ids_de(filas, columna_id):
+    return [i for i in dict.fromkeys(
+        str(f.get(columna_id) or "").strip() for f in filas or []) if i]
+
+
+def no_convocados(conn, encuesta_id, filas, columna_id, tipo, origen):
+    """R-EU.4 — quiénes del archivo **no** estaban en la audiencia de la
+    encuesta. Sin audiencia (nadie convocado) no aplica y devuelve None.
+
+    Una fila que no se puede atribuir a nadie del sistema tampoco estaba
+    convocada: si se crea, se crea como no convocada. Se informa aparte
+    porque es la señal más clara de un enlace reenviado."""
+    from . import encuestas
+
+    if not encuestas.tiene_audiencia(conn, encuesta_id):
+        return None
+    fuera, mapa = _no_convocados(conn, encuesta_id, filas, columna_id, tipo, origen)
+    return {
+        "cuantos": len(fuera),
+        "existentes": sum(1 for i in fuera if i in mapa),
+        "sin_identificar": sum(1 for i in fuera if i not in mapa),
+        "ids_en_origen": fuera[:200],
+        "mas": max(0, len(fuera) - 200),
+        "mensaje": (
+            f"{len(fuera)} persona(s) del archivo no estaban convocadas a esta "
+            f"encuesta. Se incorporan marcadas «no convocado»; en una encuesta "
+            f"con audiencia, casi siempre es un enlace reenviado. Podés "
+            f"excluirlas de la carga.") if fuera else None,
+    }
+
+
+def _no_convocados(conn, encuesta_id, filas, columna_id, tipo, origen):
+    from . import encuestas
+
+    ids = _ids_de(filas, columna_id)
+    mapa, _ = encuestas.resolver_identidades(
+        conn, encuesta_id, tipo or mod_ingesta.POR_ALIAS, ids, origen)
+    convocadas = {str(f["id_persona"]) for f in db.todas(
+        conn, "select id_persona from participacion where encuesta_id = %s and convocado",
+        (encuesta_id,))}
+    return [i for i in ids if str(mapa.get(i)) not in convocadas], mapa
+
+
+def ids_no_convocados(conn, encuesta_id, filas, columna_id, tipo, origen):
+    """Los ids del archivo que no estaban convocados (todos, sin recortar).
+    Sin audiencia, ninguno: no hay a quién comparar."""
+    from . import encuestas
+
+    if not encuestas.tiene_audiencia(conn, encuesta_id):
+        return []
+    return _no_convocados(conn, encuesta_id, filas, columna_id, tipo, origen)[0]
+
+
+def excluir_ids(filas, columna_id, ids):
+    """Las filas sin esos ids (R-EU.4: excluir a los no convocados)."""
+    fuera = {str(i) for i in ids or []}
+    return [f for f in filas if str(f.get(columna_id) or "").strip() not in fuera]
+
+
+# R-EU.6 — lo que implica, por finalidad, quedar sin consentimiento.
+IMPLICANCIAS = {
+    sav.CONTACTO: "No se los convocará en el futuro.",
+    sav.SEMANTICO: ("Sus respuestas no entran al store semántico: no se van a "
+                    "poder consultar."),
+}
+
+
+def consentimiento_por_finalidad(conn, encuesta_id, filas, columna_id, tipo,
+                                 origen, evidencia=None, crea_personas=False):
+    """R-EU.6 — quiénes del archivo quedan sin cada finalidad y qué implica.
+
+    Para quien ya existe, lo que tiene vigente hoy. Para quien se va a
+    crear, lo que declara su fila según la evidencia de consentimiento
+    —sin evidencia declarada para una finalidad, nadie nuevo la tiene—. Se
+    registra tal como vino: quien no consiente no va a la lista negra (la
+    lista negra es para fraude, calidad o comportamiento)."""
+    from . import encuestas
+
+    ids = _ids_de(filas, columna_id)
+    mapa, _ = encuestas.resolver_identidades(
+        conn, encuesta_id, tipo or mod_ingesta.POR_ALIAS, ids, origen)
+    existentes = list(dict.fromkeys(str(v) for v in mapa.values()))
+    vigentes = {}
+    for f in db.todas(
+            conn,
+            """select finalidad, id_persona::text as id_persona
+                 from v_persona_finalidad_vigente
+                where ref_estudio is null and id_persona = any(%s::uuid[])""",
+            (existentes,)):
+        vigentes.setdefault(f["finalidad"], set()).add(f["id_persona"])
+    nuevas = [f for f in filas or []
+              if str(f.get(columna_id) or "").strip() not in mapa] if crea_personas else []
+    salida = []
+    for finalidad in (sav.CONTACTO, sav.SEMANTICO):
+        sin_existentes = len(set(existentes) - vigentes.get(finalidad, set()))
+        regla = (evidencia or {}).get(finalidad)
+        if regla:
+            afirmativos = {str(v) for v in regla.get("valores_afirmativos") or []}
+            sin_nuevas = sum(1 for f in nuevas
+                             if str(f.get(regla["variable"]) or "").strip()
+                             not in afirmativos)
+        else:
+            sin_nuevas = len(nuevas)
+        total = sin_existentes + sin_nuevas
+        salida.append({
+            "finalidad": finalidad,
+            "sin_consentimiento": total,
+            "existentes_sin": sin_existentes,
+            "nuevas_sin": sin_nuevas,
+            "implica": IMPLICANCIAS[finalidad] if total else None,
+        })
+    return salida

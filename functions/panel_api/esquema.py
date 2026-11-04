@@ -166,8 +166,10 @@ MIGRACIONES_BOVEDA = (
         "carga.modo_relevamiento", "carga.modo_relevamiento_otro",
     )),
     # ── R-TEM ── las temáticas incorporadas de cada carga ──
+    # `carga_tematica` no se declara: la 0032 la reemplazó por
+    # `encuesta_tematica` (ver `RETIRADOS`).
     ("0027_tematicas_de_la_carga.sql", (
-        "tematica", "carga_tematica", "tematica.es_especial",
+        "tematica", "tematica.es_especial",
         "tematica_pregunta", "persona_tematica",
     )),
     # ── R-TEM.7 a R-TEM.11 ── la taxonomía de temáticas ──
@@ -182,10 +184,32 @@ MIGRACIONES_BOVEDA = (
     ("0030_borrado_de_carga.sql", ("carga_borrado",)),
     # ── Clientes de cada carga y lista negra (D80). `f_persona_convocable()`
     # se reemplaza y no se declara (ya existía).
+    # `carga_cliente` la reemplazó `encuesta_cliente` en la 0032 (ver
+    # `RETIRADOS`); `v_persona_cliente` la rehízo, pero sigue existiendo.
     ("0031_clientes_y_lista_negra.sql", (
-        "cliente", "carga_cliente", "v_persona_cliente", "lista_negra",
+        "cliente", "v_persona_cliente", "lista_negra",
+    )),
+    # ── Encuestas y cargas unificadas (D81). Cambia datos: crea una
+    # encuesta por carga y una carga por encuesta con respuestas.
+    ("0032_encuestas_y_cargas_unificadas.sql", (
+        "encuesta.tipo", "encuesta.publico_objetivo", "encuesta.descripcion",
+        "participacion.convocado", "carga.encuesta_id", "carga.archivo_huella",
+        "carga_ref_estudio_de_la_encuesta()", "encuesta_cliente",
+        "encuesta_tematica", "tematica_pregunta.encuesta_id",
+        "persona_tematica.encuesta_id", "encuesta_borrado",
     )),
 )
+
+# Objetos que una migración creó y una posterior **retiró** (los tiró sin
+# volver a crearlos). No se declaran en la que los creó: la base al día ya
+# no los tiene, y declararlos daría esa migración por no aplicada.
+RETIRADOS = {
+    "boveda": {
+        "carga_tematica": "0032_encuestas_y_cargas_unificadas.sql",
+        "carga_cliente": "0032_encuestas_y_cargas_unificadas.sql",
+    },
+    "semantica": {},
+}
 
 MIGRACIONES_SEMANTICA = (
     ("0001_init.sql", ("cuestionario", "individuo", "pregunta", "respuesta")),
@@ -226,6 +250,8 @@ MIGRACIONES_SEMANTICA = (
         "unidad_evidencia", "respuesta.unidad_id", "borrar_unidades_huerfanas()",
         "respuesta_asegurar_unidad()",
     )),
+    # ── R-EU.3 / R-EU.10 · qué carga escribió cada respuesta (D81) ──
+    ("0012_respuesta_carga.sql", ("respuesta.carga_id",)),
 )
 
 STORES = {
@@ -331,7 +357,7 @@ PARA_QUE = {
     "estado_lote_ingesta": "los estados de un lote de ingesta, con su etiqueta",
     # ── R-TEM ──
     "tematica": "el vocabulario compartido de temáticas con que se describe de qué trata cada carga",
-    "carga_tematica": "qué temáticas cubre cada carga y si las propuso Claude o las agregó el analista",
+    "encuesta_tematica": "qué temáticas cubre cada estudio y si las propuso Claude o las agregó el analista",
     "tematica.es_especial": "marcar las temáticas de categoría especial, que no salen como columna ni en exportaciones y se consultan con permiso",
     "tematica_pregunta": "qué preguntas sustentan cada temática en cada carga; sin ella ningún panelista puede tener la temática",
     "persona_tematica": "sobre qué temáticas respondió cada panelista, para filtrar, contar en la composición y mostrar en la ficha",
@@ -341,8 +367,10 @@ PARA_QUE = {
     "taxonomia_cambio": "el registro de lo que se cambió en la taxonomía, quién y cuándo",
     "ingesta_trabajo_uno_activo_por_destino": "la guarda contra el doble envío: sin ella un segundo clic en «Ingestar» encola otra ingesta de la misma carga y se procesa todo dos veces",
     "cliente": "los clientes para los que se hicieron los estudios; sin ella no hay filtro por cliente",
-    "carga_cliente": "qué clientes tiene cada carga",
-    "v_persona_cliente": "los clientes de cada panelista, derivados de sus cargas",
+    "encuesta_cliente": "qué clientes tiene cada estudio",
+    "encuesta_borrado": "la auditoría de los estudios borrados",
+    "carga.encuesta_id": "a qué encuesta pertenece cada carga; sin ella no hay ingesta (R-EU.1)",
+    "respuesta.carga_id": "qué carga escribió cada respuesta; sin ella no se puede borrar una carga (R-EU.10)",
     "lista_negra": "quién está en la lista negra y su historia; sin ella no se excluye a nadie de las convocatorias",
     "carga_borrado": "el registro de cada borrado de una carga (quién, cuándo, cuántos) y lo que permite reanudar uno cortado",
     "ingesta_trabajo.preparacion": "cuánto tardó cada parte del pedido de ingesta; sin ella no hay cómo saber qué parte de la preparación crece con la base",

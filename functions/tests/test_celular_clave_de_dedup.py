@@ -18,7 +18,7 @@ import pytest
 from panel_api import db, dedup, personas, resumen_ingesta, sav
 from panel_api.errores import DatosInvalidos
 
-from conftest import consentimientos
+from conftest import ingesta_de, consentimientos
 from test_fase7_revision import _plan
 
 
@@ -276,13 +276,13 @@ def test_una_importacion_con_celular_como_unica_clave(ctx, actor, conn_boveda, t
             for f in ("contacto_participacion", "uso_semantico")},
     }
     _, revision = ruteo.despachar(
-        "POST", f"/encuestas/{enc['id']}/sav/ingesta", dict(cuerpo, solo_revisar=True),
+        "POST", ingesta_de(ctx.boveda, enc['id']), dict(cuerpo, solo_revisar=True),
         {}, actor("operaciones"), ctx)
     assert revision["sin_clave_de_dedup"] is False
     assert revision["volumen"]["personas_estimadas"] == 11
 
     status, r = ruteo.despachar(
-        "POST", f"/encuestas/{enc['id']}/sav/ingesta", cuerpo, {},
+        "POST", ingesta_de(ctx.boveda, enc['id']), cuerpo, {},
         actor("operaciones"), ctx)
     assert status == 202
     assert r["sin_clave_de_dedup"] is False

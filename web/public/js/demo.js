@@ -361,6 +361,12 @@ function sembrar() {
     modo_relevamiento: 'telefonico', modo_relevamiento_otro: null,
     ref_estudio: uuid(), creado_en: diasAtras(25), creado_por: 'demo',
   };
+  // R-EU.1 — y su encuesta: independiente, cerrada, con los datos del estudio.
+  const estudioOmnibus = crearEncuesta(null, omnibus.nombre, omnibus.fecha_estudio, {
+    estado: 'cerrada', publico_objetivo: omnibus.publico_objetivo,
+    descripcion: omnibus.descripcion, ref_estudio: omnibus.ref_estudio,
+  });
+  omnibus.encuesta_id = estudioOmnibus.id;
   bd.cargas.push(omnibus);
   const EXTERNOS = [
     ['1.234.567-8', 'Karina Bentancur', 'F', '1983-05-11', 'Durazno', 'k.bentancur@correo.uy', '1', 'La compro por costumbre, siempre la misma'],
@@ -556,14 +562,84 @@ function agregarMiembro(panelId, idPersona) {
   return fila;
 }
 
-function crearEncuesta(panelId, nombre, fechaCampo) {
+function crearEncuesta(panelId, nombre, fechaCampo, extra = {}) {
+  // R-EU.2 — la encuesta es el estudio: sus datos viven acá, no en la carga.
   const fila = {
-    id: siguiente('encuesta'), panel_id: panelId, nombre,
+    id: siguiente('encuesta'), panel_id: panelId || null, nombre,
+    tipo: panelId ? 'panel' : 'independiente',
     fecha_campo: fechaCampo || null, estado: 'borrador',
-    ref_estudio: uuid(), creado_en: ahora(),
+    publico_objetivo: null, descripcion: null, clientes: [],
+    ref_estudio: uuid(), creado_en: ahora(), ...extra,
   };
   bd.encuestas.push(fila);
   return fila;
+}
+
+/* R-EU.1 — la carga de una encuesta que se ingestó antes de que existieran
+   las cargas (las olas sembradas): una sola, con el mismo `ref_estudio`. */
+function cargaDeEncuesta(encuesta) {
+  let carga = bd.cargas.find((c) => c.encuesta_id === encuesta.id);
+  if (!carga) {
+    carga = {
+      id: siguiente('carga'), nombre: encuesta.nombre, descripcion: null,
+      encuesta_id: encuesta.id, ref_estudio: encuesta.ref_estudio,
+      tipo_datos_origen: 'encuesta', tipo_datos_origen_otro: null,
+      modo_relevamiento: 'web', modo_relevamiento_otro: null,
+      creado_en: ahora(), creado_por: 'demo',
+    };
+    bd.cargas.push(carga);
+  }
+  return carga;
+}
+
+const clientesDeIds = (ids = []) => ids.map((id) => bd.clientes.find((c) => c.id === id))
+  .filter(Boolean).sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+/* R-EU.2 — las temáticas son del estudio. La demo las guarda por carga (como
+   antes) y la encuesta muestra la unión de las de sus cargas. */
+function tematicasDeEncuesta(encuestaId) {
+  const vistas = new Map();
+  bd.cargas.filter((c) => c.encuesta_id === encuestaId)
+    .forEach((c) => tematicasDe(c.id).forEach((t) => { if (!vistas.has(t.id)) vistas.set(t.id, t); }));
+  return [...vistas.values()].sort((a, b) => a.nombre.localeCompare(b.nombre));
+}
+
+function conteosDeEncuesta(encuestaId) {
+  const suyas = bd.participaciones.filter((p) => p.encuesta_id === encuestaId);
+  return {
+    convocados: suyas.filter((p) => p.convocado !== false).length,
+    respondieron: suyas.filter((p) => p.respondio).length,
+    no_convocados: suyas.filter((p) => p.respondio && p.convocado === false).length,
+  };
+}
+
+function encuestaCompleta(encuesta) {
+  const panel = bd.paneles.find((p) => p.id === encuesta.panel_id);
+  return {
+    ...encuesta, tipo: encuesta.tipo || 'panel',
+    panel: panel?.nombre ?? null, panel_estado: panel?.estado ?? null,
+    clientes: clientesDeIds(encuesta.clientes),
+    tematicas: tematicasDeEncuesta(encuesta.id),
+    cargas: bd.cargas.filter((c) => c.encuesta_id === encuesta.id).map(resumenCarga),
+    ...conteosDeEncuesta(encuesta.id),
+  };
+}
+
+/* R-EU.1 — quien vino en una carga respondió esa encuesta. Si no estaba
+   convocado, queda como «no convocado» (R-EU.4). */
+function registrarParticipacionDemo(encuestaId, idPersona) {
+  const existente = bd.participaciones.find(
+    (p) => p.encuesta_id === encuestaId && p.id_persona === idPersona);
+  if (existente) {
+    existente.respondio = true;
+    existente.respondio_en = existente.respondio_en || ahora();
+    return;
+  }
+  bd.participaciones.push({
+    encuesta_id: encuestaId, id_persona: idPersona, origen: 'importacion',
+    convocado: false, convocado_en: null, respondio: true, respondio_en: ahora(),
+    calidad_estado: 'pendiente',
+  });
 }
 
 /* R-LN — la lista negra, en chico. Las categorías son las del servidor
@@ -581,6 +657,10 @@ const listaNegraDe = (idPersona) => entradaDemo(
 function convocar(encuestaId, cuerpo) {
   const encuesta = bd.encuestas.find((e) => e.id === encuestaId);
   let ids = cuerpo.ids_persona || [];
+  const panel = bd.paneles.find((p) => p.id === encuesta.panel_id);
+  if (panel?.estado === 'archivado') {
+    throw new ErrorDemo('El panel está archivado: no recibe encuestas ni convocatorias.', 409);
+  }
   if (cuerpo.todo_el_panel) {
     ids = bd.membresias
       .filter((m) => m.panel_id === encuesta.panel_id && m.estado === 'activo')
@@ -593,10 +673,12 @@ function convocar(encuestaId, cuerpo) {
   const bloqueadas = ids.filter((id) => !vigente(id, 'contacto_participacion'));
   let nuevas = 0;
   habilitadas.forEach((idPersona) => {
-    if (bd.participaciones.some((p) => p.encuesta_id === encuestaId && p.id_persona === idPersona)) return;
+    const ya = bd.participaciones.find(
+      (p) => p.encuesta_id === encuestaId && p.id_persona === idPersona);
+    if (ya) { ya.convocado = true; return; }
     bd.participaciones.push({
       encuesta_id: encuestaId, id_persona: idPersona, origen: 'convocatoria',
-      convocado_en: ahora(), respondio: false, respondio_en: null,
+      convocado: true, convocado_en: ahora(), respondio: false, respondio_en: null,
       calidad_estado: 'pendiente',
     });
     nuevas++;
@@ -614,7 +696,8 @@ function convocar(encuestaId, cuerpo) {
 function ingestar(encuestaId, cuerpo) {
   const encuesta = bd.encuestas.find((e) => e.id === encuestaId);
   if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
-  return ingestarEn(encuesta, cuerpo, { sinPanel: false });
+  // R-EU.1 — toda ingesta es una carga de una encuesta.
+  return ingestarCarga(cargaDeEncuesta(encuesta).id, cuerpo);
 }
 
 /* R3.13 — la misma ingesta, contra una carga en vez de una encuesta. Del
@@ -624,14 +707,21 @@ function ingestar(encuestaId, cuerpo) {
 function ingestarCarga(cargaId, cuerpo) {
   const carga = bd.cargas.find((c) => c.id === cargaId);
   if (!carga) throw new ErrorDemo('No existe la carga.', 404);
-  const resultado = ingestarEn(carga, cuerpo, { sinPanel: true });
+  const encuesta = bd.encuestas.find((e) => e.id === carga.encuesta_id) || null;
+  const dePanel = encuesta?.tipo === 'panel';
+  // Una encuesta de panel incorpora al panel y registra la participación;
+  // una independiente, solo la participación (R-EU.1).
+  const resultado = ingestarEn(dePanel ? encuesta : carga, cuerpo, { sinPanel: !dePanel });
   // R-ORG.1 — todos los que la carga resolvió participaron de ella. Si ya
   // estaban vinculados (la carga los creó) el vínculo no se pisa.
   (resultado.resueltos || []).forEach((id) => vincular(id, cargaId, 'reutilizada'));
+  if (encuesta && !dePanel) {
+    (resultado.resueltos || []).forEach((id) => registrarParticipacionDemo(encuesta.id, id));
+  }
   delete resultado.resueltos;
   resultado.carga_id = cargaId;
-  resultado.sin_panel = true;
-  delete resultado.encuesta_id;
+  resultado.sin_panel = !dePanel;
+  resultado.encuesta_id = encuesta?.id ?? null;
   return resultado;
 }
 
@@ -747,14 +837,19 @@ function guardarTematicasDemo(cargaId, items) {
 function resumenCarga(carga) {
   const suyos = bd.vinculos.filter((v) => v.carga_id === carga.id
     && bd.personas.some((p) => p.id_persona === v.id_persona));
+  const encuesta = bd.encuestas.find((e) => e.id === carga.encuesta_id);
+  // R-EU.2 — los datos del estudio son de la encuesta.
+  const delEstudio = encuesta ? {
+    fecha_estudio: encuesta.fecha_campo, publico_objetivo: encuesta.publico_objetivo,
+    encuesta: encuesta.nombre, encuesta_tipo: encuesta.tipo, clientes: encuesta.clientes,
+  } : {};
   return {
-    fecha_estudio: null, publico_objetivo: null, ...carga, ...datosDeOrigen(carga),
+    fecha_estudio: null, publico_objetivo: null, ...carga, ...delEstudio, ...datosDeOrigen(carga),
     personas_creadas: suyos.filter((v) => v.origen === 'creada').length,
     personas_reutilizadas: suyos.filter((v) => v.origen === 'reutilizada').length,
     personas: suyos.length,
     tematicas: tematicasDe(carga.id),
-    clientes: (carga.clientes || []).map((id) => bd.clientes.find((c) => c.id === id))
-      .filter(Boolean).sort((a, b) => a.nombre.localeCompare(b.nombre)),
+    clientes: clientesDeIds(encuesta ? encuesta.clientes : carga.clientes),
   };
 }
 
@@ -1020,7 +1115,7 @@ function ingestarEn(encuesta, cuerpo, { sinPanel }) {
     } else {
       bd.participaciones.push({
         encuesta_id: encuestaId, id_persona: idPersona, origen: 'importacion',
-        convocado_en: ahora(), respondio: true, respondio_en: ahora(),
+        convocado: false, convocado_en: null, respondio: true, respondio_en: ahora(),
         calidad_estado: 'pendiente',
       });
       participacionesNuevas++;
@@ -1393,8 +1488,10 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   }
 
   if (clave === 'GET /paneles') {
+    // R-EU.8 — los archivados no se ven salvo que se pidan.
+    const conArchivados = ['1', 'true'].includes(String(consulta.incluir_archivados || ''));
     return {
-      items: bd.paneles.map((p) => ({
+      items: bd.paneles.filter((p) => conArchivados || p.estado !== 'archivado').map((p) => ({
         ...p,
         miembros: bd.membresias.filter((m) => m.panel_id === p.id && m.estado === 'activo').length,
         encuestas: bd.encuestas.filter((e) => e.panel_id === p.id).length,
@@ -1440,6 +1537,11 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   if (metodo === 'PATCH' && partes[0] === 'paneles') {
     const panel = bd.paneles.find((p) => p.id === Number(partes[1]));
     if (!panel) throw new ErrorDemo('No existe el panel.', 404);
+    if (cuerpo.estado === 'archivado' && bd.encuestas.some(
+      (e) => e.panel_id === panel.id && e.estado === 'en_campo')) {
+      throw new ErrorDemo('El panel tiene encuestas en campo: cerralas antes de archivarlo.', 409,
+        { motivo: 'encuestas_en_campo' });
+    }
     panel.estado = cuerpo.estado;
     return panel;
   }
@@ -1449,30 +1551,126 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     return {
       items: bd.encuestas
         .filter((e) => !panelId || e.panel_id === panelId)
+        .filter((e) => !consulta.tipo || e.tipo === consulta.tipo)
         .map((e) => ({
           ...e,
-          panel: bd.paneles.find((p) => p.id === e.panel_id)?.nombre,
-          convocados: bd.participaciones.filter((p) => p.encuesta_id === e.id).length,
-          respondieron: bd.participaciones.filter((p) => p.encuesta_id === e.id && p.respondio).length,
+          panel: bd.paneles.find((p) => p.id === e.panel_id)?.nombre ?? null,
+          panel_estado: bd.paneles.find((p) => p.id === e.panel_id)?.estado ?? null,
+          ...conteosDeEncuesta(e.id),
+          cargas: bd.cargas.filter((c) => c.encuesta_id === e.id).length,
+          clientes: clientesDeIds(e.clientes),
         })),
     };
   }
 
   if (clave === 'POST /encuestas') {
-    return crearEncuesta(Number(cuerpo.panel_id), cuerpo.nombre, cuerpo.fecha_campo);
+    const panel = bd.paneles.find((p) => p.id === Number(cuerpo.panel_id));
+    if (panel?.estado === 'archivado') {
+      throw new ErrorDemo('El panel está archivado: no recibe encuestas ni convocatorias.', 409);
+    }
+    return encuestaCompleta(crearEncuesta(Number(cuerpo.panel_id), cuerpo.nombre,
+      cuerpo.fecha_campo, {
+        publico_objetivo: (cuerpo.publico_objetivo || '').trim() || null,
+        descripcion: (cuerpo.descripcion || '').trim() || null,
+        clientes: clientesDemo(cuerpo.clientes),
+      }));
+  }
+
+  /* R-EU.5 — una encuesta independiente desde un resultado: la foto de ese
+     resultado, sin la lista negra ni quien no consintió el contacto. */
+  if (clave === 'POST /encuestas/desde-consulta') {
+    const nombre = (cuerpo.nombre || '').trim();
+    if (!nombre) throw new ErrorDemo('La encuesta necesita un nombre.', 400);
+    const ids = [...new Set(((cuerpo.resultado || {}).items || cuerpo.resultado || [])
+      .map((i) => i.id_persona).filter(Boolean))];
+    const existentes = ids.filter((id) => bd.personas.some((p) => p.id_persona === id));
+    const encuesta = crearEncuesta(null, nombre, cuerpo.fecha_campo, {
+      publico_objetivo: (cuerpo.publico_objetivo || '').trim() || null,
+      descripcion: (cuerpo.descripcion || '').trim() || null,
+      clientes: clientesDemo(cuerpo.clientes),
+    });
+    const convocatoria = convocar(encuesta.id, { ids_persona: existentes });
+    return {
+      ...encuestaCompleta(encuesta),
+      audiencia: {
+        en_el_resultado: ids.length, convocados: convocatoria.convocados_total,
+        sin_consentimiento: convocatoria.sin_consentimiento.length,
+        en_lista_negra: convocatoria.en_lista_negra,
+        no_encontrados: ids.length - existentes.length,
+      },
+    };
   }
 
   if (metodo === 'GET' && partes[0] === 'encuestas' && partes.length === 2) {
     const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
     if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
-    return encuesta;
+    return encuestaCompleta(encuesta);
   }
 
-  if (metodo === 'PATCH' && partes[0] === 'encuestas') {
+  if (metodo === 'PATCH' && partes[0] === 'encuestas' && partes.length === 2) {
     const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
     if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
-    encuesta.estado = cuerpo.estado;
-    return encuesta;
+    if (cuerpo.estado) encuesta.estado = cuerpo.estado;
+    ['nombre', 'publico_objetivo', 'descripcion', 'fecha_campo'].forEach((campo) => {
+      if (campo in cuerpo) encuesta[campo] = (cuerpo[campo] ?? '').toString().trim() || null;
+    });
+    if (!encuesta.nombre) throw new ErrorDemo('La encuesta necesita un nombre.', 400);
+    if (Array.isArray(cuerpo.clientes)) encuesta.clientes = clientesDemo(cuerpo.clientes);
+    return encuestaCompleta(encuesta);
+  }
+
+  /* R-EU.1 — una carga nueva dentro de una encuesta: solo los datos del
+     archivo; los del estudio ya están en la encuesta. */
+  if (metodo === 'POST' && partes[0] === 'encuestas' && partes[2] === 'cargas') {
+    const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
+    if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
+    const [tipo, tipoOtro] = clasificacionDemo('tipo_datos_origen',
+      cuerpo.tipo_datos_origen, cuerpo.tipo_datos_origen_otro);
+    const [modo, modoOtro] = clasificacionDemo('modo_relevamiento',
+      cuerpo.modo_relevamiento, cuerpo.modo_relevamiento_otro);
+    const carga = {
+      id: siguiente('carga'),
+      nombre: (cuerpo.nombre || '').trim() || `${encuesta.nombre} — carga`,
+      descripcion: (cuerpo.descripcion || '').trim() || null,
+      encuesta_id: encuesta.id, ref_estudio: encuesta.ref_estudio,
+      tipo_datos_origen: tipo, tipo_datos_origen_otro: tipoOtro,
+      modo_relevamiento: modo, modo_relevamiento_otro: modoOtro,
+      creado_en: ahora(), creado_por: 'demo',
+    };
+    bd.cargas.push(carga);
+    return resumenCarga(carga);
+  }
+
+  if (metodo === 'PUT' && partes[0] === 'encuestas' && partes[2] === 'tematicas') {
+    const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
+    if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
+    bd.cargas.filter((c) => c.encuesta_id === encuesta.id)
+      .forEach((c) => guardarTematicasDemo(c.id, cuerpo.tematicas));
+    return { tematicas: tematicasDeEncuesta(encuesta.id) };
+  }
+
+  /* R-EU.9 — la vista previa sí; borrar, no: la demo no lo simula. */
+  if (metodo === 'POST' && partes[0] === 'encuestas' && partes[2] === 'borrado') {
+    const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
+    if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
+    if (!cuerpo?.solo_revisar) throw new ErrorDemo('En el modo demo no se borran encuestas.', 400);
+    const suyas = bd.cargas.filter((c) => c.encuesta_id === encuesta.id);
+    const personas = new Set(bd.vinculos.filter((v) => suyas.some((c) => c.id === v.carga_id))
+      .map((v) => v.id_persona));
+    const cuestionario = bd.semantica.cuestionarios.find((c) => c.ref_estudio === encuesta.ref_estudio);
+    const preguntas = new Set(bd.semantica.preguntas
+      .filter((q) => q.cuestionario_id === cuestionario?.id).map((q) => q.id));
+    return {
+      encuesta: { id: encuesta.id, nombre: encuesta.nombre, tipo: encuesta.tipo,
+                  estado: encuesta.estado, ref_estudio: encuesta.ref_estudio },
+      respuestas_a_borrar: bd.semantica.respuestas.filter((r) => preguntas.has(r.pregunta_id)).length,
+      unidades_que_se_borran: 0,
+      participaciones_a_borrar: bd.participaciones.filter((p) => p.encuesta_id === encuesta.id).length,
+      cargas_a_borrar: suyas.length,
+      personas_con_tematicas_del_estudio: 0,
+      personas_que_se_conservan: personas.size,
+      irreversible: true, borrado_en_curso: null,
+    };
   }
 
   if (metodo === 'POST' && partes[0] === 'encuestas' && partes[2] === 'convocatoria') {
@@ -1792,16 +1990,21 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
       cuerpo.tipo_datos_origen, cuerpo.tipo_datos_origen_otro);
     const [modo, modoOtro] = clasificacionDemo('modo_relevamiento',
       cuerpo.modo_relevamiento, cuerpo.modo_relevamiento_otro);
+    // R-EU.1 — una carga desde Panelistas crea su encuesta: independiente,
+    // cerrada, con los datos del estudio (que viven en ella, R-EU.2).
+    const encuesta = crearEncuesta(null, nombre, cuerpo.fecha_estudio || null, {
+      estado: 'cerrada',
+      publico_objetivo: (cuerpo.publico_objetivo || '').trim() || null,
+      descripcion: (cuerpo.descripcion || '').trim() || null,
+      clientes: clientesDemo(cuerpo.clientes),
+    });
     const carga = {
       id: siguiente('carga'), nombre,
       descripcion: (cuerpo.descripcion || '').trim() || null,
-      // R-ORG.4 — los datos del estudio, en la carga.
-      fecha_estudio: cuerpo.fecha_estudio || null,
-      publico_objetivo: (cuerpo.publico_objetivo || '').trim() || null,
+      encuesta_id: encuesta.id, ref_estudio: encuesta.ref_estudio,
       tipo_datos_origen: tipo, tipo_datos_origen_otro: tipoOtro,
       modo_relevamiento: modo, modo_relevamiento_otro: modoOtro,
-      ref_estudio: uuid(), creado_en: ahora(), creado_por: 'demo',
-      clientes: clientesDemo(cuerpo.clientes),
+      creado_en: ahora(), creado_por: 'demo',
     };
     bd.cargas.push(carga);
     return resumenCarga(carga);
@@ -1817,6 +2020,9 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     if (q) items = items.filter((c) => sinTildes(normalizarTematica(c.nombre)).includes(q));
     if (consulta.tematica_id) {
       items = items.filter((c) => c.tematicas.some((t) => t.id === Number(consulta.tematica_id)));
+    }
+    if (consulta.encuesta_id) {
+      items = items.filter((c) => c.encuesta_id === Number(consulta.encuesta_id));
     }
     return { items, opciones: OPCIONES_CARGA };
   }
@@ -1838,7 +2044,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     const q = sinTildes((consulta.q || '').toLowerCase());
     return {
       items: bd.clientes.filter((c) => !q || sinTildes(c.nombre).includes(q)).map((c) => ({
-        ...c, cargas: bd.cargas.filter((k) => (k.clientes || []).includes(c.id)).length,
+        ...c, cargas: bd.encuestas.filter((k) => (k.clientes || []).includes(c.id)).length,
       })),
     };
   }
@@ -1925,9 +2131,18 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     const carga = bd.cargas.find((c) => c.id === Number(partes[1]));
     if (!carga) throw new ErrorDemo('No existe la carga.', 404);
     if (metodo === 'PATCH') {
-      ['nombre', 'descripcion', 'fecha_estudio', 'publico_objetivo'].forEach((campo) => {
+      ['nombre', 'descripcion'].forEach((campo) => {
         if (campo in cuerpo) carga[campo] = (cuerpo[campo] ?? '').toString().trim() || null;
       });
+      // R-EU.2 — los datos del estudio se guardan en la encuesta.
+      const encuesta = bd.encuestas.find((e) => e.id === carga.encuesta_id);
+      if (encuesta) {
+        if ('fecha_estudio' in cuerpo) encuesta.fecha_campo = cuerpo.fecha_estudio || null;
+        if ('publico_objetivo' in cuerpo) {
+          encuesta.publico_objetivo = (cuerpo.publico_objetivo || '').trim() || null;
+        }
+        if (Array.isArray(cuerpo.clientes)) encuesta.clientes = clientesDemo(cuerpo.clientes);
+      }
       if (!carga.nombre) throw new ErrorDemo('La carga necesita un nombre.', 400);
       Object.keys(OPCIONES_CARGA).forEach((campo) => {
         if (campo in cuerpo) {
@@ -1935,7 +2150,6 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
             campo, cuerpo[campo], cuerpo[`${campo}_otro`]);
         }
       });
-      if (Array.isArray(cuerpo.clientes)) carga.clientes = clientesDemo(cuerpo.clientes);
     }
     return resumenCarga(carga);
   }
@@ -1954,9 +2168,26 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
       (o) => o.id_persona === v.id_persona && o.carga_id !== carga.id);
     const seVan = suyos.filter((v) => v.origen === 'creada' && !conOtra(v)).length;
     const reutilizadas = suyos.filter((v) => v.origen !== 'creada').length;
+    const encuesta = bd.encuestas.find((e) => e.id === carga.encuesta_id);
+    const suyas = new Set(suyos.map((v) => v.id_persona));
+    const enOtraCarga = (id) => bd.vinculos.some((o) => o.id_persona === id
+      && o.carga_id !== carga.id
+      && bd.cargas.find((c) => c.id === o.carga_id)?.encuesta_id === carga.encuesta_id);
+    const participaciones = bd.participaciones.filter((p) => p.encuesta_id === carga.encuesta_id
+      && suyas.has(p.id_persona) && !enOtraCarga(p.id_persona));
+    // R-EU.10 — dar de baja a las creadas es una opción.
+    const darDeBaja = Boolean(cuerpo.dar_de_baja_creadas);
     return {
-      carga: { id: carga.id, nombre: carga.nombre, ref_estudio: carga.ref_estudio },
-      personas: suyos.length, se_dan_de_baja: seVan, se_conservan: suyos.length - seVan,
+      carga: { id: carga.id, nombre: carga.nombre, ref_estudio: carga.ref_estudio,
+               encuesta_id: carga.encuesta_id, encuesta: encuesta?.nombre ?? null },
+      unica_de_su_encuesta: bd.cargas.filter((c) => c.encuesta_id === carga.encuesta_id).length <= 1,
+      participaciones: {
+        vuelven_a_no_respondio: participaciones.filter((p) => p.convocado !== false).length,
+        se_borran: participaciones.filter((p) => p.convocado === false).length,
+      },
+      personas: suyos.length, se_pueden_dar_de_baja: seVan,
+      se_dan_de_baja: darDeBaja ? seVan : 0,
+      se_conservan: suyos.length - (darDeBaja ? seVan : 0),
       conservadas_por_motivo: [
         ...(reutilizadas ? [{ motivo: 'reutilizada', etiqueta: 'ya existía: la carga la reutilizó', personas: reutilizadas }] : []),
         ...(suyos.length - seVan - reutilizadas
@@ -4029,6 +4260,7 @@ function composicionDeAmbitoDemo(consulta) {
         + 'del panel nacional y uno del total de la bóveda son comparaciones distintas.'] : [],
     };
   }
+  if (ambito === 'encuesta') return composicionDeEncuestaDemo(consulta);
   const carga = bd.cargas.find((c) => c.id === Number(consulta.carga_id));
   if (!carga) throw new ErrorDemo('No existe la carga.', 404);
   const ids = new Set(bd.vinculos.filter((v) => v.carga_id === carga.id).map((v) => v.id_persona));
@@ -4049,6 +4281,68 @@ function composicionDeAmbitoDemo(consulta) {
     avisos: ['La composición de una carga muestra cómo está hoy ese grupo, no un registro '
       + 'fiel de lo que se cargó: quien se dio de baja ya no aparece. Y cuenta solo a las '
       + 'personas vinculadas desde que el sistema registra de qué carga viene cada una.'],
+  };
+}
+
+/* R-EU.11 — respondentes al lado de convocados, con la tasa de respuesta de
+   cada segmento. Sin audiencia, solo respondentes. */
+function composicionDeEncuestaDemo(consulta) {
+  const encuesta = bd.encuestas.find((e) => e.id === Number(consulta.encuesta_id));
+  if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
+  const suyas = bd.participaciones.filter((p) => p.encuesta_id === encuesta.id);
+  const personasDe = (lista) => lista.map((p) => bd.personas.find((x) => x.id_persona === p.id_persona))
+    .filter(Boolean);
+  const respondentes = personasDe(suyas.filter((p) => p.respondio));
+  const convocadas = suyas.filter((p) => p.convocado !== false);
+  const conAudiencia = convocadas.length > 0;
+  const motivo = 'Una encuesta no tiene universo de referencia: se compara contra su propia '
+    + 'convocatoria (columnas de convocados y tasa de respuesta).';
+  const salida = composicionDemo(null, consulta, { personas: respondentes, objetivos: {}, motivo });
+  if (conAudiencia) {
+    salida.dimensiones.forEach((d) => {
+      const leer = DIMENSIONES_DEMO[d.dimension];
+      const contar = (lista) => {
+        const n = {};
+        personasDe(lista).forEach((p) => {
+          const c = leer(p) || '(sin dato)';
+          n[c] = (n[c] || 0) + 1;
+        });
+        return n;
+      };
+      const deConvocados = contar(convocadas);
+      const respondieronConvocados = contar(convocadas.filter((p) => p.respondio));
+      const conDato = Object.entries(deConvocados).filter(([c]) => c !== '(sin dato)')
+        .reduce((t, [, n]) => t + n, 0);
+      Object.keys(deConvocados).filter((c) => c !== '(sin dato)'
+        && !d.categorias.some((x) => x.categoria === c)).forEach((categoria) => {
+        d.categorias.push({ categoria, observados: 0, proporcion_observada: 0,
+                            proporcion_objetivo: null, brecha: null, faltan: null });
+      });
+      d.categorias.forEach((c) => {
+        c.convocados = deConvocados[c.categoria] || 0;
+        c.proporcion_convocados = conDato ? c.convocados / conDato : 0;
+        c.respondieron_convocados = c.convocados ? (respondieronConvocados[c.categoria] || 0) : null;
+        c.tasa_respuesta = c.convocados ? c.respondieron_convocados / c.convocados : null;
+      });
+      d.categorias.sort((a, b) => a.categoria.localeCompare(b.categoria));
+    });
+  }
+  return {
+    ...salida,
+    ambito: { tipo: 'encuesta', id: encuesta.id, nombre: encuesta.nombre,
+              encuesta_tipo: encuesta.tipo, estado: encuesta.estado,
+              fecha_estudio: encuesta.fecha_campo, publico_objetivo: encuesta.publico_objetivo },
+    objetivo_admitido: false, objetivo_cargado: false,
+    convocados: convocadas.length, con_audiencia: conAudiencia,
+    tasa_respuesta: conAudiencia
+      ? convocadas.filter((p) => p.respondio).length / convocadas.length : null,
+    avisos: [conAudiencia
+      ? 'La tasa de respuesta de cada segmento es respondentes ÷ convocados de ese segmento: '
+        + 'es el sesgo de no respuesta, y dice a quién hay que sobreconvocar en el próximo '
+        + 'estudio. Quien respondió sin haber sido convocado cuenta como respondente, no como '
+        + 'convocado.'
+      : 'Esta encuesta no tiene audiencia —no se convocó a nadie desde el sistema—: se '
+        + 'muestran solo sus respondentes.'],
   };
 }
 

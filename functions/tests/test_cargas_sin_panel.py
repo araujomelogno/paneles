@@ -5,8 +5,9 @@ encuesta, y toda encuesta pertenece a un panel: dar de alta gente implicaba
 meterla en un panel, y entonces aparecía en convocatorias, en la composición
 y en el muestreo. Este flujo separa las dos cosas.
 
-Lo que se prueba acá es sobre todo lo que **no** pasa: ni membresía, ni
-participación, ni indicadores movidos.
+Lo que se prueba acá es sobre todo lo que **no** pasa: ni membresía ni
+indicadores de un panel movidos. Desde D81 sí hay participación: la de la
+encuesta independiente que la carga crea.
 
 Corre contra los dos stores reales.
 """
@@ -122,20 +123,24 @@ def test_nadie_queda_como_miembro_de_ningun_panel(ctx, carga, conn_boveda):
         ctx.boveda, "select count(*)::int as n from membresia")["n"] == 0
 
 
-def test_no_se_crea_ninguna_participacion(ctx, carga):
-    """No hubo convocatoria ni encuesta fieldeada: no hay nada que registrar."""
+def test_cada_persona_queda_con_su_participacion_no_convocada(ctx, carga):
+    """D81 (R-EU.1) — antes no se registraba nada: no había encuesta. Ahora
+    la carga es de su encuesta independiente, y quien vino en el archivo
+    respondió ese estudio. No fue convocado, y por eso no habilita a nadie a
+    leer su contacto (`contacto_para_convocatoria` pide `convocado`)."""
     _crear_y_cargar(ctx, carga)
 
-    assert db.una(
-        ctx.boveda, "select count(*)::int as n from participacion")["n"] == 0
+    filas = db.todas(ctx.boveda, "select encuesta_id, respondio, convocado "
+                                 "from participacion")
+    assert filas and all(f["encuesta_id"] == carga["encuesta_id"] for f in filas)
+    assert all(f["respondio"] and not f["convocado"] for f in filas)
 
 
-def test_el_resultado_no_informa_membresias_ni_participaciones(ctx, carga):
+def test_el_resultado_no_informa_membresias(ctx, carga):
     """Informar «0 membresías nuevas» sugeriría que podría haber habido."""
     _, resultado = _crear_y_cargar(ctx, carga)
 
-    for clave in ("membresias_nuevas", "membresias_existentes",
-                  "participaciones_nuevas", "participaciones_actualizadas"):
+    for clave in ("membresias_nuevas", "membresias_existentes"):
         assert clave not in resultado
     assert resultado["sin_panel"] is True
 

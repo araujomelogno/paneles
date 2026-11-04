@@ -344,8 +344,9 @@ def test_la_pantalla_puede_omitir_la_propuesta(ctx, actor, carga):
 def _vinculos(conn, carga_id):
     return {f["nombre"]: f["origen"] for f in db.todas(
         conn,
-        "select t.nombre, ct.origen from carga_tematica ct "
-        "join tematica t on t.id = ct.tematica_id where ct.carga_id = %s",
+        "select t.nombre, et.origen from encuesta_tematica et "
+        "join tematica t on t.id = et.tematica_id "
+        "where et.encuesta_id = (select encuesta_id from carga where id = %s)",
         (carga_id,))}
 
 
@@ -398,7 +399,7 @@ def test_quitar_agregar_y_editar_antes_y_despues_de_confirmar(ctx, actor, carga)
     ({"tematicas": ["x"]}, "demasiado corta"),
     ({"tematicas": ["a" * 81]}, "demasiado larga"),
     ({"tematicas": [{"nombre": "tema", "origen": "claude"}]}, "Origen"),
-    ({"tematicas": [f"tema {i}" for i in range(31)]}, "máximo por carga"),
+    ({"tematicas": [f"tema {i}" for i in range(31)]}, "máximo por estudio"),
 ])
 def test_lo_que_no_es_una_tematica_se_rechaza(ctx, actor, carga, cuerpo, mensaje):
     with pytest.raises(DatosInvalidos, match=mensaje):
@@ -407,10 +408,12 @@ def test_lo_que_no_es_una_tematica_se_rechaza(ctx, actor, carga, cuerpo, mensaje
     assert _nombres(ctx.boveda) == []
 
 
-def test_borrar_la_carga_se_lleva_sus_vinculos_pero_no_la_tematica(conn_boveda, carga):
+def test_borrar_el_estudio_se_lleva_sus_vinculos_pero_no_la_tematica(conn_boveda, carga):
+    # D81 — las temáticas son de la encuesta: se van con ella, no con una
+    # carga (una encuesta puede tener varias).
     tematicas.guardar(conn_boveda, carga["id"], ["telefonía móvil"])
-    db.ejecutar(conn_boveda, "delete from carga where id = %s", (carga["id"],))
-    assert db.una(conn_boveda, "select count(*) as n from carga_tematica")["n"] == 0
+    db.ejecutar(conn_boveda, "delete from encuesta where id = %s", (carga["encuesta_id"],))
+    assert db.una(conn_boveda, "select count(*) as n from encuesta_tematica")["n"] == 0
     assert _nombres(conn_boveda) == ["telefonía móvil"]
 
 

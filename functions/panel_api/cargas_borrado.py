@@ -1,5 +1,25 @@
 """Borrar una carga, con lo que trajo (PEDIDO del celular, parte 3; D78).
 
+**Desde D81 (R-EU.10) una carga es un archivo de una encuesta**, y borrarla
+responde a «esto lo cargué mal»:
+
+* se borran **las respuestas que esa carga escribió por última vez**
+  (`respuesta.carga_id`); las que una carga posterior reemplazó se quedan,
+  porque son de la otra. Si era la única carga de la encuesta, se va el
+  cuestionario entero, como antes;
+* la participación de quien **solo** estaba en esta carga: si fue
+  convocada, vuelve a `respondio = false`; si no, se borra;
+* las personas que la carga **creó** y no tienen otra vida se **ofrecen**
+  para dar de baja (`dar_de_baja_creadas`). Es una opción, no un efecto: sin
+  ella se conservan, sin el vínculo ni las respuestas de esta carga;
+* las temáticas de cada persona se recalculan para el estudio con lo que
+  queda;
+* una encuesta independiente que se queda sin cargas ni participaciones
+  —la que se creó para una carga desde Panelistas— se borra con ella.
+
+Borrar **la encuesta** entera es otra cosa (`encuestas_borrado`, R-EU.9):
+ahí las personas siempre quedan.
+
 El caso: una carga hecha con un mapeo equivocado, o de prueba, que no
 debería existir. Lo que se borra es **lo que la carga trajo**, no todo lo que
 aparece en ella:
@@ -85,8 +105,11 @@ MOTIVOS = {
 
 def _clasificar(conn_boveda, conn_semantica, carga_id, ref_estudio, ids=None):
     """`{id_persona: None | motivo}` de las personas vinculadas a la carga
-    (o de esas `ids`). `None` es «se da de baja»; un motivo, «se conserva y
-    por qué». Una persona que ya no está vinculada no figura."""
+    (o de esas `ids`). `None` es «se puede dar de baja»; un motivo, «se
+    conserva y por qué». Una persona que ya no está vinculada no figura.
+
+    La participación en **la encuesta de esta carga** no cuenta como otra
+    vida: la registró esta misma carga (R-EU.1)."""
     filas = db.todas(
         conn_boveda,
         """
@@ -97,12 +120,15 @@ def _clasificar(conn_boveda, conn_semantica, carga_id, ref_estudio, ids=None):
                exists (select 1 from membresia m
                         where m.id_persona = pc.id_persona)        as panel,
                exists (select 1 from participacion pa
-                        where pa.id_persona = pc.id_persona)       as participacion,
+                        where pa.id_persona = pc.id_persona
+                          and (pa.encuesta_id <> c.encuesta_id
+                               or pa.convocado))                   as participacion,
                exists (select 1 from puntos_movimiento pm
                         where pm.id_persona = pc.id_persona)       as puntos,
                exists (select 1 from canje c
                         where c.id_persona = pc.id_persona)        as canje
           from persona_carga pc
+          join carga c on c.id = pc.carga_id
          where pc.carga_id = %s
            and (%s::uuid[] is null or pc.id_persona = any(%s::uuid[]))
         """,
@@ -128,31 +154,75 @@ def _clasificar(conn_boveda, conn_semantica, carga_id, ref_estudio, ids=None):
     return clasificacion
 
 
-def _resumen_de(clasificacion):
+def _resumen_de(clasificacion, dar_de_baja_creadas=True):
     por_motivo = {}
     for motivo in clasificacion.values():
         if motivo:
             por_motivo[motivo] = por_motivo.get(motivo, 0) + 1
+    candidatas = sum(1 for m in clasificacion.values() if m is None)
     return {
         "personas": len(clasificacion),
-        "se_dan_de_baja": sum(1 for m in clasificacion.values() if m is None),
-        "se_conservan": sum(1 for m in clasificacion.values() if m),
+        # R-EU.10 — las que se **pueden** dar de baja: las creó esta carga y
+        # no tienen otra vida. Se dan de baja solo si se elige.
+        "se_pueden_dar_de_baja": candidatas,
+        "se_dan_de_baja": candidatas if dar_de_baja_creadas else 0,
+        "se_conservan": len(clasificacion) - (candidatas if dar_de_baja_creadas else 0),
         "conservadas_por_motivo": [
             {"motivo": m, "etiqueta": MOTIVOS[m], "personas": por_motivo[m]}
             for m in MOTIVOS if m in por_motivo],
     }
 
 
-def previa(conn_boveda, conn_semantica, carga_id):
+def _unica(conn, carga):
+    """¿Es la única carga de su encuesta? Entonces el estudio es suyo."""
+    return db.una(conn, "select count(*)::int as n from carga where encuesta_id = %s",
+                  (carga["encuesta_id"],))["n"] == 1
+
+
+def _participaciones(conn, carga_id):
+    """R-EU.10 — qué pasa con la participación de quien solo estaba en esta
+    carga dentro de su encuesta: `{vuelven_a_no_respondio, se_borran}`."""
+    fila = db.una(
+        conn,
+        """
+        select count(*) filter (where pa.convocado)::int     as vuelven,
+               count(*) filter (where not pa.convocado)::int as se_borran
+          from persona_carga pc
+          join carga c on c.id = pc.carga_id
+          join participacion pa on pa.encuesta_id = c.encuesta_id
+                               and pa.id_persona = pc.id_persona
+         where pc.carga_id = %s
+           and not exists (select 1 from persona_carga o
+                             join carga oc on oc.id = o.carga_id
+                            where o.id_persona = pc.id_persona
+                              and oc.encuesta_id = c.encuesta_id
+                              and o.carga_id <> c.id)
+        """,
+        (carga_id,))
+    return {"vuelven_a_no_respondio": fila["vuelven"], "se_borran": fila["se_borran"]}
+
+
+def previa(conn_boveda, conn_semantica, carga_id, dar_de_baja_creadas=False):
     """Lo que el borrado va a hacer, sin hacer nada."""
     carga = cargas.obtener(conn_boveda, carga_id)
     clasificacion = _clasificar(conn_boveda, conn_semantica, carga_id,
                                 carga["ref_estudio"])
-    estudio = semantica.contar_estudio(conn_semantica, carga["ref_estudio"])
+    unica = _unica(conn_boveda, carga)
+    if unica:
+        estudio = semantica.contar_estudio(conn_semantica, carga["ref_estudio"])
+    else:
+        estudio = {"respuestas": semantica.contar_carga(
+            conn_semantica, carga["ref_estudio"], carga_id),
+                   "unidades_que_se_borran": None}
     return {
         "carga": {"id": carga["id"], "nombre": carga["nombre"],
-                  "ref_estudio": str(carga["ref_estudio"])},
-        **_resumen_de(clasificacion),
+                  "ref_estudio": str(carga["ref_estudio"]),
+                  "encuesta_id": carga["encuesta_id"],
+                  "encuesta": carga["encuesta"]},
+        "unica_de_su_encuesta": unica,
+        **_resumen_de(clasificacion, dar_de_baja_creadas),
+        "dar_de_baja_creadas": bool(dar_de_baja_creadas),
+        "participaciones": _participaciones(conn_boveda, carga_id),
         "respuestas_a_borrar": estudio["respuestas"],
         "unidades_que_se_borran": estudio["unidades_que_se_borran"],
         "irreversible": True,
@@ -169,7 +239,8 @@ def _borrado_en_curso(conn, carga_id):
 
 
 def lanzar(conn_boveda, conn_semantica, carga_id, confirmacion=None, actor=None,
-           encolador=None, solo_revisar=False, tamano_lote=None):
+           encolador=None, solo_revisar=False, tamano_lote=None,
+           dar_de_baja_creadas=False):
     """`(status, cuerpo)`. Con `solo_revisar`, la vista previa —de la misma
     ruta que borra, como la revisión de una importación—. Sin él, exige
     `confirmacion` igual al nombre de la carga y lanza o reanuda."""
@@ -182,7 +253,7 @@ def lanzar(conn_boveda, conn_semantica, carga_id, confirmacion=None, actor=None,
         # confirmar. Un borrado en curso no bloquea: se ofrece reanudarlo.
         if activo and not en_curso:
             diferida.exigir_sin_trabajo_activo(conn_boveda, "carga", carga_id)
-        salida = previa(conn_boveda, conn_semantica, carga_id)
+        salida = previa(conn_boveda, conn_semantica, carga_id, dar_de_baja_creadas)
         salida["borrado_en_curso"] = _publico(en_curso) if en_curso else None
         return 200, salida
 
@@ -198,7 +269,7 @@ def lanzar(conn_boveda, conn_semantica, carga_id, confirmacion=None, actor=None,
     # no calcular nada si ya se sabe que no se puede.
     diferida.exigir_sin_trabajo_activo(conn_boveda, "carga", carga_id)
 
-    vista = previa(conn_boveda, conn_semantica, carga_id)
+    vista = previa(conn_boveda, conn_semantica, carga_id, dar_de_baja_creadas)
     try:
         borrado = db.una(
             conn_boveda,
@@ -227,6 +298,9 @@ def lanzar(conn_boveda, conn_semantica, carga_id, confirmacion=None, actor=None,
 
     plan = {"operacion": OPERACION, "carga_id": carga_id,
             "ref_estudio": str(carga["ref_estudio"]), "borrado_id": borrado["id"],
+            "encuesta_id": carga["encuesta_id"],
+            "unica_de_su_encuesta": vista["unica_de_su_encuesta"],
+            "dar_de_baja_creadas": bool(dar_de_baja_creadas),
             "actor": getattr(actor, "email", None) or getattr(actor, "uid", None)}
     try:
         salida = diferida.encolar(
@@ -269,9 +343,13 @@ def procesar_lote(conn_boveda, conn_semantica, plan, ids):
     Idempotente: un reintento no encuentra lo que ya se hizo."""
     ref_estudio, carga_id = plan["ref_estudio"], plan["carga_id"]
     ids = [str(i) for i in ids]
+    # Un plan anterior a D81 no tiene estas claves: era la única carga de su
+    # estudio, y daba de baja a las creadas.
+    unica = plan.get("unica_de_su_encuesta", True)
+    dar_de_baja = plan.get("dar_de_baja_creadas", True)
 
     respuestas = semantica.borrar_respuestas_de_estudio_de(
-        conn_semantica, ids, ref_estudio)
+        conn_semantica, ids, ref_estudio, carga_id=None if unica else carga_id)
     conn_semantica.commit()
 
     clasificacion = _clasificar(conn_boveda, conn_semantica, carga_id,
@@ -283,24 +361,49 @@ def procesar_lote(conn_boveda, conn_semantica, plan, ids):
             # reintento de algo que ya se hizo.
             ya_procesadas += 1
             continue
-        if clasificacion[id_persona] is None:
+        if clasificacion[id_persona] is None and dar_de_baja:
             bajas.retirar(conn_boveda, id_persona, bajas.TODAS,
                           actor=plan.get("actor"), conn_semantica=conn_semantica,
                           motivo=MOTIVO_LAPIDA)
             dadas_de_baja += 1
             continue
-        db.ejecutar(conn_boveda,
-                    "delete from persona_tematica where id_persona = %s and carga_id = %s",
-                    (id_persona, carga_id))
-        db.ejecutar(conn_boveda,
-                    "delete from persona_carga where id_persona = %s and carga_id = %s",
-                    (id_persona, carga_id))
+        _desvincular(conn_boveda, id_persona, carga_id)
         conservadas += 1
 
     return {"operacion": OPERACION, "respuestas_borradas": respuestas,
             "personas_dadas_de_baja": dadas_de_baja,
             "personas_conservadas": conservadas,
             "personas_ya_procesadas": ya_procesadas}
+
+
+def _desvincular(conn, id_persona, carga_id):
+    """La persona se queda, sin esta carga. Si no la trae otra carga de la
+    misma encuesta, su participación vuelve atrás (R-EU.10): convocada,
+    a `respondio = false`; no convocada, se borra. Sus temáticas del estudio
+    se recalculan al final, con lo que quede."""
+    otra = db.una(
+        conn,
+        """select 1 from persona_carga o
+             join carga oc on oc.id = o.carga_id
+            where o.id_persona = %s and o.carga_id <> %s
+              and oc.encuesta_id = (select encuesta_id from carga where id = %s)""",
+        (id_persona, carga_id, carga_id))
+    if not otra:
+        encuesta = db.una(conn, "select encuesta_id from carga where id = %s",
+                          (carga_id,))["encuesta_id"]
+        db.ejecutar(
+            conn,
+            """update participacion set respondio = false, respondio_en = null
+                where encuesta_id = %s and id_persona = %s and convocado""",
+            (encuesta, id_persona))
+        db.ejecutar(
+            conn,
+            """delete from participacion
+                where encuesta_id = %s and id_persona = %s and not convocado""",
+            (encuesta, id_persona))
+    db.ejecutar(conn,
+                "delete from persona_carga where id_persona = %s and carga_id = %s",
+                (id_persona, carga_id))
 
 
 # ── El final ─────────────────────────────────────────────────────────
@@ -314,7 +417,19 @@ def finalizar(conn_boveda, conn_semantica, borrado_id):
     if borrado["estado"] == TERMINADO:
         return _final(borrado)
 
-    semantica.borrar_estudio(conn_semantica, borrado["ref_estudio"])
+    plan = {}
+    if borrado["trabajo_id"] is not None:
+        plan = db.una(conn_boveda, "select plan from ingesta_trabajo where id = %s",
+                      (borrado["trabajo_id"],))["plan"] or {}
+    carga = db.una(conn_boveda, "select id, encuesta_id from carga where id = %s",
+                   (borrado["carga_id"],)) if borrado["carga_id"] else None
+    unica = plan.get("unica_de_su_encuesta",
+                     (borrado["previa"] or {}).get("unica_de_su_encuesta", True))
+    if unica:
+        semantica.borrar_estudio(conn_semantica, borrado["ref_estudio"])
+    elif carga:
+        semantica.borrar_respuestas_de_carga(
+            conn_semantica, borrado["ref_estudio"], carga["id"])
     conn_semantica.commit()
 
     # Las respuestas se cuentan contra el estudio y no por lote: un lote que
@@ -328,9 +443,11 @@ def finalizar(conn_boveda, conn_semantica, borrado_id):
     if borrado["trabajo_id"] is not None:
         lotes = (diferida.estado(conn_boveda, borrado["trabajo_id"])["resumen"]
                  or {})
-    if borrado["carga_id"] is not None:
-        db.ejecutar(conn_boveda, "delete from carga where id = %s",
-                    (borrado["carga_id"],))
+    if carga is not None:
+        # Las personas que no se procesaron por lote (no tenían vínculo)
+        # no hay; las que quedaban, ya se desvincularon.
+        db.ejecutar(conn_boveda, "delete from carga where id = %s", (carga["id"],))
+        _cerrar_encuesta(conn_boveda, conn_semantica, carga["encuesta_id"])
     final = db.una(
         conn_boveda,
         """update carga_borrado
@@ -348,6 +465,29 @@ def finalizar(conn_boveda, conn_semantica, borrado_id):
           f"conservadas={final['personas_conservadas']} "
           f"respuestas={final['respuestas_borradas']}", flush=True)
     return _final(final)
+
+
+def _cerrar_encuesta(conn_boveda, conn_semantica, encuesta_id):
+    """Después de borrar una carga: la encuesta independiente que quedó sin
+    cargas ni participaciones era solo su contenedor (la creó una carga desde
+    Panelistas) y se va; las demás recalculan las temáticas de su gente con
+    lo que quedó en el cuestionario."""
+    from . import tematicas
+
+    vacia = db.una(
+        conn_boveda,
+        """select e.tipo = 'independiente'
+                  and not exists (select 1 from carga c where c.encuesta_id = e.id)
+                  and not exists (select 1 from participacion pa
+                                   where pa.encuesta_id = e.id) as vacia
+             from encuesta e where e.id = %s""",
+        (encuesta_id,))
+    if not vacia:
+        return
+    if vacia["vacia"]:
+        db.ejecutar(conn_boveda, "delete from encuesta where id = %s", (encuesta_id,))
+        return
+    tematicas.recalcular_encuesta(conn_boveda, conn_semantica, encuesta_id)
 
 
 def _final(borrado):

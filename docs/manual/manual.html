@@ -38,9 +38,9 @@
       datos del estudio y sus clientes · Las temáticas en la revisión ·
       Filtrar por carga · Canales de contacto · La lista negra</li></ul></li>
     <li><a href="#s4"><span><span class="num">4</span> Paneles</span></a>
-      <ul><li>Crear · Agregar miembros · Dar de baja una membresía</li></ul></li>
+      <ul><li>Crear · Agregar miembros · Dar de baja una membresía · Archivar</li></ul></li>
     <li><a href="#s5"><span><span class="num">5</span> Encuestas</span></a>
-      <ul><li>Crear una ola · Convocar · Exportar la muestra · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Enviar por WhatsApp · Verificar el cruce · Calidad del dato y vista previa · Corregir y reprocesar un estudio</li></ul></li>
+      <ul><li>Crear una ola · Convocar · Exportar la muestra · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Enviar por WhatsApp · Verificar el cruce · Calidad del dato y vista previa · Corregir y reprocesar un estudio · Varias cargas en un estudio · Encuesta desde una consulta · Borrar una encuesta o una carga</li></ul></li>
     <li><a href="#s6"><span><span class="num">6</span> Consultas</span></a>
       <ul><li>Buscar por significado · El ranking y la evidencia · Columnas ·
       La ficha desde un resultado · Exclusiones · Verificación incompleta ·
@@ -48,7 +48,7 @@
       intercambio con el verificador · Consultas solo demográficas · Filtrar
       por cliente</li></ul></li>
     <li><a href="#s7"><span><span class="num">7</span> Composición</span></a>
-      <ul><li>El ámbito: todos, un panel o una carga · Universo de referencia ·
+      <ul><li>El ámbito: todos, un panel, una encuesta o una carga · Universo de referencia ·
       Brecha · Cruce de dos dimensiones</li></ul></li>
     <li><a href="#s8"><span><span class="num">8</span> Participación</span></a>
       <ul><li>Tasa de respuesta · Último contacto · Fatiga del panel</li></ul></li>
@@ -1087,6 +1087,23 @@
   sigue existiendo en el sistema, conserva su historial y mantiene sus
   membresías en los demás paneles. No es un borrado; para eso está la baja total,
   que se describe en la sección 9.</p>
+
+  <h3><span class="n">4.4</span> Archivar un panel</h3>
+
+  <p>Un panel que ya no se usa se <strong>archiva</strong> con
+  <strong>Archivar…</strong> desde su detalle. Un panel archivado:</p>
+
+  <ul class="puntos">
+    <li>no recibe encuestas nuevas ni convocatorias;</li>
+    <li>deja de aparecer en el listado, salvo que se marque <i>Incluir
+    archivados</i>;</li>
+    <li>conserva sus miembros, sus encuestas y su historial: archivar no
+    borra nada;</li>
+    <li>se vuelve a usar con <strong>Reactivar</strong>.</li>
+  </ul>
+
+  <p>No se puede archivar un panel que tiene encuestas <strong>en
+  campo</strong>: primero hay que cerrarlas.</p>
 </section>
 
 <!-- ════════════════ 5 ════════════════ -->
@@ -1099,9 +1116,26 @@
     sistema.</p>
   </div>
 
-  <p>Cada encuesta —u ola— es un relevamiento concreto sobre un panel, con su
-  fecha de campo y su propio ciclo: se crea, se convoca, se releva en la
-  plataforma de campo habitual y finalmente se ingestan las respuestas.</p>
+  <p>Cada encuesta es <strong>un estudio</strong>: tiene su nombre, sus
+  clientes, su fecha de campo, su público objetivo, sus temáticas y su
+  audiencia. Tiene su propio ciclo: se crea, se convoca, se releva en la
+  plataforma de campo habitual y se ingestan las respuestas.</p>
+
+  <p>Hay dos tipos:</p>
+
+  <ul class="puntos">
+    <li><strong>De panel</strong>: la audiencia son los miembros de un
+    panel. Es la ola de siempre, con convocatoria, muestreo y
+    optimizador.</li>
+    <li><strong>Independiente</strong>: no tiene panel. Puede tener una
+    audiencia propia, creada desde una consulta (sección 5.11), o ninguna,
+    como la que se crea al cargar panelistas (sección 3.6).</li>
+  </ul>
+
+  <p>Las respuestas entran siempre en <strong>cargas</strong>: cada archivo
+  que se ingesta es una carga de la encuesta. Una encuesta puede tener
+  varias —una parcial y la final, el telefónico y el web— y todas escriben
+  el mismo estudio, sin duplicar a nadie (sección 5.10).</p>
 
   <figure>
     <img src="capturas/14-encuestas.jpg" alt="Listado de encuestas" />
@@ -1115,7 +1149,8 @@
   <ol class="pasos">
     <li>Utilizar <strong>+ Nueva encuesta</strong>.</li>
     <li>Elegir el panel al que se le va a fieldear, indicar el nombre de la ola y
-    la fecha de campo.</li>
+    la fecha de campo. Opcionalmente, el público objetivo, una descripción y
+    los clientes del estudio.</li>
     <li>Confirmar con <strong>Crear</strong>.</li>
   </ol>
 
@@ -1125,6 +1160,10 @@
     <code>ref_estudio</code>, un código que no hay que recordar ni
     manipular.</figcaption>
   </figure>
+
+  <p>Los datos del estudio se editan después con <strong>Editar</strong>,
+  en la tarjeta <i>Datos del estudio</i> del detalle. Las cargas no los
+  vuelven a pedir: los leen de la encuesta.</p>
 
   <p>La encuesta nace en estado <strong>borrador</strong> y pasa a
   <strong>en campo</strong> apenas se convoca a alguien. Al terminar el
@@ -1196,7 +1235,10 @@
   <h3><span class="n">5.4</span> Ingestar las respuestas</h3>
 
   <p>Terminado el campo, las respuestas se incorporan desde
-  <strong>Ingestar respuestas</strong>. El archivo esperado es el export habitual
+  <strong>+ Ingestar respuestas</strong>, en la tarjeta <i>Cargas</i> de la
+  encuesta. Cada vez que se usa abre una carga nueva: solo pide el modo de
+  relevamiento y el tipo de datos del archivo, porque los del estudio ya
+  están en la encuesta. El archivo esperado es el export habitual
   de la plataforma de campo, en <strong>formato ancho</strong>: una fila por
   persona, una columna por pregunta, y el encabezado de cada columna con el
   código de esa pregunta.</p>
@@ -2016,7 +2058,97 @@
     todas las respuestas por la configuración actual y solo re-embebe las
     desactualizadas.</p>
   </div>
+
+  <h3><span class="n">5.10</span> Varias cargas en un mismo estudio</h3>
+
+  <p>Una encuesta puede recibir varios archivos: una entrega parcial y
+  después la final, o el campo telefónico y el web por separado. Cada uno es
+  una carga, y todas escriben <strong>el mismo estudio</strong>:</p>
+
+  <ul class="puntos">
+    <li>una persona que aparece en dos cargas tiene <strong>una</strong>
+    respuesta por pregunta —la de la última carga— y <strong>una</strong>
+    participación;</li>
+    <li>una parcial seguida de la final deja lo de la final;</li>
+    <li>las temáticas se proponen con la primera carga. Las siguientes
+    proponen solo para las preguntas nuevas, y si no hay ninguna no llaman a
+    Claude.</li>
+  </ul>
+
+  <p>La revisión, antes de confirmar, avisa de tres cosas. Ninguna bloquea:
+  cada una dice qué pasa y se decide con una casilla.</p>
+
+  <ul class="puntos">
+    <li><strong>Archivo repetido.</strong> Si el archivo es idéntico al de
+    otra carga de la encuesta, lo dice y nombra esa carga. Para procesarlo
+    igual hay que marcar <i>Procesarlo igual</i>.</li>
+    <li><strong>No convocados.</strong> En una encuesta con audiencia, dice
+    cuántas personas del archivo no estaban convocadas —casi siempre, un
+    enlace reenviado— y cuántas de ellas no se pudieron identificar. Se
+    incorporan marcadas «no convocado», o se dejan afuera con <i>Excluirlas
+    de la carga</i>.</li>
+    <li><strong>Consentimiento por finalidad.</strong> Cuántos quedan sin
+    cada finalidad y qué implica: sin contacto, no se los va a convocar; sin
+    uso semántico, sus respuestas no entran al store semántico. Se registra
+    tal como vino. No consentir no es motivo de lista negra.</li>
+  </ul>
+
+  <p>Al terminar, la tarjeta <i>Participación</i> de la encuesta muestra
+  cuántos fueron convocados, cuántos respondieron y cuántos respondieron sin
+  estar convocados.</p>
+
+  <h3><span class="n">5.11</span> Una encuesta independiente desde una consulta</h3>
+
+  <p>En la barra de acciones de un resultado de consulta, <strong>Crear
+  encuesta</strong> abre una encuesta independiente cuya audiencia es
+  <strong>la foto</strong> de ese resultado: las personas de ese momento,
+  aunque la consulta después devuelva otras.</p>
+
+  <ul class="puntos">
+    <li>Se completa el nombre y, opcionalmente, la fecha de campo, el público
+    objetivo y los clientes.</li>
+    <li>Quedan afuera quienes están en la lista negra y quienes no tienen
+    consentimiento de contacto, y el aviso dice cuántos de cada uno.</li>
+    <li>Si la consulta era semántica, queda registrado como una
+    reidentificación, igual que <i>Ver quiénes son</i>.</li>
+    <li>No tiene muestreo ni optimizador: esos eligen entre los miembros de
+    un panel, y aquí no hay panel.</li>
+  </ul>
+
+  <h3><span class="n">5.12</span> Borrar una encuesta o una carga</h3>
+
+  <p><strong>Borrar la encuesta…</strong>, en el detalle, borra el estudio
+  entero. Es la respuesta a «estos datos no tienen que estar más». Lo pueden
+  hacer administración y protección de datos.</p>
+
+  <ul class="puntos">
+    <li>Primero muestra lo que va a hacer, y se confirma escribiendo el
+    nombre exacto de la encuesta.</li>
+    <li><strong>Se borran</strong> sus respuestas del store semántico, sus
+    participaciones, sus cargas y las temáticas que sus panelistas tenían por
+    ese estudio.</li>
+    <li><strong>Se conservan las personas</strong> y sus datos
+    demográficos, aunque hayan llegado en ese estudio. Para dar de baja a
+    alguien está la baja (sección 11).</li>
+    <li>Queda registrado quién lo hizo, cuándo y qué se borró. Si se
+    interrumpe, volver a pedirlo lo termina.</li>
+    <li>No se puede mientras haya una ingesta en curso en el estudio.</li>
+  </ul>
+
+  <p><strong>Borrar una carga</strong> (desde su detalle en Cargas) dentro
+  de una encuesta que tiene varias deshace solo lo que esa carga
+  escribió:</p>
+
+  <ul class="puntos">
+    <li>sus respuestas, no las de las otras cargas;</li>
+    <li>quien estaba solo en esa carga pierde su participación, o vuelve a
+    «no respondió» si estaba convocado;</li>
+    <li>las personas que la carga creó se dan de baja <strong>solo si se
+    marca</strong> la casilla. Si es la única carga de la encuesta, se borra
+    el estudio entero.</li>
+  </ul>
 </section>
+
 
 
 <!-- ════════════════ 6 ════════════════ -->
@@ -3136,6 +3268,26 @@
 
   <p>La composición a una fecha pasada (sección 9.5) sigue disponible solo
   por panel.</p>
+
+  <h3><span class="n">7.6</span> Una encuesta: convocados frente a respondentes</h3>
+
+  <p>El ámbito <strong>Una encuesta</strong>, o el botón
+  <i>Convocados vs respondentes</i> del detalle de una encuesta, pone lado a
+  lado la composición de quienes fueron convocados y la de quienes
+  respondieron, y agrega la <strong>tasa de respuesta de cada
+  segmento</strong>: de los convocados de ese segmento, cuántos
+  respondieron.</p>
+
+  <ul class="puntos">
+    <li>Es el <strong>sesgo de no respuesta</strong>: dice a quién hay que
+    sobreconvocar en el próximo estudio.</li>
+    <li>Quien respondió sin estar convocado cuenta como respondente, no como
+    convocado, y no entra en la tasa.</li>
+    <li>Sin audiencia —por ejemplo, una encuesta creada al cargar
+    panelistas— muestra solo a los respondentes.</li>
+    <li>No tiene universo de referencia: se compara contra su propia
+    convocatoria.</li>
+  </ul>
 </section>
 
 <!-- ════════════════ 8 ════════════════ -->

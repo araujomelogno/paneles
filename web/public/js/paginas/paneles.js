@@ -9,18 +9,23 @@ import {
 
 let contexto = {};
 let panelAbierto = null;
+// R-EU.8 — los archivados no se listan salvo que se pidan.
+let conArchivados = false;
+const puedeGestionar = () => ['admin', 'operaciones'].includes(contexto.actor?.rol);
 
 export async function render(main, ctx) {
   contexto = ctx;
   if (ctx.contexto?.panelId) return renderDetalle(main, ctx.contexto.panelId);
   panelAbierto = null;
 
-  const { items } = await api.paneles.listar();
+  const { items } = await api.paneles.listar(conArchivados);
 
   main.innerHTML = encabezado('Paneles', 'y membresías',
     'Una persona puede pertenecer a varios paneles sin duplicarse.') + `
     <div class="card">
-      <div class="card-header"><span class="card-header-title">Paneles</span></div>
+      <div class="card-header"><span class="card-header-title">Paneles</span>
+        <label class="check small"><input type="checkbox" id="con-archivados"
+          ${conArchivados ? 'checked' : ''} /> Incluir archivados</label></div>
       <div class="card-body tight">
         ${items.length ? `<div class="table-wrap"><table>
           <thead><tr><th>Panel</th><th>Miembros</th><th>Encuestas</th><th>Estado</th><th>Creado</th><th></th></tr></thead>
@@ -40,6 +45,7 @@ export async function render(main, ctx) {
 
   $('#ph-acciones').innerHTML = `<button class="btn btn-orange" id="nuevo">+ Nuevo panel</button>`;
   $('#nuevo').onclick = abrirNuevo;
+  $('#con-archivados').onchange = (e) => { conArchivados = e.target.checked; contexto.irA('paneles'); };
   $$('[data-panel]', main).forEach((boton) => {
     boton.onclick = () => contexto.irA('paneles', { panelId: Number(boton.dataset.panel) });
   });
@@ -97,15 +103,45 @@ async function renderDetalle(main, panelId) {
       <div class="card-body tight"><div id="miembros">${cargando('20vh')}</div></div>
     </div>`;
 
+  const archivado = panel.estado === 'archivado';
   $('#ph-acciones').innerHTML = `
     <button class="btn btn-outline" id="volver">‹ Todos los paneles</button>
-    <button class="btn btn-dark" id="encuestas">Ver encuestas</button>`;
+    <button class="btn btn-dark" id="encuestas">Ver encuestas</button>
+    ${puedeGestionar() ? `<button class="btn btn-outline" id="archivar">${archivado
+      ? 'Reactivar' : 'Archivar…'}</button>` : ''}`;
   $('#volver').onclick = () => contexto.irA('paneles');
+  if (archivado) {
+    main.insertAdjacentHTML('afterbegin', `<div class="alert alert-info" style="margin-bottom:1rem">
+      Este panel está <strong>archivado</strong>: no se le crean encuestas ni convocatorias, y
+      no se ofrece por defecto. Sus miembros, encuestas y composición se conservan.</div>`);
+  }
+  $('#archivar')?.addEventListener('click', () => cambiarArchivo(panel));
   $('#encuestas').onclick = () => contexto.irA('encuestas', { panelId });
   $('#agregar').onclick = () => abrirAgregar(panelId);
   $('#f-estado').onchange = (e) => cargarMiembros(panelId, e.target.value);
 
   await cargarMiembros(panelId, 'activo');
+}
+
+/* R-EU.8 — archivar no toca a nadie: las membresías, las encuestas y la
+   composición quedan. Con encuestas en campo, el servidor no deja. */
+async function cambiarArchivo(panel) {
+  const reactivar = panel.estado === 'archivado';
+  if (!reactivar && !(await confirmar({
+    titulo: `Archivar «${panel.nombre}»`,
+    cuerpo: `<p>No va a aparecer al crear encuestas, y no se le van a poder crear
+      encuestas ni convocatorias. <strong>No se borra nada</strong>: sus miembros, sus
+      encuestas y su composición se conservan y se pueden consultar, y se puede
+      reactivar cuando haga falta.</p>`,
+    textoOk: 'Archivar', claseOk: 'btn-dark',
+  }))) return;
+  try {
+    await api.paneles.cambiarEstado(panel.id, reactivar ? 'activo' : 'archivado');
+    toast(reactivar ? 'Panel reactivado.' : 'Panel archivado.', 'ok');
+    contexto.irA('paneles', { panelId: panel.id });
+  } catch (error) {
+    toast(error.message, 'err');
+  }
 }
 
 async function cargarMiembros(panelId, filtroEstado) {

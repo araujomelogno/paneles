@@ -5,8 +5,10 @@ entre cargas (`cliente`, boveda/0031), con el nombre normalizado —igual que
 las temáticas—, así «Antel», «ANTEL» y «antel» son el mismo, y antes de crear
 uno se busca el que difiera solo en tildes.
 
-Los clientes de una persona **se derivan** de sus cargas (`v_persona_cliente`)
-y no se copian. Con las temáticas es al revés, y no por descuido: una
+Desde D81 (`boveda/0032`) el cliente es **del estudio** (`encuesta_cliente`):
+todas las cargas de una encuesta comparten sus clientes. Los de una persona
+**se derivan** de las encuestas que respondió (`v_persona_cliente`) y no se
+copian. Con las temáticas es al revés, y no por descuido: una
 temática se asigna solo a quien **respondió** sobre ese tema (D75), porque
 estar en una carga no garantiza haber contestado esas preguntas. El cliente
 sí se hereda: quien estuvo en una carga hecha para Antel participó en un
@@ -96,12 +98,13 @@ def asegurar(conn, crudo, vocabulario=None):
 
 def listar(conn, busqueda=None, limite=20):
     """El vocabulario, para autocompletar: los que coinciden con la búsqueda
-    (sin tildes ni mayúsculas), con cuántas cargas tiene cada uno."""
+    (sin tildes ni mayúsculas), con cuántos estudios tiene cada uno. La clave
+    sigue siendo `cargas` porque es lo que la pantalla muestra desde R-CLI."""
     filas = db.todas(
         conn,
-        """select c.id, c.nombre, count(cc.carga_id) as cargas
-             from cliente c left join carga_cliente cc on cc.cliente_id = c.id
-            group by c.id order by count(cc.carga_id) desc, c.nombre""")
+        """select c.id, c.nombre, count(ec.encuesta_id) as cargas
+             from cliente c left join encuesta_cliente ec on ec.cliente_id = c.id
+            group by c.id order by count(ec.encuesta_id) desc, c.nombre""")
     clave = tematicas.clave_de_busqueda(busqueda) if busqueda else ""
     elegidos = [f for f in filas
                 if not clave or clave in tematicas.clave_de_busqueda(f["nombre"])]
@@ -109,60 +112,84 @@ def listar(conn, busqueda=None, limite=20):
             for f in elegidos[:max(1, int(limite or 20))]]
 
 
-def de_cargas(conn, ids_carga):
-    """`{carga_id: [{id, nombre}]}` de esas cargas, de una vez."""
-    ids = [int(i) for i in ids_carga or []]
+def de_encuestas(conn, ids_encuesta):
+    """`{encuesta_id: [{id, nombre}]}` de esos estudios, de una vez."""
+    ids = [int(i) for i in ids_encuesta or [] if i is not None]
     if not ids:
         return {}
     salida = {i: [] for i in ids}
     for f in db.todas(
             conn,
-            """select cc.carga_id, c.id, c.nombre
-                 from carga_cliente cc join cliente c on c.id = cc.cliente_id
-                where cc.carga_id = any(%s) order by c.nombre""",
+            """select ec.encuesta_id, c.id, c.nombre
+                 from encuesta_cliente ec join cliente c on c.id = ec.cliente_id
+                where ec.encuesta_id = any(%s) order by c.nombre""",
             (ids,)):
-        salida[f["carga_id"]].append({"id": f["id"], "nombre": f["nombre"]})
+        salida[f["encuesta_id"]].append({"id": f["id"], "nombre": f["nombre"]})
     return salida
+
+
+def de_encuesta(conn, encuesta_id):
+    return de_encuestas(conn, [encuesta_id]).get(int(encuesta_id), [])
+
+
+def de_cargas(conn, ids_carga):
+    """`{carga_id: [{id, nombre}]}`: los del estudio de cada carga."""
+    ids = [int(i) for i in ids_carga or []]
+    if not ids:
+        return {}
+    encuesta_de = {f["id"]: f["encuesta_id"] for f in db.todas(
+        conn, "select id, encuesta_id from carga where id = any(%s)", (ids,))}
+    por_encuesta = de_encuestas(conn, list(encuesta_de.values()))
+    return {i: por_encuesta.get(encuesta_de.get(i), []) for i in ids}
 
 
 def de_carga(conn, carga_id):
     return de_cargas(conn, [carga_id]).get(int(carga_id), [])
 
 
-def guardar_de_carga(conn, carga_id, nombres):
-    """Deja a la carga con **exactamente** esos clientes (por nombre; los
+def guardar_de_encuesta(conn, encuesta_id, nombres):
+    """Deja al estudio con **exactamente** esos clientes (por nombre; los
     nuevos se crean). Los que se quitan dejan de verse en sus panelistas en
     el acto: se derivan, no se copiaron."""
     if nombres is None:
-        return de_carga(conn, carga_id)
+        return de_encuesta(conn, encuesta_id)
     if not isinstance(nombres, list):
         raise DatosInvalidos("Los clientes van como una lista de nombres.",
                              {"campo": "clientes"})
-    if not db.una(conn, "select 1 from carga where id = %s", (carga_id,)):
-        raise NoEncontrado(f"No existe la carga {carga_id}.")
+    if not db.una(conn, "select 1 from encuesta where id = %s", (encuesta_id,)):
+        raise NoEncontrado(f"No existe la encuesta {encuesta_id}.")
     vocabulario = _vocabulario(conn)
     ids = list(dict.fromkeys(asegurar(conn, n, vocabulario) for n in nombres
                              if normalizar(n)))
     db.ejecutar(conn,
-                "delete from carga_cliente where carga_id = %s and cliente_id <> all(%s)",
-                (carga_id, ids))
+                "delete from encuesta_cliente where encuesta_id = %s "
+                "and cliente_id <> all(%s)",
+                (encuesta_id, ids))
     for cliente_id in ids:
         db.ejecutar(conn,
-                    """insert into carga_cliente (carga_id, cliente_id) values (%s, %s)
-                       on conflict do nothing""",
-                    (carga_id, cliente_id))
-    return de_carga(conn, carga_id)
+                    """insert into encuesta_cliente (encuesta_id, cliente_id)
+                       values (%s, %s) on conflict do nothing""",
+                    (encuesta_id, cliente_id))
+    return de_encuesta(conn, encuesta_id)
+
+
+def guardar_de_carga(conn, carga_id, nombres):
+    """Los clientes del estudio de la carga (D81): ver `guardar_de_encuesta`."""
+    fila = db.una(conn, "select encuesta_id from carga where id = %s", (carga_id,))
+    if not fila:
+        raise NoEncontrado(f"No existe la carga {carga_id}.")
+    return guardar_de_encuesta(conn, fila["encuesta_id"], nombres)
 
 
 def de_persona(conn, id_persona):
-    """Los clientes de una persona, con las cargas de las que sale cada uno."""
+    """Los clientes de una persona, con los estudios de los que sale cada uno."""
     filas = db.todas(
         conn,
-        """select v.cliente_id, v.cliente, array_agg(distinct v.carga_id) as cargas
+        """select v.cliente_id, v.cliente, array_agg(distinct v.encuesta_id) as encuestas
              from v_persona_cliente v where v.id_persona = %s
             group by v.cliente_id, v.cliente order by v.cliente""",
         (str(id_persona),))
-    return [{"id": f["cliente_id"], "nombre": f["cliente"], "cargas": f["cargas"]}
+    return [{"id": f["cliente_id"], "nombre": f["cliente"], "encuestas": f["encuestas"]}
             for f in filas]
 
 

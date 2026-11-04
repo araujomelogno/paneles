@@ -394,8 +394,9 @@ proviene (`persona_carga`, `boveda/0024`), y la composición se calcula por
 - **El vínculo es de muchos a muchos y no se pisa.** `creada` o
   `reutilizada`, fijado la primera vez (`cargas.registrar_vinculos`, `on
   conflict do nothing`). No le agreguen un `carga_id` a `persona`.
-- **Los datos del estudio viven en la carga** (`fecha_estudio`,
-  `publico_objetivo`) y se leen por join. No los copien en la persona: la
+- **Los datos del estudio viven en la encuesta** (`fecha_campo`,
+  `publico_objetivo`, clientes, temáticas; desde D81, antes en la carga) y
+  se leen por join. No los copien en la persona: la
   corrección se tiene que ver en todas las fichas sin tocar ninguna.
 - **No se reconstruye el pasado.** Sin vínculo, la ficha lo explica
   (`cargas.SIN_VINCULO_REGISTRADO`); no se infiere de `alias_origen`.
@@ -429,8 +430,10 @@ Desde R-TEM / R-CAR (D74, D75, D76, `boveda/0027` y `0028`) cada carga tiene sus
   llena de variantes y «¿qué cargas cubren telefonía?» deja de tener
   respuesta.
 - **Claude propone, el analista confirma.** `tematicas.proponer` no escribe
-  nada; lo único que escribe `carga_tematica` es `tematicas.guardar`
-  (`PUT /cargas/<id>/tematicas`), antes y después de confirmar. El origen
+  nada; lo único que escribe `encuesta_tematica` es
+  `tematicas.guardar_de_encuesta` (`PUT /encuestas/<id>/tematicas`, y
+  `PUT /cargas/<id>/tematicas`, que va a la encuesta de la carga), antes y
+  después de confirmar. El origen
   (`propuesta_ia` | `manual`) se fija la primera vez. Si Claude falla o
   tarda, la revisión llega con aviso y la lista vacía: **la carga no se
   frena por las temáticas**, y confirmar no llama a Claude.
@@ -439,12 +442,12 @@ Desde R-TEM / R-CAR (D74, D75, D76, `boveda/0027` y `0028`) cada carga tiene sus
   solo código y texto, nunca respuestas, ni demográficas, ni identidad, ni la
   columna que identifica. No armen un segundo criterio de qué se manda.
   `es_nueva` lo decide la base, no el modelo.
-- **Hay dos niveles y no se mezclan** (R-TEM.6, D75): las temáticas de **la
-  carga** (qué cubrió el estudio) y las de **cada panelista**
+- **Hay dos niveles y no se mezclan** (R-TEM.6, D75): las temáticas **del
+  estudio** (la encuesta, desde D81: qué cubrió) y las de **cada panelista**
   (`persona_tematica`: sobre qué respondió). Una persona tiene la temática si
-  respondió **al menos una** de las preguntas que la sustentan en esa carga
-  (`tematica_pregunta`); haber estado en la carga no alcanza. No hereden la
-  temática de la carga.
+  respondió **al menos una** de las preguntas que la sustentan en ese
+  estudio (`tematica_pregunta`); haber estado en él no alcanza. No hereden
+  la temática del estudio.
 - **«Respondió» tiene una sola definición**: `tematicas.respondida` (lo
   embebido que no es no respuesta, con `calidad_dato.es_no_respuesta`). La
   usan los dos caminos: la ingesta (`registrar_de_lote`, con la fila en la
@@ -463,9 +466,11 @@ Desde R-TEM / R-CAR (D74, D75, D76, `boveda/0027` y `0028`) cada carga tiene sus
   misma ruta y permiso que la sección Panelistas. No agreguen una ruta bajo
   `/cargas/` que liste personas; hay una prueba que lo vigila.
 - **Borrar una carga deshace lo que trajo**, no todo lo que aparece en ella
-  (D78, `cargas_borrado.py`, `boveda/0030`): todas las respuestas de su
-  estudio, y las personas que **creó y no tienen otra vida** se dan de baja
-  **por `bajas.retirar()`** (así COLOQUIO recibe su `borrado_pendiente`); las
+  (D78, `cargas_borrado.py`, `boveda/0030`; D81): las respuestas que ella
+  escribió (`respuesta.carga_id`; si es la única carga de su encuesta, todo
+  el estudio), y —**solo si se elige** `dar_de_baja_creadas`— las personas
+  que **creó y no tienen otra vida** se dan de baja **por
+  `bajas.retirar()`** (así COLOQUIO recibe su `borrado_pendiente`); las
   demás se conservan sin el vínculo. No lo reemplacen por un `delete from
   carga`. Corre por la vía diferida (`plan.operacion = 'borrado_carga'`):
   semántico primero en cada lote, la carga al final, y volver a pedirlo lo
@@ -511,12 +516,55 @@ Desde la spec de clientes y lista negra (D80, `boveda/0031`):
 - **Una fila por entrada; sacar no borra.** Activa = sin `removido_en`. El
   motivo es obligatorio (lo pide la base). El panelista no ve nada: hay una
   prueba que falla si `portal.py` nombra la tabla.
-- **Los clientes de un panelista se derivan** de sus cargas
-  (`v_persona_cliente`); no se copian ni se heredan como las temáticas.
+- **Los clientes de un panelista se derivan** de las encuestas que
+  respondió (`v_persona_cliente`, desde D81 por `participacion`); no se
+  copian ni se heredan como las temáticas.
   Son confidenciales: ni portal, ni COLOQUIO, ni exportaciones.
 - **Los eventos de reidentificación se arman al leer**
   (`auditoria.eventos_de_reidentificacion`), agrupando las filas de una
   misma llamada. No le agreguen un id de evento a `reidentificacion`.
+
+## La encuesta es el estudio; la carga, un archivo de ese estudio
+
+Desde D81 (`specs/SPEC_encuestas_y_cargas_unificadas.md`, `boveda/0032`,
+`semantica/0012`) hay **un solo camino** para meter respuestas. Lo que no
+hay que deshacer:
+
+- **Toda ingesta es una carga de una encuesta, y la ingesta es
+  `cargas.ingestar`.** `encuestas.ingestar` es un envoltorio que busca (o
+  crea) la carga y delega. No vuelvan a escribir una ingesta «de encuesta»:
+  el bug que esto arregla es que había dos, con datos del estudio,
+  temáticas y clientes en lugares distintos.
+- **`carga.ref_estudio` lo pone un trigger desde su encuesta.** Todas las
+  cargas de un estudio escriben el mismo cuestionario: la última gana por
+  persona y pregunta, y `respuesta.carga_id` dice cuál la escribió (sin FK:
+  es otro store). Por eso una carga se puede borrar sin tocar a las otras.
+- **Una ingesta en curso bloquea a toda la encuesta**
+  (`encuestas_borrado.exigir_sin_ingesta`), no solo a su carga: dos cargas
+  del mismo estudio escribirían el mismo cuestionario a la vez.
+- **`participacion.convocado` es la audiencia.** Quien llegó en un archivo
+  sin estar convocado tiene participación con `convocado = false`. Lo que
+  pregunta «¿lo convocamos?» —la composición, `contacto_para_convocatoria`
+  de COLOQUIO, la tasa de respuesta— mira `convocado`, nunca `origen`. Sin
+  eso, responder un archivo habilitaba a leer el contacto de esa persona.
+- **Una encuesta independiente no tiene panel**: ni muestreo ni optimizador
+  (`encuestas.exigir_de_panel`). Desde una consulta es la **foto** del
+  resultado y pasa por `encuestas.convocar`, que ya deja afuera a la lista
+  negra y a quien no tiene contacto. No escriban otro camino de alta de
+  audiencia.
+- **Las advertencias de la revisión no bloquean** (D63): archivo repetido,
+  no convocados y consentimiento por finalidad se informan, y lo que se hace
+  con ellos es una decisión explícita en el cuerpo
+  (`confirmar_archivo_repetido`, `excluir_no_convocados`). Dentro del modal
+  de ingesta son casillas, no `confirmar()`, que cerraría el modal.
+- **Borrar una encuesta es borrar el estudio, no a la gente**
+  (`encuestas_borrado.py`): semántico primero, después la bóveda, cada paso
+  commiteado y reanudable, con su fila en `encuesta_borrado`. Las personas
+  se conservan; quien quiera dar de baja a alguien usa la baja.
+- **La migración `0032` cambia datos.** Tiene corrida de prueba y
+  verificación (`scripts/migrar_encuestas_y_cargas.py`) y se aplica y
+  verifica **antes** de desplegar el código. `carga.fecha_estudio` y
+  `carga.publico_objetivo` quedaron sin uso: ningún código nuevo los lee.
 
 ## Reglas de negocio que el código debe respetar
 

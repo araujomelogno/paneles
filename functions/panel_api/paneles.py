@@ -6,7 +6,11 @@ que agregar a alguien dos veces sea idempotente en vez de un error.
 """
 
 from . import db
-from .errores import NoEncontrado
+from .errores import Conflicto, DatosInvalidos, NoEncontrado
+
+# R-EU.8 — los paneles no se borran: se archivan, y se pueden reactivar.
+ACTIVO = "activo"
+ARCHIVADO = "archivado"
 
 
 def crear(conn, nombre, descripcion=None):
@@ -29,7 +33,9 @@ def crear(conn, nombre, descripcion=None):
     }
 
 
-def listar(conn):
+def listar(conn, incluir_archivados=False):
+    """Los paneles. Los archivados no aparecen salvo que se pidan (R-EU.8):
+    no se ofrecen al crear encuestas, pero su historia se puede consultar."""
     filas = db.todas(
         conn,
         """
@@ -38,8 +44,10 @@ def listar(conn):
                  where m.panel_id = p.id and m.estado = 'activo')::int as miembros,
                (select count(*) from encuesta e where e.panel_id = p.id)::int as encuestas
           from panel p
+         where %s or p.estado <> 'archivado'
          order by p.estado, p.nombre
         """,
+        (bool(incluir_archivados),),
     )
     return [
         {
@@ -72,10 +80,31 @@ def obtener(conn, panel_id):
     }
 
 
-def archivar(conn, panel_id, estado="archivado"):
-    n = db.ejecutar(conn, "update panel set estado = %s where id = %s", (estado, panel_id))
-    if not n:
-        raise NoEncontrado(f"No existe el panel {panel_id}.")
+def archivar(conn, panel_id, estado=ARCHIVADO):
+    """R-EU.8 — archiva (o reactiva, con `estado = 'activo'`) un panel.
+
+    Archivar no toca a nadie: las membresías, las encuestas y su
+    composición quedan y se pueden consultar; las personas siguen existiendo
+    y pueden estar en otros paneles. Lo que cambia es que no se le crean
+    encuestas ni convocatorias, y no se ofrece por defecto. Un panel con
+    encuestas **en campo** no se archiva: primero se cierran.
+    """
+    if estado not in (ACTIVO, ARCHIVADO):
+        raise DatosInvalidos(f"Estado de panel desconocido: {estado!r}.",
+                             {"estados": [ACTIVO, ARCHIVADO]})
+    obtener(conn, panel_id)
+    if estado == ARCHIVADO:
+        en_campo = db.todas(
+            conn, "select id, nombre from encuesta where panel_id = %s "
+                  "and estado = 'en_campo' order by id", (panel_id,))
+        if en_campo:
+            raise Conflicto(
+                f"El panel tiene {len(en_campo)} encuesta(s) en campo: cerralas "
+                f"antes de archivarlo.",
+                {"motivo": "encuestas_en_campo",
+                 "encuestas": [{"id": e["id"], "nombre": e["nombre"]}
+                               for e in en_campo]})
+    db.ejecutar(conn, "update panel set estado = %s where id = %s", (estado, panel_id))
     return obtener(conn, panel_id)
 
 

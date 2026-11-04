@@ -4780,3 +4780,180 @@ Pruebas: `functions/tests/test_clientes.py`,
 `functions/tests/test_lista_negra.py`,
 `functions/tests/test_cargas_ficha_y_auditoria.py`,
 `functions/tests/test_pantallas_clientes_lista_negra.py`.
+
+## D81 · La encuesta es el estudio y la carga es un archivo de ese estudio
+
+**El pedido.** `specs/SPEC_encuestas_y_cargas_unificadas.md`. Había dos
+caminos para meter respuestas: la ingesta desde una encuesta de panel y la
+carga sin panel. Cada uno guardaba sus propios datos del estudio, temáticas
+y clientes. Una segunda entrega del mismo estudio era otra carga, con otro
+cuestionario y personas duplicadas en los resultados. La spec unifica:
+**toda ingesta es una carga de una encuesta**. P0 y P1 van juntos; P2 queda
+afuera. Esquema en `boveda/0032` y `semantica/0012`.
+
+### El modelo
+
+- **Encuesta = el estudio.** Guarda el nombre, los clientes, la fecha de
+  campo, el público objetivo, las temáticas, el panel o una audiencia
+  propia, y el estado. Es `tipo = 'panel'` (con `panel_id`) o
+  `'independiente'` (sin panel). La base lo hace valer:
+  `(tipo = 'panel') = (panel_id is not null)`.
+- **Carga = un archivo de la encuesta.** Guarda quién y cuándo, el modo, el
+  tipo de datos, las filas, el resultado, la huella del archivo y el origen
+  creado o reutilizado de cada persona. `carga.encuesta_id` es obligatorio.
+  `carga.ref_estudio` lo copia un trigger desde su encuesta: todas las
+  cargas de un estudio escriben en **el mismo cuestionario**.
+- **Participación = una por persona y encuesta**, como siempre. Lleva además
+  `convocado`: si la persona estaba en la audiencia o llegó en un archivo.
+  `origen` sigue diciendo cómo se creó la fila; `convocado` es lo que se
+  pregunta.
+- **Temáticas y clientes pasan a la encuesta** (`encuesta_tematica`,
+  `encuesta_cliente`). `tematica_pregunta` y `persona_tematica` cambian su
+  clave de carga a encuesta. Se crearon tablas nuevas, se copiaron los datos
+  y se borraron las viejas, en lugar de renombrar columnas. Dos cargas del
+  mismo estudio podían tener la misma temática y la clave nueva no admitía
+  la copia. Las funciones de siempre (`tematicas.de_carga`,
+  `clientes.de_carga`, `guardar(carga_id)`) siguen existiendo: buscan la
+  encuesta de la carga y llaman a la versión por encuesta.
+- **`v_persona_cliente` se deriva de las participaciones con respuesta.** Ya
+  no sale de `persona_carga`. Una persona es «del cliente» si respondió una
+  encuesta de ese cliente. Haber sido convocada no alcanza.
+
+### Una sola ingesta (R-EU.1 a R-EU.4)
+
+- **`cargas.ingestar` es la única.** Resuelve las identidades de la misma
+  forma para cualquier encuesta (participaciones y alias), registra el
+  vínculo persona ↔ carga, la temática por panelista y la participación
+  (`respondio = true`). Si la encuesta es de panel, además incorpora al
+  panel. `encuestas.ingestar` quedó como envoltorio: busca la última carga
+  de la encuesta, o la crea, y delega. Así siguen andando los trabajos
+  diferidos viejos con destino `encuesta` y el reproceso.
+- **Toda persona del archivo queda con su participación**, también quien no
+  dio `uso_semantico` y cuyas respuestas no se ingestan. Respondió el
+  estudio, y eso es un hecho de la bóveda, no contenido. La migración hace
+  lo mismo con las personas de cada carga. La membresía al panel, en
+  cambio, sigue acompañando solo a lo que se ingestó (addendum de R3.9).
+- **La última carga gana.** Las respuestas se escriben con el upsert de
+  siempre, por persona y pregunta. `respuesta.carga_id` (sin FK, es otro
+  store) guarda la última carga que la escribió. Sirve para borrar una carga
+  sin tocar lo que escribieron las otras.
+- **Una ingesta a la vez por encuesta.** El índice único sigue siendo por
+  carga. La ruta rechaza antes si cualquier carga de la misma encuesta tiene
+  una en curso (`encuestas_borrado.exigir_sin_ingesta`), porque dos cargas
+  escriben el mismo cuestionario.
+- **El mismo archivo dos veces se avisa y no se bloquea.** La huella es el
+  sha256 del archivo, o de las filas en forma canónica si se leyó en el
+  navegador. Si coincide con otra carga de la encuesta, la revisión lo dice.
+  Confirmar exige `confirmar_archivo_repetido`. En la pantalla es una casilla
+  dentro del modal: un `confirmar()` cerraría el modal de la ingesta.
+- **No convocados.** En una encuesta con audiencia, quien responde sin estar
+  convocado se incorpora con `convocado = false`. La revisión los cuenta,
+  separa a los que existen de los que no se pudieron identificar, y ofrece
+  excluirlos (`excluir_no_convocados`). Sin audiencia no hay nada que
+  comparar y no se informa.
+- **R-EU.2. La segunda carga no vuelve a pedir los datos del estudio.** La
+  propuesta de temáticas se pide solo para las preguntas que la encuesta
+  todavía no tenía. Si no hay ninguna nueva, no se llama a Claude
+  (`sin_preguntas_nuevas`).
+
+### Consentimiento en la vista previa (R-EU.6)
+
+- La revisión dice, por finalidad, cuántos quedan sin ella y qué implica.
+  Para los que ya existen, lo vigente hoy. Para los que se crean, lo que
+  dice su fila según la evidencia declarada.
+- **Se registra como vino.** Quien no consiente no va a la lista negra: la
+  lista negra es por fraude, calidad o comportamiento (D80).
+- **Pregunta abierta resuelta: las respuestas de quien no dio
+  `uso_semantico` no se guardan** en ningún lado. Es lo que ya hacía el
+  gate de la ingesta. Conservarlas para una exportación fuera del store
+  semántico abriría un tercer depósito de contenido con otra regla de
+  borrado. Si protección de datos decide otra cosa, es otra decisión.
+
+### Encuestas independientes (R-EU.5) y composición (R-EU.11)
+
+- **Desde una consulta** («Crear encuesta» en la barra de acciones de un
+  resultado): una encuesta independiente con la **foto** del resultado como
+  audiencia. Pasa por `encuestas.convocar`, que deja afuera a la lista negra
+  y a quien no tiene `contacto_participacion` y los cuenta aparte. Si la
+  consulta era semántica, se registra la reidentificación con motivo
+  `convocatoria`, igual que «ver quiénes son».
+- **Una independiente no tiene muestreo ni optimizador**
+  (`encuestas.exigir_de_panel`). Eligen entre los miembros de un panel y
+  aquí no hay panel.
+- **La fatiga cuenta también las independientes** (`v_fatiga_panelista`).
+  Haber sido convocado a un estudio cansa igual, sea de panel o no.
+- **Composición de una encuesta.** La de los respondentes al lado de la de
+  los convocados, y la tasa de respuesta de cada segmento: convocados que
+  respondieron sobre convocados. Los no convocados que respondieron cuentan
+  como respondentes y no entran en la tasa. Sin audiencia, solo
+  respondentes. No tiene universo de referencia: se compara contra su propia
+  convocatoria.
+
+### COLOQUIO
+
+- **`contacto_para_convocatoria` exige `pa.convocado`.** Una participación
+  creada por una carga no es una convocatoria activa. Sin este cambio,
+  responder un archivo habría habilitado leer el contacto de esa persona. La
+  firma no cambia y los `grant` se conservan.
+- La batería sigue en 18 de 18. Hay que avisar a COLOQUIO: la fatiga cuenta
+  más estudios que antes.
+
+### Archivar, borrar una encuesta, borrar una carga (R-EU.8 a R-EU.10)
+
+- **Un panel archivado** no recibe encuestas ni convocatorias, se oculta de
+  la lista salvo que se pida, y se reactiva. No se archiva si tiene
+  encuestas en campo (`409`, motivo `encuestas_en_campo`).
+- **Borrar una encuesta** (`encuestas_borrado.py`) borra el estudio y no a
+  la gente: respuestas del store semántico, participaciones, cargas (con el
+  vínculo persona ↔ carga) y temáticas por panelista. Las personas y sus
+  atributos se conservan. Primero se borra el lado semántico, después la
+  bóveda, y cada paso se commitea. Volver a pedirlo termina un borrado que
+  quedó a medias. Se registra en `encuesta_borrado`, que sobrevive a la
+  encuesta. Lo pueden hacer admin y dpo (permiso `borrar_encuesta`): es la
+  respuesta a «estos datos no tienen que estar más». No corre por la vía
+  diferida porque no hay personas que procesar una por una.
+- **Borrar una carga dentro de una encuesta** borra solo las respuestas con
+  `carga_id` de esa carga. Las personas que estaban solo en esa carga
+  pierden su participación: si estaban convocadas vuelve a
+  `respondio = false`, y si no, se borra. **Dar de baja a las personas que
+  la carga creó pasa a ser una opción** (`dar_de_baja_creadas`). Antes era
+  automático (D78). Una carga ya no es el estudio entero: lo que trajo puede
+  ser una parte de una persona que el estudio sigue necesitando. Si es la
+  única carga de su encuesta, se borra todo el estudio como antes. Una
+  encuesta independiente que queda sin cargas se borra con ella.
+
+### La migración
+
+- **Es el punto de no retorno**, y por eso:
+  - es una sola transacción;
+  - no corre si hay una ingesta en curso;
+  - tiene una corrida de prueba (`scripts/migrar_encuestas_y_cargas.py
+    prueba`) que aplica la `0032` dentro de una transacción, informa lo que
+    crea, compara los filtros de temáticas y clientes y hace rollback;
+  - tiene una verificación posterior contra esa foto (`verificar`).
+- **Qué hace con los datos existentes:**
+  - a cada carga existente le crea una encuesta independiente y cerrada, con
+    el mismo `ref_estudio`: el cuestionario semántico queda vinculado sin
+    tocarlo y no se re-embebe nada;
+  - a cada encuesta con respuestas le crea una carga que las representa;
+  - a cada persona de una carga le crea su participación.
+- **`respuesta.carga_id` de lo anterior** lo completa `migrar_encuestas_y_cargas.py
+  semantico`, solo para las encuestas que tienen una sola carga. En las
+  demás no hay forma honesta de saber qué carga escribió cada respuesta, y
+  queda `null`. Borrar una carga de esas encuestas no borra respuestas
+  viejas: hay que borrar la encuesta.
+- **`carga.fecha_estudio` y `carga.publico_objetivo` quedan sin uso**
+  (comentadas en la base). Se quitan en una migración posterior, cuando el
+  código que no los lee lleve un tiempo en producción.
+
+**Dónde vive.** `db/boveda/0032_encuestas_y_cargas_unificadas.sql`,
+`db/semantica/0012_respuesta_carga.sql`,
+`scripts/migrar_encuestas_y_cargas.py`, `functions/panel_api/encuestas.py`,
+`cargas.py` (`ingestar`, `huella`, `no_convocados`,
+`consentimiento_por_finalidad`), `encuestas_borrado.py`, `cargas_borrado.py`,
+`tematicas.py`, `clientes.py`, `composicion.py`
+(`_composicion_de_encuesta`), `paneles.py` (`archivar`),
+`web/public/js/paginas/encuestas.js`. Pruebas:
+`functions/tests/test_encuestas_y_cargas_unificadas.py`,
+`functions/tests/test_migracion_0032.py`,
+`functions/tests/test_pantallas_encuestas_unificadas.py`.

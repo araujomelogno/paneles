@@ -11,6 +11,10 @@
    R-ORG.2 — el conjunto ya no es siempre un panel: se elige el ámbito
    (todos los panelistas, un panel o una carga) y se muestra junto al
    resultado. «Todos» admite su propio universo de referencia; una carga no.
+
+   R-EU.11 — una encuesta se mira contra su propia convocatoria: la
+   composición de quienes respondieron al lado de la de los convocados, y la
+   tasa de respuesta de cada segmento. Sin audiencia, solo respondentes.
 */
 
 import * as api from '../api.js';
@@ -29,9 +33,11 @@ let cruceActual = null;
    vuelve en la respuesta, que es lo que se muestra junto al resultado. */
 let ambitoActual = null;
 let cargaActual = null;
+let encuestaActual = null;
 const AMBITOS = {
   todos: 'Todos los panelistas',
   panel: 'Un panel',
+  encuesta: 'Una encuesta',
   carga: 'Una carga',
 };
 
@@ -48,10 +54,12 @@ const rotuloCarga = (c) => [c.nombre, c.fecha_estudio ? fechaCorta(c.fecha_estud
 
 export async function render(main, ctx) {
   contexto = ctx;
-  const [{ items: paneles }, delCatalogo, { items: cargas }] = await Promise.all([
-    api.paneles.listar(), catalogo.cargar(),
-    api.cargas.listar().catch(() => ({ items: [] })),
-  ]);
+  const [{ items: paneles }, delCatalogo, { items: cargas }, { items: encuestas }] =
+    await Promise.all([
+      api.paneles.listar(), catalogo.cargar(),
+      api.cargas.listar().catch(() => ({ items: [] })),
+      api.encuestas.listar().catch(() => ({ items: [] })),
+    ]);
   catalogoDeAtributos = delCatalogo;
   // R-CAR.2 — desde el detalle de una carga se llega con su id: se abre en
   // el ámbito «una carga», con esa carga elegida.
@@ -59,12 +67,20 @@ export async function render(main, ctx) {
     ambitoActual = 'carga';
     cargaActual = Number(ctx.contexto.cargaId);
   }
+  // R-EU.11 — desde el detalle de una encuesta: convocados vs respondentes.
+  if (ctx.contexto?.encuestaId) {
+    ambitoActual = 'encuesta';
+    encuestaActual = Number(ctx.contexto.encuestaId);
+  }
   const activos = paneles.filter((p) => p.estado === 'activo');
   panelActual = activos.some((p) => p.id === panelActual) ? panelActual : activos[0]?.id ?? null;
   cargaActual = cargas.some((c) => c.id === cargaActual) ? cargaActual : cargas[0]?.id ?? null;
+  encuestaActual = encuestas.some((e) => e.id === encuestaActual)
+    ? encuestaActual : encuestas[0]?.id ?? null;
   // Sin paneles activos ya no hay pantalla vacía: «todos» siempre existe.
   if (!ambitoActual || (ambitoActual === 'panel' && !panelActual)
-      || (ambitoActual === 'carga' && !cargaActual)) {
+      || (ambitoActual === 'carga' && !cargaActual)
+      || (ambitoActual === 'encuesta' && !encuestaActual)) {
     ambitoActual = panelActual ? 'panel' : 'todos';
   }
 
@@ -76,11 +92,15 @@ export async function render(main, ctx) {
           <select class="fselect" id="ambito">${Object.entries(AMBITOS).map(([clave, texto]) =>
             `<option value="${clave}" ${clave === ambitoActual ? 'selected' : ''}
               ${(clave === 'panel' && !activos.length) || (clave === 'carga' && !cargas.length)
-                ? 'disabled' : ''}>${esc(texto)}</option>`).join('')}
+                || (clave === 'encuesta' && !encuestas.length) ? 'disabled' : ''}>${esc(texto)}</option>`).join('')}
           </select></div>
         <div class="form-group" style="margin:0" id="grupo-panel"><label>Panel</label>
           <select class="fselect" id="panel">${activos.map((p) =>
             `<option value="${p.id}" ${p.id === panelActual ? 'selected' : ''}>${esc(p.nombre)}</option>`
+          ).join('')}</select></div>
+        <div class="form-group" style="margin:0" id="grupo-encuesta"><label>Encuesta</label>
+          <select class="fselect" id="encuesta">${encuestas.map((e) =>
+            `<option value="${e.id}" ${e.id === encuestaActual ? 'selected' : ''}>${esc(e.nombre)}</option>`
           ).join('')}</select></div>
         <div class="form-group" style="margin:0" id="grupo-carga"><label>Carga</label>
           <select class="fselect" id="carga">${cargas.map((c) =>
@@ -100,11 +120,13 @@ export async function render(main, ctx) {
   const mostrarSelectores = () => {
     $('#grupo-panel').style.display = ambitoActual === 'panel' ? '' : 'none';
     $('#grupo-carga').style.display = ambitoActual === 'carga' ? '' : 'none';
+    $('#grupo-encuesta').style.display = ambitoActual === 'encuesta' ? '' : 'none';
   };
   mostrarSelectores();
   $('#ambito').onchange = (e) => { ambitoActual = e.target.value; mostrarSelectores(); cargar(); };
   $('#panel').onchange = (e) => { panelActual = Number(e.target.value); cargar(); };
   $('#carga').onchange = (e) => { cargaActual = Number(e.target.value); cargar(); };
+  $('#encuesta').onchange = (e) => { encuestaActual = Number(e.target.value); cargar(); };
   $('#cruce').value = cruceActual ? cruceActual.join(',') : '';
   $('#cruce').onchange = (e) => {
     cruceActual = e.target.value ? e.target.value.split(',') : null;
@@ -114,7 +136,8 @@ export async function render(main, ctx) {
 }
 
 const referenciaActual = () => (ambitoActual === 'panel' ? panelActual
-  : ambitoActual === 'carga' ? cargaActual : null);
+  : ambitoActual === 'carga' ? cargaActual
+  : ambitoActual === 'encuesta' ? encuestaActual : null);
 
 async function cargar() {
   const caja = $('#cuerpo');
@@ -137,7 +160,12 @@ async function cargar() {
    carga, con los datos del estudio. */
 function pintarAmbito(ambito) {
   if (!ambito) return '';
-  const detalle = ambito.tipo === 'carga'
+  const detalle = ambito.tipo === 'encuesta'
+    ? [ambito.fecha_estudio ? `campo del ${fechaCorta(ambito.fecha_estudio)}` : null,
+       ambito.publico_objetivo,
+       ambito.encuesta_tipo === 'independiente' ? 'independiente' : 'de panel']
+      .filter(Boolean).join(' · ')
+    : ambito.tipo === 'carga'
     ? [ambito.fecha_estudio ? `estudio del ${fechaCorta(ambito.fecha_estudio)}` : null,
        ambito.publico_objetivo, ambito.tipo_datos_origen_etiqueta,
        ambito.modo_relevamiento_etiqueta].filter(Boolean).join(' · ')
@@ -154,12 +182,18 @@ function pintar(salida) {
   const puedeGestionar = ['admin', 'operaciones'].includes(contexto.actor?.rol);
   const ambito = salida.ambito || { tipo: 'panel' };
   const esPanel = ambito.tipo === 'panel';
+  const esEncuesta = ambito.tipo === 'encuesta';
   const admite = salida.objetivo_admitido !== false;
   return `
     ${pintarAmbito(salida.ambito)}
     <div class="stat-grid">
-      <div class="stat s-total"><label>${esPanel ? 'Miembros activos' : 'Personas'}</label>
+      <div class="stat s-total"><label>${esPanel ? 'Miembros activos'
+        : esEncuesta ? 'Respondentes' : 'Personas'}</label>
         <strong>${salida.miembros}</strong></div>
+      ${esEncuesta && salida.con_audiencia ? `<div class="stat"><label>Convocados</label>
+        <strong>${salida.convocados}</strong></div>
+        <div class="stat"><label>Tasa de respuesta</label>
+        <strong id="tasa-global">${pct(salida.tasa_respuesta)}</strong></div>` : ''}
       ${ambito.tipo === 'todos' ? `<div class="stat"><label>Sin ningún panel</label>
         <strong>${salida.sin_panel ?? '—'}</strong></div>` : ''}
       <div class="stat ${salida.objetivo_cargado ? 's-ok' : 's-warn'}">
@@ -169,7 +203,7 @@ function pintar(salida) {
 
     ${(salida.avisos || []).map((a) => `<div class="alert alert-info">${esc(a)}</div>`).join('')}
 
-    ${!admite ? `<div class="alert alert-warn">
+    ${esEncuesta ? '' : !admite ? `<div class="alert alert-warn">
       Una carga <strong>no tiene universo de referencia</strong>: es un hecho
       del pasado —lo que entró, entró— y no algo que se corrija reclutando. La
       composición es descriptiva y la brecha figura como no disponible, no
@@ -188,7 +222,9 @@ function pintar(salida) {
       </button>
     </div>` : ''}
 
-    ${salida.dimensiones.map((d) => pintarDimension(d, salida.miembros, puedeGestionar && admite)).join('')}
+    ${salida.dimensiones.map((d) => (esEncuesta
+    ? pintarDimensionDeEncuesta(d, salida.con_audiencia)
+    : pintarDimension(d, salida.miembros, puedeGestionar && admite))).join('')}
     ${salida.cruce ? pintarCruce(salida.cruce) : ''}
     ${salida.tematicas ? pintarTematicas(salida.tematicas) : ''}`;
 }
@@ -223,6 +259,43 @@ function pintarTematicas(tematicas) {
         puede tener varias, así que los porcentajes no suman 100.${tematicas.especiales_ocultas
           ? ' Las de categoría especial no se muestran con tu rol.' : ''}</p>
     </div></div>`;
+}
+
+/* R-EU.11 — respondentes al lado de convocados, y la tasa de respuesta de
+   cada segmento (convocados que respondieron ÷ convocados). Es el sesgo de
+   no respuesta: dice a quién sobreconvocar la próxima vez. */
+function pintarDimensionDeEncuesta(dimension, conAudiencia) {
+  return `<div class="card" data-dimension-encuesta="${esc(dimension.dimension)}">
+    <div class="card-header">
+      <span class="card-header-title">${esc(etiqueta(dimension.dimension))}</span>
+      <span class="badge badge-off">${conAudiencia ? 'convocados vs respondentes'
+        : 'solo respondentes'}</span>
+    </div>
+    <div class="card-body tight">
+      <div class="table-wrap"><table>
+        <thead><tr>
+          <th>Categoría</th>
+          ${conAudiencia ? '<th>Convocados</th><th>% convocados</th>' : ''}
+          <th>Respondentes</th><th>% respondentes</th>
+          ${conAudiencia ? '<th>Tasa de respuesta</th>' : ''}
+        </tr></thead>
+        <tbody>${dimension.categorias.map((c) => `<tr>
+          <td class="td-strong">${esc(c.categoria)}</td>
+          ${conAudiencia ? `<td class="mono">${c.convocados ?? 0}</td>
+            <td class="mono">${pct(c.proporcion_convocados)}</td>` : ''}
+          <td class="mono">${c.observados}</td>
+          <td><div class="barra"><span
+                style="width:${Math.round((c.proporcion_observada || 0) * 100)}%"></span></div>
+              <div class="small mono">${pct(c.proporcion_observada)}</div></td>
+          ${conAudiencia ? `<td class="mono" data-tasa>${c.tasa_respuesta == null ? '—'
+            : pct(c.tasa_respuesta)}</td>` : ''}
+        </tr>`).join('')}</tbody>
+      </table></div>
+      ${dimension.sin_dato ? `<div class="alert alert-info" style="margin:1rem 1.5rem 0">
+        <strong>${dimension.sin_dato}</strong> respondente(s) no tienen esta
+        variable cargada y no se cuentan en ninguna categoría.</div>` : ''}
+    </div>
+  </div>`;
 }
 
 function pintarDimension(dimension, miembros, puedeGestionar) {

@@ -114,8 +114,9 @@ def test_los_clientes_de_una_persona_salen_de_sus_cargas(ctx, dos_cargas):
     p1 = clientes.de_persona(ctx.boveda, dos_cargas["p1"])
     assert [c["nombre"] for c in p1] == ["antel", "movistar"]
     antel = next(c for c in p1 if c["nombre"] == "antel")
-    assert sorted(antel["cargas"]) == sorted([dos_cargas["a"]["id"],
-                                              dos_cargas["b"]["id"]])
+    # D81 — los clientes son del estudio: las encuestas de las dos cargas.
+    assert sorted(antel["encuestas"]) == sorted([dos_cargas["a"]["encuesta_id"],
+                                                 dos_cargas["b"]["encuesta_id"]])
     assert [c["nombre"] for c in clientes.de_persona(ctx.boveda, dos_cargas["p2"])] \
         == ["antel"]
 
@@ -190,7 +191,7 @@ def test_cliente_es_una_clave_reservada():
 # ════════════════════════════════════════════════════════════════════
 
 def test_coloquio_no_ve_los_clientes(conn_boveda):
-    for objeto in ("cliente", "carga_cliente", "v_persona_cliente"):
+    for objeto in ("cliente", "encuesta_cliente", "v_persona_cliente"):
         assert not db.una(
             conn_boveda,
             "select has_table_privilege('coloquio_app', %s, 'SELECT') as puede",

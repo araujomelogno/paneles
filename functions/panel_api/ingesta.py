@@ -365,9 +365,12 @@ def _por_que_no_entro_nada(ids_origen, sin_mapear, motivos, bloqueadas):
 _ESTUDIO_POR_DESTINO = {
     "encuesta": """select ref_estudio, nombre, fecha_campo, panel_id
                      from encuesta where id = %s""",
-    "carga": """select ref_estudio, nombre, fecha_estudio as fecha_campo,
-                       null::bigint as panel_id
-                  from carga where id = %s""",
+    # D81 — el estudio de una carga es su encuesta: mismo `ref_estudio`,
+    # nombre y fecha del estudio. La carga viaja para `respuesta.carga_id`.
+    "carga": """select e.ref_estudio, e.nombre, e.fecha_campo, e.panel_id,
+                       c.id as carga_id
+                  from carga c join encuesta e on e.id = c.encuesta_id
+                 where c.id = %s""",
 }
 
 
@@ -386,6 +389,7 @@ def estudio_del_destino(conn_boveda, destino_tipo, destino_id):
         "nombre": fila["nombre"],
         "fecha_campo": fila["fecha_campo"],
         "panel_id": fila["panel_id"],
+        "carga_id": fila.get("carga_id"),
     }
 
 
@@ -518,6 +522,9 @@ def ingestar(
             "valor_texto": etiqueta,
             "texto_embebido": texto,
             "hash_texto": semantica.hash_texto(texto),
+            # R-EU.3 — qué carga la escribió: la última gana, y borrar una
+            # carga borra solo lo suyo (R-EU.10).
+            "carga_id": (encuesta or {}).get("carga_id"),
         }
         for id_origen, codigo, etiqueta, texto in largo
     ]
