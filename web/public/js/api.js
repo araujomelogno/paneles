@@ -179,7 +179,9 @@ export const revisiones = {
 };
 
 export const paneles = {
-  listar: () => GET('/paneles'),
+  /* R-EU.8 — los archivados no vienen salvo que se pidan. */
+  listar: (incluirArchivados = false) =>
+    GET('/paneles', incluirArchivados ? { incluir_archivados: '1' } : {}),
   ver: (id) => GET(`/paneles/${id}`),
   crear: (nombre, descripcion) => POST('/paneles', { nombre, descripcion }),
   cambiarEstado: (id, estadoPanel) => PATCH(`/paneles/${id}`, { estado: estadoPanel }),
@@ -218,24 +220,33 @@ export const cumplimiento = {
 };
 
 export const encuestas = {
-  listar: (panelId) => GET('/encuestas', panelId ? { panel_id: panelId } : {}),
+  listar: (panelId, tipo) => GET('/encuestas', {
+    ...(panelId ? { panel_id: panelId } : {}), ...(tipo ? { tipo } : {}) }),
   ver: (id) => GET(`/encuestas/${id}`),
-  crear: (panelId, nombre, fechaCampo) =>
-    POST('/encuestas', { panel_id: panelId, nombre, fecha_campo: fechaCampo }),
+  /* R-EU.2 — los datos del estudio viven en la encuesta. */
+  crear: (panelId, nombre, fechaCampo, { publicoObjetivo, descripcion, clientes } = {}) =>
+    POST('/encuestas', {
+      panel_id: panelId, nombre, fecha_campo: fechaCampo,
+      publico_objetivo: publicoObjetivo || null, descripcion: descripcion || null,
+      clientes: clientes || [],
+    }),
   cambiarEstado: (id, estadoEncuesta) => PATCH(`/encuestas/${id}`, { estado: estadoEncuesta }),
+  editar: (id, cambios) => PATCH(`/encuestas/${id}`, cambios),
+  /* R-EU.1 — ingestar en una encuesta es abrir una carga y seguir el flujo
+     de la carga (`cargas.analizar`, `cargas.ingestar`). */
+  nuevaCarga: (id, datos) => POST(`/encuestas/${id}/cargas`, datos),
+  guardarTematicas: (id, tematicas) => PUT(`/encuestas/${id}/tematicas`, { tematicas }),
+  /* R-EU.5 — «crear encuesta con estos panelistas»: la foto del resultado. */
+  desdeConsulta: (nombre, resultado, definicion, datos = {}) =>
+    POST('/encuestas/desde-consulta', { nombre, resultado, definicion, ...datos }),
+  /* R-EU.9 — borrar un estudio. La vista previa sale de la misma ruta. */
+  previaDeBorrado: (id) => POST(`/encuestas/${id}/borrado`, { solo_revisar: true }),
+  borrar: (id, confirmacion) => POST(`/encuestas/${id}/borrado`, { confirmacion }),
   convocar: (id, { idsPersona, todoElPanel } = {}) =>
     POST(`/encuestas/${id}/convocatoria`, {
       ids_persona: idsPersona, todo_el_panel: !!todoElPanel,
     }),
   participacion: (id) => GET(`/encuestas/${id}/participacion`),
-  /* El cuerpo viaja **tal cual** y con los nombres del servidor.
-
-     Antes esta función desarmaba un objeto con nombres propios y rearmaba
-     el del servidor. Esa lista blanca descartaba en silencio cualquier
-     campo que no estuviera enumerado, y ya costó un bug: `modo` se mandaba
-     desde la pantalla y nunca llegaba. Un traductor que pierde lo que no
-     conoce es peor que no tener traductor. */
-  ingestar: (id, cuerpo) => POST(`/encuestas/${id}/ingesta`, cuerpo),
   cruce: (id) => GET(`/encuestas/${id}/cruce`),
   // R3.12.a — la muestra para precargar en la plataforma de campo.
   muestra: (id, conContacto = false) =>
@@ -299,6 +310,8 @@ export const composicion = {
       ambito,
       panel_id: ambito === 'panel' ? referencia : undefined,
       carga_id: ambito === 'carga' ? referencia : undefined,
+      // R-EU.11 — convocados frente a respondentes.
+      encuesta_id: ambito === 'encuesta' ? referencia : undefined,
       dimensiones: dimensiones?.join(','),
       cruce: cruce?.join(','),
     }),
@@ -383,15 +396,6 @@ export const inscripciones = {
     POST('/textos-consentimiento', { finalidad, version, cuerpo }),
 };
 
-export const sav = {
-  // Fase 8 — `valores_no_respuesta` va en `opciones.extra` cuando el
-  // analista editó la lista; si no, el servidor usa la de por defecto.
-  analizar: (encuestaId, archivoBase64, opciones) =>
-    subir(`/encuestas/${encuestaId}/sav/analizar`,
-          { archivo_base64: archivoBase64, ...(opciones?.extra || {}) }, opciones),
-  ingestar: (encuestaId, cuerpo, opciones) =>
-    subir(`/encuestas/${encuestaId}/sav/ingesta`, cuerpo, opciones),
-};
 
 /* R4.4 — por qué canal acepta cada persona que la contacten.
 
@@ -508,9 +512,12 @@ export const cargas = {
   editar: (cargaId, cambios) => PATCH(`/cargas/${cargaId}`, cambios),
   // PEDIDO del celular, parte 3 — borrar una carga. La vista previa sale de
   // la misma ruta que borra (`solo_revisar`), como la revisión de una carga.
-  previaDeBorrado: (cargaId) => POST(`/cargas/${cargaId}/borrado`, { solo_revisar: true }),
-  borrar: (cargaId, confirmacion) =>
-    POST(`/cargas/${cargaId}/borrado`, { confirmacion }),
+  // R-EU.10 — dar de baja a las personas que la carga creó es una opción.
+  previaDeBorrado: (cargaId, darDeBajaCreadas = false) =>
+    POST(`/cargas/${cargaId}/borrado`,
+         { solo_revisar: true, dar_de_baja_creadas: darDeBajaCreadas }),
+  borrar: (cargaId, confirmacion, darDeBajaCreadas = false) =>
+    POST(`/cargas/${cargaId}/borrado`, { confirmacion, dar_de_baja_creadas: darDeBajaCreadas }),
   analizar: (cargaId, archivoBase64, opciones) =>
     subir(`/cargas/${cargaId}/analizar`,
           { archivo_base64: archivoBase64, ...(opciones?.extra || {}) }, opciones),

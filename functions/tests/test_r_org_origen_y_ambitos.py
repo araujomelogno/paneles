@@ -343,10 +343,12 @@ def test_las_rutas_de_ambito(ctx, actor, bóveda_mixta, omnibus):
 #  R-ORG.4/5/6 · Los datos del estudio, en la carga
 # ════════════════════════════════════════════════════════════════════
 
-def test_nombre_fecha_y_publico_se_guardan_en_la_carga(conn_boveda, omnibus):
+def test_nombre_fecha_y_publico_se_guardan_en_el_estudio(conn_boveda, omnibus):
+    # D81 (R-EU.2) — los datos del estudio viven en la encuesta de la carga.
     fila = db.una(conn_boveda,
-                  "select nombre, fecha_estudio::text as fecha, publico_objetivo "
-                  "from carga where id = %s", (omnibus["id"],))
+                  "select e.nombre, e.fecha_campo::text as fecha, e.publico_objetivo "
+                  "from carga c join encuesta e on e.id = c.encuesta_id "
+                  "where c.id = %s", (omnibus["id"],))
     assert fila == {"nombre": "Ómnibus agosto 2026", "fecha": "2026-08-15",
                     "publico_objetivo": "Población adulta de Montevideo"}
     # Y no copiados en la persona: `persona` no tiene dónde guardarlos.

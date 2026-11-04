@@ -119,6 +119,10 @@ PERMISOS = {
     # PEDIDO del celular, parte 3 — borrar una carga da de baja a las
     # personas que trajo y no tiene vuelta atrás: solo administración.
     "borrar_carga": {"admin"},
+    # R-EU.9 — borrar un estudio entero: sus respuestas, participaciones y
+    # cargas (las personas quedan). Lo pide un cliente o lo decide quien
+    # responde por los datos: administración y protección de datos.
+    "borrar_encuesta": {"admin", "dpo"},
     # R-LN.1 — agregar a alguien a la lista negra o sacarlo. Lo deja fuera de
     # toda convocatoria, la de COLOQUIO incluida: es de quien decide a quién
     # se invita.

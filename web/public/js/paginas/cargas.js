@@ -225,6 +225,10 @@ async function renderDetalle(main, cargaId) {
         <div class="card-body">
           <dl class="carga-atributos">
             <dt>Nombre</dt><dd>${esc(carga.nombre)}</dd>
+            <dt>Encuesta</dt><dd>${carga.encuesta_id
+              ? `<a href="#" id="ir-a-encuesta">${esc(carga.encuesta || 'ver la encuesta')}</a>
+                 <span class="small muted">· los datos del estudio se editan ahí</span>`
+              : dato(null)}</dd>
             <dt>Descripción</dt><dd>${dato(carga.descripcion)}</dd>
             <dt>Fecha del estudio</dt><dd>${carga.fecha_estudio
               ? esc(fechaCorta(carga.fecha_estudio)) : dato(null)}</dd>
@@ -296,6 +300,13 @@ async function renderDetalle(main, cargaId) {
   if (puedeBorrar()) $('#borrar-carga').onclick = () => abrirBorrado(carga);
   // El ámbito «una carga» de la composición (R-ORG) ya existe: se abre ahí.
   $('#composicion').onclick = () => contexto.irA('composicion', { cargaId: carga.id });
+  const aEncuesta = $('#ir-a-encuesta');
+  if (aEncuesta) {
+    aEncuesta.onclick = (e) => {
+      e.preventDefault();
+      contexto.irA('encuestas', { encuestaId: carga.encuesta_id });
+    };
+  }
 
   if (puedeEditar()) {
     // R-CLI.2 — los clientes se editan después de creada la carga.
@@ -465,23 +476,35 @@ async function abrirBorrado(carga) {
     ${previa.borrado_en_curso ? alerta(
       'Esta carga tiene un borrado que quedó a medias. Confirmar lo reanuda '
       + 'desde donde quedó.', 'info') : ''}
+    <p class="small">«Esto lo cargué mal»: se deshace lo que trajo este archivo en
+      la encuesta <strong>${esc(previa.carga.encuesta || '')}</strong>. Para borrar el
+      estudio entero, se borra la encuesta.</p>
     <table class="tabla-borrado">
       <tr><td>Personas vinculadas a la carga</td><td class="num">${previa.personas}</td></tr>
-      <tr class="peligro"><td><strong>Se dan de baja</strong> — las creó esta
-        carga y no tienen otra vida en el sistema</td>
-        <td class="num"><strong>${previa.se_dan_de_baja}</strong></td></tr>
-      <tr><td><strong>Se conservan</strong>, sin el vínculo ni sus respuestas
+      <tr><td>Las creó esta carga y no tienen otra vida en el sistema
+        <div><label class="check small"><input type="checkbox" id="dar-de-baja"
+          ${previa.se_pueden_dar_de_baja ? '' : 'disabled'} />
+          <strong>Darlas de baja</strong> (opcional: si no, se conservan)</label></div></td>
+        <td class="num"><strong>${previa.se_pueden_dar_de_baja}</strong></td></tr>
+      <tr><td>Se conservan otras, sin el vínculo ni sus respuestas
         de esta carga${motivos.length ? `<ul class="small">${motivos.map((m) =>
           `<li>${m.personas} · ${esc(m.etiqueta)}</li>`).join('')}</ul>` : ''}</td>
-        <td class="num">${previa.se_conservan}</td></tr>
-      <tr class="peligro"><td>Respuestas del estudio que se borran (de todas las
-        personas)</td><td class="num">${previa.respuestas_a_borrar}</td></tr>
-      <tr><td>Textos embebidos que se van con ellas (los compartidos con otro
-        estudio se conservan)</td><td class="num">${previa.unidades_que_se_borran}</td></tr>
+        <td class="num">${previa.personas - previa.se_pueden_dar_de_baja}</td></tr>
+      <tr><td>Participaciones en la encuesta: vuelven a «no respondió» (estaban
+        convocadas) / se borran (no lo estaban)</td>
+        <td class="num">${previa.participaciones?.vuelven_a_no_respondio ?? 0} /
+          ${previa.participaciones?.se_borran ?? 0}</td></tr>
+      <tr class="peligro"><td>Respuestas que se borran: ${previa.unica_de_su_encuesta
+        ? 'todo el estudio (es su única carga)'
+        : 'las que escribió esta carga; las que reemplazó otra carga se quedan'}</td>
+        <td class="num">${previa.respuestas_a_borrar}</td></tr>
+      ${previa.unidades_que_se_borran != null ? `<tr><td>Textos embebidos que se van con
+        ellas (los compartidos con otro estudio se conservan)</td>
+        <td class="num">${previa.unidades_que_se_borran}</td></tr>` : ''}
     </table>
-    <p class="small">Las bajas siguen el camino de siempre: se avisa a los otros
-      sistemas que usan la bóveda (COLOQUIO) para que borren lo suyo. El borrado
-      queda registrado con quién lo hizo y estos números.</p>
+    <p class="small">Si elegís darlas de baja, siguen el camino de siempre: se avisa
+      a los otros sistemas que usan la bóveda (COLOQUIO) para que borren lo suyo. El
+      borrado queda registrado con quién lo hizo y estos números.</p>
     <div class="form-group">
       <label for="confirmar-nombre" class="etiqueta-literal">Para confirmar, escribí el nombre de la carga:
         <strong>${esc(carga.nombre)}</strong></label>
@@ -508,7 +531,8 @@ async function abrirBorrado(carga) {
       <span class="spinner spinner-sm"></span><div class="procesando-texto">
       <strong class="procesando-titulo">Borrando…</strong></div></div>`;
     try {
-      const salida = await api.cargas.borrar(carga.id, nombre$.value);
+      const salida = await api.cargas.borrar(
+        carga.id, nombre$.value, Boolean($('#dar-de-baja', caja)?.checked));
       cerrarModal();
       if (salida.estado === 'terminado') {
         toast(`Se borró la carga «${carga.nombre}».`, 'ok');

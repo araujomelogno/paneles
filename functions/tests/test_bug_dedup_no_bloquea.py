@@ -30,6 +30,8 @@ from panel_api.errores import DatosInvalidos
 
 from test_fase7_revision import _cuerpo, _filas, _plan, _sav
 
+from conftest import ingesta_de
+
 RAIZ = pathlib.Path(__file__).resolve().parents[2]
 ENCUESTAS_JS = (RAIZ / "web/public/js/paginas/encuestas.js").read_text(encoding="utf-8")
 CALIDAD_JS = (RAIZ / "web/public/js/calidad.js").read_text(encoding="utf-8")
@@ -193,13 +195,13 @@ def test_una_carga_sin_ninguna_clave_se_puede_ejecutar_igual(
     ruta = _sav_sin_clave(tmp_path)
 
     _, revision = ruteo.despachar(
-        "POST", f"/encuestas/{enc['id']}/sav/ingesta",
+        "POST", ingesta_de(ctx.boveda, enc['id']),
         _cuerpo_sin_clave(ruta, panel["id"], solo_revisar=True), {},
         actor("operaciones"), ctx)
     assert "sin_clave_de_dedup" in _tipos(revision)
 
     status, r = ruteo.despachar(
-        "POST", f"/encuestas/{enc['id']}/sav/ingesta",
+        "POST", ingesta_de(ctx.boveda, enc['id']),
         _cuerpo_sin_clave(ruta, panel["id"]), {}, actor("operaciones"), ctx)
     assert status == 202
     assert r["creacion_de_individuos"]["resumen"]["creados"] == 12
@@ -213,7 +215,7 @@ def test_el_resultado_deja_constancia_de_que_se_cargo_sin_clave(
     panel = paneles.crear(conn_boveda, "Panel")
     enc = encuestas.crear(conn_boveda, panel["id"], "Ola")
     _, r = ruteo.despachar(
-        "POST", f"/encuestas/{enc['id']}/sav/ingesta",
+        "POST", ingesta_de(ctx.boveda, enc['id']),
         _cuerpo_sin_clave(_sav_sin_clave(tmp_path), panel["id"]), {},
         actor("operaciones"), ctx)
 
@@ -228,7 +230,7 @@ def test_con_clave_no_queda_ninguna_constancia(ctx, actor, conn_boveda, tmp_path
     panel = paneles.crear(conn_boveda, "Panel")
     enc = encuestas.crear(conn_boveda, panel["id"], "Ola")
     _, r = ruteo.despachar(
-        "POST", f"/encuestas/{enc['id']}/sav/ingesta",
+        "POST", ingesta_de(ctx.boveda, enc['id']),
         _cuerpo(_sav(tmp_path), panel["id"]), {}, actor("operaciones"), ctx)
     assert r["sin_clave_de_dedup"] is False
     assert diferida.estado(conn_boveda, r["trabajo_id"])["sin_clave_de_dedup"] is False
@@ -256,7 +258,7 @@ def test_sigue_bloqueando_crear_individuos_sin_evidencia_de_consentimiento(
     cuerpo = _cuerpo(_sav(tmp_path), panel["id"])
     cuerpo.pop("evidencia_consentimiento")
     with pytest.raises(DatosInvalidos):
-        ruteo.despachar("POST", f"/encuestas/{enc['id']}/sav/ingesta",
+        ruteo.despachar("POST", ingesta_de(ctx.boveda, enc['id']),
                         cuerpo, {}, actor("operaciones"), ctx)
     assert db.una(conn_boveda, "select count(*) as n from persona")["n"] == 0
     assert db.una(conn_boveda,

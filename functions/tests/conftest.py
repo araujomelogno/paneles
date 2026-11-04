@@ -58,7 +58,9 @@ TABLAS_BOVEDA = [
     "tematica",
     # R-TEM.7 — las áreas no cascadean desde la temática (es al revés), y el
     # registro de cambios no tiene FK a nadie.
-    "area_tematica", "taxonomia_cambio", "carga_borrado", "carga_cliente", "cliente",
+    "area_tematica", "taxonomia_cambio", "carga_borrado", "cliente",
+    # D81 — la auditoría de los estudios borrados no cascadea desde nada.
+    "encuesta_borrado",
 ]
 
 # R3.14 — el catálogo de atributos **no** se trunca: `sexo`, `localidad`,
@@ -368,3 +370,12 @@ def actor():
         )
 
     return _actor
+
+
+def ingesta_de(conn, encuesta_id):
+    """D81 — la ruta de ingesta de una encuesta es la de su carga: la más
+    reciente, o una nueva. Las rutas `/encuestas/<id>/sav/…` y
+    `/encuestas/<id>/ingesta` ya no existen; toda ingesta es una carga."""
+    from panel_api import encuestas
+
+    return f"/cargas/{encuestas.carga_por_defecto(conn, encuesta_id)}/ingesta"

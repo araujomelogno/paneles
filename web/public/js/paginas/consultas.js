@@ -1012,6 +1012,8 @@ function barraDeAcciones(resultado) {
         >CSV con datos</button>
       <button class="btn btn-outline btn-sm" id="elegir-columnas">Columnas</button>
       <button class="btn btn-outline btn-sm" id="crear-panel">Crear panel</button>
+      <button class="btn btn-outline btn-sm" id="crear-encuesta"
+        title="Una encuesta independiente con estas personas como audiencia">Crear encuesta</button>
     </div>`;
 }
 
@@ -1020,6 +1022,7 @@ function engancharAcciones(caja, resultado) {
   $('#bajar-csv', caja).onclick = bajarCsv;
   $('#bajar-csv-pii', caja).onclick = bajarCsvIdentificado;
   $('#crear-panel', caja).onclick = crearPanelDesdeConsulta;
+  $('#crear-encuesta', caja).onclick = crearEncuestaDesdeConsulta;
   $('#elegir-columnas', caja).onclick = abrirElegirColumnas;
   $$('[data-detalle]', caja).forEach((b) => {
     b.onclick = () => abrirDetalle(resultado.items[Number(b.dataset.detalle)]);
@@ -1804,6 +1807,63 @@ async function crearPanelDesdeConsulta() {
       },
     ],
   });
+}
+
+/* R-EU.5 — «crear encuesta con estos panelistas»: un estudio a medida sin
+   armar un panel. La audiencia es la foto de este resultado; la lista negra
+   y quien no tiene consentimiento de contacto quedan afuera, y el servidor
+   dice cuántos. */
+async function crearEncuestaDesdeConsulta() {
+  if (!ultimoResultado?.items?.length) {
+    toast('El resultado está vacío: no hay audiencia para una encuesta.', 'err');
+    return;
+  }
+  const { editorDeClientes } = await import('../clientes.js');
+  let clientes = null;
+  const caja = modal({
+    titulo: `Crear una encuesta con estas ${ultimoResultado.items.length} personas`,
+    ancho: '600px',
+    cuerpo: `
+      <div id="enc-alerta"></div>
+      <p class="small muted">Es una encuesta <strong>independiente</strong>: no se asocia a
+      ningún panel. Su audiencia es la <strong>foto</strong> de este resultado —la
+      consulta no se vuelve a ejecutar—. Quien está en la lista negra o no tiene
+      consentimiento de contacto queda afuera.</p>
+      <div class="form-group"><label>Nombre de la encuesta</label>
+        <input class="finput" name="nombre" placeholder="Estudio a medida — fernet" /></div>
+      <div class="form-row">
+        <div class="form-group"><label>Fecha de campo</label>
+          <input type="date" name="fecha_campo" /></div>
+        <div class="form-group"><label>Público objetivo</label>
+          <input class="finput" name="publico_objetivo" /></div>
+      </div>
+      <div class="form-group"><label>Clientes</label><div data-clientes></div></div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Crear la encuesta', clase: 'btn-orange', onClick: async (contenedor) => {
+          const datos = leerFormulario(contenedor);
+          if (!datos.nombre?.trim()) { toast('La encuesta necesita un nombre.', 'err'); return; }
+          try {
+            const encuesta = await api.encuestas.desdeConsulta(
+              datos.nombre.trim(), ultimoResultado, definicion, {
+                fecha_campo: datos.fecha_campo || null,
+                publico_objetivo: datos.publico_objetivo || null,
+                clientes: clientes.valor(),
+              });
+            cerrarModal();
+            const a = encuesta.audiencia;
+            toast(`Encuesta «${encuesta.nombre}» creada con ${a.convocados} convocado(s).`
+              + (a.en_lista_negra ? ` ${a.en_lista_negra} afuera por la lista negra.` : '')
+              + (a.sin_consentimiento ? ` ${a.sin_consentimiento} sin consentimiento de contacto.` : ''),
+              'ok');
+            contexto.irA('encuestas', { encuestaId: encuesta.id });
+          } catch (error) {
+            $('#enc-alerta', contenedor).innerHTML = alerta(error.message);
+          }
+        } },
+    ],
+  });
+  clientes = editorDeClientes($('[data-clientes]', caja));
 }
 
 /* ── Consultas guardadas ────────────────────────────────────────── */

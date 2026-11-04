@@ -165,8 +165,8 @@ def _tematicas_con_conteos(conn):
         conn,
         """
         select t.id, t.nombre, t.area_id, t.es_especial, t.es_especial_propia,
-               (select count(*)::int from carga_tematica ct
-                 where ct.tematica_id = t.id) as cargas,
+               (select count(*)::int from encuesta_tematica et
+                 where et.tematica_id = t.id) as cargas,
                (select count(distinct pt.id_persona)::int from persona_tematica pt
                  where pt.tematica_id = t.id) as personas
           from v_tematica t
@@ -260,29 +260,33 @@ def filtro(conn, incluir_especiales=False):
 
 
 def sin_personas(conn):
-    """R-TEM.14 — las temáticas que están en una carga y que **nadie** de esa
-    carga tiene: candidatas a quitar. Es la revisión general después del
+    """R-TEM.14 — las temáticas que están en un estudio y que **nadie** de
+    ese estudio tiene: candidatas a quitar. Desde D81 las temáticas son de la
+    encuesta; `carga_id` es una de sus cargas, para llevar a su detalle. Es la revisión general después del
     arreglo de «nivel educativo»."""
     return [
         {"carga_id": f["carga_id"], "carga": f["carga"],
+         "encuesta_id": f["encuesta_id"],
          "tematica_id": f["tematica_id"], "tematica": f["tematica"],
          "preguntas": list(f["preguntas"] or [])}
         for f in db.todas(
             conn,
             """
-            select c.id as carga_id, c.nombre as carga, t.id as tematica_id,
+            select (select min(c.id) from carga c
+                     where c.encuesta_id = et.encuesta_id) as carga_id,
+                   e.id as encuesta_id, e.nombre as carga, t.id as tematica_id,
                    t.nombre as tematica,
                    array(select tp.codigo_pregunta from tematica_pregunta tp
-                          where tp.carga_id = ct.carga_id
-                            and tp.tematica_id = ct.tematica_id
+                          where tp.encuesta_id = et.encuesta_id
+                            and tp.tematica_id = et.tematica_id
                           order by 1) as preguntas
-              from carga_tematica ct
-              join carga c on c.id = ct.carga_id
-              join tematica t on t.id = ct.tematica_id
+              from encuesta_tematica et
+              join encuesta e on e.id = et.encuesta_id
+              join tematica t on t.id = et.tematica_id
              where not exists (select 1 from persona_tematica pt
-                                where pt.carga_id = ct.carga_id
-                                  and pt.tematica_id = ct.tematica_id)
-             order by c.nombre, t.nombre
+                                where pt.encuesta_id = et.encuesta_id
+                                  and pt.tematica_id = et.tematica_id)
+             order by e.nombre, t.nombre
             """)
     ]
 
@@ -729,37 +733,38 @@ def _exigir_areas(conn, ids):
 
 
 def _fusionar_tematicas(conn, origen_ids, destino_id):
-    """Reapunta `carga_tematica`, `tematica_pregunta` y `persona_tematica`
-    de cada origen a la que queda, **sin duplicar filas**, y borra el
-    origen. Devuelve las cargas afectadas, para recalcular."""
-    cargas = [f["carga_id"] for f in db.todas(
-        conn, "select distinct carga_id from carga_tematica "
+    """Reapunta `encuesta_tematica`, `tematica_pregunta` y
+    `persona_tematica` de cada origen a la que queda, **sin duplicar
+    filas**, y borra el origen. Devuelve los estudios afectados, para
+    recalcular."""
+    estudios = [f["encuesta_id"] for f in db.todas(
+        conn, "select distinct encuesta_id from encuesta_tematica "
               "where tematica_id = any(%s::bigint[])", (origen_ids,))]
     for origen in origen_ids:
         db.ejecutar(conn, """
-            insert into carga_tematica (carga_id, tematica_id, origen, creado_en)
-            select carga_id, %s, origen, creado_en from carga_tematica
+            insert into encuesta_tematica (encuesta_id, tematica_id, origen, creado_en)
+            select encuesta_id, %s, origen, creado_en from encuesta_tematica
              where tematica_id = %s
-            on conflict (carga_id, tematica_id) do nothing""", (destino_id, origen))
+            on conflict (encuesta_id, tematica_id) do nothing""", (destino_id, origen))
         db.ejecutar(conn, """
-            insert into tematica_pregunta (carga_id, tematica_id, codigo_pregunta)
-            select carga_id, %s, codigo_pregunta from tematica_pregunta
+            insert into tematica_pregunta (encuesta_id, tematica_id, codigo_pregunta)
+            select encuesta_id, %s, codigo_pregunta from tematica_pregunta
              where tematica_id = %s
             on conflict do nothing""", (destino_id, origen))
-        # Una persona con las dos temáticas en la misma carga queda con una
+        # Una persona con las dos temáticas en el mismo estudio queda con una
         # fila. La cuenta de preguntas se recalcula después, si hay con qué.
         db.ejecutar(conn, """
-            insert into persona_tematica (id_persona, tematica_id, carga_id,
+            insert into persona_tematica (id_persona, tematica_id, encuesta_id,
                                           preguntas_respondidas, creado_en)
-            select id_persona, %s, carga_id, preguntas_respondidas, creado_en
+            select id_persona, %s, encuesta_id, preguntas_respondidas, creado_en
               from persona_tematica where tematica_id = %s
-            on conflict (id_persona, tematica_id, carga_id) do update
+            on conflict (id_persona, tematica_id, encuesta_id) do update
               set preguntas_respondidas = greatest(
                     persona_tematica.preguntas_respondidas,
                     excluded.preguntas_respondidas)""", (destino_id, origen))
         # Se van los vínculos del origen (y en cascada sus preguntas y
         # personas, ya copiadas) y después el origen.
-        db.ejecutar(conn, "delete from carga_tematica where tematica_id = %s", (origen,))
+        db.ejecutar(conn, "delete from encuesta_tematica where tematica_id = %s", (origen,))
     db.ejecutar(conn, """
         update tematica d set es_especial = d.es_especial or o.especial,
                               area_id = coalesce(d.area_id, o.area_id)
@@ -768,7 +773,7 @@ def _fusionar_tematicas(conn, origen_ids, destino_id):
                   from tematica where id = any(%s::bigint[])) o
          where d.id = %s""", (origen_ids, destino_id))
     db.ejecutar(conn, "delete from tematica where id = any(%s::bigint[])", (origen_ids,))
-    return cargas
+    return estudios
 
 
 def aplicar(conn, operacion, actor=None, conn_semantica=None, puede_desmarcar=False):
@@ -811,14 +816,14 @@ def aplicar(conn, operacion, actor=None, conn_semantica=None, puede_desmarcar=Fa
         if not origenes:
             raise DatosInvalidos("Una fusión necesita al menos una temática distinta de la que queda.")
         existentes = _exigir_tematicas(conn, origenes + [destino])
-        cargas = _fusionar_tematicas(conn, origenes, destino)
+        estudios = _fusionar_tematicas(conn, origenes, destino)
         if conn_semantica is not None:
-            for carga_id in cargas:
-                mod_tematicas.recalcular_carga(conn, conn_semantica, carga_id)
+            for encuesta_id in estudios:
+                mod_tematicas.recalcular_encuesta(conn, conn_semantica, encuesta_id)
         detalle.update({
             "destino": {"id": destino, "nombre": existentes[destino]["nombre"]},
             "origenes": [{"id": i, "nombre": existentes[i]["nombre"]} for i in origenes],
-            "cargas_afectadas": cargas, "recalculada": conn_semantica is not None})
+            "encuestas_afectadas": estudios, "recalculada": conn_semantica is not None})
 
     elif tipo == RENOMBRAR_AREA:
         aid = _ids([operacion.get("area_id")], "area_id")[0]

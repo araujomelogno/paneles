@@ -277,8 +277,11 @@ def test_el_estudio_de_cada_destino_sale_de_un_solo_lugar(conn_boveda, carga, ol
     de_carga = ingesta.estudio_del_destino(conn_boveda, "carga", carga["id"])
     de_encuesta = ingesta.estudio_del_destino(conn_boveda, "encuesta",
                                               ola["encuesta"]["id"])
+    # D81 — la de una carga es la de su encuesta, más la carga: cada
+    # respuesta dice qué carga la escribió (R-EU.3).
     assert set(de_carga) == set(de_encuesta) == {
-        "ref_estudio", "nombre", "fecha_campo", "panel_id"}
+        "ref_estudio", "nombre", "fecha_campo", "panel_id", "carga_id"}
+    assert de_carga["carga_id"] == carga["id"] and de_encuesta["carga_id"] is None
     assert de_carga["fecha_campo"] == datetime.date(2026, 8, 15)
     assert de_carga["panel_id"] is None
     assert de_encuesta["fecha_campo"] == datetime.date(2026, 3, 1)
@@ -293,10 +296,14 @@ def test_ninguna_ingesta_lee_el_estudio_por_nombre_de_campo():
 
     from panel_api import encuestas
 
-    for modulo in (cargas, encuestas):
-        fuente = inspect.getsource(modulo.ingestar)
-        assert "estudio_del_destino(" in fuente, modulo.__name__
-        assert '"fecha_campo":' not in fuente, modulo.__name__
+    # D81 — hay una sola ingesta, la de la carga; `encuestas.ingestar`
+    # delega en ella y no arma ningún estudio.
+    fuente = inspect.getsource(cargas.ingestar)
+    assert "estudio_del_destino(" in fuente
+    assert '"fecha_campo":' not in fuente
+    delegada = inspect.getsource(encuestas.ingestar)
+    assert "cargas.ingestar(" in delegada
+    assert '"fecha_campo":' not in delegada
 
 
 def test_editar_la_fecha_del_estudio_actualiza_el_cuestionario(ctx, actor, carga):

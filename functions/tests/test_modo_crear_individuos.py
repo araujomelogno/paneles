@@ -19,6 +19,8 @@ import pytest
 from panel_api import db, encuestas, ingesta, paneles, ruteo
 from panel_api.errores import DatosInvalidos
 
+from conftest import ingesta_de
+
 VERSION = "consentimiento-campo-2026-09"   # publicada por el conftest
 
 
@@ -82,7 +84,7 @@ def _cuerpo(ruta, panel_id, modo, con_evidencia=True):
 
 def _ingestar(ctx, actor, encuesta_id, cuerpo):
     return ruteo.despachar(
-        "POST", f"/encuestas/{encuesta_id}/sav/ingesta", cuerpo, {},
+        "POST", ingesta_de(ctx.boveda, encuesta_id), cuerpo, {},
         actor("operaciones"), ctx)
 
 

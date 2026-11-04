@@ -368,21 +368,26 @@ def upsert_respuestas(conn, respuestas):
             """
             insert into respuesta
                    (individuo_id, pregunta_id, valor_texto, texto_embebido,
-                    hash_texto, unidad_id)
+                    hash_texto, unidad_id, carga_id)
             select * from unnest(%s::bigint[], %s::bigint[], %s::text[],
-                                 %s::text[], %s::text[], %s::bigint[])
+                                 %s::text[], %s::text[], %s::bigint[],
+                                 %s::bigint[])
             on conflict (individuo_id, pregunta_id) do update
                     set valor_texto = excluded.valor_texto,
                         texto_embebido = excluded.texto_embebido,
                         hash_texto = excluded.hash_texto,
-                        unidad_id = excluded.unidad_id
+                        unidad_id = excluded.unidad_id,
+                        -- R-EU.3: la última carga que la escribió. Un
+                        -- reproceso no trae carga y no la cambia.
+                        carga_id = coalesce(excluded.carga_id, respuesta.carga_id)
             """,
             ([r["individuo_id"] for r in respuestas],
              [r["pregunta_id"] for r in respuestas],
              [r.get("valor_texto") for r in respuestas],
              [r["texto_embebido"] for r in respuestas],
              [r["hash_texto"] for r in respuestas],
-             [unidad_de[r["hash_texto"]] for r in respuestas]),
+             [unidad_de[r["hash_texto"]] for r in respuestas],
+             [r.get("carga_id") for r in respuestas]),
         )
     except (psycopg.errors.NotNullViolation,
             psycopg.errors.ForeignKeyViolation) as error:
@@ -871,9 +876,11 @@ def con_respuestas_de_otro_estudio(conn, ids_persona, ref_estudio):
     }
 
 
-def borrar_respuestas_de_estudio_de(conn, ids_persona, ref_estudio):
+def borrar_respuestas_de_estudio_de(conn, ids_persona, ref_estudio, carga_id=None):
     """Las respuestas de ese estudio de esas personas, de una vez (un lote
-    del borrado). Las de otros estudios no se tocan."""
+    del borrado). Las de otros estudios no se tocan. Con `carga_id`, solo
+    las que esa carga escribió por última vez (R-EU.10): las que una carga
+    posterior reemplazó son de la otra."""
     if not ids_persona:
         return 0
     ids = [str(i) for i in ids_persona]
@@ -882,8 +889,9 @@ def borrar_respuestas_de_estudio_de(conn, ids_persona, ref_estudio):
           join individuo i on i.id = r.individuo_id
           join pregunta p on p.id = r.pregunta_id
           join cuestionario c on c.id = p.cuestionario_id
-         where i.id_persona = any(%s::uuid[]) and c.ref_estudio = %s""",
-        (ids, str(ref_estudio)))
+         where i.id_persona = any(%s::uuid[]) and c.ref_estudio = %s
+           and (%s::bigint is null or r.carga_id = %s::bigint)""",
+        (ids, str(ref_estudio), carga_id, carga_id))
     n = db.ejecutar(
         conn,
         """
@@ -894,10 +902,49 @@ def borrar_respuestas_de_estudio_de(conn, ids_persona, ref_estudio):
            and p.cuestionario_id = c.id
            and i.id_persona = any(%s::uuid[])
            and c.ref_estudio = %s
+           and (%s::bigint is null or r.carga_id = %s::bigint)
         """,
-        (ids, str(ref_estudio)))
+        (ids, str(ref_estudio), carga_id, carga_id))
     borrar_veredictos_huerfanos(conn)
     return n
+
+
+def contar_carga(conn, ref_estudio, carga_id):
+    """Las respuestas que una carga escribió por última vez (R-EU.10)."""
+    return db.una(
+        conn,
+        """select count(*)::int as n
+             from respuesta r
+             join pregunta p on p.id = r.pregunta_id
+             join cuestionario c on c.id = p.cuestionario_id
+            where c.ref_estudio = %s and r.carga_id = %s""",
+        (str(ref_estudio), carga_id))["n"]
+
+
+def borrar_respuestas_de_carga(conn, ref_estudio, carga_id):
+    """Las que queden de una carga, de quien sea: el cierre de su borrado."""
+    n = db.ejecutar(
+        conn,
+        """delete from respuesta r
+            using pregunta p, cuestionario c
+            where r.pregunta_id = p.id and p.cuestionario_id = c.id
+              and c.ref_estudio = %s and r.carga_id = %s""",
+        (str(ref_estudio), carga_id))
+    borrar_veredictos_huerfanos(conn)
+    return n
+
+
+def asignar_carga(conn, ref_estudio, carga_id):
+    """La 0032 en el store semántico (`migrar_encuestas_y_cargas.py
+    semantico`): las respuestas de un cuestionario que tenía una sola carga
+    son de esa carga. Solo las que no tienen. Devuelve cuántas."""
+    return db.ejecutar(
+        conn,
+        """update respuesta r set carga_id = %s
+             from pregunta p, cuestionario c
+            where r.pregunta_id = p.id and p.cuestionario_id = c.id
+              and c.ref_estudio = %s and r.carga_id is null""",
+        (carga_id, str(ref_estudio)))
 
 
 def borrar_estudio(conn, ref_estudio):

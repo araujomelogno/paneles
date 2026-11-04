@@ -22,7 +22,7 @@ from panel_api import (calidad_dato, db, diferida, encuestas, ingesta, paneles,
                        personas, reproceso, ruteo, sav, semantica)
 from panel_api.errores import Conflicto
 
-from conftest import consentimientos
+from conftest import ingesta_de, consentimientos
 
 AMBAS = ("contacto_participacion", "uso_semantico")
 PREGUNTA_BATERIA = ("Pensando en el ÚLTIMO mes, ¿has consumido alguno de estos "
@@ -518,7 +518,7 @@ def _ingesta_por_ruta(ctx, actor, archivo, encuesta, preguntas, **extra):
         "preguntas": preguntas, "columna_id": "ID", "origen": "sav",
         **extra,
     }
-    return ruteo.despachar("POST", f"/encuestas/{encuesta['id']}/sav/ingesta",
+    return ruteo.despachar("POST", ingesta_de(ctx.boveda, encuesta['id']),
                            cuerpo, {}, actor("admin"), ctx)
 
 

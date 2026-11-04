@@ -287,13 +287,16 @@ def test_fusionar_dos_tematicas_reapunta_cargas_preguntas_y_personas_sin_duplica
         "motivo": "Son lo mismo."}}, {}, actor("operaciones"), ctx)
 
     assert not db.una(ctx.boveda, "select 1 as hay from tematica where id = %s", (celular,))
-    vinculos = db.todas(ctx.boveda, "select carga_id from carga_tematica "
-                                    "where tematica_id = %s order by carga_id", (movil,))
-    assert [v["carga_id"] for v in vinculos] == [carga["id"], otra["id"]]
-    preguntas = db.todas(ctx.boveda, "select carga_id, codigo_pregunta from tematica_pregunta "
+    # D81 — los vínculos son del estudio (la encuesta de cada carga).
+    vinculos = db.todas(ctx.boveda, "select encuesta_id from encuesta_tematica "
+                                    "where tematica_id = %s order by encuesta_id", (movil,))
+    assert [v["encuesta_id"] for v in vinculos] == [carga["encuesta_id"], otra["encuesta_id"]]
+    preguntas = db.todas(ctx.boveda, "select encuesta_id, codigo_pregunta "
+                                     "from tematica_pregunta "
                                      "where tematica_id = %s order by 1, 2", (movil,))
-    assert [(p["carga_id"], p["codigo_pregunta"]) for p in preguntas] == [
-        (carga["id"], "T1"), (carga["id"], "T2"), (otra["id"], "X1")]
+    assert [(p["encuesta_id"], p["codigo_pregunta"]) for p in preguntas] == [
+        (carga["encuesta_id"], "T1"), (carga["encuesta_id"], "T2"),
+        (otra["encuesta_id"], "X1")]
     # Una fila por persona y carga, con la cuenta recalculada.
     assert _tematicas_de(ctx.boveda, carga["id"]) == {
         "30-1": {"telefonía móvil": 2, "consumo de tabaco": 1},

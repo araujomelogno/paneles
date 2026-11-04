@@ -4,7 +4,8 @@
 El escenario es una carga «Ómnibus de prueba» con seis personas, una por
 cada caso del pedido:
 
-* A y F — las creó la carga y no tienen otra vida: **se dan de baja**.
+* A y F — las creó la carga y no tienen otra vida: **se dan de baja** si
+  se elige esa opción (desde D81 es optativa; antes era automática).
 * B — ya existía (panelista propio): la carga la **reutilizó**.
 * C — la creó la carga y **después** entró en un panel.
 * D — la creó la carga y después vino también en **otra carga**.
@@ -69,6 +70,9 @@ def escenario(ctx):
 
 
 def _pedir(ctx, actor, carga, rol="admin", **cuerpo):
+    # D81 — dar de baja a las creadas es una opción. Estas pruebas son de lo
+    # que pasa cuando se elige; la que sigue prueba que sin ella no pasa.
+    cuerpo.setdefault("dar_de_baja_creadas", True)
     return ruteo.despachar("POST", f"/cargas/{carga['id']}/borrado", cuerpo, {},
                            actor(rol), ctx)
 
@@ -160,6 +164,17 @@ def test_las_creadas_sin_otros_vinculos_se_dan_de_baja(ctx, actor, escenario):
                         "select motivo from persona_borrada where id_persona = %s",
                         (ids[letra],))
         assert lapida["motivo"] == "borrado_de_carga"
+
+
+def test_sin_la_opcion_nadie_se_da_de_baja(ctx, actor, escenario):
+    _, previa = _pedir(ctx, actor, escenario["carga"], solo_revisar=True,
+                       dar_de_baja_creadas=False)
+    assert previa["se_dan_de_baja"] == 0 and previa["se_pueden_dar_de_baja"] == 2
+    _pedir(ctx, actor, escenario["carga"], confirmacion=NOMBRE, dar_de_baja_creadas=False)
+    _procesar(ctx)
+    assert db.una(ctx.boveda, "select count(*)::int as n from persona")["n"] == 6
+    assert not db.una(ctx.boveda, "select 1 from carga where id = %s",
+                      (escenario["carga"]["id"],))
 
 
 def test_las_demas_se_conservan_sin_lo_que_la_carga_les_agrego(ctx, actor, escenario):

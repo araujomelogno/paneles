@@ -28,6 +28,7 @@ from . import (
     correo,
     db,
     encuestas,
+    encuestas_borrado,
     esquema,
     estadisticas,
     inscripciones,
@@ -56,7 +57,8 @@ from . import (
     verificacion_contacto,
     whatsapp,
 )
-from .errores import DatosInvalidos, EnvioNoConfigurado, ErrorApi, NoEncontrado
+from .errores import (
+    Conflicto, DatosInvalidos, EnvioNoConfigurado, ErrorApi, NoEncontrado)
 
 RUTAS = []
 
@@ -437,7 +439,9 @@ def crear_panel(ctx, actor, params, cuerpo, consulta):
 
 @ruta("GET", "/paneles", "leer")
 def listar_paneles(ctx, actor, params, cuerpo, consulta):
-    return 200, {"items": paneles.listar(ctx.boveda)}
+    """Los paneles; los archivados, solo con `incluir_archivados=1` (R-EU.8)."""
+    return 200, {"items": paneles.listar(
+        ctx.boveda, incluir_archivados=_bandera(consulta.get("incluir_archivados")))}
 
 
 @ruta("GET", "/paneles/<panel_id>", "leer")
@@ -445,8 +449,10 @@ def ver_panel(ctx, actor, params, cuerpo, consulta):
     return 200, paneles.obtener(ctx.boveda, _entero(params["panel_id"]))
 
 
-@ruta("PATCH", "/paneles/<panel_id>", "gestionar_paneles")
+@ruta("PATCH", "/paneles/<panel_id>", "gestionar_paneles", requisito="R-EU.8")
 def cambiar_panel(ctx, actor, params, cuerpo, consulta):
+    """Archiva (`estado: archivado`) o reactiva (`estado: activo`) un panel.
+    Con encuestas en campo no se archiva: `409 encuestas_en_campo`."""
     resultado = paneles.archivar(
         ctx.boveda, _entero(params["panel_id"]), cuerpo.get("estado", "archivado")
     )
@@ -547,11 +553,15 @@ def reintentar_cumplimiento(ctx, actor, params, cuerpo, consulta):
 #  Encuestas, fielding e ingesta
 # ════════════════════════════════════════════════════════════════════
 
-@ruta("POST", "/encuestas", "fieldear", requisito="R1.5")
+@ruta("POST", "/encuestas", "fieldear", requisito="R1.5, R-EU.2")
 def crear_encuesta(ctx, actor, params, cuerpo, consulta):
+    """Abre un estudio de panel con sus datos (R-EU.2). Una independiente se
+    crea desde el resultado de una consulta (`/encuestas/desde-consulta`)."""
     resultado = encuestas.crear(
         ctx.boveda, _entero(cuerpo.get("panel_id")), cuerpo.get("nombre"),
-        cuerpo.get("fecha_campo"),
+        cuerpo.get("fecha_campo"), tipo=encuestas.DE_PANEL,
+        publico_objetivo=cuerpo.get("publico_objetivo"),
+        descripcion=cuerpo.get("descripcion"), clientes=cuerpo.get("clientes"),
     )
     ctx.boveda.commit()
     return 201, resultado
@@ -559,21 +569,97 @@ def crear_encuesta(ctx, actor, params, cuerpo, consulta):
 
 @ruta("GET", "/encuestas", "leer")
 def listar_encuestas(ctx, actor, params, cuerpo, consulta):
-    return 200, {"items": encuestas.listar(ctx.boveda, _entero(consulta.get("panel_id")))}
+    return 200, {"items": encuestas.listar(
+        ctx.boveda, _entero(consulta.get("panel_id")), tipo=consulta.get("tipo"))}
 
 
-@ruta("GET", "/encuestas/<encuesta_id>", "leer")
+@ruta("GET", "/encuestas/<encuesta_id>", "leer", requisito="R-EU.2")
 def ver_encuesta(ctx, actor, params, cuerpo, consulta):
-    return 200, encuestas.obtener(ctx.boveda, _entero(params["encuesta_id"]))
+    """El estudio con sus datos, clientes, temáticas, cargas y conteos."""
+    return 200, encuestas.obtener(ctx.boveda, _entero(params["encuesta_id"]),
+                                  completa=True)
 
 
-@ruta("PATCH", "/encuestas/<encuesta_id>", "fieldear")
+@ruta("PATCH", "/encuestas/<encuesta_id>", "fieldear", requisito="R1.5, R-EU.2")
 def cambiar_encuesta(ctx, actor, params, cuerpo, consulta):
-    resultado = encuestas.cambiar_estado(
-        ctx.boveda, _entero(params["encuesta_id"]), cuerpo.get("estado")
-    )
+    """El estado (`estado`) y/o los datos del estudio (nombre, fecha de
+    campo, público objetivo, descripción, clientes)."""
+    encuesta_id = _entero(params["encuesta_id"])
+    cuerpo = cuerpo or {}
+    resultado = None
+    if cuerpo.get("estado"):
+        resultado = encuestas.cambiar_estado(ctx.boveda, encuesta_id, cuerpo["estado"])
+    datos = {k: v for k, v in cuerpo.items() if k != "estado"}
+    if datos:
+        resultado = encuestas.editar(
+            ctx.boveda, encuesta_id, datos,
+            conn_semantica=ctx.semantica if ("fecha_campo" in datos
+                                              or "fecha_estudio" in datos) else None)
+    if resultado is None:
+        raise DatosInvalidos("No hay nada que cambiar.")
     ctx.boveda.commit()
+    ctx.semantica.commit()
     return 200, resultado
+
+
+@ruta("POST", "/encuestas/desde-consulta", "fieldear", requisito="R-EU.5")
+def encuesta_desde_consulta(ctx, actor, params, cuerpo, consulta):
+    """«Crear encuesta con estos panelistas»: una encuesta independiente con
+    la foto del resultado como audiencia. Quedan afuera la lista negra y
+    quien no tiene `contacto_participacion`, y se informa cuántos."""
+    cuerpo = cuerpo or {}
+    salida = encuestas.crear_desde_consulta(
+        ctx.boveda, cuerpo.get("nombre"), cuerpo.get("resultado") or {},
+        actor=actor, fecha_campo=cuerpo.get("fecha_campo"),
+        publico_objetivo=cuerpo.get("publico_objetivo"),
+        descripcion=cuerpo.get("descripcion"), clientes=cuerpo.get("clientes"),
+        definicion=cuerpo.get("definicion"))
+    ctx.boveda.commit()
+    return 201, salida
+
+
+@ruta("POST", "/encuestas/<encuesta_id>/cargas", "ingestar", requisito="R-EU.1")
+def nueva_carga_de_encuesta(ctx, actor, params, cuerpo, consulta):
+    """Abre una carga (un archivo) dentro del estudio. No vuelve a pedir los
+    datos del estudio (R-EU.2): solo los del archivo —nombre, tipo de datos
+    y modo de relevamiento—. Después sigue el flujo de la carga de siempre:
+    `/cargas/<id>/analizar` y `/cargas/<id>/ingesta`."""
+    encuesta_id = _entero(params["encuesta_id"])
+    cuerpo = cuerpo or {}
+    carga = cargas.crear(
+        ctx.boveda, cuerpo.get("nombre"), cuerpo.get("descripcion"), actor,
+        tipo_datos_origen=cuerpo.get("tipo_datos_origen"),
+        tipo_datos_origen_otro=cuerpo.get("tipo_datos_origen_otro"),
+        modo_relevamiento=cuerpo.get("modo_relevamiento"),
+        modo_relevamiento_otro=cuerpo.get("modo_relevamiento_otro"),
+        exigir_origen=True, encuesta_id=encuesta_id)
+    ctx.boveda.commit()
+    return 201, carga
+
+
+@ruta("PUT", "/encuestas/<encuesta_id>/tematicas", "ingestar", requisito="R-EU.2")
+def guardar_tematicas_de_encuesta(ctx, actor, params, cuerpo, consulta):
+    """Las temáticas del estudio: las mismas que se editan desde cualquiera
+    de sus cargas. Recalcula las de cada panelista."""
+    encuesta_id = _entero(params["encuesta_id"])
+    salida = tematicas.guardar_de_encuesta(
+        ctx.boveda, encuesta_id, (cuerpo or {}).get("tematicas"),
+        conn_semantica=ctx.semantica,
+        puede_desmarcar=actor.puede("gestionar_atributos"))
+    ctx.boveda.commit()
+    return 200, {"tematicas": salida}
+
+
+@ruta("POST", "/encuestas/<encuesta_id>/borrado", "borrar_encuesta", requisito="R-EU.9")
+def borrar_encuesta(ctx, actor, params, cuerpo, consulta):
+    """Borra un estudio (sus respuestas, participaciones y cargas; las
+    personas quedan), o con `solo_revisar` muestra qué haría. Exige
+    `confirmacion` con el nombre exacto. Con un borrado a medias, lo termina."""
+    cuerpo = cuerpo or {}
+    return encuestas_borrado.lanzar(
+        ctx.boveda, ctx.semantica, _entero(params["encuesta_id"]),
+        confirmacion=cuerpo.get("confirmacion"), actor=actor,
+        solo_revisar=_revision_pedida(cuerpo))
 
 
 @ruta("POST", "/encuestas/<encuesta_id>/convocatoria", "fieldear", requisito="R1.5")
@@ -593,35 +679,6 @@ def ver_participacion(ctx, actor, params, cuerpo, consulta):
     return 200, {
         "items": encuestas.listar_participacion(ctx.boveda, _entero(params["encuesta_id"]))
     }
-
-
-@ruta("POST", "/encuestas/<encuesta_id>/ingesta", "ingestar",
-      requisito="R1.5, R-ASYNC.1, R-ING.2, R-ING.3")
-def ingestar_encuesta(ctx, actor, params, cuerpo, consulta):
-    """Confirma la carga: la guarda, la parte en lotes y los encola.
-
-    **No procesa nada acá.** Responde `202` con el trabajo recién creado y la
-    pantalla pasa a mostrar progreso. Antes esto corría la ingesta entera
-    adentro de la request y con una base real cortaba por timeout, a mitad de
-    camino y sin forma de retomar.
-    """
-    encuesta_id = _entero(params["encuesta_id"])
-    encuesta = encuestas.obtener(ctx.boveda, encuesta_id)   # que exista, antes de guardar nada
-    # R-ING.2 — antes de nada: con una ingesta en curso no hay qué revisar.
-    diferida.exigir_sin_trabajo_activo(ctx.boveda, "encuesta", encuesta_id)
-    cronometro = diferida.Cronometro()
-    with cronometro.parte("armar_plan"):
-        plan = _plan_de(cuerpo)
-    filas = cuerpo.get("filas") or []
-    if _revision_pedida(cuerpo):
-        return 200, resumen_ingesta.resumir(
-            plan, filas, panel=encuesta.get("panel_id"),
-            evidencia=_evidencia_normalizada(cuerpo),
-            destino_tipo="encuesta", nombre_destino=encuesta.get("nombre"))
-    salida = diferida.encolar(
-        ctx.boveda, "encuesta", encuesta_id, plan, filas,
-        actor=actor, encolador=ctx.encolador, cronometro=cronometro)
-    return 202, salida
 
 
 @ruta("GET", "/encuestas/<encuesta_id>/muestra", "leer", requisito="R3.12")
@@ -949,15 +1006,17 @@ def _dimensiones_y_cruce(consulta):
     return dimensiones, cruce_de
 
 
-@ruta("GET", "/composicion", "leer", requisito="R-ORG.2, R-ORG.3")
+@ruta("GET", "/composicion", "leer", requisito="R-ORG.2, R-ORG.3, R-EU.11")
 def ver_composicion_de_ambito(ctx, actor, params, cuerpo, consulta):
-    """La composición de un ámbito: `ambito=todos`, `ambito=panel&panel_id=…`
-    o `ambito=carga&carga_id=…`. El ámbito vuelve en la respuesta, junto al
-    resultado, para que la pantalla diga qué se está mirando."""
+    """La composición de un ámbito: `ambito=todos`, `ambito=panel&panel_id=…`,
+    `ambito=carga&carga_id=…` o `ambito=encuesta&encuesta_id=…` (R-EU.11:
+    respondentes frente a convocados, con la tasa de respuesta de cada
+    segmento). El ámbito vuelve en la respuesta, junto al resultado, para
+    que la pantalla diga qué se está mirando."""
     dimensiones, cruce_de = _dimensiones_y_cruce(consulta)
     ambito = (consulta.get("ambito") or "panel").strip().lower()
-    referencia = _entero(consulta.get("carga_id" if ambito == "carga"
-                                      else "panel_id"))
+    referencia = _entero(consulta.get({"carga": "carga_id",
+                                       "encuesta": "encuesta_id"}.get(ambito, "panel_id")))
     momento = _momento(ctx, consulta)
     estado = consulta.get("estado", "activo")
     salida = composicion.composicion_de_ambito(
@@ -1343,6 +1402,7 @@ def diagnostico_sav(ctx, actor, params, cuerpo, consulta):
 @ruta("POST", "/encuestas/<encuesta_id>/muestreo", "muestrear", requisito="R3.1")
 def proponer_muestreo(ctx, actor, params, cuerpo, consulta):
     """Propone a quién invitar. No convoca: la propuesta se confirma aparte."""
+    encuestas.exigir_de_panel(ctx.boveda, int(params["encuesta_id"]))
     return 200, muestreo.proponer(
         ctx.boveda, int(params["encuesta_id"]),
         dimension=(cuerpo.get("dimension") or "sexo"),
@@ -1580,119 +1640,6 @@ def _claves_del_catalogo(ctx):
         ctx.boveda, solo_activos=True, con_categorias=False)]
 
 
-@ruta("POST", "/encuestas/<encuesta_id>/sav/analizar", "ingestar", requisito="R3.9")
-def analizar_sav(ctx, actor, params, cuerpo, consulta):
-    """Devuelve la metadata precargada del `.sav`. No ingesta nada."""
-    contenido = _archivo_de(cuerpo)
-    return 200, sav.analizar(contenido, _claves_del_catalogo(ctx),
-                             cuerpo.get("valores_no_respuesta"))
-
-
-@ruta("POST", "/encuestas/<encuesta_id>/sav/ingesta", "ingestar",
-      requisito="R3.9, R-ING.2, R-ING.3")
-def ingestar_sav(ctx, actor, params, cuerpo, consulta):
-    """Ingesta el `.sav` con la metadata ya confirmada por el analista."""
-    encuesta_id = int(params["encuesta_id"])
-    contenido = _archivo_de(cuerpo)
-    preguntas = cuerpo.get("preguntas") or []
-    if not preguntas:
-        raise DatosInvalidos(
-            "Hace falta la lista de preguntas confirmada. Pedila primero a "
-            "POST /encuestas/{id}/sav/analizar y mandala editada."
-        )
-    columna_id = (cuerpo.get("columna_id") or "").strip()
-    if not columna_id:
-        raise DatosInvalidos("Falta indicar qué variable identifica al individuo.")
-    # R-ING.2 — antes de leer el archivo, que es lo que más tarda.
-    diferida.exigir_sin_trabajo_activo(ctx.boveda, "encuesta", encuesta_id)
-    cronometro = diferida.Cronometro()
-
-    with cronometro.parte("despivotar"):
-        filas = sav.filas_de(contenido)
-        # El marcado demográfico vale para los dos modos y es la única fuente del
-        # mapeo a campos de `persona`: `mapeo_patronimico` quedó como alias de
-        # compatibilidad para las llamadas viejas, no como un mecanismo aparte.
-        demograficas = sav.normalizar_demograficas(
-            cuerpo.get("demograficas"), {c for fila in filas for c in fila},
-            campos_validos=sav.campos_demograficos(ctx.boveda), conn=ctx.boveda)
-    mapeo = sav.mapeo_por_campo(demograficas) or (
-        cuerpo.get("mapeo_patronimico") or {})
-    # Los value labels de cada variable, para traducir el código del archivo
-    # antes de escribirlo en la bóveda. Salen de la misma lista de preguntas:
-    # una variable demográfica se configuró como cualquier otra y recién el
-    # marcado decide que su valor va a `persona`.
-    opciones_por_variable = {
-        p.get("codigo"): (p.get("opciones") or {}) for p in preguntas
-    }
-
-    # R7.2 — la revisión va **antes** de `crear_individuos`: en el modo que
-    # crea personas, confirmar es lo irreversible, y el resumen existe para
-    # verlo antes. Si esto estuviera más abajo, revisar ya habría dado de
-    # alta a la gente.
-    if _revision_pedida(cuerpo):
-        encuesta = encuestas.obtener(ctx.boveda, encuesta_id)
-        return 200, resumen_ingesta.resumir(
-            _plan_de(cuerpo, columna_id=columna_id,
-                     origen=(cuerpo.get("origen") or "sav"),
-                     preguntas=preguntas, demograficas=demograficas),
-            # El panel de la encuesta, y no solo el que viene en el cuerpo:
-            # en el modo «ya existen» la pantalla no lo manda, y la ingesta
-            # igual incorpora a todos al panel de la encuesta (R3.9.a). El
-            # resumen decía «no quedan asociados a ningún panel», que era
-            # falso.
-            filas, panel=cuerpo.get("panel_id") or encuesta.get("panel_id"),
-            evidencia=_evidencia_normalizada(cuerpo),
-            destino_tipo="encuesta",
-            nombre_destino=encuesta.get("nombre"))
-
-    creacion = None
-    if cuerpo.get("modo") == "crear_individuos":
-        # La evidencia de consentimiento es obligatoria en este modo y se
-        # valida **antes** de ingestar nada: si falta o está mal declarada,
-        # la importación entera se rechaza sin haber escrito una respuesta.
-        # Al revés —ingestar primero y fallar al crear— dejaría el store
-        # semántico con respuestas de gente que no existe en la bóveda.
-        with cronometro.parte("crear_individuos"):
-            creacion = sav.crear_individuos(
-                ctx.boveda, filas, mapeo,
-                origen=(cuerpo.get("origen") or "sav"), columna_id=columna_id,
-                evidencia_consentimiento=cuerpo.get("evidencia_consentimiento"),
-                actor=actor, panel_id=cuerpo.get("panel_id"),
-                opciones_por_variable=opciones_por_variable,
-            )
-        # Antes de encolar: las personas tienen que existir cuando la primera
-        # tarea busque a quién corresponde cada fila, y las tareas corren en
-        # otro proceso que no ve esta transacción.
-        ctx.boveda.commit()
-
-    # R-ASYNC.1 — se encola, no se procesa. El `.sav` ya se leyó y se
-    # despivotó acá: lo que viaja a los lotes son las filas, no el archivo,
-    # así que ninguna tarea vuelve a parsearlo.
-    #
-    # El plan lleva las demográficas **ya normalizadas** y no las crudas del
-    # cuerpo: normalizarlas consulta el catálogo de atributos, y hacerlo una
-    # vez por lote sería re-resolver el mapeo, que es justo lo que R-ASYNC.1
-    # prohíbe.
-    with cronometro.parte("armar_plan"):
-        plan = _con_constancia_de_dedup(
-            _plan_de(cuerpo, columna_id=columna_id,
-                     origen=(cuerpo.get("origen") or "sav"),
-                     preguntas=preguntas, demograficas=demograficas), filas)
-    salida = diferida.encolar(
-        ctx.boveda, "encuesta", encuesta_id, plan,
-        filas, actor=actor, encolador=ctx.encolador, cronometro=cronometro)
-    salida["sin_clave_de_dedup"] = plan["sin_clave_de_dedup"]
-
-    # Lo que se puede decir sin procesar nada se dice ya: son chequeos sobre
-    # el archivo, no sobre lo ingestado, y esperarlos al final no aportaría.
-    salida["duplicados_en_el_archivo"] = calidad.detectar_duplicados_en_filas(
-        filas, columna_id
-    )
-    if creacion is not None:
-        salida["creacion_de_individuos"] = creacion
-    return 202, salida
-
-
 # ════════════════════════════════════════════════════════════════════
 #  R3.13 — Cargar panelistas sin asociarlos a un panel
 # ════════════════════════════════════════════════════════════════════
@@ -1922,7 +1869,7 @@ def editar_carga(ctx, actor, params, cuerpo, consulta):
 
 
 @ruta("POST", "/cargas/<carga_id>/borrado", "borrar_carga",
-      requisito="PEDIDO celular · borrar una carga")
+      requisito="PEDIDO celular · borrar una carga, R-EU.10")
 def borrar_carga(ctx, actor, params, cuerpo, consulta):
     """Borra una carga con lo que trajo, o muestra qué haría.
 
@@ -1936,7 +1883,10 @@ def borrar_carga(ctx, actor, params, cuerpo, consulta):
     return cargas_borrado.lanzar(
         ctx.boveda, ctx.semantica, _entero(params["carga_id"]),
         confirmacion=cuerpo.get("confirmacion"), actor=actor,
-        encolador=ctx.encolador, solo_revisar=_revision_pedida(cuerpo))
+        encolador=ctx.encolador, solo_revisar=_revision_pedida(cuerpo),
+        # R-EU.10 — dar de baja a las personas que la carga creó y no tienen
+        # otra vida es una opción que se elige en la vista previa.
+        dar_de_baja_creadas=bool(cuerpo.get("dar_de_baja_creadas")))
 
 
 @ruta("POST", "/cargas/<carga_id>/analizar", "ingestar", requisito="R3.13")
@@ -1947,30 +1897,74 @@ def analizar_sav_de_carga(ctx, actor, params, cuerpo, consulta):
                              cuerpo.get("valores_no_respuesta"))
 
 
-@ruta("POST", "/cargas/<carga_id>/ingesta", "ingestar",
-      requisito="R3.13, R-TEM.2, R-TEM.13, R-ING.2, R-ING.3")
-def ingestar_carga(ctx, actor, params, cuerpo, consulta):
-    """Incorpora los individuos del archivo y sus respuestas. Sin panel.
+AVISO_SIN_PREGUNTAS_NUEVAS = (
+    "Las preguntas de este archivo ya estaban en la encuesta: sus temáticas "
+    "son las del estudio, y no hace falta proponer otras.")
 
-    Lo que **no** hace es tan importante como lo que hace: no crea membresías
-    ni participaciones. Esa gente no es panelista y no tiene por qué aparecer
-    en la composición, la brecha ni el muestreo de ningún panel.
+
+def _propuesta_de_tematicas(ctx, carga, disponibles):
+    """R-EU.2 — las temáticas se proponen **una vez por encuesta**, en su
+    primera carga. Una carga posterior propone solo para las preguntas que
+    trae nuevas, y devuelve las del estudio como punto de partida."""
+    actuales = tematicas.de_encuesta(ctx.boveda, carga["encuesta_id"])
+    ya_estaban = {p["codigo"] for p in tematicas.preguntas_guardadas(
+        ctx.semantica, carga["ref_estudio"])}
+    if not actuales and not ya_estaban:
+        propuesta = tematicas.proponer(ctx.boveda, ctx.proponente_tematicas,
+                                       disponibles)
+    else:
+        nuevas = [p for p in disponibles if p.get("codigo") not in ya_estaban]
+        propuesta = (tematicas.proponer(ctx.boveda, ctx.proponente_tematicas, nuevas)
+                     if nuevas else
+                     {"estado": "sin_preguntas_nuevas",
+                      "aviso": AVISO_SIN_PREGUNTAS_NUEVAS, "propuesta": []})
+        propuesta["solo_preguntas_nuevas"] = True
+        propuesta["preguntas_nuevas"] = [p.get("codigo") for p in nuevas]
+    propuesta["actuales"] = actuales
+    return propuesta
+
+
+@ruta("POST", "/cargas/<carga_id>/ingesta", "ingestar",
+      requisito="R3.13, R-TEM.2, R-TEM.13, R-ING.2, R-ING.3, R-EU.1, R-EU.3, "
+                "R-EU.4, R-EU.6")
+def ingestar_carga(ctx, actor, params, cuerpo, consulta):
+    """Ingesta el archivo de una carga en su encuesta. **El** flujo de
+    ingesta (D81): el de la sección Panelistas y el de Encuestas son este.
+
+    La revisión (`solo_revisar`) dice, además de lo de siempre:
+
+    * `archivo_repetido` — la carga de esta encuesta que ya trajo un archivo
+      idéntico (R-EU.3). Confirmar igual exige `confirmar_archivo_repetido`.
+    * `no_convocados` — en una encuesta con audiencia, quiénes del archivo no
+      estaban convocados (R-EU.4). `excluir_no_convocados` los saca.
+    * `consentimiento_por_finalidad` — quiénes quedan sin cada finalidad y
+      qué implica (R-EU.6).
+    * `tematicas` — la propuesta: la primera carga del estudio la pide para
+      todas sus preguntas; las siguientes, solo para las nuevas (R-EU.2).
     """
+    from . import encuestas_borrado
+
     carga_id = _entero(params["carga_id"])
+    carga = cargas.obtener(ctx.boveda, carga_id)
+    encuesta = encuestas.obtener(ctx.boveda, carga["encuesta_id"])
     preguntas = cuerpo.get("preguntas") or []
     columna_id = (cuerpo.get("columna_id") or "").strip()
     if not columna_id:
         raise DatosInvalidos("Falta indicar qué variable identifica al individuo.")
     # R-ING.2 — antes de leer el archivo, de pedir temáticas a Claude o de
-    # crear a nadie: con una ingesta en curso no hay qué revisar.
-    diferida.exigir_sin_trabajo_activo(ctx.boveda, "carga", carga_id)
+    # crear a nadie: con una ingesta en curso no hay qué revisar. Todas las
+    # cargas de una encuesta escriben en el mismo cuestionario: una a la vez.
+    encuestas_borrado.exigir_sin_ingesta(ctx.boveda, encuesta["id"])
     cronometro = diferida.Cronometro()
 
     with cronometro.parte("despivotar"):
         # Las filas llegan del `.sav` o ya despivotadas, igual que en R3.9.
-        filas = (sav.filas_de(_archivo_de(cuerpo))
-                 if cuerpo.get("archivo_base64") or cuerpo.get("archivo")
+        contenido = (_archivo_de(cuerpo)
+                     if cuerpo.get("archivo_base64") or cuerpo.get("archivo") else None)
+        filas = (sav.filas_de(contenido) if contenido is not None
                  else (cuerpo.get("filas") or []))
+        huella = cargas.huella(contenido=contenido,
+                               filas=None if contenido is not None else filas)
 
         demograficas = sav.normalizar_demograficas(
             cuerpo.get("demograficas"), {c for fila in filas for c in fila},
@@ -1978,15 +1972,29 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
     opciones_por_variable = {
         p.get("codigo"): (p.get("opciones") or {}) for p in preguntas
     }
+    origen = cuerpo.get("origen") or "carga"
+    tipo_id = cuerpo.get("tipo_identificador")
+    de_panel = encuesta["tipo"] == encuestas.DE_PANEL
+    repetido = cargas.archivo_repetido(ctx.boveda, encuesta["id"], huella,
+                                       excepto=carga_id)
 
     if _revision_pedida(cuerpo):
         resumen = resumen_ingesta.resumir(
-            _plan_de(cuerpo, columna_id=columna_id,
-                     origen=(cuerpo.get("origen") or "carga"),
+            _plan_de(cuerpo, columna_id=columna_id, origen=origen,
                      preguntas=preguntas, demograficas=demograficas),
-            filas, panel=None, evidencia=_evidencia_normalizada(cuerpo),
-            destino_tipo="carga",
-            nombre_destino=cargas.obtener(ctx.boveda, carga_id).get("nombre"))
+            filas, panel=encuesta.get("panel_id") if de_panel else None,
+            evidencia=_evidencia_normalizada(cuerpo),
+            destino_tipo="encuesta" if de_panel else "carga",
+            nombre_destino=encuesta.get("nombre"))
+        resumen["encuesta"] = {"id": encuesta["id"], "nombre": encuesta["nombre"],
+                               "tipo": encuesta["tipo"]}
+        resumen["archivo_repetido"] = repetido
+        resumen["no_convocados"] = cargas.no_convocados(
+            ctx.boveda, encuesta["id"], filas, columna_id, tipo_id, origen)
+        resumen["consentimiento_por_finalidad"] = cargas.consentimiento_por_finalidad(
+            ctx.boveda, encuesta["id"], filas, columna_id, tipo_id, origen,
+            evidencia=_evidencia_normalizada(cuerpo),
+            crea_personas=cuerpo.get("modo") == "crear_individuos")
         # R-TEM.2 — la propuesta de temáticas aparece en la revisión, junto
         # al resto de la configuración. Sale de **lo que el resumen dice que
         # va al store semántico**: las demográficas, las de identidad y las
@@ -1998,15 +2006,12 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
         disponibles = tematicas.preguntas_para_proponer(
             resumen["al_store_semantico"]["variables"], demograficas, columna_id)
         if cuerpo.get("proponer_tematicas", True) is not False:
-            resumen["tematicas"] = tematicas.proponer(
-                ctx.boveda, ctx.proponente_tematicas, disponibles)
+            resumen["tematicas"] = _propuesta_de_tematicas(ctx, carga, disponibles)
         elif cuerpo.get("propuesta_previa") is not None \
                 or cuerpo.get("tematicas_editadas") is not None:
             # R-TEM.13 — se marcó (o desmarcó) una variable como demográfica:
             # la propuesta que ya estaba se ajusta a las preguntas que siguen
-            # yendo al store semántico, **sin volver a llamar a Claude**. Las
-            # temáticas que salían solo de las variables marcadas se retiran;
-            # la pantalla las guarda para devolverlas si se desmarcan.
+            # yendo al store semántico, **sin volver a llamar a Claude**.
             propuesta, retiradas = tematicas.ajustar_a_preguntas(
                 cuerpo.get("propuesta_previa") or [], disponibles)
             editadas, retiradas_editadas = tematicas.ajustar_a_preguntas(
@@ -2020,6 +2025,20 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
             resumen["tematicas"] = None
         return 200, resumen
 
+    # R-EU.3 — el mismo archivo dos veces: se avisó en la revisión, y
+    # confirmar igual es una decisión explícita.
+    if repetido and not cuerpo.get("confirmar_archivo_repetido"):
+        raise Conflicto(
+            f"Este archivo es idéntico al de la carga «{repetido['nombre']}» de "
+            f"esta encuesta. Si de verdad querés procesarlo otra vez, confirmalo.",
+            {"motivo": "archivo_repetido", "carga": repetido})
+    # R-EU.4 — el analista puede dejar afuera a los no convocados.
+    if cuerpo.get("excluir_no_convocados"):
+        filas = cargas.excluir_ids(filas, columna_id, cargas.ids_no_convocados(
+            ctx.boveda, encuesta["id"], filas, columna_id, tipo_id, origen))
+
+    db.ejecutar(ctx.boveda, "update carga set archivo_huella = %s where id = %s",
+                (huella, carga_id))
     creacion = None
     if cuerpo.get("modo") == "crear_individuos":
         # Igual que en R3.9: la evidencia se valida **antes** de ingestar
@@ -2028,25 +2047,24 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
         with cronometro.parte("crear_individuos"):
             creacion = cargas.crear_individuos(
                 ctx.boveda, filas, sav.mapeo_por_campo(demograficas),
-                origen=(cuerpo.get("origen") or "carga"), columna_id=columna_id,
+                origen=origen, columna_id=columna_id,
                 evidencia_consentimiento=cuerpo.get("evidencia_consentimiento"),
                 actor=actor, opciones_por_variable=opciones_por_variable,
                 carga_id=carga_id,
             )
-        # Igual que en R3.9: las personas tienen que estar commiteadas antes
-        # de que arranque la primera tarea.
-        ctx.boveda.commit()
+    # Las personas tienen que estar commiteadas antes de que arranque la
+    # primera tarea, y la huella también.
+    ctx.boveda.commit()
 
-    cargas.obtener(ctx.boveda, carga_id)   # que exista, antes de guardar nada
     with cronometro.parte("armar_plan"):
         plan = _con_constancia_de_dedup(
-            _plan_de(cuerpo, columna_id=columna_id,
-                     origen=(cuerpo.get("origen") or "carga"),
+            _plan_de(cuerpo, columna_id=columna_id, origen=origen,
                      preguntas=preguntas, demograficas=demograficas), filas)
     salida = diferida.encolar(
         ctx.boveda, "carga", carga_id, plan,
         filas, actor=actor, encolador=ctx.encolador, cronometro=cronometro)
     salida["sin_clave_de_dedup"] = plan["sin_clave_de_dedup"]
+    salida["encuesta_id"] = encuesta["id"]
 
     salida["duplicados_en_el_archivo"] = calidad.detectar_duplicados_en_filas(
         filas, columna_id
@@ -2747,6 +2765,7 @@ def optimizar_muestra(ctx, actor, params, cuerpo, consulta):
 
     **Propone.** Convocar sigue siendo una acción explícita, igual que con las
     reglas de R3.1."""
+    encuestas.exigir_de_panel(ctx.boveda, _entero(params["encuesta_id"]))
     return 200, optimizador.optimizar(
         ctx.boveda, _entero(params["encuesta_id"]),
         dimension=consulta.get("dimension", "sexo"),
@@ -2759,6 +2778,7 @@ def optimizar_muestra(ctx, actor, params, cuerpo, consulta):
       requisito="R4.2")
 def comparar_metodos(ctx, actor, params, cuerpo, consulta):
     """La misma pregunta por los dos métodos, para poder justificar el cambio."""
+    encuestas.exigir_de_panel(ctx.boveda, _entero(params["encuesta_id"]))
     return 200, optimizador.comparar(
         ctx.boveda, _entero(params["encuesta_id"]),
         dimension=consulta.get("dimension", "sexo"),

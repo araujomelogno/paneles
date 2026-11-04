@@ -17,7 +17,9 @@ RUTAS_DEL_HANDOFF = [
     ("DELETE", "/paneles/1/miembros/3f5b8a1e-0000-4000-8000-000000000001"),
     ("POST", "/consentimientos/3f5b8a1e-0000-4000-8000-000000000001/retiro"),
     ("POST", "/encuestas"),
-    ("POST", "/encuestas/1/ingesta"),
+    # D81 — la ingesta de una encuesta es la de una de sus cargas.
+    ("POST", "/encuestas/1/cargas"),
+    ("POST", "/cargas/1/ingesta"),
 ]
 
 

@@ -153,7 +153,10 @@ def test_lo_declarado_coincide_con_lo_que_crean_las_migraciones(store, migracion
 
         # Lo que se reemplaza no cuenta como objeto creado acá: la migración
         # se detecta por lo que sí crea.
-        faltan = reales - redefinidos - set(declarados)
+        # Y lo que una migración posterior retiró no se declara acá: la
+        # base al día ya no lo tiene (`esquema.RETIRADOS`).
+        retirados = set(esquema.RETIRADOS.get(store, {}))
+        faltan = reales - redefinidos - set(declarados) - retirados
         assert not faltan, (
             f"{store}/{archivo} crea {sorted(faltan)} y esquema.py no lo declara"
         )

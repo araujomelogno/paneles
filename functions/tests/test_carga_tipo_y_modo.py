@@ -92,14 +92,17 @@ def test_la_base_tambien_lo_hace_valer(conn_boveda, telefonica):
 
 def test_las_opciones_coinciden_con_el_check_de_la_base(conn_boveda):
     """Espejo: cada clave que ofrece la pantalla la acepta la base."""
+    # D81 — toda carga es de una encuesta.
+    encuesta = db.una(conn_boveda, """insert into encuesta (nombre, tipo)
+                                      values ('espejo', 'independiente') returning id""")["id"]
     for campo, vocabulario in cargas.opciones().items():
         for opcion in vocabulario:
             otro = "algo" if opcion["clave"] == cargas.OTRO else None
             with conn_boveda.transaction():
                 db.ejecutar(
                     conn_boveda,
-                    f"insert into carga (nombre, {campo}, {campo}_otro) "
-                    f"values ('espejo', %s, %s)", (opcion["clave"], otro))
+                    f"insert into carga (nombre, encuesta_id, {campo}, {campo}_otro) "
+                    f"values ('espejo', %s, %s, %s)", (encuesta, opcion["clave"], otro))
 
 
 def test_las_opciones_son_las_pedidas():

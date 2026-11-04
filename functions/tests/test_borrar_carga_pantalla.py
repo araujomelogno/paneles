@@ -40,7 +40,9 @@ def test_el_borrado_muestra_la_vista_previa_y_pide_el_nombre(pagina):
 
     cuerpo = pagina.inner_text("#borrado-cuerpo")
     assert "irreversible" in cuerpo.lower()
-    assert "Se dan de baja" in cuerpo and "Se conservan" in cuerpo
+    # D81 (R-EU.10) — dar de baja a las creadas es una casilla, sin marcar.
+    assert "Darlas de baja" in cuerpo and "Se conservan" in cuerpo
+    assert not pagina.locator("#dar-de-baja").is_checked()
     assert "respaldo" in cuerpo
 
     boton = pagina.locator("#confirmar-borrado")

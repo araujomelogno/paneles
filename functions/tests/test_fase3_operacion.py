@@ -220,11 +220,14 @@ def test_un_sav_demasiado_grande_se_rechaza_diciendo_cuanto_pesa(ctx, actor):
     """
     from panel_api import ruteo
 
+    from panel_api import cargas
+
     grande = base64.b64encode(b"\0" * (ruteo.LIMITE_SAV_BYTES + 1)).decode()
+    carga = cargas.crear(ctx.boveda, "Archivo grande")
 
     with pytest.raises(DatosInvalidos) as excepcion:
         ruteo.despachar(
-            "POST", "/encuestas/1/sav/analizar",
+            "POST", f"/cargas/{carga['id']}/analizar",
             {"archivo_base64": grande}, {}, actor("operaciones"), ctx,
         )
 

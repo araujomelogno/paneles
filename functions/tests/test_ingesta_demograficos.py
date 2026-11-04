@@ -15,7 +15,7 @@ import pytest
 from panel_api import db, encuestas, paneles, personas, sav
 from panel_api.errores import DatosInvalidos
 
-from conftest import consentimientos
+from conftest import ingesta_de, consentimientos
 
 
 def _procesar_lotes(ctx, trabajo_id):
@@ -383,7 +383,7 @@ def test_por_la_ruta_el_marcado_reemplaza_al_mapeo_patronimico(ctx, actor, conn_
     version = "consentimiento-campo-2026-09"
 
     status, respuesta = ruteo.despachar(
-        "POST", f"/encuestas/{encuesta['id']}/sav/ingesta",
+        "POST", ingesta_de(ctx.boveda, encuesta['id']),
         {
             "archivo_base64": base64.b64encode(ruta.read_bytes()).decode(),
             "columna_id": "ID",

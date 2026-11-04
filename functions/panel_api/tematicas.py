@@ -178,14 +178,18 @@ def listar(conn):
         {"id": f["id"], "nombre": f["nombre"], "es_especial": f["es_especial"],
          "es_especial_propia": f["es_especial_propia"],
          "area_id": f["area_id"], "area": f["area"],
-         "cargas": f["cargas"], "personas": f["personas"]}
+         "encuestas": f["encuestas"], "cargas": f["cargas"],
+         "personas": f["personas"]}
         for f in db.todas(
             conn,
             """
             select t.id, t.nombre, t.es_especial, t.es_especial_propia,
                    t.area_id, t.area,
-                   (select count(*)::int from carga_tematica ct
-                     where ct.tematica_id = t.id) as cargas,
+                   (select count(*)::int from encuesta_tematica et
+                     where et.tematica_id = t.id) as encuestas,
+                   (select count(*)::int from encuesta_tematica et
+                      join carga c on c.encuesta_id = et.encuesta_id
+                     where et.tematica_id = t.id) as cargas,
                    (select count(distinct pt.id_persona)::int from persona_tematica pt
                      where pt.tematica_id = t.id) as personas
               from v_tematica t
@@ -204,43 +208,68 @@ def _fila(f):
             "creado_en": f["creado_en"].isoformat()}
 
 
-def de_cargas(conn, ids_carga):
-    """`{carga_id: [temática, …]}` para varias cargas, en una consulta.
+def de_encuestas(conn, ids_encuesta):
+    """`{encuesta_id: [temática, …]}` para varios estudios, en una consulta.
 
-    Cada temática viene con las preguntas que la sustentan en esa carga y
-    con cuántas personas de la carga la tienen (R-TEM.6): el número que
-    contesta «¿de cuántos sabemos algo sobre esto?».
+    Desde la 0032 (D81) las temáticas son **del estudio**: todas las cargas
+    de una encuesta comparten su cuestionario y sus temáticas. Cada temática
+    viene con las preguntas que la sustentan en ese estudio y con cuántas
+    personas la tienen (R-TEM.6): el número que contesta «¿de cuántos
+    sabemos algo sobre esto?».
     """
-    ids = [int(i) for i in dict.fromkeys(ids_carga or []) if i is not None]
+    ids = [int(i) for i in dict.fromkeys(ids_encuesta or []) if i is not None]
     if not ids:
         return {}
     salida = {i: [] for i in ids}
     for f in db.todas(
         conn,
         """
-        select ct.carga_id, ct.tematica_id, t.nombre, t.es_especial,
-               t.es_especial_propia, t.area_id, t.area, ct.origen,
-               ct.creado_en,
+        select et.encuesta_id, et.tematica_id, t.nombre, t.es_especial,
+               t.es_especial_propia, t.area_id, t.area, et.origen,
+               et.creado_en,
                array(select tp.codigo_pregunta from tematica_pregunta tp
-                      where tp.carga_id = ct.carga_id
-                        and tp.tematica_id = ct.tematica_id
+                      where tp.encuesta_id = et.encuesta_id
+                        and tp.tematica_id = et.tematica_id
                       order by tp.codigo_pregunta) as preguntas,
                (select count(*)::int from persona_tematica pt
-                 where pt.carga_id = ct.carga_id
-                   and pt.tematica_id = ct.tematica_id) as personas
-          from carga_tematica ct
-          join v_tematica t on t.id = ct.tematica_id
-         where ct.carga_id = any(%s)
-         order by ct.carga_id, t.nombre
+                 where pt.encuesta_id = et.encuesta_id
+                   and pt.tematica_id = et.tematica_id) as personas
+          from encuesta_tematica et
+          join v_tematica t on t.id = et.tematica_id
+         where et.encuesta_id = any(%s)
+         order by et.encuesta_id, t.nombre
         """,
         (ids,),
     ):
-        salida[f["carga_id"]].append(_fila(f))
+        salida[f["encuesta_id"]].append(_fila(f))
     return salida
 
 
+def de_encuesta(conn, encuesta_id):
+    return de_encuestas(conn, [encuesta_id]).get(int(encuesta_id), [])
+
+
+def encuesta_de_carga(conn, carga_id):
+    """El estudio al que pertenece una carga (toda carga tiene uno)."""
+    fila = db.una(conn, "select encuesta_id from carga where id = %s", (carga_id,))
+    if not fila:
+        raise NoEncontrado(f"No existe la carga {carga_id}.")
+    return fila["encuesta_id"]
+
+
+def de_cargas(conn, ids_carga):
+    """`{carga_id: [temática, …]}`: las de la encuesta de cada carga."""
+    ids = [int(i) for i in dict.fromkeys(ids_carga or []) if i is not None]
+    if not ids:
+        return {}
+    encuesta_de = {f["id"]: f["encuesta_id"] for f in db.todas(
+        conn, "select id, encuesta_id from carga where id = any(%s)", (ids,))}
+    por_encuesta = de_encuestas(conn, list(encuesta_de.values()))
+    return {i: por_encuesta.get(encuesta_de.get(i), []) for i in ids}
+
+
 def de_carga(conn, carga_id):
-    return de_cargas(conn, [carga_id]).get(int(carga_id), [])
+    return de_encuesta(conn, encuesta_de_carga(conn, carga_id))
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -315,12 +344,20 @@ def _marcar_especiales(conn, especiales, puede_desmarcar):
 
 
 def guardar(conn, carga_id, items, conn_semantica=None, puede_desmarcar=False):
-    """Deja a la carga con **esas** temáticas: agrega las nuevas y quita las
+    """Las temáticas del estudio de una carga (D81): ver `guardar_de_encuesta`."""
+    return guardar_de_encuesta(conn, encuesta_de_carga(conn, carga_id), items,
+                               conn_semantica=conn_semantica,
+                               puede_desmarcar=puede_desmarcar)
+
+
+def guardar_de_encuesta(conn, encuesta_id, items, conn_semantica=None,
+                        puede_desmarcar=False):
+    """Deja al estudio con **esas** temáticas: agrega las nuevas y quita las
     que no vinieron, con las preguntas que sustentan cada una (R-TEM.6) y
     su marca de especial. Devuelve la lista como quedó.
 
-    Es el único camino que escribe `carga_tematica` y `tematica_pregunta`,
-    antes y después de confirmar la carga (R-TEM.4). El origen se fija la
+    Es el único camino que escribe `encuesta_tematica` y `tematica_pregunta`,
+    antes y después de confirmar una carga (R-TEM.4). El origen se fija la
     primera vez: volver a guardar una propuesta ya aceptada no la convierte
     en manual.
 
@@ -333,8 +370,8 @@ def guardar(conn, carga_id, items, conn_semantica=None, puede_desmarcar=False):
         raise DatosInvalidos(
             "Mandá la lista de temáticas (`tematicas`), aunque sea vacía.",
             {"campo": "tematicas"})
-    if not db.una(conn, "select 1 as hay from carga where id = %s", (carga_id,)):
-        raise NoEncontrado(f"No existe la carga {carga_id}.")
+    if not db.una(conn, "select 1 as hay from encuesta where id = %s", (encuesta_id,)):
+        raise NoEncontrado(f"No existe la encuesta {encuesta_id}.")
 
     elegidas = {}
     for crudo in items:
@@ -342,7 +379,7 @@ def guardar(conn, carga_id, items, conn_semantica=None, puede_desmarcar=False):
         elegidas.setdefault(item["nombre"], item)
     if len(elegidas) > MAX_POR_CARGA:
         raise DatosInvalidos(
-            f"Son {len(elegidas)} temáticas: el máximo por carga es "
+            f"Son {len(elegidas)} temáticas: el máximo por estudio es "
             f"{MAX_POR_CARGA}. Una temática es un tema de investigación, no "
             f"una pregunta.", {"campo": "tematicas"})
 
@@ -375,37 +412,37 @@ def guardar(conn, carga_id, items, conn_semantica=None, puede_desmarcar=False):
 
     db.ejecutar(
         conn,
-        "delete from carga_tematica where carga_id = %s "
+        "delete from encuesta_tematica where encuesta_id = %s "
         "and not (tematica_id = any(%s))",
-        (carga_id, list(vinculos)))
+        (encuesta_id, list(vinculos)))
     for tematica_id, item in vinculos.items():
         db.ejecutar(
             conn,
             """
-            insert into carga_tematica (carga_id, tematica_id, origen)
+            insert into encuesta_tematica (encuesta_id, tematica_id, origen)
             values (%s, %s, %s)
-            on conflict (carga_id, tematica_id) do nothing
+            on conflict (encuesta_id, tematica_id) do nothing
             """,
-            (carga_id, tematica_id, item["origen"]))
+            (encuesta_id, tematica_id, item["origen"]))
         if item["preguntas"] is None:
             continue
         db.ejecutar(
             conn,
-            "delete from tematica_pregunta where carga_id = %s and tematica_id = %s "
+            "delete from tematica_pregunta where encuesta_id = %s and tematica_id = %s "
             "and not (codigo_pregunta = any(%s))",
-            (carga_id, tematica_id, item["preguntas"]))
+            (encuesta_id, tematica_id, item["preguntas"]))
         if item["preguntas"]:
             db.ejecutar(
                 conn,
                 """
-                insert into tematica_pregunta (carga_id, tematica_id, codigo_pregunta)
+                insert into tematica_pregunta (encuesta_id, tematica_id, codigo_pregunta)
                 select %s, %s, unnest(%s::text[])
                 on conflict do nothing
                 """,
-                (carga_id, tematica_id, item["preguntas"]))
+                (encuesta_id, tematica_id, item["preguntas"]))
     if conn_semantica is not None:
-        recalcular_carga(conn, conn_semantica, carga_id)
-    return de_carga(conn, carga_id)
+        recalcular_encuesta(conn, conn_semantica, encuesta_id)
+    return de_encuesta(conn, encuesta_id)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -437,47 +474,47 @@ def respondida(pregunta, etiqueta, valores_no_respuesta=None):
         pregunta or {}, etiqueta, calidad_dato.lista_no_respuesta(valores_no_respuesta))
 
 
-def _aplicar(conn, carga_id, pares, personas=None):
-    """Escribe `persona_tematica` de una carga a partir de pares
+def _aplicar(conn, encuesta_id, pares, personas=None):
+    """Escribe `persona_tematica` de un estudio a partir de pares
     `(id_persona, codigo_pregunta)` respondidos.
 
     `personas` acota qué personas se reemplazan (las de un lote); sin él se
-    reemplaza la carga entera (el recálculo). Quien no respondió ninguna
+    reemplaza el estudio entero (el recálculo). Quien no respondió ninguna
     pregunta relacionada queda sin fila. Solo para personas que existen en
     la bóveda: el store semántico no tiene FK hacia acá.
     """
     if personas is None:
-        db.ejecutar(conn, "delete from persona_tematica where carga_id = %s",
-                    (carga_id,))
+        db.ejecutar(conn, "delete from persona_tematica where encuesta_id = %s",
+                    (encuesta_id,))
     else:
         personas = [str(p) for p in dict.fromkeys(personas)]
         if not personas:
             return 0
         db.ejecutar(
             conn,
-            "delete from persona_tematica where carga_id = %s "
-            "and id_persona = any(%s::uuid[])", (carga_id, personas))
+            "delete from persona_tematica where encuesta_id = %s "
+            "and id_persona = any(%s::uuid[])", (encuesta_id, personas))
     pares = list(dict.fromkeys((str(a), str(b)) for a, b in pares))
     if not pares:
         return 0
     return db.ejecutar(
         conn,
         """
-        insert into persona_tematica (id_persona, tematica_id, carga_id,
+        insert into persona_tematica (id_persona, tematica_id, encuesta_id,
                                       preguntas_respondidas)
-        select r.id_persona, tp.tematica_id, tp.carga_id, count(*)::int
+        select r.id_persona, tp.tematica_id, tp.encuesta_id, count(*)::int
           from unnest(%s::uuid[], %s::text[]) as r(id_persona, codigo)
           join tematica_pregunta tp
-            on tp.carga_id = %s and tp.codigo_pregunta = r.codigo
+            on tp.encuesta_id = %s and tp.codigo_pregunta = r.codigo
           join persona p on p.id_persona = r.id_persona
-         group by r.id_persona, tp.tematica_id, tp.carga_id
-        on conflict (id_persona, tematica_id, carga_id)
+         group by r.id_persona, tp.tematica_id, tp.encuesta_id
+        on conflict (id_persona, tematica_id, encuesta_id)
           do update set preguntas_respondidas = excluded.preguntas_respondidas
         """,
-        ([a for a, _ in pares], [b for _, b in pares], carga_id))
+        ([a for a, _ in pares], [b for _, b in pares], encuesta_id))
 
 
-def registrar_de_lote(conn, carga_id, respuestas, preguntas, personas,
+def registrar_de_lote(conn, encuesta_id, respuestas, preguntas, personas,
                       valores_no_respuesta=None):
     """R-TEM.6 — al ingestar: las temáticas de las personas de un lote.
 
@@ -491,11 +528,17 @@ def registrar_de_lote(conn, carga_id, respuestas, preguntas, personas,
     por_codigo = {p.get("codigo"): p for p in preguntas or []}
     pares = [(id_persona, codigo) for id_persona, codigo, etiqueta in respuestas
              if respondida(por_codigo.get(codigo), etiqueta, valores_no_respuesta)]
-    return _aplicar(conn, carga_id, pares, personas=personas)
+    return _aplicar(conn, encuesta_id, pares, personas=personas)
 
 
 def recalcular_carga(conn_boveda, conn_semantica, carga_id):
-    """Recalcula las temáticas de todas las personas de una carga.
+    """Las del estudio de la carga: ver `recalcular_encuesta`."""
+    return recalcular_encuesta(conn_boveda, conn_semantica,
+                               encuesta_de_carga(conn_boveda, carga_id))
+
+
+def recalcular_encuesta(conn_boveda, conn_semantica, encuesta_id):
+    """Recalcula las temáticas de todas las personas de un estudio.
 
     Lee del store semántico, por `ref_estudio`, qué preguntas respondió cada
     individuo: solo `id_persona`, código y la etiqueta para descartar la no
@@ -503,10 +546,10 @@ def recalcular_carga(conn_boveda, conn_semantica, carga_id):
     o sus preguntas) y el del cálculo inicial de una carga anterior
     (R-TEM.5): para esas no hay otra fuente.
     """
-    carga = db.una(conn_boveda, "select ref_estudio from carga where id = %s",
-                   (carga_id,))
-    if not carga:
-        raise NoEncontrado(f"No existe la carga {carga_id}.")
+    estudio = db.una(conn_boveda, "select ref_estudio from encuesta where id = %s",
+                     (encuesta_id,))
+    if not estudio:
+        raise NoEncontrado(f"No existe la encuesta {encuesta_id}.")
     filas = db.todas(
         conn_semantica,
         """
@@ -518,18 +561,18 @@ def recalcular_carga(conn_boveda, conn_semantica, carga_id):
           join individuo i on i.id = r.individuo_id
          where c.ref_estudio = %s
         """,
-        (str(carga["ref_estudio"]),))
+        (str(estudio["ref_estudio"]),))
     pares = [
         (f["id_persona"], f["codigo"]) for f in filas
         if respondida({"opciones": f["opciones"], "tipo": f["tipo"]},
                       f["valor_texto"],
                       (f["normalizacion"] or {}).get("valores_no_respuesta"))
     ]
-    return _aplicar(conn_boveda, carga_id, pares)
+    return _aplicar(conn_boveda, encuesta_id, pares)
 
 
 def de_persona(conn, id_persona, incluir_especiales=False):
-    """La ficha: las temáticas de una persona y de qué carga viene cada una.
+    """La ficha: las temáticas de una persona y de qué estudio viene cada una.
 
     Las especiales solo con permiso (`tematicas_especiales`): verlas asocia a
     una persona identificada con un tema sensible.
@@ -537,14 +580,15 @@ def de_persona(conn, id_persona, incluir_especiales=False):
     filas = db.todas(
         conn,
         """
-        select t.id, t.nombre, t.es_especial, t.area, c.id as carga_id,
-               c.nombre as carga, c.fecha_estudio, pt.preguntas_respondidas
+        select t.id, t.nombre, t.es_especial, t.area, e.id as encuesta_id,
+               e.nombre as estudio, e.fecha_campo as fecha_estudio,
+               pt.preguntas_respondidas
           from persona_tematica pt
           join v_tematica t on t.id = pt.tematica_id
-          join carga c on c.id = pt.carga_id
+          join encuesta e on e.id = pt.encuesta_id
          where pt.id_persona = %s
            and (%s or not t.es_especial)
-         order by t.nombre, c.fecha_estudio nulls last, c.id
+         order by t.nombre, e.fecha_campo nulls last, e.id
         """,
         (str(id_persona), bool(incluir_especiales)))
     ocultas = 0
@@ -558,7 +602,10 @@ def de_persona(conn, id_persona, incluir_especiales=False):
     return {
         "items": [
             {"id": f["id"], "nombre": f["nombre"], "es_especial": f["es_especial"],
-             "area": f["area"], "carga_id": f["carga_id"], "carga": f["carga"],
+             "area": f["area"], "encuesta_id": f["encuesta_id"],
+             # `carga` es el nombre del estudio: la ficha lo muestra así
+             # desde R-TEM.6, y desde D81 el estudio es la encuesta.
+             "estudio": f["estudio"], "carga": f["estudio"],
              "fecha_estudio": (f["fecha_estudio"].isoformat()
                                if f["fecha_estudio"] else None),
              "preguntas_respondidas": f["preguntas_respondidas"]}

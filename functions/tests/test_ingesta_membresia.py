@@ -187,8 +187,11 @@ def test_la_tasa_de_respuesta_cuenta_a_quien_no_fue_convocado(ctx, escenario):
 
     ola = next(e for e in encuestas.listar(ctx.boveda)
                if e["id"] == escenario["encuesta"]["id"])
-    assert ola["convocados"] == 2
+    # D81 (R-EU.4) — quien respondió sin estar convocado no pasa a contarse
+    # como convocado: la audiencia es la que se convocó.
+    assert ola["convocados"] == 1
     assert ola["respondieron"] == 2
+    assert ola["no_convocados"] == 1
 
 
 # ── R3.9.c · Idempotencia ────────────────────────────────────────────
@@ -264,11 +267,14 @@ def test_sin_contacto_vigente_igual_se_registra_lo_que_ya_paso(ctx):
     assert _participacion(ctx.boveda, encuesta["id"], persona)["respondio"] is True
 
 
-def test_quien_no_tiene_uso_semantico_no_entra_por_esta_puerta(ctx):
-    """Sus respuestas no se ingestan, así que no hay hecho que registrar.
+def test_quien_no_tiene_uso_semantico_no_entra_al_panel_pero_respondio(ctx):
+    """Sus respuestas no se ingestan, y la membresía acompaña a lo que
+    efectivamente se ingestó (decisión del addendum).
 
-    Es la decisión del addendum: la membresía y la participación acompañan a
-    lo que efectivamente se ingestó.
+    La participación cambió con D81 (R-EU.1): toda persona del archivo de una
+    carga respondió el estudio, y eso es un hecho de la bóveda, no contenido.
+    Antes no se registraba; ahora sí, como en la migración, que crea la
+    participación de cada persona de una carga.
     """
     panel = paneles.crear(ctx.boveda, "Panel sin semántico")
     persona = _panelista(
@@ -283,7 +289,7 @@ def test_quien_no_tiene_uso_semantico_no_entra_por_esta_puerta(ctx):
 
     assert persona in resultado["sin_consentimiento"]
     assert resultado["membresias_nuevas"] == 0
-    assert resultado["participaciones_nuevas"] == 0
+    assert resultado["participaciones_nuevas"] == 1
     assert _membresia(ctx.boveda, panel["id"], persona) is None
 
 

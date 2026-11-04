@@ -128,7 +128,9 @@ def _validar_objetivos(objetivos, categoricas=None):
 TODOS = "todos"
 PANEL = "panel"
 CARGA = "carga"
-AMBITOS = (TODOS, PANEL, CARGA)
+# R-EU.11 — una encuesta: sus respondentes frente a sus convocados.
+ENCUESTA = "encuesta"
+AMBITOS = (TODOS, PANEL, CARGA, ENCUESTA)
 # R-ORG.3 — los que admiten universo de referencia (D67).
 AMBITOS_CON_OBJETIVO = (PANEL, TODOS)
 
@@ -310,6 +312,18 @@ def _universo_carga(carga_id):
     )
 
 
+def _universo_encuesta(encuesta_id, quienes="respondieron"):
+    """R-EU.11 — las personas de una encuesta: las que respondieron, o las
+    convocadas (su audiencia). Una sola participación por persona y encuesta
+    (`unique`), así que no hay que deduplicar."""
+    condicion = "pa.respondio" if quienes == "respondieron" else "pa.convocado"
+    return (
+        "from participacion pa join persona p on p.id_persona = pa.id_persona",
+        f"pa.encuesta_id = %s and {condicion}",
+        (encuesta_id,),
+    )
+
+
 def universo_de_ambito(ambito, referencia=None, estado="activo"):
     """El `(from, where, parámetros)` de un ámbito, para quien cuenta otra
     cosa sobre el mismo conjunto de personas (R-TEM.6: las temáticas). Es el
@@ -319,6 +333,8 @@ def universo_de_ambito(ambito, referencia=None, estado="activo"):
         return _universo_todos()
     if ambito == CARGA:
         return _universo_carga(referencia)
+    if ambito == ENCUESTA:
+        return _universo_encuesta(referencia)
     return _universo_panel(referencia, estado)
 
 
@@ -613,6 +629,10 @@ def composicion_de_ambito(conn, ambito, referencia=None, dimensiones=None,
             {"ambito": ambito})
 
     pedidas = _dimensiones_pedidas(conn, dimensiones)
+    if ambito == ENCUESTA:
+        if referencia is None:
+            raise DatosInvalidos("Para el ámbito «encuesta» hace falta la encuesta.")
+        return _composicion_de_encuesta(conn, referencia, pedidas, cruce_de)
     if ambito == TODOS:
         universo = _universo_todos()
         objetivos = obtener_objetivo_de_todos(conn)["dimensiones"]
@@ -667,3 +687,106 @@ def composicion_de_ambito(conn, ambito, referencia=None, dimensiones=None,
         salida["cruce"] = {"ambito": descriptor,
                            **_cruce(conn, universo, cruce_de[0], cruce_de[1])}
     return salida
+
+
+# ── R-EU.11 · Convocados frente a respondentes ───────────────────────
+
+AVISO_ENCUESTA_SIN_AUDIENCIA = (
+    "Esta encuesta no tiene audiencia —no se convocó a nadie desde el "
+    "sistema, por ejemplo una carga desde Panelistas—: se muestra solo la "
+    "composición de quienes respondieron."
+)
+AVISO_ENCUESTA = (
+    "La tasa de respuesta de cada segmento es respondentes ÷ convocados de "
+    "ese segmento: es el sesgo de no respuesta, y dice a quién hay que "
+    "sobreconvocar en el próximo estudio. Quien respondió sin haber sido "
+    "convocado cuenta como respondente, no como convocado."
+)
+
+
+def _composicion_de_encuesta(conn, encuesta_id, pedidas, cruce_de=None):
+    """La composición de quienes respondieron, al lado de la de quienes
+    fueron convocados, y la **tasa de respuesta** de cada segmento. Sin
+    audiencia, solo la de respondentes. No tiene universo de referencia:
+    la comparación es contra la propia convocatoria."""
+    from . import encuestas
+
+    encuesta = encuestas.obtener(conn, encuesta_id)
+    respondentes = _universo_encuesta(encuesta_id, "respondieron")
+    convocados = _universo_encuesta(encuesta_id, "convocados")
+    total = _contar(conn, respondentes)
+    total_convocados = _contar(conn, convocados)
+    con_audiencia = total_convocados > 0
+    dimensiones = []
+    for dimension in pedidas:
+        fila = _dimension(conn, respondentes, dimension, {}, total,
+                          motivo_sin_objetivo=MOTIVO_SIN_OBJETIVO_ENCUESTA,
+                          quienes="respondente(s)")
+        if con_audiencia:
+            de_convocados = _observada(conn, convocados, dimension)
+            de_convocados.pop(SIN_DATO, None)
+            con_dato_convocados = sum(de_convocados.values())
+            vistas = {c["categoria"] for c in fila["categorias"]}
+            for categoria in sorted(set(de_convocados) - vistas):
+                fila["categorias"].append({
+                    "categoria": categoria, "observados": 0,
+                    "proporcion_observada": 0.0, "proporcion_objetivo": None,
+                    "brecha": None, "faltan": None})
+            for c in fila["categorias"]:
+                n = de_convocados.get(c["categoria"], 0)
+                c["convocados"] = n
+                c["proporcion_convocados"] = (
+                    round(n / con_dato_convocados, 4) if con_dato_convocados else 0.0)
+                # Respondentes de los convocados de ese segmento: los no
+                # convocados que respondieron no entran en la tasa.
+                c["respondieron_convocados"] = None
+                c["tasa_respuesta"] = None
+            tasas = _tasas_por_categoria(conn, encuesta_id, dimension)
+            for c in fila["categorias"]:
+                hechos = tasas.get(c["categoria"])
+                if hechos and c["convocados"]:
+                    c["respondieron_convocados"] = hechos
+                    c["tasa_respuesta"] = round(hechos / c["convocados"], 4)
+                elif c["convocados"]:
+                    c["respondieron_convocados"] = 0
+                    c["tasa_respuesta"] = 0.0
+            fila["categorias"].sort(key=lambda c: c["categoria"])
+        dimensiones.append(fila)
+    salida = {
+        "ambito": {"tipo": ENCUESTA, "id": encuesta["id"], "nombre": encuesta["nombre"],
+                   "encuesta_tipo": encuesta["tipo"], "estado": encuesta["estado"],
+                   "fecha_estudio": encuesta["fecha_campo"],
+                   "publico_objetivo": encuesta["publico_objetivo"]},
+        "objetivo_admitido": False,
+        "objetivo_cargado": False,
+        "miembros": total,
+        "convocados": total_convocados,
+        "con_audiencia": con_audiencia,
+        "tasa_respuesta": (round(
+            db.una(conn, """select count(*)::int as n from participacion
+                             where encuesta_id = %s and convocado and respondio""",
+                   (encuesta_id,))["n"] / total_convocados, 4)
+            if con_audiencia else None),
+        "dimensiones": dimensiones,
+        "avisos": [AVISO_ENCUESTA if con_audiencia else AVISO_ENCUESTA_SIN_AUDIENCIA],
+    }
+    if cruce_de:
+        salida["cruce"] = {"ambito": salida["ambito"],
+                           **_cruce(conn, respondentes, cruce_de[0], cruce_de[1])}
+    return salida
+
+
+MOTIVO_SIN_OBJETIVO_ENCUESTA = (
+    "Una encuesta no tiene universo de referencia: se compara contra su "
+    "propia convocatoria (columnas de convocados y tasa de respuesta)."
+)
+
+
+def _tasas_por_categoria(conn, encuesta_id, dimension):
+    """`{categoria: convocados que respondieron}` de una dimensión."""
+    desde, donde, params = (
+        "from participacion pa join persona p on p.id_persona = pa.id_persona",
+        "pa.encuesta_id = %s and pa.convocado and pa.respondio",
+        (encuesta_id,))
+    return {c: n for c, n in _observada(conn, (desde, donde, params), dimension).items()
+            if c != SIN_DATO}

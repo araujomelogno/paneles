@@ -73,7 +73,8 @@ def _tematicas_de(conn, carga_id=None):
              from persona_tematica pt
              join persona p on p.id_persona = pt.id_persona
              join tematica t on t.id = pt.tematica_id
-            where %s::bigint is null or pt.carga_id = %s""",
+            where %s::bigint is null
+               or pt.encuesta_id = (select encuesta_id from carga where id = %s)""",
         (carga_id, carga_id)):
         salida.setdefault(f["documento"], {})[f["nombre"]] = f["preguntas_respondidas"]
     return salida
@@ -170,13 +171,15 @@ def test_una_persona_en_varias_cargas_acumula_las_tematicas(ctx, actor, carga):
     _cargar(ctx, otra, [_fila(1, documento="30-1"), _fila(2)])
     ids = _ids(ctx.boveda)
     filas = db.todas(ctx.boveda,
-                     "select t.nombre, pt.carga_id from persona_tematica pt "
+                     "select t.nombre, pt.encuesta_id from persona_tematica pt "
                      "join tematica t on t.id = pt.tematica_id "
-                     "where pt.id_persona = %s order by t.nombre, pt.carga_id",
+                     "where pt.id_persona = %s order by t.nombre, pt.encuesta_id",
                      (ids["30-1"],))
-    assert [(f["nombre"], f["carga_id"]) for f in filas] == [
-        ("consumo de tabaco", carga["id"]), ("fidelidad a la compañía", otra["id"]),
-        ("telefonía móvil", carga["id"]), ("telefonía móvil", otra["id"])]
+    # D81 — por estudio: cada carga es de su propia encuesta.
+    uno, dos = carga["encuesta_id"], otra["encuesta_id"]
+    assert [(f["nombre"], f["encuesta_id"]) for f in filas] == [
+        ("consumo de tabaco", uno), ("fidelidad a la compañía", dos),
+        ("telefonía móvil", uno), ("telefonía móvil", dos)]
 
     _, ficha = ruteo.despachar("GET", f"/panelistas/{ids['30-1']}", {}, {},
                                actor("admin"), ctx)
@@ -436,7 +439,10 @@ def test_una_baja_elimina_las_tematicas_de_la_persona(ctx, actor, carga):
                               "where id_persona = %s", (ids["30-4"],))["n"] == 0
 
 
-def test_borrar_la_carga_se_lleva_las_tematicas_de_sus_panelistas(ctx, carga):
-    db.ejecutar(ctx.boveda, "delete from carga where id = %s", (carga["id"],))
+def test_borrar_el_estudio_se_lleva_las_tematicas_de_sus_panelistas(ctx, carga):
+    # D81 — las temáticas por panelista son del estudio: se van con la
+    # encuesta. Borrar una carga de un estudio con varias las recalcula
+    # (`cargas_borrado.finalizar`); la única carga se lleva la encuesta.
+    db.ejecutar(ctx.boveda, "delete from encuesta where id = %s", (carga["encuesta_id"],))
     assert _tematicas_de(ctx.boveda) == {}
     assert db.una(ctx.boveda, "select count(*) as n from tematica_pregunta")["n"] == 0
