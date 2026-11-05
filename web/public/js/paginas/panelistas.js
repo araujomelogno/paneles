@@ -106,7 +106,7 @@ export async function render(main, ctx) {
       <div class="card-header">
         <div class="toolbar" style="flex:1">
           <div class="buscador">
-            <input type="text" id="q" placeholder="Buscar por nombre, email o documento…"
+            <input type="text" id="q" placeholder="Buscar por nombre, email, documento o id de origen…"
                    value="${esc(filtro.q)}" />
           </div>
           <select class="fselect" id="f-panel" style="width:auto">
@@ -234,7 +234,10 @@ async function cargarTabla() {
               <span class="badge badge-off" title="Sin ninguna letra ni dígito">inválido:
               ${esc(p.campos_invalidos.map((c) => CAMPO_INVALIDO[c] || c).join(', '))}</span></div>` : ''}
           </td>
-          <td class="mono">${esc(p.documento || '—')}</td>
+          <td class="mono">${esc(p.documento || '—')}
+            ${(p.ids_en_origen || []).length ? `<div class="small muted" data-ids-en-origen
+              title="Id de la plataforma de campo que coincidió con la búsqueda">${esc(
+              p.ids_en_origen.join(' · '))}</div>` : ''}</td>
           <td class="small">${esc([p.sexo, p.tramo_etario, p.localidad].filter(Boolean).join(' · ') || '—')}</td>
           <td>${consentimientos(p)}</td>
           <td class="mono">${p.paneles}</td>
