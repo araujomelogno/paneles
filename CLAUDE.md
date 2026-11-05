@@ -566,6 +566,24 @@ hay que deshacer:
   verifica **antes** de desplegar el código. `carga.fecha_estudio` y
   `carga.publico_objetivo` quedaron sin uso: ningún código nuevo los lee.
 
+Desde el PEDIDO de encuestas sin convocatoria (D82, `boveda/0033`), tres
+más:
+
+- **Cada encuesta dice de dónde viene** (`encuesta.origen`: `panel`,
+  `consulta` o `carga`), y se fija al crearla. Una de carga no tiene
+  convocatoria: la pantalla muestra «Respondentes», no «Convocatoria». No lo
+  vuelvan a inferir de si hay convocados.
+- **`convocado_en` no es una fecha de convocatoria si `convocado` es
+  falso**: es cuándo llegó la fila. Lo que la muestre o la exponga mira
+  `convocado` primero (`listar_participacion`, la longitudinal, la ficha).
+  Sigue siendo `not null` a propósito, por el muestreo y la fatiga.
+- **Un identificador sin ninguna letra ni dígito no identifica a nadie**,
+  en ningún tipo: es `identificador_invalido` (`ingesta.separar_invalidos`),
+  y un nombre sin letras se guarda vacío. Los que ya entraron se listan en
+  Panelistas (`identificador_invalido=1`) y no se borran solos. En SQL, la
+  clase de letras es explícita (`personas.CAMPOS_INVALIDOS_SQL`): con
+  `collate C`, `[[:alpha:]]` no ve la «ñ».
+
 ## Reglas de negocio que el código debe respetar
 
 - No se puede convocar ni incluir en muestreo a una persona sin `consentimiento` **vigente** para la finalidad correspondiente.

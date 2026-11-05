@@ -562,11 +562,30 @@ function agregarMiembro(panelId, idPersona) {
   return fila;
 }
 
+/* El doble de `personas.CAMPOS_INVALIDOS_SQL`: qué datos de la persona no
+   tienen ninguna letra ni dígito (el nombre, ninguna letra). */
+const conContenido = (v) => /[0-9A-Za-zÀ-ÖØ-öø-ÿ]/.test(v);
+const conLetras = (v) => /[A-Za-zÀ-ÖØ-öø-ÿ]/.test(v);
+function camposInvalidosDemo(idPersona) {
+  const p = bd.personas.find((x) => x.id_persona === idPersona) || {};
+  const mal = (v, prueba = conContenido) => v != null && v !== '' && !prueba(String(v));
+  return [
+    mal(p.nombre, conLetras) ? 'nombre' : null,
+    mal(p.documento) ? 'documento' : null,
+    mal(p.email) ? 'email' : null,
+    mal(p.celular) ? 'celular' : null,
+    bd.alias.some((a) => a.id_persona === idPersona && mal(a.id_en_origen)) ? 'id_en_origen' : null,
+  ].filter(Boolean);
+}
+
 function crearEncuesta(panelId, nombre, fechaCampo, extra = {}) {
   // R-EU.2 — la encuesta es el estudio: sus datos viven acá, no en la carga.
   const fila = {
     id: siguiente('encuesta'), panel_id: panelId || null, nombre,
     tipo: panelId ? 'panel' : 'independiente',
+    // boveda/0033 — de dónde viene: una independiente sin decirlo es de una
+    // carga (el desde-consulta lo declara).
+    origen: panelId ? 'panel' : 'carga',
     fecha_campo: fechaCampo || null, estado: 'borrador',
     publico_objetivo: null, descripcion: null, clientes: [],
     ref_estudio: uuid(), creado_en: ahora(), ...extra,
@@ -622,6 +641,7 @@ function encuestaCompleta(encuesta) {
     tematicas: tematicasDeEncuesta(encuesta.id),
     cargas: bd.cargas.filter((c) => c.encuesta_id === encuesta.id).map(resumenCarga),
     ...conteosDeEncuesta(encuesta.id),
+    con_convocatoria: conteosDeEncuesta(encuesta.id).convocados > 0,
   };
 }
 
@@ -1287,7 +1307,13 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     }
     const desde = Number(consulta.desde || 0);
     const limite = Number(consulta.limite || 50);
-    items = items.map((p) => ({ ...p, en_lista_negra: Boolean(listaNegraDe(p.id_persona)) }));
+    items = items.map((p) => ({ ...p, en_lista_negra: Boolean(listaNegraDe(p.id_persona)),
+      campos_invalidos: camposInvalidosDemo(p.id_persona) }));
+    // PEDIDO encuestas sin convocatoria — nombre sin letras, o un
+    // identificador sin ninguna letra ni dígito.
+    if (['1', 'true'].includes(String(consulta.identificador_invalido || ''))) {
+      items = items.filter((p) => p.campos_invalidos.length);
+    }
     return { total: items.length, items: items.slice(desde, desde + limite) };
   }
 
@@ -1557,6 +1583,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
           panel: bd.paneles.find((p) => p.id === e.panel_id)?.nombre ?? null,
           panel_estado: bd.paneles.find((p) => p.id === e.panel_id)?.estado ?? null,
           ...conteosDeEncuesta(e.id),
+          con_convocatoria: conteosDeEncuesta(e.id).convocados > 0,
           cargas: bd.cargas.filter((c) => c.encuesta_id === e.id).length,
           clientes: clientesDeIds(e.clientes),
         })),
@@ -1585,6 +1612,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
       .map((i) => i.id_persona).filter(Boolean))];
     const existentes = ids.filter((id) => bd.personas.some((p) => p.id_persona === id));
     const encuesta = crearEncuesta(null, nombre, cuerpo.fecha_campo, {
+      origen: 'consulta',
       publico_objetivo: (cuerpo.publico_objetivo || '').trim() || null,
       descripcion: (cuerpo.descripcion || '').trim() || null,
       clientes: clientesDemo(cuerpo.clientes),
@@ -1683,8 +1711,14 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
         .filter((p) => p.encuesta_id === Number(partes[1]))
         .map((p) => {
           const persona = bd.personas.find((x) => x.id_persona === p.id_persona);
+          const convocado = p.convocado !== false;
           return {
             ...p,
+            // Sin convocatoria no hay fecha de convocatoria (PEDIDO
+            // encuestas sin convocatoria); la de la fila es cuándo llegó.
+            convocado,
+            convocado_en: convocado ? p.convocado_en : null,
+            registrado_en: p.convocado_en || p.respondio_en,
             nombre: persona?.nombre, email: persona?.email,
             id_en_origen: bd.alias.find((a) => a.id_persona === p.id_persona)?.id_en_origen,
             consiente_semantico: vigente(p.id_persona, 'uso_semantico'),

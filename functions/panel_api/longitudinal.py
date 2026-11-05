@@ -56,7 +56,7 @@ def de_persona(boveda, semantica, id_persona, actor=None, con_respuestas=True):
         boveda,
         """
         select e.id, e.nombre, e.fecha_campo, e.ref_estudio, e.estado,
-               pa.convocado_en, pa.respondio, pa.respondio_en,
+               pa.convocado, pa.convocado_en, pa.respondio, pa.respondio_en,
                pa.calidad_estado, pa.origen,
                p.id as panel_id, p.nombre as panel
           from participacion pa
@@ -107,7 +107,12 @@ def de_persona(boveda, semantica, id_persona, actor=None, con_respuestas=True):
                 "panel_id": o["panel_id"],
                 "fecha_campo": (o["fecha_campo"].isoformat()
                                 if o["fecha_campo"] else None),
-                "convocado_en": o["convocado_en"].isoformat(),
+                # Sin convocatoria no hay fecha de convocatoria: la de la
+                # fila es cuándo llegó el archivo (PEDIDO encuestas sin
+                # convocatoria).
+                "convocado": o["convocado"],
+                "convocado_en": (o["convocado_en"].isoformat()
+                                 if o["convocado"] else None),
                 "respondio": o["respondio"],
                 "respondio_en": (o["respondio_en"].isoformat()
                                  if o["respondio_en"] else None),

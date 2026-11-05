@@ -170,6 +170,23 @@ SIN_ALIAS = "sin_alias_para_ese_origen"
 # El número lo tiene más de una persona: un celular puede ser de un hogar, no
 # de una persona. La fila no se asigna a ninguna, igual que en el dedup.
 CELULAR_COMPARTIDO = "celular_compartido"
+# PEDIDO encuestas sin convocatoria — un valor sin ninguna letra ni dígito
+# («...........», «-----») no identifica a nadie, en ningún tipo. Una
+# columna de celular sucia hizo que «...........» se aceptara como id de la
+# plataforma y se creara una persona con él.
+IDENTIFICADOR_INVALIDO = "identificador_invalido"
+
+
+def tiene_contenido(valor):
+    """¿Tiene al menos una letra o un dígito? Lo que no, es relleno."""
+    return any(c.isalnum() for c in str(valor or ""))
+
+
+def separar_invalidos(valores):
+    """`(validos, motivos)`: los valores sin letras ni dígitos van a
+    `motivos` como `identificador_invalido` y no se buscan."""
+    validos = [v for v in valores if tiene_contenido(v)]
+    return validos, {v: IDENTIFICADOR_INVALIDO for v in valores if not tiene_contenido(v)}
 
 # Lo que puede traer una celda de celular para tomarla como número: dígitos,
 # un `+` adelante y los separadores habituales. `normalizar_celular` es más
@@ -195,9 +212,14 @@ def resolver_identificadores(conn_boveda, tipo, valores, origen=None):
             {"tipos_validos": list(TIPOS_DE_IDENTIFICADOR)},
         )
     valores = [str(v).strip() for v in dict.fromkeys(valores) if str(v).strip()]
+    valores, invalidos = separar_invalidos(valores)
     if not valores:
-        return {}, {}
+        return {}, invalidos
+    mapa, motivos = _resolver_validos(conn_boveda, tipo, valores, origen)
+    return mapa, {**invalidos, **motivos}
 
+
+def _resolver_validos(conn_boveda, tipo, valores, origen):
     if tipo == POR_ALIAS:
         if not origen:
             raise DatosInvalidos(
@@ -458,10 +480,19 @@ def ingestar(
             "la bóveda) o un `mapa_personas` explícito."
         )
 
+    # Un id sin letras ni dígitos no identifica a nadie, venga del mapa que
+    # venga: si un alias así quedó registrado antes, tampoco se usa.
+    motivos_sin_mapear = dict(motivos_sin_mapear or {})
+    for i in ids_origen:
+        if not tiene_contenido(i):
+            mapa.pop(i, None)
+            motivos_sin_mapear[i] = IDENTIFICADOR_INVALIDO
+            if i not in sin_mapear:
+                sin_mapear.append(i)
+
     # R3.12.d — el motivo por fila. Las tres causas —el valor no es un uuid,
     # el uuid no existe, esa plataforma no tiene ese alias— se arreglan de
     # forma distinta, y una lista sin motivo obliga a adivinar cuál pasó.
-    motivos_sin_mapear = motivos_sin_mapear or {}
     detalle_sin_mapear = [
         {"id_en_origen": i, "motivo": motivos_sin_mapear.get(i, NO_ENCONTRADO)}
         for i in sin_mapear

@@ -52,12 +52,14 @@ export async function render(main, ctx) {
             return `<tr>
               <td class="td-strong">${esc(e.nombre)}</td>
               <td class="small">${e.tipo === 'independiente'
-                ? '<span class="badge">independiente</span>'
+                ? `<span class="badge" data-origen="${esc(e.origen || '')}">${esc(
+                  ORIGEN_ETIQUETA[e.origen] || 'independiente')}</span>`
                 : `${esc(e.panel || '—')}${e.panel_estado === 'archivado' ? ' <span class="badge">archivado</span>' : ''}`}</td>
               <td>${chipsDeClientes(e.clientes || [])}</td>
               <td class="small">${e.fecha_campo ? fechaCorta(e.fecha_campo) : '—'}</td>
               <td>${estado(e.estado, ESTADO_ETIQUETA[e.estado])}</td>
-              <td class="mono">${e.convocados ?? 0}</td>
+              <td class="mono" data-convocados>${e.con_convocatoria ? e.convocados
+                : '<span class="muted" title="Nadie fue convocado desde el sistema">—</span>'}</td>
               <td><div style="display:flex;align-items:center;gap:0.5rem">
                 <span class="mono">${e.respondieron ?? 0}</span>
                 ${e.convocados ? `<span class="barra ${tasa >= 60 ? 'ok' : ''}"><span style="width:${tasa}%"></span></span>
@@ -154,7 +156,8 @@ async function renderDetalle(main, encuestaId) {
   const panelArchivado = encuesta.panel_estado === 'archivado';
 
   main.innerHTML = encabezado(encuesta.nombre, '',
-    `${independiente ? 'Encuesta independiente' : `De panel · ${esc(encuesta.panel || `#${encuesta.panel_id}`)}`}`
+    `${independiente ? `Encuesta independiente ${ORIGEN_ETIQUETA[encuesta.origen] || ''}`.trim()
+      : `De panel · ${esc(encuesta.panel || `#${encuesta.panel_id}`)}`}`
     + ` · campo ${encuesta.fecha_campo ? fechaCorta(encuesta.fecha_campo) : 'sin fecha'}`) + `
     <div class="grid-2" style="margin-bottom:1.25rem">
       <div class="card"><div class="card-header"><span class="card-header-title">Datos del estudio</span>
@@ -162,7 +165,9 @@ async function renderDetalle(main, encuestaId) {
         <div class="card-body">
           <dl class="kv">
             <dt>Audiencia</dt><dd>${independiente
-              ? `Independiente${encuesta.convocados ? ' · la foto de una consulta' : ' · sin convocatoria'}`
+              ? (esDeCarga(encuesta)
+                ? 'Independiente · llegó como archivo de respuestas, sin convocatoria'
+                : 'Independiente · la foto de una consulta')
               : `De panel · ${esc(encuesta.panel || '')}${panelArchivado ? ' <span class="badge">archivado</span>' : ''}`}</dd>
             <dt>Estado</dt><dd>${estado(encuesta.estado, ESTADO_ETIQUETA[encuesta.estado])}</dd>
             <dt>Público objetivo</dt><dd>${esc(encuesta.publico_objetivo || '—')}</dd>
@@ -175,10 +180,12 @@ async function renderDetalle(main, encuestaId) {
           </dl>
         </div></div>
       <div class="card" style="margin-top:0"><div class="card-header"><span class="card-header-title">Participación</span>
-          <button class="btn btn-outline btn-sm" id="composicion">Convocados vs respondentes</button></div>
+          <button class="btn btn-outline btn-sm" id="composicion">${encuesta.con_convocatoria
+            ? 'Convocados vs respondentes' : 'Composición de respondentes'}</button></div>
         <div class="card-body">
           <div class="grid-datos">
-            <div class="tarjeta-dato"><div class="valor">${encuesta.convocados ?? 0}</div>
+            <div class="tarjeta-dato"><div class="valor">${encuesta.con_convocatoria
+              ? encuesta.convocados : '—'}</div>
               <div class="etiqueta">convocados</div></div>
             <div class="tarjeta-dato"><div class="valor">${encuesta.respondieron ?? 0}</div>
               <div class="etiqueta">respondieron</div></div>
@@ -223,16 +230,21 @@ async function renderDetalle(main, encuestaId) {
     </div>
     <div class="card">
       <div class="card-header">
-        <span class="card-header-title">Convocatoria</span>
+        <span class="card-header-title" id="titulo-participacion">${esDeCarga(encuesta)
+          ? 'Respondentes' : 'Convocatoria'}</span>
         <div class="toolbar">
           ${!independiente && !cerrada && !panelArchivado
             ? '<button class="btn btn-outline btn-sm" id="convocar">Convocar al panel</button>' : ''}
-          <button class="btn btn-outline btn-sm" id="muestra">Exportar muestra</button>
+          ${esDeCarga(encuesta) ? ''
+            : '<button class="btn btn-outline btn-sm" id="muestra">Exportar muestra</button>'}
         </div>
       </div>
-      ${independiente ? `<p class="small muted" style="padding:.6rem 1.5rem 0">La audiencia de
-        una encuesta independiente es la foto de la consulta con que se creó: no se convoca a
-        ningún panel.</p>` : ''}
+      ${esDeCarga(encuesta) ? `<p class="small muted" id="texto-participacion"
+        style="padding:.6rem 1.5rem 0">Esta encuesta llegó como archivo de respuestas: nadie
+        fue convocado desde el sistema. Se listan quienes respondieron.</p>`
+        : independiente ? `<p class="small muted" id="texto-participacion"
+        style="padding:.6rem 1.5rem 0">La audiencia de esta encuesta es la foto de la
+        consulta con que se creó: no se convoca a ningún panel.</p>` : ''}
       <div class="card-body tight"><div id="participacion">${cargando('20vh')}</div></div>
     </div>
     <!-- R4.5 — el canal de WhatsApp. La tarjeta existe siempre, porque es
@@ -321,7 +333,7 @@ async function renderDetalle(main, encuestaId) {
   }
 
   $('#convocar')?.addEventListener('click', () => convocar(encuestaId));
-  $('#muestra').onclick = () => exportarMuestra(encuestaId);
+  $('#muestra')?.addEventListener('click', () => exportarMuestra(encuestaId));
   $('#ingestar').onclick = () => abrirNuevaCarga(encuesta);
   // R8.9 — corregir lo ya ingestado sin volver a subir el archivo. El avance
   // se sigue en esta misma ficha, como el de una carga.
@@ -330,12 +342,13 @@ async function renderDetalle(main, encuestaId) {
     abrirReproceso({ tipo: 'encuesta', id: encuesta.id, nombre: encuesta.nombre },
       (salida) => (salida?.trabajo_id
         ? seguirTrabajo(salida.trabajo_id,
-                        { alTerminar: () => cargarParticipacion(encuestaId) })
+                        { alTerminar: () => cargarParticipacion(
+                          encuestaId, { respondentes: esDeCarga(encuesta) }) })
         : null));
   };
   $('#verificar').onclick = () => verificarCruce(encuestaId);
 
-  await cargarParticipacion(encuestaId);
+  await cargarParticipacion(encuestaId, { respondentes: esDeCarga(encuesta) });
   // R-ASYNC.3 — si alguna carga de esta encuesta quedó a medias, se retoma.
   // El trabajo se busca por su destino (la carga), no por algo que esta
   // pantalla hubiera guardado.
@@ -528,32 +541,59 @@ export async function retomarCargaEnCurso(destinoTipo, destinoId, opciones = {})
   }
 }
 
-async function cargarParticipacion(encuestaId) {
+/* PEDIDO encuestas sin convocatoria — una independiente viene de una consulta
+   (tiene audiencia) o de una carga (un archivo de respuestas, sin audiencia),
+   y se muestran distinto. El origen lo fija el servidor al crearla. */
+const ORIGEN_ETIQUETA = {
+  consulta: 'desde una consulta',
+  carga: 'desde una carga',
+};
+const esDeCarga = (encuesta) => encuesta.origen === 'carga';
+
+async function cargarParticipacion(encuestaId, { respondentes = false } = {}) {
   const contenedor = $('#participacion');
   if (!contenedor) return;
   const { items } = await api.encuestas.participacion(encuestaId);
   if (!items.length) {
-    contenedor.innerHTML = vacio('Todavía no se convocó a nadie.', '📭');
+    contenedor.innerHTML = vacio(respondentes ? 'Todavía no respondió nadie.'
+      : 'Todavía no se convocó a nadie.', '📭');
     return;
   }
   const respondieron = items.filter((p) => p.respondio).length;
-  contenedor.innerHTML = `
+  const convocados = items.filter((p) => p.convocado).length;
+  const noConvocados = items.filter((p) => !p.convocado).length;
+  const persona = (p) => `<td><div class="td-strong">${esc(p.nombre || 'Sin nombre')}</div>
+            <div class="td-muted small">${esc(p.email || '—')}</div></td>
+          <td class="mono small">${esc(p.id_en_origen || '—')}</td>`;
+  const semantico = (p) => `<td>${p.consiente_semantico
+            ? '<span class="badge badge-on">Sí</span>'
+            : '<span class="badge badge-off">No</span>'}</td>`;
+  // Una encuesta que llegó como archivo no tiene convocatoria: no hay
+  // columna «Convocado», sino cuándo respondió (o se cargó).
+  contenedor.innerHTML = respondentes ? `
+    <div class="table-wrap"><table>
+      <thead><tr><th>Panelista</th><th>Id en el origen</th><th>Respondió / cargado</th>
+        <th>Uso semántico</th></tr></thead>
+      <tbody>${items.map((p) => `
+        <tr>${persona(p)}
+          <td class="small" data-respondio-en>${fechaCorta(p.respondio_en || p.registrado_en)}</td>
+          ${semantico(p)}
+        </tr>`).join('')}</tbody></table></div>
+    <div class="paginacion"><span class="p-info">${items.length} respondentes</span></div>`
+    : `
     <div class="table-wrap"><table>
       <thead><tr><th>Panelista</th><th>Id en el origen</th><th>Convocado</th>
         <th>Respondió</th><th>Uso semántico</th></tr></thead>
       <tbody>${items.map((p) => `
-        <tr>
-          <td><div class="td-strong">${esc(p.nombre || 'Sin nombre')}</div>
-            <div class="td-muted small">${esc(p.email || '—')}</div></td>
-          <td class="mono small">${esc(p.id_en_origen || '—')}</td>
-          <td class="small">${fechaCorta(p.convocado_en)}</td>
+        <tr>${persona(p)}
+          <td class="small" data-convocado>${p.convocado ? fechaCorta(p.convocado_en)
+            : '<span class="badge" title="Respondió sin haber sido convocado">no convocado</span>'}</td>
           <td>${p.respondio ? estado('completa', 'Sí') : estado('no_ficho', 'No')}</td>
-          <td>${p.consiente_semantico
-            ? '<span class="badge badge-on">Sí</span>'
-            : '<span class="badge badge-off">No</span>'}</td>
+          ${semantico(p)}
         </tr>`).join('')}</tbody></table></div>
     <div class="paginacion"><span class="p-info">
-      ${items.length} convocados · ${respondieron} respondieron</span></div>`;
+      ${convocados} convocados · ${respondieron} respondieron${noConvocados
+        ? ` · ${noConvocados} sin estar convocados` : ''}</span></div>`;
 }
 
 async function convocar(encuestaId) {
@@ -593,6 +633,7 @@ const MOTIVOS_SIN_MAPEAR = {
   no_encontrado: 'ese identificador no existe en la bóveda',
   sin_alias_para_ese_origen: 'esa plataforma no tiene registrado ese id',
   celular_compartido: 'ese celular lo tiene más de una persona: no se asigna a ninguna',
+  identificador_invalido: 'el valor no tiene ninguna letra ni dígito («.....», «-----»): no identifica a nadie',
 };
 
 function resumirSinMapear(resultado) {
@@ -2676,6 +2717,8 @@ function mostrarResumenDeIngesta(resultado, esCarga, titulo = 'Ingesta terminada
           ['Personas creadas', resultado.creacion_de_individuos.resumen.creados],
           ['Sin consentimiento',
            resultado.creacion_de_individuos.resumen.sin_consentimiento, true],
+          ['Identificador inválido',
+           resultado.creacion_de_individuos.resumen.identificadores_invalidos || 0, true],
         ] : []),
         // Addendum de R3.9: la ingesta ahora incorpora al panel y registra
         // la participación. Son cifras que cambian la composición y la tasa
@@ -2700,6 +2743,9 @@ function mostrarResumenDeIngesta(resultado, esCarga, titulo = 'Ingesta terminada
           : null,
         resultado.creacion_de_individuos?.aviso_sin_consentimiento?.mensaje,
         resultado.creacion_de_individuos?.aviso_sin_la_otra_finalidad?.mensaje,
+        (resultado.creacion_de_individuos?.identificadores_invalidos || []).length
+          ? `${resultado.creacion_de_individuos.identificadores_invalidos.length} fila(s) tienen un identificador sin ninguna letra ni dígito («.....», «-----»): no se creó ninguna persona con ellas.`
+          : null,
         (resultado.sin_mapear || []).length
           ? `${resultado.sin_mapear.length} fila(s) no se pudieron vincular a ningún panelista: ${resumirSinMapear(resultado)}.`
           : null,

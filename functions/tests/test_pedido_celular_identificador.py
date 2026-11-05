@@ -75,13 +75,21 @@ def test_un_celular_compartido_no_se_asigna_a_nadie(conn_boveda):
     assert motivos == {"098111222": ingesta.CELULAR_COMPARTIDO}
 
 
-@pytest.mark.parametrize("crudo", ["solo WhatsApp 095093112", "....", "1", "abc"])
+@pytest.mark.parametrize("crudo", ["solo WhatsApp 095093112", "1", "abc"])
 def test_un_celular_mal_escrito_es_formato_invalido(conn_boveda, ana, crudo):
     """«solo WhatsApp 095093112» tiene un número adentro, y el alta lo
     rescataría; para decidir de quién es una fila, no es un identificador."""
     mapa, motivos = _resolver(conn_boveda, crudo)
     assert mapa == {}
     assert motivos == {crudo: ingesta.FORMATO_INVALIDO}
+
+
+def test_un_celular_sin_digitos_ni_letras_es_identificador_invalido(conn_boveda, ana):
+    """D82 — «....» no es un celular mal escrito: no tiene nada. Es
+    `identificador_invalido` en cualquier tipo, antes de mirar el formato."""
+    mapa, motivos = _resolver(conn_boveda, "....")
+    assert mapa == {}
+    assert motivos == {"....": ingesta.IDENTIFICADOR_INVALIDO}
 
 
 def test_un_celular_que_nadie_tiene_es_no_encontrado(conn_boveda, ana):

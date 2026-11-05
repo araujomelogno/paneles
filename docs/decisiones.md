@@ -4957,3 +4957,95 @@ afuera. Esquema en `boveda/0032` y `semantica/0012`.
 `functions/tests/test_encuestas_y_cargas_unificadas.py`,
 `functions/tests/test_migracion_0032.py`,
 `functions/tests/test_pantallas_encuestas_unificadas.py`.
+
+## D82 · Cada encuesta dice de dónde viene; nadie no convocado tiene fecha de convocatoria; un identificador sin letras ni dígitos no identifica a nadie
+
+**El pedido.** `docs/PEDIDO_encuestas_sin_convocatoria.md`, detectado el día
+después de desplegar D81. AVANTI, una encuesta migrada desde una carga:
+
+- el listado decía 0 convocados y 910 respondieron;
+- el detalle tenía una sección «Convocatoria» con las 910 personas y la
+  columna «Convocado: 26/10/2026»;
+- el texto hablaba de «la foto de la consulta», y no venía de ninguna
+  consulta;
+- la primera fila era una persona llamada «......» con id de plataforma
+  «...........».
+
+El dato estaba bien (`convocado = false`) y no se rompía nada: el muestreo y
+la fatiga cuentan solo `origen = 'convocatoria'`. Lo engañoso era la
+presentación. Esquema en `boveda/0033`.
+
+### De dónde viene cada encuesta
+
+- **`encuesta.origen`** (`panel` | `consulta` | `carga`), fijado al crearla.
+  Una independiente puede venir de una consulta, con audiencia, o de una
+  carga (un archivo de respuestas), sin audiencia. Inferirlo cada vez de
+  «¿hay alguien convocado?» confunde una encuesta desde consulta en la que
+  todos quedaron afuera con una que llegó como archivo.
+- La `0033` marca las existentes con esa regla: de panel las de panel,
+  `consulta` las independientes con algún convocado, `carga` el resto. Entre
+  estas últimas están las que creó la `0032`, que no tienen ningún
+  convocado.
+- Una inserción que no lo dice se completa sola con un trigger: `panel` si
+  es de panel, `carga` si no. Así el código anterior a la `0033`, o un
+  `insert` a mano, no rompe. La encuesta desde consulta lo declara siempre.
+  Un `check` impide que el origen contradiga al tipo.
+- **«Sin convocatoria» es «nadie convocado»** (`con_convocatoria`, sobre
+  `participacion.convocado`), no «origen distinto de panel». El listado
+  muestra «—» y no 0. El detalle de una encuesta de carga tiene la sección
+  **«Respondentes»**: sin columna de convocatoria, con la fecha en que
+  respondió o se cargó, y sin exportar muestra.
+
+### Nadie no convocado tiene fecha de convocatoria
+
+- `convocado_en` es `not null` desde la `0001`. La `0032` tuvo que poner una
+  fecha a quien vino en una carga, y puso la de la carga. Se evaluó hacerla
+  nullable (la alternativa del pedido) y no se hizo: muestreo, fatiga y
+  `v_fatiga_panelista` (superficie de COLOQUIO) la usan como fecha de
+  referencia, y con estos ajustes alcanza.
+- **Quien la expone, mira `convocado` primero:**
+  - `encuestas.listar_participacion` devuelve `convocado_en` nulo si no fue
+    convocado, y la fecha de la fila en `registrado_en`;
+  - la longitudinal, lo mismo;
+  - el tablero de participación toma la primera convocatoria solo de los
+    convocados;
+  - la ficha fecha el ingreso por archivo con la respuesta;
+  - la pantalla muestra «no convocado» en vez de una fecha.
+- **Convocar a quien ya había respondido le pone la fecha de la
+  convocatoria.** Antes cambiaba `convocado` y dejaba la fecha de la carga.
+- **La lista negra cancela invitaciones por `convocado`**, no por `origen`
+  (regla de D81). Quien llegó en un archivo y después se convocó tiene
+  `origen = 'importacion'` y una invitación igual.
+
+### Un identificador sin letras ni dígitos no identifica a nadie
+
+- **En cualquier tipo de identificador**, un valor sin ninguna letra ni
+  dígito («...........», «-----», solo espacios) es `identificador_invalido`.
+  No se busca, ni en las participaciones ni en los alias, y la fila se
+  informa con ese motivo. Lo hacen `ingesta.separar_invalidos` (usada por
+  `resolver_identificadores` y `encuestas._resolver_identidades`) y la
+  ingesta misma. Esta última cubre un alias así que ya hubiera quedado
+  registrado.
+- **Al crear personas** (`sav.crear_individuos`) esa fila no se crea ni se
+  reutiliza, y va a `identificadores_invalidos`. Una celda vacía sigue sin
+  ser una fila.
+- **Un nombre sin letras se guarda vacío**, y cualquier dato demográfico
+  sin letras ni dígitos también (`sav.valor_demografico`, que usan el alta
+  y `completar_demograficos`).
+- **Los que ya entraron se listan, no se borran.** Pueden tener respuestas
+  válidas y otros identificadores buenos. Panelistas → *Con identificadores
+  inválidos* (`GET /panelistas?identificador_invalido=1`, la ruta de
+  siempre) marca en cada fila qué tiene mal: nombre, documento, correo,
+  celular o id de plataforma. El equipo decide desde la ficha.
+- **Letras con tilde y eñe.** La base corre con `collate C`, y
+  `[[:alpha:]]` no reconoce «ñ» ni «á». El SQL usa la clase explícita
+  `[0-9A-Za-zÀ-ÖØ-öø-ÿ]` (`personas.CAMPOS_INVALIDOS_SQL`). Python usa
+  `str.isalnum`, que las reconoce.
+
+**Dónde vive.** `db/boveda/0033_origen_de_la_encuesta.sql`,
+`functions/panel_api/encuestas.py` (`ORIGENES`, `con_convocatoria`,
+`listar_participacion`), `ingesta.py` (`IDENTIFICADOR_INVALIDO`,
+`separar_invalidos`), `sav.py`, `personas.py` (`CAMPOS_INVALIDOS_SQL`),
+`web/public/js/paginas/encuestas.js`, `panelistas.js`. Pruebas:
+`functions/tests/test_pedido_encuestas_sin_convocatoria.py`,
+`functions/tests/test_pantallas_encuestas_sin_convocatoria.py`.

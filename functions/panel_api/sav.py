@@ -591,6 +591,13 @@ def valor_demografico(campo, crudo, opciones=None):
     etiqueta = (opciones or {}).get(texto)
     if etiqueta:
         texto = str(etiqueta).strip()
+    # PEDIDO encuestas sin convocatoria — un valor sin ninguna letra ni
+    # dígito («......», «-----») es relleno, no un dato: se guarda vacío. Y
+    # un nombre sin letras tampoco es un nombre.
+    if not any(c.isalnum() for c in texto):
+        return None
+    if campo == "nombre" and not any(c.isalpha() for c in texto):
+        return None
     # 2 · La forma que espera la bóveda, donde hay una.
     if campo == "sexo":
         return SEXO_CANONICO.get(texto.lower(), texto)
@@ -1278,6 +1285,7 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
 
     creados, reutilizados, en_revision = [], [], []
     sin_datos, sin_consentimiento = [], []
+    identificadores_invalidos = []
     otorgados = {finalidad: 0 for finalidad in FINALIDADES_EVIDENCIABLES}
     preferencias_registradas = {canal: 0 for canal in canales}
     preferencias_rechazadas = []
@@ -1303,8 +1311,14 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
                     "motivo": error.mensaje})
 
     for fila in filas:
-        id_en_origen = str(fila.get(columna_id) or "").strip()
-        if not id_en_origen:
+        crudo = fila.get(columna_id)
+        id_en_origen = str(crudo or "").strip()
+        if not any(c.isalnum() for c in id_en_origen):
+            # Una celda vacía no es una fila; «...........» o «   » sí, y no
+            # identifica a nadie: no se crea ni se reutiliza, y se informa.
+            if crudo not in (None, ""):
+                identificadores_invalidos.append({
+                    "id_en_origen": str(crudo), "motivo": "identificador_invalido"})
             continue
 
         consintio = {
@@ -1466,6 +1480,9 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
         "en_revision": en_revision,
         "sin_datos_suficientes": sin_datos,
         "sin_consentimiento": sin_consentimiento,
+        # PEDIDO encuestas sin convocatoria — filas cuyo identificador no
+        # tiene ninguna letra ni dígito. No se crearon.
+        "identificadores_invalidos": identificadores_invalidos,
         "evidencia_declarada": evidencia,
         "consentimientos_registrados": otorgados,
         # R4.4 — qué preferencias de canal dejó registradas el archivo, y
@@ -1481,6 +1498,7 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
             "en_revision": len(en_revision),
             "sin_datos_suficientes": len(sin_datos),
             "sin_consentimiento": len(sin_consentimiento),
+            "identificadores_invalidos": len(identificadores_invalidos),
         },
         "finalidad_obligatoria": finalidad_obligatoria,
         "aviso_sin_consentimiento": (

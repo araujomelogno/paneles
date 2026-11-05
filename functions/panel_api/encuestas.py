@@ -24,7 +24,16 @@ DE_PANEL = "panel"
 INDEPENDIENTE = "independiente"
 TIPOS = (DE_PANEL, INDEPENDIENTE)
 
-_COLUMNAS = ("id, panel_id, tipo, nombre, fecha_campo, publico_objetivo, "
+# De dónde viene (boveda/0033). Una independiente puede venir de una consulta
+# —tiene audiencia— o de una carga —un archivo de respuestas, sin
+# audiencia—, y la pantalla las muestra distinto: «Convocatoria» o
+# «Respondentes». Se fija al crear.
+ORIGEN_PANEL = "panel"
+ORIGEN_CONSULTA = "consulta"
+ORIGEN_CARGA = "carga"
+ORIGENES = (ORIGEN_PANEL, ORIGEN_CONSULTA, ORIGEN_CARGA)
+
+_COLUMNAS = ("id, panel_id, tipo, origen, nombre, fecha_campo, publico_objetivo, "
              "descripcion, estado, ref_estudio, creado_en, flow_id, "
              "flow_plantilla, flow_idioma")
 
@@ -63,11 +72,16 @@ def _exigir_panel_activo(conn, panel_id):
 
 def crear(conn, panel_id, nombre, fecha_campo=None, tipo=None,
           publico_objetivo=None, descripcion=None, clientes=None,
-          estado="borrador"):
+          estado="borrador", origen=None):
     """Abre un estudio. De panel (`panel_id`) o independiente (sin panel).
 
     Los datos del estudio viven acá (R-EU.2): las cargas que se le hagan no
     los vuelven a pedir. `clientes` son nombres; los que no existen se crean.
+
+    `origen` dice de dónde viene una independiente: `consulta` (con
+    audiencia) o `carga` (un archivo de respuestas, sin audiencia). Una de
+    panel es siempre `panel`. Una independiente sin origen declarado es de
+    una carga, que es como la crean las cargas desde Panelistas.
     """
     nombre = (nombre or "").strip()
     if not nombre:
@@ -87,16 +101,20 @@ def crear(conn, panel_id, nombre, fecha_campo=None, tipo=None,
             "una consulta.", {"campo": "panel_id"})
     if estado not in ESTADOS:
         raise DatosInvalidos(f"Estado desconocido: {estado!r}.")
+    origen = ORIGEN_PANEL if tipo == DE_PANEL else (origen or ORIGEN_CARGA)
+    if origen not in ORIGENES or (origen == ORIGEN_PANEL) != (tipo == DE_PANEL):
+        raise DatosInvalidos(f"Origen de encuesta inválido: {origen!r}.",
+                             {"origenes": list(ORIGENES)})
     fila = db.una(
         conn,
         f"""
-        insert into encuesta (panel_id, tipo, nombre, fecha_campo,
+        insert into encuesta (panel_id, tipo, origen, nombre, fecha_campo,
                               publico_objetivo, descripcion, estado)
-             values (%s, %s, %s, %s, %s, %s, %s)
+             values (%s, %s, %s, %s, %s, %s, %s, %s)
           returning {_COLUMNAS}
         """,
-        (panel_id if tipo == DE_PANEL else None, tipo, nombre, _fecha(fecha_campo),
-         _texto(publico_objetivo), _texto(descripcion), estado),
+        (panel_id if tipo == DE_PANEL else None, tipo, origen, nombre,
+         _fecha(fecha_campo), _texto(publico_objetivo), _texto(descripcion), estado),
     )
     from . import clientes as mod_clientes
 
@@ -111,6 +129,7 @@ def _serializar(fila):
         "id": fila["id"],
         "panel_id": fila["panel_id"],
         "tipo": fila.get("tipo") or DE_PANEL,
+        "origen": fila.get("origen") or ORIGEN_PANEL,
         "nombre": fila["nombre"],
         "fecha_campo": fila["fecha_campo"].isoformat() if fila["fecha_campo"] else None,
         "publico_objetivo": fila.get("publico_objetivo"),
@@ -146,6 +165,7 @@ def obtener(conn, encuesta_id, completa=False):
         salida["tematicas"] = tematicas.de_encuesta(conn, encuesta_id)
         salida["cargas"] = cargas.listar(conn, encuesta_id=encuesta_id)
         salida.update(conteos(conn, encuesta_id))
+        salida["con_convocatoria"] = salida["convocados"] > 0
         if fila["panel_id"]:
             panel = db.una(conn, "select nombre, estado from panel where id = %s",
                            (fila["panel_id"],))
@@ -219,6 +239,10 @@ def listar(conn, panel_id=None, tipo=None):
                 "panel": f["panel"],
                 "panel_estado": f["panel_estado"],
                 "convocados": f["convocados"],
+                # PEDIDO encuestas sin convocatoria — «0 convocados» no es lo
+                # mismo que «nadie convocó desde el sistema»: la pantalla
+                # muestra «—» cuando no hay convocatoria.
+                "con_convocatoria": f["convocados"] > 0,
                 "respondieron": f["respondieron"],
                 "no_convocados": f["no_convocados"],
                 "cargas": f["cargas"],
@@ -346,7 +370,7 @@ def convocar(conn, encuesta_id, ids_persona=None, todo_el_panel=False,
             insert into participacion (encuesta_id, id_persona, convocado)
                  values (%s, %s, true)
             on conflict (encuesta_id, id_persona) do update
-                  set convocado = true
+                  set convocado = true, convocado_en = now()
                 where not participacion.convocado
             """,
             (encuesta_id, id_persona),
@@ -389,7 +413,8 @@ def crear_desde_consulta(conn, nombre, resultado, actor=None, fecha_campo=None,
             "El resultado no tiene ningún individuo, así que no hay audiencia "
             "para la encuesta.")
     encuesta = crear(conn, None, nombre, fecha_campo=fecha_campo,
-                     tipo=INDEPENDIENTE, publico_objetivo=publico_objetivo,
+                     tipo=INDEPENDIENTE, origen=ORIGEN_CONSULTA,
+                     publico_objetivo=publico_objetivo,
                      descripcion=descripcion, clientes=clientes)
     existentes = {str(f["id_persona"]) for f in db.todas(
         conn, "select id_persona from persona where id_persona = any(%s::uuid[])",
@@ -422,8 +447,8 @@ def listar_participacion(conn, encuesta_id):
     filas = db.todas(
         conn,
         """
-        select pa.id_persona, pa.convocado_en, pa.respondio, pa.respondio_en,
-               pa.calidad_estado, p.nombre, p.email,
+        select pa.id_persona, pa.convocado, pa.convocado_en, pa.respondio,
+               pa.respondio_en, pa.calidad_estado, p.nombre, p.email,
                exists (select 1 from consentimiento c
                         where c.id_persona = pa.id_persona
                           and c.finalidad = 'uso_semantico'
@@ -442,7 +467,12 @@ def listar_participacion(conn, encuesta_id):
             "nombre": f["nombre"],
             "email": f["email"],
             "id_en_origen": f["id_en_origen"],
-            "convocado_en": f["convocado_en"].isoformat(),
+            # `convocado_en` no es una fecha de convocatoria si `convocado`
+            # es falso: es cuándo se creó la fila (la carga que lo trajo).
+            # La pantalla mira `convocado` antes de mostrarla.
+            "convocado": f["convocado"],
+            "convocado_en": f["convocado_en"].isoformat() if f["convocado"] else None,
+            "registrado_en": f["convocado_en"].isoformat(),
             "respondio": f["respondio"],
             "respondio_en": f["respondio_en"].isoformat() if f["respondio_en"] else None,
             "calidad_estado": f["calidad_estado"],
@@ -797,6 +827,10 @@ def _resolver_identidades(conn, encuesta_id, tipo, valores, origen):
     if tipo != mod_ingesta.POR_ALIAS:
         return mod_ingesta.resolver_identificadores(conn, tipo, valores, origen)
 
+    # Un id sin letras ni dígitos no se busca, ni en las participaciones ni
+    # en los alias: «...........» pudo haber quedado registrado antes.
+    valores, invalidos = mod_ingesta.separar_invalidos(valores)
+
     # Alias: las participaciones de esta ola **y** `alias_origen`, unidos.
     # Antes era uno u otro, y con un solo convocado con alias —o sea,
     # siempre— la ingesta dejaba de mirar `alias_origen`: todo el que
@@ -811,7 +845,9 @@ def _resolver_identidades(conn, encuesta_id, tipo, valores, origen):
         por_alias, _ = mod_ingesta.mapear_a_id_persona(
             conn, origen, [v for v in valores if v not in mapa])
         mapa = {**por_alias, **mapa}
-    return mapa, {v: mod_ingesta.SIN_ALIAS for v in valores if v not in mapa}
+    mapa = {k: v for k, v in mapa.items() if mod_ingesta.tiene_contenido(k)}
+    return mapa, {**invalidos,
+                  **{v: mod_ingesta.SIN_ALIAS for v in valores if v not in mapa}}
 
 
 def _sembrar_alias(conn, tipo, mapa, origen):

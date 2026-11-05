@@ -70,7 +70,8 @@ def por_ola(conn, panel_id=None):
                                                                           as calidad_sospechosa,
                count(p.id) filter (where p.calidad_estado = 'pendiente')::int
                                                                           as calidad_pendiente,
-               min(p.convocado_en) as primera_convocatoria,
+               min(p.convocado_en) filter (where p.convocado)
+                                                                          as primera_convocatoria,
                max(p.respondio_en) as ultima_respuesta
           from encuesta e
           join panel pa on pa.id = e.panel_id
