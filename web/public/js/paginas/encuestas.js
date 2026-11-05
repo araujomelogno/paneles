@@ -568,32 +568,52 @@ async function cargarParticipacion(encuestaId, { respondentes = false } = {}) {
   const semantico = (p) => `<td>${p.consiente_semantico
             ? '<span class="badge badge-on">Sí</span>'
             : '<span class="badge badge-off">No</span>'}</td>`;
+  // Panelista: tiene una membresía activa en algún panel. Independiente:
+  // no tiene panel, llegó solo por archivos.
+  const panel = (p) => `<td data-panel-de-persona>${p.es_panelista
+            ? '<span class="badge badge-on">panelista</span>'
+            : '<span class="badge">independiente</span>'}</td>`;
+  // Abre la ficha completa de la bóveda: queda registrada como
+  // reidentificación, igual que desde Panelistas.
+  const ficha = (p) => `<td class="right"><button class="btn btn-outline btn-sm"
+            data-ficha="${esc(p.id_persona)}">Ver ficha</button></td>`;
   // Una encuesta que llegó como archivo no tiene convocatoria: no hay
   // columna «Convocado», sino cuándo respondió (o se cargó).
   contenedor.innerHTML = respondentes ? `
     <div class="table-wrap"><table>
-      <thead><tr><th>Panelista</th><th>Id en el origen</th><th>Respondió / cargado</th>
-        <th>Uso semántico</th></tr></thead>
+      <thead><tr><th>Panelista</th><th>Id en el origen</th><th>Panel</th><th>Convocatoria</th>
+        <th>Respondió / cargado</th><th>Uso semántico</th><th></th></tr></thead>
       <tbody>${items.map((p) => `
         <tr>${persona(p)}
+          ${panel(p)}
+          <td data-convocado>${p.convocado ? '<span class="badge badge-on">convocado</span>'
+            : '<span class="badge" title="Respondió sin haber sido convocado desde el sistema">no convocado</span>'}</td>
           <td class="small" data-respondio-en>${fechaCorta(p.respondio_en || p.registrado_en)}</td>
           ${semantico(p)}
+          ${ficha(p)}
         </tr>`).join('')}</tbody></table></div>
-    <div class="paginacion"><span class="p-info">${items.length} respondentes</span></div>`
+    <div class="paginacion"><span class="p-info">${items.length} respondentes ·
+      ${items.filter((p) => p.es_panelista).length} panelistas ·
+      ${items.filter((p) => !p.es_panelista).length} independientes</span></div>`
     : `
     <div class="table-wrap"><table>
-      <thead><tr><th>Panelista</th><th>Id en el origen</th><th>Convocado</th>
-        <th>Respondió</th><th>Uso semántico</th></tr></thead>
+      <thead><tr><th>Panelista</th><th>Id en el origen</th><th>Panel</th><th>Convocado</th>
+        <th>Respondió</th><th>Uso semántico</th><th></th></tr></thead>
       <tbody>${items.map((p) => `
         <tr>${persona(p)}
+          ${panel(p)}
           <td class="small" data-convocado>${p.convocado ? fechaCorta(p.convocado_en)
             : '<span class="badge" title="Respondió sin haber sido convocado">no convocado</span>'}</td>
           <td>${p.respondio ? estado('completa', 'Sí') : estado('no_ficho', 'No')}</td>
           ${semantico(p)}
+          ${ficha(p)}
         </tr>`).join('')}</tbody></table></div>
     <div class="paginacion"><span class="p-info">
       ${convocados} convocados · ${respondieron} respondieron${noConvocados
         ? ` · ${noConvocados} sin estar convocados` : ''}</span></div>`;
+  contenedor.querySelectorAll('[data-ficha]').forEach((boton) => {
+    boton.onclick = () => contexto.irA('panelistas', { idPersona: boton.dataset.ficha });
+  });
 }
 
 async function convocar(encuestaId) {

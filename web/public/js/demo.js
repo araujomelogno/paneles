@@ -1280,8 +1280,13 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     const q = (consulta.q || '').toLowerCase();
     const panelId = consulta.panel_id ? Number(consulta.panel_id) : null;
     let items = bd.personas.map(resumenPersona);
+    // También por el id de una plataforma de campo (alias_origen).
+    const aliasQueCoinciden = (id) => (q ? bd.alias.filter((a) => a.id_persona === id
+      && String(a.id_en_origen || '').toLowerCase().includes(q))
+      .map((a) => `${a.origen}: ${a.id_en_origen}`) : []);
     if (q) items = items.filter((p) => [p.nombre, p.email, p.documento]
-      .some((v) => (v || '').toLowerCase().includes(q)));
+      .some((v) => (v || '').toLowerCase().includes(q)) || aliasQueCoinciden(p.id_persona).length);
+    items = items.map((p) => ({ ...p, ids_en_origen: aliasQueCoinciden(p.id_persona) }));
     if (panelId) {
       const miembros = new Set(bd.membresias
         .filter((m) => m.panel_id === panelId && m.estado === 'activo')
@@ -1718,6 +1723,8 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
             // encuestas sin convocatoria); la de la fila es cuándo llegó.
             convocado,
             convocado_en: convocado ? p.convocado_en : null,
+            es_panelista: bd.membresias.some((m) => m.id_persona === p.id_persona
+              && m.estado === 'activo'),
             registrado_en: p.convocado_en || p.respondio_en,
             nombre: persona?.nombre, email: persona?.email,
             id_en_origen: bd.alias.find((a) => a.id_persona === p.id_persona)?.id_en_origen,

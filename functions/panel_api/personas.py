@@ -799,12 +799,18 @@ def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
     """
     condiciones = []
     params = []
-    if busqueda:
+    patron = f"%{busqueda.strip()}%" if busqueda and busqueda.strip() else None
+    if patron:
+        # También por el id que le dio una plataforma de campo
+        # (`alias_origen`): es lo que trae el archivo, y con eso se busca a
+        # alguien cuando hay que ver por qué una fila no resolvió.
         condiciones.append(
-            "(p.nombre ilike %s or p.email ilike %s or p.documento ilike %s)"
+            "(p.nombre ilike %s or p.email ilike %s or p.documento ilike %s"
+            " or exists (select 1 from alias_origen a"
+            "             where a.id_persona = p.id_persona"
+            "               and a.id_en_origen ilike %s))"
         )
-        patron = f"%{busqueda.strip()}%"
-        params += [patron, patron, patron]
+        params += [patron, patron, patron, patron]
     if panel_id:
         condiciones.append(
             "exists (select 1 from membresia m where m.id_persona = p.id_persona "
@@ -852,7 +858,13 @@ def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
                exists (select 1 from lista_negra ln
                         where ln.id_persona = p.id_persona
                           and ln.removido_en is null) as en_lista_negra,
-               {CAMPOS_INVALIDOS_SQL} as campos_invalidos
+               {CAMPOS_INVALIDOS_SQL} as campos_invalidos,
+               -- Los ids de plataforma que coincidieron con la búsqueda,
+               -- para que la fila diga por qué apareció.
+               {"array(select a.origen || ': ' || a.id_en_origen from alias_origen a"
+                " where a.id_persona = p.id_persona and a.id_en_origen ilike %s"
+                " order by 1 limit 5)" if patron else "array[]::text[]"}
+                                                         as ids_en_origen
                {origen_en_carga}
           from persona p left join v_demografia d on d.id_persona = p.id_persona
           {donde}
@@ -862,7 +874,8 @@ def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
         # R-CAR.2 — filtrada por carga, cada fila dice si esa carga la creó
         # o la reutilizó. El parámetro va primero: la subconsulta está en el
         # `select`, antes del `where`.
-        ((carga_id,) if carga_id else ()) + tuple(params) + (limite, desplazamiento),
+        ((patron,) if patron else ()) + ((carga_id,) if carga_id else ())
+        + tuple(params) + (limite, desplazamiento),
     )
     return {
         "total": total,
@@ -880,6 +893,7 @@ def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
                 "paneles": f["paneles"],
                 "en_lista_negra": f["en_lista_negra"],
                 "campos_invalidos": list(f["campos_invalidos"] or []),
+                "ids_en_origen": list(f["ids_en_origen"] or []),
                 **({"origen_en_carga": f["origen_en_carga"]} if carga_id else {}),
             }
             for f in filas

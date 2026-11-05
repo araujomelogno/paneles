@@ -454,7 +454,12 @@ def listar_participacion(conn, encuesta_id):
                           and c.finalidad = 'uso_semantico'
                           and c.estado = 'vigente') as consiente_semantico,
                (select id_en_origen from alias_origen a
-                 where a.id_persona = pa.id_persona limit 1) as id_en_origen
+                 where a.id_persona = pa.id_persona limit 1) as id_en_origen,
+               -- Panelista es quien tiene una membresía activa en algún
+               -- panel; independiente, quien no (llegó solo por archivos).
+               exists (select 1 from membresia m
+                        where m.id_persona = pa.id_persona
+                          and m.estado = 'activo') as es_panelista
           from participacion pa join persona p on p.id_persona = pa.id_persona
          where pa.encuesta_id = %s
          order by p.nombre nulls last
@@ -477,6 +482,7 @@ def listar_participacion(conn, encuesta_id):
             "respondio_en": f["respondio_en"].isoformat() if f["respondio_en"] else None,
             "calidad_estado": f["calidad_estado"],
             "consiente_semantico": f["consiente_semantico"],
+            "es_panelista": f["es_panelista"],
         }
         for f in filas
     ]

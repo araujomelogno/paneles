@@ -5049,3 +5049,40 @@ presentación. Esquema en `boveda/0033`.
 `web/public/js/paginas/encuestas.js`, `panelistas.js`. Pruebas:
 `functions/tests/test_pedido_encuestas_sin_convocatoria.py`,
 `functions/tests/test_pantallas_encuestas_sin_convocatoria.py`.
+
+## D83 · La lista de una encuesta dice quién es panelista y abre la ficha; Panelistas busca por id de origen
+
+**El pedido.** Tres cambios chicos sobre D82:
+
+1. desde la lista de respondentes de una encuesta, ver la ficha de cada uno;
+2. una columna para saber si fue convocado o es independiente;
+3. buscar en Panelistas por el id de origen.
+
+- **«Convocado o independiente» son dos preguntas, y van en dos columnas.**
+  En una encuesta que llegó como archivo nadie fue convocado, así que una
+  sola columna diría «independiente» en todas las filas. Se pidieron las
+  dos:
+  - **Panel**: *panelista* si tiene una membresía activa en algún panel,
+    *independiente* si no (llegó solo por archivos). Una membresía dada de
+    baja no cuenta. Lo calcula `encuestas.listar_participacion`
+    (`es_panelista`) al leer: no se guarda.
+  - **Convocatoria**: si fue convocado a esta encuesta. Es
+    `participacion.convocado` (D81 y D82).
+
+  Las dos tablas, «Respondentes» y «Convocatoria», muestran la columna
+  Panel. El pie de «Respondentes» cuenta panelistas e independientes.
+- **«Ver ficha» lleva a la ficha de la bóveda**, la misma de Panelistas
+  (`GET /panelistas/<id>`). Queda registrada como reidentificación, igual
+  que desde Panelistas. La lista ya mostraba nombre y correo, así que no
+  expone nada nuevo.
+- **La búsqueda de Panelistas incluye `alias_origen.id_en_origen`**, parcial
+  y sin distinguir mayúsculas, como el resto. Cada fila trae los ids que
+  coincidieron (`ids_en_origen`, como `origen: id`) para que se vea por qué
+  apareció. Es la misma ruta y el mismo permiso. No se agregó una ruta
+  aparte para buscar personas.
+
+**Dónde vive.** `functions/panel_api/encuestas.py` (`listar_participacion`),
+`personas.py` (`listar`), `web/public/js/paginas/encuestas.js`,
+`panelistas.js`. Pruebas:
+`functions/tests/test_respondentes_y_busqueda_por_origen.py`,
+`functions/tests/test_pantallas_respondentes_y_busqueda.py`.
