@@ -55,7 +55,7 @@ const CANALES = [
 
 const ETIQUETA_CANAL = Object.fromEntries(CANALES.map(([k, v]) => [k, v]));
 
-let filtro = { q: '', panel_id: '', sin_panel: false, carga_id: '' };
+let filtro = { q: '', panel_id: '', sin_panel: false, carga_id: '', invalidos: false };
 /* R-PAN.1 — la grilla pagina. La página vive aparte de los filtros: cambiar
    un filtro vuelve a la primera, y pasar de página los conserva. */
 const TAMANOS_DE_PAGINA = [25, 50, 100];
@@ -121,6 +121,9 @@ export async function render(main, ctx) {
           </select>
           <button class="btn btn-outline btn-sm" id="editar-estudio"
                   style="${filtro.carga_id ? '' : 'display:none'}">Datos del estudio</button>
+          <label class="check small" title="Nombre sin letras, o documento, correo, celular o id de plataforma sin ninguna letra ni dígito («......»)">
+            <input type="checkbox" id="f-invalidos" ${filtro.invalidos ? 'checked' : ''} />
+            Con identificadores inválidos</label>
         </div>
       </div>
       <div class="card-body tight"><div id="tabla">${cargando()}</div></div>
@@ -154,6 +157,14 @@ export async function render(main, ctx) {
     paginado.desde = 0;
     cargarTabla();
   };
+  // PEDIDO encuestas sin convocatoria — quienes entraron con un nombre o un
+  // identificador sin letras ni dígitos. Se listan para revisarlos y decidir
+  // desde la ficha; no se borran solos.
+  $('#f-invalidos').onchange = (e) => {
+    filtro.invalidos = e.target.checked;
+    paginado.desde = 0;
+    cargarTabla();
+  };
   // Se relee la carga en vez de usar la del selector: los conteos de
   // creadas y reutilizadas pudieron cambiar con una carga en curso.
   $('#editar-estudio').onclick = async () => {
@@ -172,6 +183,11 @@ export async function render(main, ctx) {
   await retomarCargaEnCurso('carga', null, { alTerminar: cargarTabla });
 }
 
+const CAMPO_INVALIDO = {
+  nombre: 'nombre', documento: 'documento', email: 'correo',
+  celular: 'celular', id_en_origen: 'id de plataforma',
+};
+
 async function cargarTabla() {
   const contenedor = $('#tabla');
   if (!contenedor) return;
@@ -181,6 +197,7 @@ async function cargarTabla() {
     limite: paginado.limite, desde: paginado.desde,
     sin_panel: filtro.sin_panel ? '1' : '',
     carga_id: filtro.carga_id,
+    identificador_invalido: filtro.invalidos ? '1' : '',
   });
   // Una página que quedó más allá del final (se dio de baja gente, o cambió
   // el tamaño): se vuelve a la última que existe.
@@ -191,7 +208,8 @@ async function cargarTabla() {
 
   if (!items.length) {
     contenedor.innerHTML = vacio(
-      filtro.sin_panel ? 'Todos los individuos pertenecen a algún panel.'
+      filtro.invalidos ? 'Nadie tiene un nombre o un identificador sin letras ni dígitos.'
+        : filtro.sin_panel ? 'Todos los individuos pertenecen a algún panel.'
         : filtro.carga_id ? 'No hay personas vinculadas a esa carga. El vínculo '
           + 'se registra desde la versión R-ORG: lo cargado antes no dejó constancia.'
         : filtro.q ? 'Ningún panelista coincide con la búsqueda.'
@@ -212,6 +230,9 @@ async function cargarTabla() {
             <div class="td-strong">${esc(p.nombre || 'Sin nombre')}
               ${p.en_lista_negra ? listaNegra.marca({}) : ''}</div>
             <div class="td-muted small">${esc(p.email || '—')}</div>
+            ${(p.campos_invalidos || []).length ? `<div class="small" data-invalidos>
+              <span class="badge badge-off" title="Sin ninguna letra ni dígito">inválido:
+              ${esc(p.campos_invalidos.map((c) => CAMPO_INVALIDO[c] || c).join(', '))}</span></div>` : ''}
           </td>
           <td class="mono">${esc(p.documento || '—')}</td>
           <td class="small">${esc([p.sexo, p.tramo_etario, p.localidad].filter(Boolean).join(' · ') || '—')}</td>

@@ -198,6 +198,10 @@ MIGRACIONES_BOVEDA = (
         "encuesta_tematica", "tematica_pregunta.encuesta_id",
         "persona_tematica.encuesta_id", "encuesta_borrado",
     )),
+    # ── PEDIDO encuestas sin convocatoria: de dónde viene cada encuesta.
+    ("0033_origen_de_la_encuesta.sql", (
+        "encuesta.origen", "encuesta_origen_por_defecto()",
+    )),
 )
 
 # Objetos que una migración creó y una posterior **retiró** (los tiró sin

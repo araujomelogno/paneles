@@ -272,6 +272,9 @@ def listar_panelistas(ctx, actor, params, cuerpo, consulta):
         sin_panel=_bandera(consulta.get("sin_panel")),
         # R-ORG.5 — los que provienen de una carga, creados o reutilizados.
         carga_id=_entero(consulta.get("carga_id")),
+        # PEDIDO encuestas sin convocatoria — los que tienen un nombre o un
+        # identificador sin letras ni dígitos, para revisarlos.
+        identificador_invalido=_bandera(consulta.get("identificador_invalido")),
     )
 
 

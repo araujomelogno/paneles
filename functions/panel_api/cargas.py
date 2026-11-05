@@ -246,7 +246,8 @@ def crear(conn, nombre, descripcion=None, actor=None, fecha_estudio=None,
     if encuesta_id is None:
         encuesta_id = encuestas.crear(
             conn, None, nombre, fecha_campo=_fecha(fecha_estudio),
-            tipo=encuestas.INDEPENDIENTE, publico_objetivo=publico_objetivo,
+            tipo=encuestas.INDEPENDIENTE, origen=encuestas.ORIGEN_CARGA,
+            publico_objetivo=publico_objetivo,
             descripcion=descripcion, clientes=clientes or [],
             estado="cerrada")["id"]
     else:
@@ -548,11 +549,14 @@ def _otros_ingresos(conn, id_persona, creada_por_carga):
             (str(id_persona),))
     ] + [
         {"via": INGRESO_ENCUESTA, "etiqueta": ETIQUETAS_INGRESO[INGRESO_ENCUESTA],
-         "fecha": f["convocado_en"].isoformat(), "detalle": f["nombre"],
+         "fecha": f["llego_en"].isoformat(), "detalle": f["nombre"],
          "encuesta_id": f["encuesta_id"]}
         for f in db.todas(
             conn,
-            """select pa.encuesta_id, e.nombre, pa.convocado_en
+            """select pa.encuesta_id, e.nombre,
+                      -- Cuándo llegó en el archivo, no una convocatoria:
+                      -- quien vino en un archivo no fue convocado.
+                      coalesce(pa.respondio_en, pa.convocado_en) as llego_en
                  from participacion pa join encuesta e on e.id = pa.encuesta_id
                 where pa.id_persona = %s and pa.origen = 'importacion'
                   -- D81: si llegó en una carga de esa encuesta, ya figura
@@ -561,7 +565,7 @@ def _otros_ingresos(conn, id_persona, creada_por_carga):
                       select 1 from persona_carga pc join carga c on c.id = pc.carga_id
                        where pc.id_persona = pa.id_persona
                          and c.encuesta_id = pa.encuesta_id)
-                order by pa.convocado_en""",
+                order by llego_en""",
             (str(id_persona),))
     ]
     if not ingresos and not creada_por_carga:

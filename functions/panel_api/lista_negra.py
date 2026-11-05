@@ -74,14 +74,16 @@ def _cancelar_invitaciones(conn, id_persona):
     """R-LN.2 — las invitaciones pendientes se cancelan: convocatorias que
     emitió el sistema, sin respuesta, de encuestas que no están cerradas. Lo
     que ya respondió no se toca (es un hecho) ni lo que vino de un archivo de
-    campo (`origen = 'importacion'`)."""
+    campo. Se pregunta por `convocado` y no por `origen` (D81): quien llegó
+    en un archivo y después se convocó tiene `origen = 'importacion'` y una
+    convocatoria igual."""
     filas = db.todas(
         conn,
         """delete from participacion pa
             using encuesta e
             where e.id = pa.encuesta_id
               and pa.id_persona = %s
-              and pa.origen = 'convocatoria'
+              and pa.convocado
               and not pa.respondio
               and e.estado <> 'cerrada'
         returning pa.encuesta_id, e.nombre, pa.convocado_en""",

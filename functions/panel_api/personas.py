@@ -753,8 +753,33 @@ def _origen(conn, id_persona):
     return cargas.origen_de(conn, id_persona)
 
 
+# PEDIDO encuestas sin convocatoria — un identificador o un nombre que no
+# tiene ninguna letra ni dígito («...........», «......») es relleno de un
+# archivo sucio, no un dato. Desde ese pedido la carga los rechaza; estas
+# expresiones encuentran los que ya entraron, para que el equipo decida. Las
+# letras son las del alfabeto latino con tildes: la base corre con
+# `collate C` y `[[:alpha:]]` no ve la «ñ».
+_CON_CONTENIDO = "'[0-9A-Za-zÀ-ÖØ-öø-ÿ]'"
+_CON_LETRAS = "'[A-Za-zÀ-ÖØ-öø-ÿ]'"
+
+
+def _invalido(columna, patron=_CON_CONTENIDO):
+    return f"({columna} is not null and {columna} <> '' and {columna} !~ {patron})"
+
+
+CAMPOS_INVALIDOS_SQL = f"""array_remove(array[
+    case when {_invalido('p.nombre', _CON_LETRAS)} then 'nombre' end,
+    case when {_invalido('p.documento')} then 'documento' end,
+    case when {_invalido('p.email')} then 'email' end,
+    case when {_invalido('p.celular')} then 'celular' end,
+    case when exists (select 1 from alias_origen a
+                       where a.id_persona = p.id_persona
+                         and {_invalido('a.id_en_origen')}) then 'id_en_origen' end
+  ]::text[], null)"""
+
+
 def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
-           sin_panel=False, carga_id=None):
+           sin_panel=False, carga_id=None, identificador_invalido=False):
     """Listado de panelistas para la grilla de administración.
 
     `sin_panel` (R3.13.e) deja solo a quienes no son miembros de ningún
@@ -765,6 +790,12 @@ def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
     `carga_id` (R-ORG.5) deja a quienes provienen de esa carga, creados o
     reutilizados. Va por el vínculo `persona_carga`: quien se cargó antes de
     que existiera no aparece, porque no hay constancia de que viniera de ahí.
+
+    `identificador_invalido` deja a quienes tienen un nombre sin letras, o
+    un documento, correo, celular o id de plataforma sin ninguna letra ni
+    dígito. Es para revisarlos: no se borran solos, porque pueden tener
+    respuestas válidas y otros identificadores buenos. Cada fila dice cuáles
+    (`campos_invalidos`).
     """
     condiciones = []
     params = []
@@ -791,6 +822,8 @@ def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
             "and pc.carga_id = %s)"
         )
         params.append(carga_id)
+    if identificador_invalido:
+        condiciones.append(f"cardinality({CAMPOS_INVALIDOS_SQL}) > 0")
     donde = ("where " + " and ".join(condiciones)) if condiciones else ""
     origen_en_carga = (
         ", (select pc.origen from persona_carga pc where pc.id_persona = "
@@ -818,7 +851,8 @@ def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
                -- R-LN.2 — la grilla la marca; el motivo está en la ficha.
                exists (select 1 from lista_negra ln
                         where ln.id_persona = p.id_persona
-                          and ln.removido_en is null) as en_lista_negra
+                          and ln.removido_en is null) as en_lista_negra,
+               {CAMPOS_INVALIDOS_SQL} as campos_invalidos
                {origen_en_carga}
           from persona p left join v_demografia d on d.id_persona = p.id_persona
           {donde}
@@ -845,6 +879,7 @@ def listar(conn, busqueda=None, panel_id=None, limite=50, desplazamiento=0,
                 "consiente_semantico": f["consiente_semantico"],
                 "paneles": f["paneles"],
                 "en_lista_negra": f["en_lista_negra"],
+                "campos_invalidos": list(f["campos_invalidos"] or []),
                 **({"origen_en_carga": f["origen_en_carga"]} if carga_id else {}),
             }
             for f in filas
