@@ -44,7 +44,10 @@ FASES_CON_PANTALLA = ("R7.", "R8.",
                       "R-CLI.", "R-LN.", "R-AUD.",
                       # SPEC_encuestas_y_cargas_unificadas — la encuesta como
                       # estudio, sus cargas, borrarla, archivar paneles.
-                      "R-EU.")
+                      "R-EU.",
+                      # SPEC_convocatoria_y_mensajes (D85) — estado, panelistas
+                      # a mano, mensajes y su envío.
+                      "R-CF.")
 
 # Rutas de estas fases que **no** tienen pantalla, con el motivo. Vacío hoy;
 # si alguna vez hace falta, el motivo va escrito acá y no en la memoria de

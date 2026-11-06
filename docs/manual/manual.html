@@ -2171,7 +2171,74 @@
     <li>las personas que la carga creó se dan de baja <strong>solo si se
     marca</strong> la casilla. Si es la única carga de la encuesta, se borra
     el estudio entero.</li>
+    <li>quien recibió un mensaje de una encuesta (sección 5.13) se conserva:
+    darlo de baja borraría la constancia de que se le escribió.</li>
   </ul>
+
+  <h3><span class="n">5.13</span> Lanzar y seguir el campo desde la encuesta</h3>
+
+  <p>La invitación, los recordatorios y el agradecimiento salen del sistema, y
+  queda registrado a quién se le escribió y cómo le fue a cada envío.</p>
+
+  <p><strong>El estado.</strong> En el detalle (y en el listado) el estado es un
+  selector, y se puede cambiar en cualquier dirección. <strong>Historial</strong>
+  muestra quién lo cambió y cuándo.</p>
+
+  <table>
+    <tr><th></th><th>Convocar y agregar</th><th>Enviar mensajes</th><th>Cargas</th></tr>
+    <tr><td>Borrador</td><td>sí</td><td>no</td><td>sí</td></tr>
+    <tr><td>En campo</td><td>sí</td><td>sí</td><td>sí</td></tr>
+    <tr><td>Cerrada</td><td>no</td><td>no</td><td>sí</td></tr>
+  </table>
+
+  <p>Una encuesta que llegó como archivo empieza cerrada, y se puede reabrir.</p>
+
+  <p><strong>La URL de Alchemer.</strong> En <strong>Datos del estudio</strong>,
+  la dirección de la encuesta terminada en el parámetro que recibe al panelista
+  (<code>…?pid=</code>). A cada uno se le agrega su identificador del sistema,
+  y así vuelve en las respuestas.</p>
+
+  <p><strong>Agregar panelistas.</strong> Suma gente a la audiencia sin convocar
+  a todo el panel: una persona por línea, por identificador del sistema, correo
+  o celular, mezclados. No crea a nadie, y cada línea dice qué pasó: agregado, ya
+  estaba, no corresponde, ambiguo (el celular es de más de una persona), en
+  lista negra, sin consentimiento o formato inválido.</p>
+
+  <p><strong>Los mensajes.</strong> Cada encuesta tiene los suyos, con un nombre
+  libre («Invitación», «Recordatorio 1», «Gracias»):</p>
+
+  <ul class="puntos">
+    <li><b>WhatsApp:</b> se elige una plantilla <strong>aprobada por Meta</strong>
+    y qué va en cada parámetro del texto (el nombre del panelista o el de la
+    encuesta). El botón de la plantilla lleva a la encuesta con el identificador
+    de cada uno. Si el botón lleva a otra dirección que la de la encuesta, el
+    sistema lo avisa antes de guardar: guardar igual pide marcar una casilla.</li>
+    <li><b>Correo:</b> asunto y cuerpo. <code>{nombre}</code>,
+    <code>{encuesta}</code> y <code>{enlace}</code> se reemplazan al enviar; si
+    el cuerpo no trae el enlace, se agrega al final.</li>
+  </ul>
+
+  <p><strong>Enviar…</strong> (operaciones y administración) pide a quién:</p>
+
+  <ul class="puntos">
+    <li><b>No enviado aún:</b> nadie lo recibe dos veces. Un envío que falló
+    cuenta como no enviado, así que vuelve a entrar.</li>
+    <li><b>Todos:</b> la vista previa avisa si se lo repetiría a quien ya lo
+    tiene.</li>
+    <li><b>No contestaron</b> y <b>Respondieron:</b> según las respuestas ya
+    ingestadas.</li>
+  </ul>
+
+  <p>Antes de confirmar, la vista previa dice cuántos lo van a recibir y quiénes
+  quedan afuera y por qué: lista negra, sin consentimiento, no aceptó ese canal,
+  sin celular válido o sin correo. El envío corre en segundo plano, con su barra
+  de avance, y termina con un resumen. No se puede lanzar el mismo mensaje dos
+  veces a la vez.</p>
+
+  <p>En la sección Convocatoria, la columna <strong>Mensajes</strong> muestra, por
+  panelista, cada mensaje con su estado: <i>Enviado</i>, <i>Entregado</i>,
+  <i>Leído</i> o <i>Falló</i> (pasando el ratón, el motivo). El primer mensaje que
+  alguien recibe lo deja convocado con esa fecha.</p>
 </section>
 
 

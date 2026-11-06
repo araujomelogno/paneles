@@ -1,7 +1,10 @@
-"""R4.5 — Envío de encuestas por WhatsApp Flow.
+"""R4.5 — Envío de encuestas por WhatsApp Flow; D85 — mensajes de una
+encuesta y su webhook de estados.
 
-**El sistema solo envía.** No recibe respuestas, no procesa webhooks, no crea
-ni edita Flows ni plantillas. El Flow y la plantilla se arman en Meta y acá se
+**El sistema envía y escucha estados, nada más.** No recibe respuestas, no
+crea ni edita Flows ni plantillas. Desde D85 (R-CF.7) recibe el webhook de
+**estados** de Meta —entregado, leído, fallido—, firmado y verificado
+(`firma_valida`); los mensajes entrantes que traiga se ignoran. El Flow y la plantilla se arman en Meta y acá se
 referencian por id; el analista baja las respuestas de Meta y las ingesta por
 el flujo de siempre. Eso deja el modelo de ingesta sin tocar, que es
 deliberado: WhatsApp es un canal de envío, no una plataforma de recolección.
@@ -123,6 +126,32 @@ def _boton_de_flow(componentes):
     return None
 
 
+def _boton_de_url(componentes):
+    """El botón de URL de una plantilla, si lo tiene (R-CF.4).
+
+    Meta fija la base de la URL al aprobar la plantilla y solo deja variar el
+    final (`…?pid={{1}}`). Ese final es lo que recibe el `id_persona`. Una URL
+    sin `{{1}}` es fija: no puede llevar a nadie a su propia encuesta.
+    """
+    for componente in componentes or []:
+        if (componente.get("type") or "").upper() != "BUTTONS":
+            continue
+        for indice, boton in enumerate(componente.get("buttons") or []):
+            if (boton.get("type") or "").upper() == "URL":
+                url = boton.get("url") or ""
+                return {"indice": indice, "url": url, "texto": boton.get("text"),
+                        "dinamico": "{{1}}" in url,
+                        "base": url.split("{{")[0] if "{{1}}" in url else url}
+    return None
+
+
+def parametros_del_cuerpo(texto):
+    """Cuántos parámetros (`{{1}}`, `{{2}}`…) tiene el texto de una plantilla."""
+    import re
+
+    return len({m for m in re.findall(r"\{\{(\d+)\}\}", texto or "")})
+
+
 def _cuerpo_de(componentes):
     """El texto del cuerpo, para que la lista se pueda leer sin ir a Meta."""
     for componente in componentes or []:
@@ -182,6 +211,8 @@ def listar_plantillas(entorno=None, pedir=None, solo_con_flow=True,
             sin_flow += 1
             if solo_con_flow:
                 continue
+        boton_url = _boton_de_url(cruda.get("components"))
+        cuerpo = _cuerpo_de(cruda.get("components"))
         plantillas.append({
             "nombre": cruda.get("name"),
             "idioma": cruda.get("language"),
@@ -189,8 +220,12 @@ def listar_plantillas(entorno=None, pedir=None, solo_con_flow=True,
             "categoria": cruda.get("category"),
             "flow_id": boton["flow_id"] if boton else None,
             "texto_boton": boton["texto"] if boton else None,
-            "cuerpo": _cuerpo_de(cruda.get("components")),
+            "cuerpo": cuerpo,
             "calidad": (cruda.get("quality_score") or {}).get("score"),
+            # R-CF.4 — para los mensajes de una encuesta: el botón de URL
+            # (cuya base fija Meta) y cuántos parámetros lleva el texto.
+            "boton_url": boton_url,
+            "parametros_cuerpo": parametros_del_cuerpo(cuerpo),
         })
 
     # El mismo nombre puede existir en varios idiomas, y son plantillas
@@ -361,3 +396,103 @@ def enviar_flow(destino, plantilla, idioma, flow_token,
         token=datos["token"])
     mensajes = respuesta.get("messages") or [{}]
     return {"message_id": mensajes[0].get("id"), "respuesta": respuesta}
+
+
+# ── R-CF.4 / R-CF.5 · Mensajes de una encuesta ───────────────────────
+
+def enviar_plantilla(destino, plantilla, idioma, textos=None, id_persona=None,
+                     boton_url=None, flow_id=None, entorno=None, pedir=None):
+    """Manda una plantilla aprobada a un número. Devuelve el id del mensaje.
+
+    `textos` va a los `{{1}}`, `{{2}}`… del cuerpo, en orden. Si la plantilla
+    tiene un botón de URL dinámico, su parámetro es el `id_persona`: es lo que
+    Alchemer recibe y lo que vuelve como columna en el SAV (R-CF.3). Si tiene
+    un botón de Flow, el `id_persona` va como `flow_token`, igual que R4.5.
+    """
+    datos = config(entorno)
+    if not datos["token"] or not datos["phone_number_id"]:
+        raise SinConfigurar("Sin credenciales de WhatsApp.")
+    componentes = []
+    if textos:
+        componentes.append({
+            "type": "body",
+            "parameters": [{"type": "text", "text": str(t)} for t in textos]})
+    if boton_url and boton_url.get("dinamico"):
+        componentes.append({
+            "type": "button", "sub_type": "url",
+            "index": str(boton_url.get("indice", 0)),
+            "parameters": [{"type": "text", "text": str(id_persona)}]})
+    elif flow_id:
+        componentes.append({
+            "type": "button", "sub_type": "flow", "index": "0",
+            "parameters": [{"type": "action",
+                            "action": {"flow_token": str(id_persona)}}]})
+    cuerpo = {
+        "messaging_product": "whatsapp",
+        "to": destino,
+        "type": "template",
+        "template": {"name": plantilla, "language": {"code": idioma or "es"},
+                     **({"components": componentes} if componentes else {})},
+    }
+    respuesta = (pedir or _pedir)(
+        f"{API}/{datos['phone_number_id']}/messages", cuerpo, token=datos["token"])
+    mensajes = respuesta.get("messages") or [{}]
+    return {"message_id": mensajes[0].get("id"), "respuesta": respuesta}
+
+
+# ── R-CF.7 · El webhook de estados ───────────────────────────────────
+#
+# Meta le avisa al sistema cuándo un mensaje se entregó, se leyó o falló. Es
+# una URL pública, así que lo que la protege es la firma: Meta firma el cuerpo
+# **crudo** con el secreto de la app (`X-Hub-Signature-256`). Sin secreto
+# configurado no se acepta nada —fallar cerrado—: un webhook sin firma
+# verificable dejaría a cualquiera marcar mensajes como leídos.
+
+def config_webhook(entorno=None):
+    entorno = os.environ if entorno is None else entorno
+    return {"verify_token": entorno.get("WHATSAPP_VERIFY_TOKEN", "").strip(),
+            "app_secret": entorno.get("WHATSAPP_APP_SECRET", "").strip()}
+
+
+def verificar_suscripcion(modo, token, desafio, entorno=None):
+    """El GET con que Meta da de alta el webhook. Devuelve el desafío si el
+    token coincide; `None` si no (o si no hay token configurado)."""
+    import hmac
+
+    esperado = config_webhook(entorno)["verify_token"]
+    if modo == "subscribe" and esperado and token \
+            and hmac.compare_digest(str(token), esperado):
+        return desafio
+    return None
+
+
+def firma_valida(cuerpo_crudo, firma, entorno=None):
+    """¿El cuerpo viene de Meta? Compara `X-Hub-Signature-256` con el HMAC del
+    cuerpo crudo. Sin secreto configurado, **no**."""
+    import hashlib
+    import hmac
+
+    secreto = config_webhook(entorno)["app_secret"]
+    if not secreto or not firma or not str(firma).startswith("sha256="):
+        return False
+    calculada = hmac.new(secreto.encode(), cuerpo_crudo or b"",
+                         hashlib.sha256).hexdigest()
+    return hmac.compare_digest(str(firma)[len("sha256="):], calculada)
+
+
+def estados_del_webhook(cuerpo):
+    """`[{id, estado, error}]` de los estados que trae un aviso de Meta. Lo
+    que no es un estado (mensajes entrantes, otros campos) se ignora."""
+    salida = []
+    for entrada in (cuerpo or {}).get("entry") or []:
+        for cambio in entrada.get("changes") or []:
+            for estado in (cambio.get("value") or {}).get("statuses") or []:
+                errores = estado.get("errors") or []
+                salida.append({
+                    "id": estado.get("id"),
+                    "estado": (estado.get("status") or "").lower(),
+                    "error": "; ".join(
+                        (e.get("title") or e.get("message") or str(e.get("code")))
+                        for e in errores) or None,
+                })
+    return salida

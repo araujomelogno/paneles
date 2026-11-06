@@ -209,6 +209,12 @@ MIGRACIONES_BOVEDA = (
         "f_persona_convocable_filtrada()", "ficha_candidato()",
         "identificar_candidatos()",
     )),
+    # ── Convocatoria desde la encuesta: estado, panelistas a mano y mensajes
+    # (D85). Suma `mensaje` a los destinos de la vía diferida.
+    ("0035_convocatoria_y_mensajes.sql", (
+        "encuesta.url_alchemer", "encuesta_estado_cambio", "encuesta_mensaje",
+        "envio",
+    )),
 )
 
 # Objetos que una migración creó y una posterior **retiró** (los tiró sin

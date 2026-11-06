@@ -65,6 +65,11 @@ PERMISOS = {
     # quema el canal para todos. Por eso no lo tiene el analista, que sí puede
     # fieldear e ingestar.
     "enviar_whatsapp": {"admin", "operaciones"},
+    # D85 · R-CF.5 — enviar un mensaje de una encuesta, por WhatsApp o por
+    # correo. Mismo motivo y mismos roles que `enviar_whatsapp`: es dinero y
+    # es la reputación del número y de la cuenta de correo. Armar los
+    # mensajes es `fieldear`; lanzarlos, esto.
+    "enviar_mensajes": {"admin", "operaciones"},
     # R4.1.b — declarar que dos preguntas de olas distintas son la misma
     # medición. Es una decisión metodológica, así que es del analista tanto
     # como de operaciones. El dpo no: no es su trabajo y una serie mal armada

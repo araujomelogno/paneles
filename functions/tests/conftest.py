@@ -61,6 +61,9 @@ TABLAS_BOVEDA = [
     "area_tematica", "taxonomia_cambio", "carga_borrado", "cliente",
     # D81 — la auditoría de los estudios borrados no cascadea desde nada.
     "encuesta_borrado",
+    # D85 — los mensajes y su registro cascadean desde la encuesta, pero se
+    # nombran para que el truncate no dependa de eso.
+    "envio", "encuesta_mensaje", "encuesta_estado_cambio",
 ]
 
 # R3.14 — el catálogo de atributos **no** se trunca: `sexo`, `localidad`,

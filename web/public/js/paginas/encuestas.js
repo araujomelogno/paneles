@@ -57,7 +57,9 @@ export async function render(main, ctx) {
                 : `${esc(e.panel || '—')}${e.panel_estado === 'archivado' ? ' <span class="badge">archivado</span>' : ''}`}</td>
               <td>${chipsDeClientes(e.clientes || [])}</td>
               <td class="small">${e.fecha_campo ? fechaCorta(e.fecha_campo) : '—'}</td>
-              <td>${estado(e.estado, ESTADO_ETIQUETA[e.estado])}</td>
+              <td>${puedeEditarEstudio()
+                ? selectorDeEstado(e.estado, `data-estado-encuesta="${e.id}"`)
+                : estado(e.estado, ESTADO_ETIQUETA[e.estado])}</td>
               <td class="mono" data-convocados>${e.con_convocatoria ? e.convocados
                 : '<span class="muted" title="Nadie fue convocado desde el sistema">—</span>'}</td>
               <td><div style="display:flex;align-items:center;gap:0.5rem">
@@ -85,6 +87,12 @@ export async function render(main, ctx) {
   activarTokens(main);
   $$('[data-encuesta]', main).forEach((boton) => {
     boton.onclick = () => contexto.irA('encuestas', { encuestaId: Number(boton.dataset.encuesta) });
+  });
+  // R-CF.1 — también desde el listado, en cualquier dirección.
+  $$('[data-estado-encuesta]', main).forEach((selector) => {
+    selector.onchange = () => cambiarEstadoDeEncuesta(
+      Number(selector.dataset.estadoEncuesta), selector.value,
+      () => contexto.irA('encuestas', { ...(panelId ? { panelId } : {}), ...(tipo ? { tipo } : {}) }));
   });
 }
 
@@ -169,7 +177,15 @@ async function renderDetalle(main, encuestaId) {
                 ? 'Independiente · llegó como archivo de respuestas, sin convocatoria'
                 : 'Independiente · la foto de una consulta')
               : `De panel · ${esc(encuesta.panel || '')}${panelArchivado ? ' <span class="badge">archivado</span>' : ''}`}</dd>
-            <dt>Estado</dt><dd>${estado(encuesta.estado, ESTADO_ETIQUETA[encuesta.estado])}</dd>
+            <dt>Estado</dt><dd><div class="toolbar">${puedeEditarEstudio()
+                ? selectorDeEstado(encuesta.estado, 'id="estado-encuesta"')
+                : estado(encuesta.estado, ESTADO_ETIQUETA[encuesta.estado])}
+                <button class="btn btn-outline btn-sm" id="historial-estado">Historial</button></div>
+              <div class="field-hint" id="efecto-estado">${esc(EFECTO_DEL_ESTADO[encuesta.estado] || '')}</div></dd>
+            <dt>Encuesta en Alchemer</dt><dd>${encuesta.url_alchemer
+              ? `<span class="mono small" data-url-alchemer>${esc(encuesta.url_alchemer)}</span>
+                 <div class="field-hint">Cada panelista la recibe con su id_persona al final.</div>`
+              : '<span class="muted" data-url-alchemer>Sin cargar</span>'}</dd>
             <dt>Público objetivo</dt><dd>${esc(encuesta.publico_objetivo || '—')}</dd>
             <dt>Clientes</dt><dd>${chipsDeClientes(encuesta.clientes || [])}</dd>
             ${encuesta.descripcion ? `<dt>Descripción</dt><dd>${esc(encuesta.descripcion)}</dd>` : ''}
@@ -235,6 +251,8 @@ async function renderDetalle(main, encuestaId) {
         <div class="toolbar">
           ${!independiente && !cerrada && !panelArchivado
             ? '<button class="btn btn-outline btn-sm" id="convocar">Convocar al panel</button>' : ''}
+          ${puedeEditarEstudio() && !cerrada && !panelArchivado
+            ? '<button class="btn btn-outline btn-sm" id="agregar-panelistas">Agregar panelistas</button>' : ''}
           ${esDeCarga(encuesta) ? ''
             : '<button class="btn btn-outline btn-sm" id="muestra">Exportar muestra</button>'}
         </div>
@@ -246,6 +264,13 @@ async function renderDetalle(main, encuestaId) {
         style="padding:.6rem 1.5rem 0">La audiencia de esta encuesta es la foto de la
         consulta con que se creó: no se convoca a ningún panel.</p>` : ''}
       <div class="card-body tight"><div id="participacion">${cargando('20vh')}</div></div>
+    </div>
+    <!-- D85 · R-CF.4 a R-CF.8 — los mensajes de la encuesta y su envío. -->
+    <div class="card" id="tarjeta-mensajes">
+      <div class="card-header"><span class="card-header-title">Mensajes</span>
+        ${puedeEditarEstudio()
+          ? '<button class="btn btn-orange btn-sm" id="nuevo-mensaje">+ Nuevo mensaje</button>' : ''}</div>
+      <div class="card-body tight"><div id="mensajes">${cargando('12vh')}</div></div>
     </div>
     <!-- R4.5 — el canal de WhatsApp. La tarjeta existe siempre, porque es
          donde se configura; el envío aparece cuando hay Flow. -->
@@ -282,24 +307,15 @@ async function renderDetalle(main, encuestaId) {
 
   $('#ph-acciones').innerHTML = `
     <button class="btn btn-outline" id="volver">‹ Encuestas</button>
-    ${!cerrada ? `<button class="btn btn-dark" id="cerrar">Cerrar encuesta</button>` : ''}
     ${puedeBorrarEncuesta() ? '<button class="btn btn-outline texto-peligro" id="borrar-encuesta">Borrar la encuesta…</button>' : ''}`;
   $('#volver').onclick = () => contexto.irA('encuestas');
   $('#configurar-flow').onclick = () => abrirConfiguracionFlow(encuesta);
   if ($('#enviar-wa')) $('#enviar-wa').onclick = () => abrirEnvioWhatsapp(encuesta);
   if (encuesta.es_flow) cargarEstadoFlow(encuesta.id);
-  $('#cerrar')?.addEventListener('click', async () => {
-    const ok = await confirmar({
-      titulo: 'Cerrar la encuesta',
-      cuerpo: '<p>Una encuesta cerrada no admite nuevas convocatorias. Se le pueden '
-        + 'seguir sumando cargas.</p>',
-      textoOk: 'Cerrar', claseOk: 'btn-dark',
-    });
-    if (!ok) return;
-    await api.encuestas.cambiarEstado(encuestaId, 'cerrada');
-    toast('Encuesta cerrada.', 'ok');
-    contexto.irA('encuestas', { encuestaId });
-  });
+  // R-CF.1 — el estado en cualquier dirección; cada cambio queda registrado.
+  $('#estado-encuesta')?.addEventListener('change', (e) => cambiarEstadoDeEncuesta(
+    encuestaId, e.target.value, () => contexto.irA('encuestas', { encuestaId })));
+  $('#historial-estado').onclick = () => abrirHistorialDeEstado(encuestaId);
   $('#borrar-encuesta')?.addEventListener('click', () => abrirBorradoDeEncuesta(encuesta));
   $('#editar-estudio')?.addEventListener('click', () => abrirDatosDeEncuesta(encuesta));
   $('#composicion').onclick = () => contexto.irA('composicion', { encuestaId });
@@ -333,6 +349,10 @@ async function renderDetalle(main, encuestaId) {
   }
 
   $('#convocar')?.addEventListener('click', () => convocar(encuestaId));
+  $('#agregar-panelistas')?.addEventListener('click', () => abrirAgregarPanelistas(
+    encuesta, () => contexto.irA('encuestas', { encuestaId })));
+  $('#nuevo-mensaje')?.addEventListener('click', () => abrirMensaje(encuesta));
+  cargarMensajes(encuesta);
   $('#muestra')?.addEventListener('click', () => exportarMuestra(encuestaId));
   $('#ingestar').onclick = () => abrirNuevaCarga(encuesta);
   // R8.9 — corregir lo ya ingestado sin volver a subir el archivo. El avance
@@ -446,6 +466,11 @@ function abrirDatosDeEncuesta(encuesta) {
           <input type="text" name="publico_objetivo" value="${esc(encuesta.publico_objetivo || '')}" /></div>
       </div>
       <div class="form-group"><label>Clientes</label><div data-clientes></div></div>
+      <div class="form-group"><label>URL de la encuesta en Alchemer</label>
+        <input type="url" name="url_alchemer" value="${esc(encuesta.url_alchemer || '')}"
+               placeholder="https://survey.alchemer.com/s3/…?pid=" />
+        <div class="field-hint">Terminada en el parámetro que recibe al panelista
+          (<code>…?pid=</code>): a cada uno se le agrega su id_persona.</div></div>
       <div class="form-group"><label>Descripción</label>
         <textarea class="finput" name="descripcion">${esc(encuesta.descripcion || '')}</textarea></div>`,
     acciones: [
@@ -456,7 +481,7 @@ function abrirDatosDeEncuesta(encuesta) {
             await api.encuestas.editar(encuesta.id, {
               nombre: datos.nombre, fecha_campo: datos.fecha_campo || null,
               publico_objetivo: datos.publico_objetivo, descripcion: datos.descripcion,
-              clientes: clientes.valor(),
+              clientes: clientes.valor(), url_alchemer: datos.url_alchemer || null,
             });
             cerrarModal();
             toast('Datos del estudio actualizados.', 'ok');
@@ -582,13 +607,14 @@ async function cargarParticipacion(encuestaId, { respondentes = false } = {}) {
   contenedor.innerHTML = respondentes ? `
     <div class="table-wrap"><table>
       <thead><tr><th>Panelista</th><th>Id en el origen</th><th>Panel</th><th>Convocatoria</th>
-        <th>Respondió / cargado</th><th>Uso semántico</th><th></th></tr></thead>
+        <th>Respondió / cargado</th><th>Mensajes</th><th>Uso semántico</th><th></th></tr></thead>
       <tbody>${items.map((p) => `
         <tr>${persona(p)}
           ${panel(p)}
           <td data-convocado>${p.convocado ? '<span class="badge badge-on">convocado</span>'
             : '<span class="badge" title="Respondió sin haber sido convocado desde el sistema">no convocado</span>'}</td>
           <td class="small" data-respondio-en>${fechaCorta(p.respondio_en || p.registrado_en)}</td>
+          ${celdaDeMensajes(p)}
           ${semantico(p)}
           ${ficha(p)}
         </tr>`).join('')}</tbody></table></div>
@@ -598,13 +624,14 @@ async function cargarParticipacion(encuestaId, { respondentes = false } = {}) {
     : `
     <div class="table-wrap"><table>
       <thead><tr><th>Panelista</th><th>Id en el origen</th><th>Panel</th><th>Convocado</th>
-        <th>Respondió</th><th>Uso semántico</th><th></th></tr></thead>
+        <th>Respondió</th><th>Mensajes</th><th>Uso semántico</th><th></th></tr></thead>
       <tbody>${items.map((p) => `
         <tr>${persona(p)}
           ${panel(p)}
           <td class="small" data-convocado>${p.convocado ? fechaCorta(p.convocado_en)
             : '<span class="badge" title="Respondió sin haber sido convocado">no convocado</span>'}</td>
           <td>${p.respondio ? estado('completa', 'Sí') : estado('no_ficho', 'No')}</td>
+          ${celdaDeMensajes(p)}
           ${semantico(p)}
           ${ficha(p)}
         </tr>`).join('')}</tbody></table></div>
@@ -888,7 +915,7 @@ function panelDeAvance(destino, archivo) {
         <span class="avance-cifra"></span>
       </div>
       <div class="barra"><span style="width:0%"></span></div>
-      <div class="avance-pie">${esc(archivo.name)} · ${enMb(archivo.size)}</div>
+      <div class="avance-pie">${esc(archivo.name)}${archivo.size ? ` · ${enMb(archivo.size)}` : ''}</div>
     </div>`;
   const texto = $('.avance-texto', destino);
   const cifra = $('.avance-cifra', destino);
@@ -2917,6 +2944,489 @@ async function reanudarIngesta(trabajoId, { esCarga, alTerminar } = {}) {
   }
 }
 
+
+/* ── D85 · Convocatoria desde la encuesta ───────────────────────── */
+
+/* R-CF.1 — el estado se cambia en cualquier dirección, desde el detalle o
+   desde el listado, y cada cambio queda registrado con quién lo hizo. Lo
+   que habilita cada estado lo decide el servidor; esto es solo para que se
+   lea junto al selector. */
+const EFECTO_DEL_ESTADO = {
+  borrador: 'Se convoca y se agregan panelistas; todavía no se envían mensajes.',
+  en_campo: 'Se convoca, se agregan panelistas y se envían mensajes.',
+  cerrada: 'No se convoca ni se envían mensajes. Se le pueden seguir sumando cargas.',
+};
+
+function selectorDeEstado(actual, atributos) {
+  return `<select class="fselect" ${atributos} style="width:auto"
+      aria-label="Estado de la encuesta">${Object.entries(ESTADO_ETIQUETA).map(([clave, texto]) =>
+    `<option value="${clave}" ${clave === actual ? 'selected' : ''}>${esc(texto)}</option>`).join('')}
+    </select>`;
+}
+
+async function cambiarEstadoDeEncuesta(encuestaId, nuevo, alTerminar) {
+  try {
+    await api.encuestas.cambiarEstado(encuestaId, nuevo);
+    toast(`Estado: ${ESTADO_ETIQUETA[nuevo] || nuevo}.`, 'ok');
+  } catch (error) {
+    toast(error.message, 'err');
+  }
+  await alTerminar?.();
+}
+
+async function abrirHistorialDeEstado(encuestaId) {
+  let items = [];
+  try {
+    ({ items } = await api.encuestas.historialDeEstado(encuestaId));
+  } catch (error) {
+    toast(error.message, 'err');
+    return;
+  }
+  modal({
+    titulo: 'Cambios de estado',
+    ancho: '560px',
+    cuerpo: items.length ? `<div class="table-wrap"><table id="tabla-historial-estado">
+        <thead><tr><th>Cuándo</th><th>De</th><th>A</th><th>Quién</th></tr></thead>
+        <tbody>${items.map((c) => `<tr>
+          <td class="small">${esc(fechaHora(c.creado_en))}</td>
+          <td>${c.estado_anterior ? esc(ESTADO_ETIQUETA[c.estado_anterior] || c.estado_anterior) : '—'}</td>
+          <td class="td-strong">${esc(ESTADO_ETIQUETA[c.estado_nuevo] || c.estado_nuevo)}</td>
+          <td class="small">${esc(c.actor)}</td></tr>`).join('')}</tbody></table></div>`
+      : vacio('Todavía no se cambió el estado de esta encuesta.', '🗒️'),
+    acciones: [{ texto: 'Cerrar', clase: 'btn-outline', onClick: cerrarModal }],
+  });
+}
+
+/* R-CF.2 — sumar panelistas a mano: uno o una lista pegada, mezclando
+   id_persona, correos y celulares. No crea a nadie: pasa por la convocatoria
+   de siempre, que deja afuera a la lista negra y a quien no tiene
+   consentimiento, y el resultado se informa línea por línea. */
+const CLASE_DE_RESULTADO = {
+  agregado: 'badge-on', ya_estaba: '', no_corresponde: 'badge-off', ambiguo: 'badge-off',
+  en_lista_negra: 'badge-off', sin_consentimiento: 'badge-off', formato_invalido: 'badge-off',
+};
+
+function abrirAgregarPanelistas(encuesta, alTerminar) {
+  let agrego = false;
+  const caja = modal({
+    titulo: 'Agregar panelistas',
+    ancho: '680px',
+    cuerpo: `
+      <div id="agregar-alerta"></div>
+      <div class="form-group"><label>Una persona por línea</label>
+        <textarea class="finput mono" name="lineas" rows="8"
+          placeholder="ana.perez@correo.uy&#10;099 123 456&#10;3f2a…-…(id_persona)"></textarea>
+        <div class="field-hint">Por <strong>id_persona</strong>, <strong>correo</strong> o
+          <strong>celular</strong>, mezclados. No se crea a nadie: quien no está en la
+          bóveda se informa como «no corresponde».</div></div>
+      <div id="agregar-resultado"></div>`,
+    acciones: [
+      { texto: 'Cerrar', clase: 'btn-outline', onClick: async () => {
+          cerrarModal();
+          if (agrego) await alTerminar?.();
+        } },
+      { texto: 'Agregar', clase: 'btn-orange', onClick: async (c) => {
+          const lineas = leerFormulario(c).lineas || '';
+          if (!lineas.trim()) {
+            $('#agregar-alerta', c).innerHTML = alerta('Pegá al menos una línea.');
+            return;
+          }
+          const enCurso = bloquearModal(c);
+          try {
+            const salida = await api.encuestas.agregarPanelistas(encuesta.id, lineas);
+            $('#agregar-alerta', c).innerHTML = '';
+            agrego = agrego || (salida.conteo?.agregado || 0) > 0;
+            $('#agregar-resultado', c).innerHTML = pintarAgregados(salida);
+          } catch (error) {
+            $('#agregar-alerta', c).innerHTML = alerta(error.message);
+          } finally {
+            enCurso.soltar();
+          }
+        } },
+    ],
+  });
+  return caja;
+}
+
+function pintarAgregados(salida) {
+  const conteo = Object.entries(salida.conteo || {}).filter(([, n]) => n);
+  return `
+    <div class="small" data-conteo-agregados style="margin:.5rem 0">${conteo.map(([clave, n]) =>
+      `<span class="badge ${CLASE_DE_RESULTADO[clave] ?? ''}">${n} ${esc(
+        (salida.etiquetas || {})[clave] || clave)}</span>`).join(' ')}</div>
+    <div class="table-wrap"><table id="tabla-agregados">
+      <thead><tr><th>Línea</th><th>Resultado</th></tr></thead>
+      <tbody>${(salida.lineas || []).map((l) => `<tr>
+        <td class="mono small">${esc(l.linea)}</td>
+        <td><span class="badge ${CLASE_DE_RESULTADO[l.resultado] ?? ''}"
+          data-resultado="${esc(l.resultado)}">${esc(l.etiqueta)}</span></td></tr>`).join('')}
+      </tbody></table></div>`;
+}
+
+/* R-CF.4 — los mensajes de la encuesta. */
+const ETIQUETA_DE_CANAL = { whatsapp: 'WhatsApp', correo: 'Correo' };
+const ESTADO_DE_ENVIO = {
+  aceptado: ['Enviado', ''],
+  entregado: ['Entregado', 'badge-on'],
+  leido: ['Leído', 'badge-on'],
+  fallido: ['Falló', 'badge-off'],
+};
+const puedeEnviarMensajes = () => ['admin', 'operaciones'].includes(contexto.actor?.rol);
+
+async function cargarMensajes(encuesta) {
+  const contenedor = $('#mensajes');
+  if (!contenedor) return;
+  let items = [];
+  try {
+    ({ items } = await api.mensajes.listar(encuesta.id));
+  } catch (error) {
+    contenedor.innerHTML = alerta(error.message);
+    return;
+  }
+  const enviable = encuesta.estado === 'en_campo';
+  contenedor.innerHTML = `${!enviable ? `<p class="small muted" id="mensajes-sin-campo"
+      style="padding:.6rem 1.5rem 0">Los mensajes se envían con la encuesta <strong>en
+      campo</strong>. ${encuesta.estado === 'cerrada' ? 'Está cerrada.' : 'Está en borrador.'}</p>` : ''}
+    ${items.length ? `<div class="table-wrap"><table id="tabla-mensajes">
+      <thead><tr><th>Mensaje</th><th>Canal</th><th class="num">Lo recibieron</th>
+        <th class="num">Fallidos</th><th>Último envío</th><th></th></tr></thead>
+      <tbody>${items.map((m) => `<tr data-mensaje="${m.id}">
+        <td class="td-strong">${esc(m.nombre)}</td>
+        <td class="small">${esc(ETIQUETA_DE_CANAL[m.canal] || m.canal)}
+          <div class="td-muted small mono">${esc(m.canal === 'correo' ? m.asunto
+            : `${m.plantilla} · ${m.plantilla_idioma || ''}`)}</div></td>
+        <td class="num">${m.recibieron}</td>
+        <td class="num">${m.fallidos}</td>
+        <td class="small">${m.ultimo_envio ? esc(fechaHora(m.ultimo_envio)) : '—'}</td>
+        <td class="right"><div class="toolbar" style="justify-content:flex-end">
+          ${puedeEnviarMensajes() ? `<button class="btn btn-orange btn-sm" data-enviar-mensaje="${m.id}"
+            ${enviable ? '' : 'disabled title="La encuesta no está en campo"'}>Enviar…</button>` : ''}
+          ${puedeEditarEstudio() ? `<button class="btn btn-outline btn-sm" data-editar-mensaje="${m.id}">Editar</button>` : ''}
+          ${puedeEditarEstudio() && !m.recibieron && !m.fallidos
+            ? `<button class="btn btn-outline btn-sm texto-peligro" data-borrar-mensaje="${m.id}">Borrar</button>` : ''}
+        </div></td></tr>`).join('')}</tbody></table></div>`
+      : `<p class="small muted" style="padding:1rem 1.5rem">Todavía no hay mensajes. Cada uno
+         tiene un nombre (invitación, recordatorio, agradecimiento) y sale por WhatsApp, con una
+         plantilla aprobada por Meta, o por correo.</p>`}`;
+  const porId = Object.fromEntries(items.map((m) => [String(m.id), m]));
+  $$('[data-enviar-mensaje]', contenedor).forEach((b) => {
+    b.onclick = () => abrirEnvioDeMensaje(encuesta, porId[b.dataset.enviarMensaje]);
+  });
+  $$('[data-editar-mensaje]', contenedor).forEach((b) => {
+    b.onclick = () => abrirMensaje(encuesta, porId[b.dataset.editarMensaje]);
+  });
+  $$('[data-borrar-mensaje]', contenedor).forEach((b) => {
+    b.onclick = async () => {
+      const mensaje = porId[b.dataset.borrarMensaje];
+      const ok = await confirmar({
+        titulo: 'Borrar el mensaje',
+        cuerpo: `<p>Se borra «${esc(mensaje.nombre)}». Todavía no se le envió a nadie.</p>`,
+        textoOk: 'Borrar',
+      });
+      if (!ok) return;
+      try {
+        await api.mensajes.borrar(encuesta.id, mensaje.id);
+        toast('Mensaje borrado.', 'ok');
+      } catch (error) {
+        toast(error.message, 'err');
+      }
+      await cargarMensajes(encuesta);
+    };
+  });
+  // Un envío que quedó en curso —otra pestaña, un refresco— se sigue acá:
+  // el estado vive en la base.
+  for (const m of items) {
+    // eslint-disable-next-line no-await-in-loop
+    const { items: trabajos } = await api.ingestas.listar(
+      { destino_tipo: 'mensaje', destino_id: m.id, limite: 1 }).catch(() => ({ items: [] }));
+    const ultimo = (trabajos || [])[0];
+    if (ultimo && !ultimo.terminal) {
+      seguirEnvio(ultimo.trabajo_id, m, () => recargarConvocatoria(encuesta));
+      break;
+    }
+  }
+}
+
+async function recargarConvocatoria(encuesta) {
+  await Promise.all([
+    cargarMensajes(encuesta),
+    cargarParticipacion(encuesta.id, { respondentes: esDeCarga(encuesta) }),
+  ]);
+}
+
+/* El modal de un mensaje. WhatsApp: se elige una plantilla aprobada y qué va
+   en cada parámetro de su texto; el botón de URL lleva el id_persona. Si el
+   botón no lleva a la URL de Alchemer de la encuesta, el servidor avisa
+   antes de guardar (409 `url_distinta`) y guardar igual es una casilla:
+   adentro de un modal, un `confirmar()` lo cerraría. */
+async function abrirMensaje(encuesta, mensaje = null) {
+  let plantillas = [];
+  let fuentes = {};
+  let avisosPlantillas = [];
+  try {
+    const salida = await api.mensajes.plantillas();
+    plantillas = salida.plantillas || [];
+    fuentes = salida.fuentes_de_parametro || {};
+    avisosPlantillas = salida.avisos || [];
+  } catch (error) {
+    avisosPlantillas = [error.message];
+  }
+  const canal = mensaje?.canal || 'whatsapp';
+  const actual = mensaje?.plantilla
+    ? JSON.stringify([mensaje.plantilla, mensaje.plantilla_idioma]) : '';
+  const caja = modal({
+    titulo: mensaje ? `Mensaje · ${mensaje.nombre}` : 'Nuevo mensaje',
+    ancho: '680px',
+    cuerpo: `
+      <div id="mensaje-alerta"></div>
+      <div class="form-row">
+        <div class="form-group"><label>Nombre</label>
+          <input type="text" name="nombre" value="${esc(mensaje?.nombre || '')}"
+                 placeholder="Invitación, Recordatorio 1, Gracias…" /></div>
+        <div class="form-group"><label>Canal</label>
+          <select class="fselect" name="canal" id="mensaje-canal">
+            ${Object.entries(ETIQUETA_DE_CANAL).map(([clave, texto]) =>
+              `<option value="${clave}" ${clave === canal ? 'selected' : ''}>${texto}</option>`).join('')}
+          </select></div>
+      </div>
+      <div data-seccion="whatsapp">
+        ${avisosPlantillas.map((a) => alerta(a, 'warn')).join('')}
+        <div class="form-group"><label>Plantilla aprobada</label>
+          <select class="fselect" id="mensaje-plantilla">
+            <option value="">— elegir —</option>
+            ${plantillas.map((p) => {
+              const valor = JSON.stringify([p.nombre, p.idioma]);
+              return `<option value="${esc(valor)}" ${valor === actual ? 'selected' : ''}>${esc(
+                p.nombre)} · ${esc(p.idioma)}${p.boton_url ? ' · botón de URL' : ''}</option>`;
+            }).join('')}
+          </select>
+          <div class="field-hint">Solo se listan las aprobadas por Meta. El botón de URL
+            lleva al panelista a la encuesta con su id_persona al final.</div></div>
+        <div id="mensaje-plantilla-detalle"></div>
+      </div>
+      <div data-seccion="correo">
+        <div class="form-group"><label>Asunto</label>
+          <input type="text" name="asunto" value="${esc(mensaje?.asunto || '')}" /></div>
+        <div class="form-group"><label>Cuerpo</label>
+          <textarea class="finput" name="cuerpo" rows="7">${esc(mensaje?.cuerpo || '')}</textarea>
+          <div class="field-hint"><code>{nombre}</code>, <code>{encuesta}</code> y
+            <code>{enlace}</code> se reemplazan al enviar. El enlace es la URL de Alchemer con
+            el id_persona; si el cuerpo no lo trae, se agrega al final. Sale por Google
+            Workspace, a quien aceptó el correo como canal.</div></div>
+      </div>
+      <label class="check" id="confirmar-url" style="display:none">
+        <input type="checkbox" name="confirmar_url_distinta" />
+        <span>Guardar igual: el botón no lleva a la URL de Alchemer de esta encuesta.</span></label>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Guardar', clase: 'btn-orange', onClick: async (c) => {
+          const datos = leerFormulario(c);
+          const elegida = $('#mensaje-plantilla', c).value;
+          const [plantilla, idioma] = elegida ? JSON.parse(elegida) : [null, null];
+          const cuerpo = {
+            nombre: datos.nombre, canal: datos.canal,
+            ...(datos.canal === 'whatsapp' ? {
+              plantilla, plantilla_idioma: idioma,
+              parametros: $$('[data-parametro]', c).map((s) => s.value),
+            } : { asunto: datos.asunto, cuerpo: datos.cuerpo }),
+            confirmar_url_distinta: !!$('[name="confirmar_url_distinta"]', c).checked,
+          };
+          const enCurso = bloquearModal(c);
+          try {
+            const salida = mensaje
+              ? await api.mensajes.editar(encuesta.id, mensaje.id, cuerpo)
+              : await api.mensajes.crear(encuesta.id, cuerpo);
+            enCurso.soltar();
+            cerrarModal();
+            toast(['Mensaje guardado.', ...(salida.avisos || [])].join(' '),
+                  (salida.avisos || []).length ? 'warn' : 'ok');
+            await cargarMensajes(encuesta);
+          } catch (error) {
+            enCurso.soltar();
+            $('#mensaje-alerta', c).innerHTML = alerta(error.message,
+              error.detalle?.motivo === 'url_distinta' ? 'warn' : 'error');
+            if (error.detalle?.motivo === 'url_distinta') {
+              $('#confirmar-url', c).style.display = '';
+            }
+          }
+        } },
+    ],
+  });
+
+  const pintarCanal = () => {
+    const elegido = $('#mensaje-canal', caja).value;
+    $$('[data-seccion]', caja).forEach((s) => {
+      s.style.display = s.dataset.seccion === elegido ? '' : 'none';
+    });
+  };
+  const pintarPlantilla = () => {
+    const valor = $('#mensaje-plantilla', caja).value;
+    const p = plantillas.find((x) => JSON.stringify([x.nombre, x.idioma]) === valor);
+    $('[name="confirmar_url_distinta"]', caja).checked = false;
+    $('#confirmar-url', caja).style.display = 'none';
+    if (!p) { $('#mensaje-plantilla-detalle', caja).innerHTML = ''; return; }
+    const previos = mensaje && valor === actual ? mensaje.parametros : [];
+    const boton = p.boton_url;
+    const otraUrl = boton && encuesta.url_alchemer && boton.base !== encuesta.url_alchemer;
+    $('#mensaje-plantilla-detalle', caja).innerHTML = `
+      <dl class="kv">
+        ${p.cuerpo ? `<dt>Texto</dt><dd class="small">${esc(p.cuerpo)}</dd>` : ''}
+        <dt>Botón</dt><dd data-boton-url>${boton
+          ? `${esc(boton.texto || '')} → <span class="mono small">${esc(boton.base || boton.url)}</span>${
+            boton.dinamico ? '<span class="td-muted small"> + id_persona</span>' : ''}`
+          : '<span class="muted">sin botón de URL</span>'}</dd>
+      </dl>
+      ${otraUrl ? alerta(`El botón lleva a ${boton.base} y la encuesta está en `
+        + `${encuesta.url_alchemer}.`, 'warn') : ''}
+      ${!encuesta.url_alchemer && boton ? alerta('La encuesta todavía no tiene su URL de '
+        + 'Alchemer: cargala en «Datos del estudio» para comprobar el botón.', 'warn') : ''}
+      ${Array.from({ length: p.parametros_cuerpo || 0 }, (_, i) => `
+        <div class="form-group"><label>Parámetro {{${i + 1}}} del texto</label>
+          <select class="fselect" data-parametro="${i}">
+            ${Object.entries(fuentes).map(([clave, texto]) =>
+              `<option value="${esc(clave)}" ${previos[i] === clave ? 'selected' : ''}>${esc(texto)}</option>`).join('')}
+          </select></div>`).join('')}`;
+  };
+  $('#mensaje-canal', caja).onchange = pintarCanal;
+  $('#mensaje-plantilla', caja).onchange = pintarPlantilla;
+  pintarCanal();
+  pintarPlantilla();
+  return caja;
+}
+
+/* R-CF.5 — elegir el público, ver a cuántos les llega y quiénes quedan
+   afuera (por motivo), y recién ahí enviar. La vista previa sale de la misma
+   ruta que envía. El envío corre en lotes: se sigue abajo. */
+async function abrirEnvioDeMensaje(encuesta, mensaje) {
+  const PUBLICOS = {
+    no_enviado: 'No enviado aún',
+    todos: 'Todos',
+    no_contestaron: 'No contestaron',
+    respondieron: 'Respondieron',
+  };
+  const caja = modal({
+    titulo: `Enviar · ${mensaje.nombre}`,
+    ancho: '640px',
+    cuerpo: `
+      <div id="envio-mensaje-alerta"></div>
+      <div class="form-group"><label>A quién</label>
+        <select class="fselect" id="envio-publico">
+          ${Object.entries(PUBLICOS).map(([clave, texto]) =>
+            `<option value="${clave}">${texto}</option>`).join('')}
+        </select>
+        <div class="field-hint">«No enviado aún» no le repite a nadie: un envío que falló
+          cuenta como no enviado. «No contestaron» y «Respondieron» miran las respuestas
+          ingestadas.</div></div>
+      <div id="envio-previa">${cargando('12vh')}</div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Enviar', clase: 'btn-orange', onClick: async (c) => {
+          const publico = $('#envio-publico', c).value;
+          const enCurso = bloquearModal(c);
+          try {
+            const salida = await api.mensajes.enviar(encuesta.id, mensaje.id, publico);
+            enCurso.soltar();
+            cerrarModal();
+            toast(`Envío encolado: ${salida.recibiran} destinatario(s).`, 'ok');
+            seguirEnvio(salida.trabajo_id, mensaje, () => recargarConvocatoria(encuesta));
+          } catch (error) {
+            enCurso.soltar();
+            if (error.status === 409 && error.detalle?.trabajo_id) {
+              cerrarModal();
+              toast('Ya hay un envío de este mensaje en curso: se sigue abajo.', 'warn');
+              seguirEnvio(error.detalle.trabajo_id, mensaje, () => recargarConvocatoria(encuesta));
+              return;
+            }
+            $('#envio-mensaje-alerta', c).innerHTML = alerta(error.message);
+          }
+        } },
+    ],
+  });
+  const boton = $('.modal-foot .btn-orange', caja);
+  const pintar = async () => {
+    boton.disabled = true;
+    $('#envio-previa', caja).innerHTML = cargando('12vh');
+    try {
+      const previa = await api.mensajes.previa(encuesta.id, mensaje.id,
+                                               $('#envio-publico', caja).value);
+      $('#envio-previa', caja).innerHTML = pintarPrevia(previa);
+      boton.textContent = `Enviar a ${previa.recibiran}`;
+      boton.disabled = !previa.puede_enviar || !!previa.envio_en_curso;
+    } catch (error) {
+      $('#envio-previa', caja).innerHTML = alerta(error.message);
+    }
+  };
+  $('#envio-publico', caja).onchange = pintar;
+  await pintar();
+  return caja;
+}
+
+function pintarPrevia(previa) {
+  const excluidos = Object.entries(previa.excluidos || {}).filter(([, n]) => n);
+  return `
+    <div class="resultado" data-previa>
+      <div class="r"><div class="r-num" data-en-el-publico>${previa.en_el_publico}</div>
+        <div class="r-label">En el público</div></div>
+      <div class="r"><div class="r-num" data-recibiran>${previa.recibiran}</div>
+        <div class="r-label">Lo van a recibir</div></div>
+      <div class="r ${previa.ya_recibieron ? 'alerta' : ''}"><div class="r-num">${previa.ya_recibieron}</div>
+        <div class="r-label">Ya lo recibieron</div></div>
+      <div class="r"><div class="r-num">${previa.excluidos_total}</div>
+        <div class="r-label">Quedan afuera</div></div>
+    </div>
+    ${excluidos.length ? `<div class="small" style="margin-top:.75rem" data-excluidos>
+      <strong>Por qué quedan afuera.</strong>
+      <ul>${excluidos.map(([motivo, n]) => `<li data-motivo="${esc(motivo)}">${n} — ${esc(
+        (previa.etiquetas || {})[motivo] || motivo)}</li>`).join('')}</ul></div>` : ''}
+    ${(previa.avisos || []).map((a) => alerta(a, 'warn')).join('')}
+    ${previa.envio_en_curso ? alerta('Ya hay un envío de este mensaje en curso. '
+      + 'Esperá a que termine para lanzar otro.', 'warn') : ''}
+    ${(previa.motivos || []).length ? `<div class="alert alert-warn" data-motivos>No se puede
+      enviar:<ul>${previa.motivos.map((m) => `<li>${esc(m)}</li>`).join('')}</ul></div>` : ''}`;
+}
+
+/* El avance de un envío: el mismo trabajo diferido que una carga, con su
+   propio resumen al terminar. */
+async function seguirEnvio(trabajoId, mensaje, alTerminar) {
+  const avance = panelDeAvance(cajaDeAvance(), { name: `envío · ${mensaje.nombre}`, size: 0 });
+  try {
+    let estadoTrabajo;
+    for (;;) {
+      // eslint-disable-next-line no-await-in-loop
+      estadoTrabajo = await api.ingestas.ver(trabajoId);
+      avance.medido(`${estadoTrabajo.estado_etiqueta} · ${estadoTrabajo.filas_procesadas} de `
+        + `${estadoTrabajo.filas_total} destinatario(s)`, (estadoTrabajo.porcentaje || 0) / 100);
+      if (estadoTrabajo.terminal) break;
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((listo) => setTimeout(listo, MS_ENTRE_CONSULTAS));
+    }
+    avance.cerrar();
+    const r = estadoTrabajo.resumen || {};
+    mostrarResultado(estadoTrabajo.estado === 'terminada' ? 'Envío terminado'
+      : 'Envío terminado con errores', [
+      ['Enviados', r.enviados ?? 0],
+      ['Fallidos', r.fallidos ?? 0, true],
+      ['Quedaron afuera al enviar', r.excluidos_al_enviar ?? 0, true],
+      ['Ya los tenían', r.salteados ?? 0],
+    ], r.fallidos ? `${r.fallidos} envío(s) fallaron. Cuentan como no enviados: «No enviado `
+      + 'aún» los vuelve a incluir.' : '');
+    await alTerminar?.();
+  } catch (error) {
+    avance.cerrar();
+    toast(error.message, 'err');
+  }
+}
+
+/* R-CF.6 / R-CF.7 — los mensajes de cada panelista en la convocatoria. */
+function celdaDeMensajes(p) {
+  const envios = p.mensajes || [];
+  if (!envios.length) return '<td class="small muted" data-mensajes-de-persona>—</td>';
+  return `<td class="small" data-mensajes-de-persona>${envios.map((e) => {
+    const [texto, clase] = ESTADO_DE_ENVIO[e.estado] || [e.estado, ''];
+    return `<div title="${esc(`${fechaHora(e.enviado_en)}${e.error ? ` · ${e.error}` : ''}`)}">
+      ${esc(e.mensaje)} <span class="badge ${clase}" data-estado-envio="${esc(e.estado)}">${esc(texto)}</span></div>`;
+  }).join('')}</td>`;
+}
 
 /* ── R4.5 · WhatsApp Flow ───────────────────────────────────────── */
 

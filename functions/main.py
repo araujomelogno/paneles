@@ -91,6 +91,14 @@ SECRETOS = [
     # falla el deploy sino la primera consulta completa —con un aviso de
     # lotes sin encolar—. La cuenta que firma es la misma `TAREAS_CUENTA`.
     "TAREAS_CONSULTA_URL",
+    # ── D85 · R-CF.7 · El webhook de estados de WhatsApp ──
+    # `WHATSAPP_VERIFY_TOKEN` es el que se escribe al dar de alta el webhook
+    # en Meta (el GET de suscripción lo compara). `WHATSAPP_APP_SECRET` es el
+    # secreto de la app con que Meta firma cada aviso (`X-Hub-Signature-256`).
+    # Sin él el webhook no acepta nada: falla cerrado, y los envíos quedan en
+    # «aceptado» sin pasar a entregado ni leído.
+    "WHATSAPP_VERIFY_TOKEN",
+    "WHATSAPP_APP_SECRET",
 ]
 
 PREFIJO = "/api"
@@ -350,3 +358,58 @@ def procesarconsulta(req: https_fn.CallableRequest) -> dict:
              "costo_usd": (salida.get("resultado") or {}).get("costo_usd")},
             default=str))
         return {"estado": salida.get("estado")}
+
+
+# ════════════════════════════════════════════════════════════════════
+#  D85 · R-CF.7 — El webhook de estados de WhatsApp
+# ════════════════════════════════════════════════════════════════════
+#
+# Meta avisa acá cuándo un mensaje se entregó, se leyó o falló. Es una URL
+# pública —Meta no manda un token de Firebase—, así que va en su propia
+# función y no en `api`: lo que la protege es la firma `X-Hub-Signature-256`,
+# calculada sobre el cuerpo **crudo**, y `api` solo ve el JSON ya parseado.
+#
+#   · GET: el alta del webhook. Devuelve `hub.challenge` si
+#     `hub.verify_token` coincide con `WHATSAPP_VERIFY_TOKEN`.
+#   · POST: un aviso. Sin firma válida, 403 y no se toca nada (falla
+#     cerrado: sin `WHATSAPP_APP_SECRET` no se acepta ningún aviso).
+#
+# Se le contesta 200 a todo aviso firmado, aunque no traiga estados que nos
+# importen: un error hace que Meta reintente durante horas.
+@https_fn.on_request(
+    region=REGION,
+    secrets=SECRETOS,
+    vpc_connector=VPC_CONNECTOR,
+    vpc_connector_egress_settings=(
+        options.VpcEgressSetting.PRIVATE_RANGES_ONLY if VPC_CONNECTOR else None
+    ),
+    timeout_sec=60,
+)
+def whatsappwebhook(req: https_fn.Request) -> https_fn.Response:
+    from panel_api import mensajes, whatsapp
+
+    if req.method == "GET":
+        desafio = whatsapp.verificar_suscripcion(
+            req.args.get("hub.mode"), req.args.get("hub.verify_token"),
+            req.args.get("hub.challenge"))
+        if desafio is None:
+            return https_fn.Response("token inválido", status=403)
+        return https_fn.Response(str(desafio), status=200)
+
+    crudo = req.get_data() or b""
+    if not whatsapp.firma_valida(crudo, req.headers.get("X-Hub-Signature-256")):
+        print("[webhook] aviso rechazado: firma ausente o inválida", flush=True)
+        return https_fn.Response("firma inválida", status=403)
+    try:
+        cuerpo = json.loads(crudo.decode() or "{}")
+    except ValueError:
+        return https_fn.Response("cuerpo inválido", status=400)
+    estados = whatsapp.estados_del_webhook(cuerpo)
+    if not estados:
+        return _json(200, {"estados": 0})
+    cfg = config.cargar()
+    with contexto.abrir(cfg) as ctx:
+        actualizados = mensajes.aplicar_estados(ctx.boveda, estados)
+    # Números, nunca contenido ni teléfonos.
+    print(f"[webhook] estados={len(estados)} actualizados={actualizados}", flush=True)
+    return _json(200, {"estados": len(estados), "actualizados": actualizados})

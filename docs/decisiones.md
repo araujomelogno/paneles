@@ -5214,3 +5214,113 @@ retención antes de que importe; queda anotado y no entra acá.
 `functions/panel_api/auditoria.py` (`MOTIVOS_REIDENTIFICACION`),
 `esquema.py`, `scripts/verificar_coloquio.py`. Pruebas:
 `functions/tests/test_superficie_seleccion_cuali.py`.
+
+## D85 · La convocatoria se opera desde la encuesta: estado con registro, panelistas a mano y mensajes por la vía diferida
+
+**El pedido.** `specs/SPEC_convocatoria_y_mensajes.md`, P0 y P1 en una sola
+versión (R-CF.1 a R-CF.8). El sistema registraba el campo pero no lo
+operaba: las invitaciones y los recordatorios salían por fuera, y nadie
+sabía desde la plataforma a quién se le escribió.
+
+- **El estado se cambia en cualquier dirección (R-CF.1)**, desde el detalle
+  y desde el listado, con un selector. El botón «Cerrar encuesta» se fue: lo
+  reemplaza el selector. Cada cambio deja una fila en
+  `encuesta_estado_cambio` con quién, cuándo, de qué a qué; la escribe
+  `encuestas.cambiar_estado`, que es el único camino, incluida la
+  transición automática de borrador a en campo al convocar. Lo que habilita
+  cada estado:
+
+  | | Convocar / agregar | Mensajes | Cargas |
+  |---|---|---|---|
+  | Borrador | sí | no | sí |
+  | En campo | sí | sí | sí |
+  | Cerrada | no | no | sí |
+
+  Una encuesta que nació de una carga sigue empezando cerrada, y ahora se
+  puede reabrir.
+- **Agregar panelistas a mano es convocar (R-CF.2).** Una línea por persona:
+  id_persona, correo o celular, mezclados. Cada línea se resuelve con
+  `ingesta.resolver_identificadores`, los mismos tipos y reglas de la
+  ingesta (correo en minúsculas, celular en E.164 con una sola titular), y
+  lo resuelto pasa por `encuestas.convocar`, que ya deja afuera a la lista
+  negra y a quien no tiene consentimiento. No hay un segundo camino de alta
+  de audiencia. Resultado por línea: agregado, ya estaba, no corresponde,
+  ambiguo, en lista negra, sin consentimiento, formato inválido. No crea
+  personas. Funciona también en una independiente (`a_mano=True`): la
+  regla «una independiente no se convoca» era para el panel entero, no para
+  sumar a alguien puntual.
+- **La URL de Alchemer vive en la encuesta (R-CF.3)** y termina en el
+  parámetro (`…?pid=`): se le agrega el id_persona. Se valida al guardar
+  (http/https, sin espacios, terminada en `=`).
+- **Un mensaje es WhatsApp o correo (R-CF.4, R-CF.8).** WhatsApp: una
+  plantilla **aprobada** —no se asocia ni se envía otra—, qué va en cada
+  `{{n}}` del texto (nombre del panelista o de la encuesta, un conjunto
+  cerrado) y el botón de URL, cuyo parámetro es el id_persona. Si la base
+  del botón no es la `url_alchemer` de la encuesta, o el botón es fijo, o la
+  encuesta no tiene URL todavía, el servidor responde `409 url_distinta`
+  **antes de guardar**, y guardar igual es una casilla en el modal (no un
+  `confirmar()`, que lo cerraría). Correo: asunto y cuerpo, con
+  `{nombre}`, `{encuesta}` y `{enlace}`; si el cuerpo no trae el enlace, se
+  agrega al final. Sale por `enviar_y_registrar` (Workspace), la misma
+  función de siempre, con la plantilla `mensaje_encuesta`.
+- **Un mensaje enviado no se borra**: su registro es lo que dice a quién se
+  le escribió, y «no enviado aún» se calcula sobre él.
+- **El envío corre por la vía diferida (R-CF.5).** Es un trabajo con destino
+  `mensaje` (la `0035` lo suma al `check`) y `plan.operacion =
+  'envio_mensaje'`. Así:
+  - el índice único de la `0029` —un trabajo activo por destino— es lo que
+    impide lanzar dos veces el mismo mensaje a la vez;
+  - el avance se deriva de los lotes y la pantalla lo sigue con la ruta de
+    siempre (`/ingestas/<id>`);
+  - **el gate se reaplica en cada lote** (`preferencias.filtrar_contactables`:
+    lista negra, consentimiento, canal aceptado, celular válido; para correo,
+    además, que tenga correo). Quien aceptó solo correo no recibe WhatsApp
+    (R-CF.8).
+- **Nadie recibe dos veces el mismo envío.** Cada persona se registra y se
+  commitea apenas sale. Si Cloud Tasks reintenta un lote, quien ya tiene su
+  fila **en ese trabajo** se saltea. Con «No enviado aún», además, se
+  saltea a quien lo recibió entre la vista previa y el lote.
+- **Los cuatro públicos** salen de las participaciones de la encuesta:
+  *Todos*; *No enviado aún* (sin un envío recibido de este mensaje: **un
+  fallido cuenta como no enviado**, así el reintento lo incluye); *No
+  contestaron* y *Respondieron*, por `participacion.respondio`, es decir,
+  por las respuestas ingestadas. La vista previa sale de la misma ruta que
+  envía (`solo_revisar`) y dice cuántos están en el público, cuántos lo
+  reciben, quiénes quedan afuera por motivo, y avisa cuando *Todos* le
+  repetiría el mensaje a quien ya lo tiene. Con correo avisa también si se
+  pasaría del límite diario de Workspace (2.000).
+- **El primer mensaje recibido convoca (R-CF.6).** Deja la participación con
+  `convocado = true` y la fecha de ese envío; los siguientes no la tocan
+  (no inflan la fatiga), y un agradecimiento a quien ya respondió tampoco.
+  El registro (`envio`) es una fila por persona y por envío: cuándo, quién
+  lo lanzó, aceptado con el id de Meta o fallido con el motivo. Sin PII: la
+  persona va por id, y una baja se lleva sus filas.
+- **Los estados de entrega llegan por un webhook propio (R-CF.7)**:
+  `whatsappwebhook`, una función aparte de `api`, porque la firma
+  `X-Hub-Signature-256` se calcula sobre el cuerpo **crudo**. Falla
+  cerrado: sin `WHATSAPP_APP_SECRET` no se acepta ningún aviso. Un estado
+  **no retrocede** (los avisos llegan desordenados): entregado y leído solo
+  avanzan, y un fallido manda salvo sobre uno ya leído. Al aviso firmado se
+  le contesta 200 aunque no traiga nada útil: un error hace que Meta
+  reintente durante horas. Al log van números, nunca teléfonos.
+- **Borrar una carga conserva a quien se le escribió.** `envio` referencia a
+  la persona, así que es un vínculo más en `cargas_borrado._clasificar`
+  (motivo `mensajes`): darla de baja se llevaría la constancia de a quién se
+  le escribió.
+- **Permisos.** Armar mensajes y agregar panelistas es `fieldear`. Enviar es
+  un permiso nuevo, `enviar_mensajes` (admin y operaciones): cuesta plata y
+  le llega a la gente.
+
+**Lo que no se hizo (P2).** Saber quién abrió el enlace, un código opaco por
+participación en vez del id_persona, envíos programados, mensajes de
+sesión y saber en tiempo real quién respondió.
+
+**Dónde vive.** `db/boveda/0035_convocatoria_y_mensajes.sql`,
+`functions/panel_api/mensajes.py` (nuevo), `encuestas.py`
+(`cambiar_estado`, `historial_de_estado`, `agregar_panelistas`,
+`url_alchemer`), `whatsapp.py` (botón de URL, envío con parámetros,
+webhook), `diferida.py`, `correo.py`, `auth.py`, `ruteo.py`,
+`functions/main.py` (`whatsappwebhook`, dos secretos),
+`web/public/js/paginas/encuestas.js`, `api.js`, `demo.js`. Pruebas:
+`functions/tests/test_convocatoria_y_mensajes.py`,
+`functions/tests/test_pantallas_convocatoria_y_mensajes.py`.

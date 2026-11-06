@@ -66,7 +66,10 @@ LOTE_PROCESANDO = "procesando"
 LOTE_OK = "ok"
 LOTE_FALLIDO = "fallido"
 
-DESTINOS = ("encuesta", "carga")
+# D85 — `mensaje`: un envío de un mensaje de una encuesta corre en lotes como
+# una ingesta, y el índice de la 0029 (un trabajo activo por destino) es lo
+# que impide lanzar dos veces el mismo mensaje a la vez.
+DESTINOS = ("encuesta", "carga", "mensaje")
 
 
 class ErrorDeDatos(DatosInvalidos):
@@ -203,10 +206,15 @@ def trabajo_activo(conn, destino_tipo, destino_id):
 
 
 def _en_curso(destino_tipo, destino_id, trabajo):
-    que = "esta carga" if destino_tipo == "carga" else "esta encuesta"
+    if destino_tipo == "mensaje":
+        texto = ("Ya hay un envío de este mensaje en curso. Se muestra su avance: "
+                 "cuando termine se puede lanzar otro.")
+    else:
+        que = "esta carga" if destino_tipo == "carga" else "esta encuesta"
+        texto = (f"Ya hay una ingesta de {que} en curso. Se muestra su avance: "
+                 f"cuando termine se puede cargar otra.")
     return IngestaEnCurso(
-        f"Ya hay una ingesta de {que} en curso. Se muestra su avance: "
-        f"cuando termine se puede cargar otra.",
+        texto,
         {"trabajo_id": trabajo["trabajo_id"] if trabajo else None,
          "estado": trabajo["estado"] if trabajo else None,
          "destino": {"tipo": destino_tipo, "id": destino_id}})
@@ -493,6 +501,8 @@ SUMABLES = (
     "textos_embebidos",
     # R-TEM.6 — filas persona ↔ temática que dejó la carga.
     "tematicas_de_panelistas",
+    # D85 — un envío de mensajes.
+    "enviados", "fallidos", "salteados", "excluidos_al_enviar",
     # El borrado de una carga (`cargas_borrado`).
     "respuestas_borradas", "personas_dadas_de_baja", "personas_conservadas",
     "personas_ya_procesadas",
@@ -558,9 +568,14 @@ def _ingestar_el_lote(conn_boveda, conn_semantica, trabajo, filas, proveedor):
     de consentimiento, el guardrail de PII y la idempotencia valgan igual por
     esta vía sin haberlos vuelto a escribir.
     """
-    from . import cargas, cargas_borrado, encuestas, reproceso
+    from . import cargas, cargas_borrado, encuestas, mensajes, reproceso
 
     plan = trabajo["plan"] or {}
+    # D85 · R-CF.5 — un envío no es una ingesta: su lote son personas a las
+    # que se les manda un mensaje. El gate se reaplica en el lote.
+    if plan.get("operacion") == mensajes.OPERACION:
+        return mensajes.procesar_lote(conn_boveda, plan, filas,
+                                      trabajo_id=trabajo["id"])
     # Borrar una carga (D78) tampoco es una ingesta: su lote son personas,
     # y lo que hace con cada una lo decide `cargas_borrado`.
     if plan.get("operacion") == cargas_borrado.OPERACION:

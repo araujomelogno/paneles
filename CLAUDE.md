@@ -608,6 +608,41 @@ más:
   clase de letras es explícita (`personas.CAMPOS_INVALIDOS_SQL`): con
   `collate C`, `[[:alpha:]]` no ve la «ñ».
 
+## La convocatoria se opera desde la encuesta
+
+Desde D85 (`specs/SPEC_convocatoria_y_mensajes.md`, `boveda/0035`) la
+encuesta lanza y sigue su campo: estado editable, panelistas a mano y
+mensajes por WhatsApp o correo. Lo que no hay que deshacer:
+
+- **El estado cambia por `encuestas.cambiar_estado` y nada más**, en
+  cualquier dirección, y cada cambio deja su fila en
+  `encuesta_estado_cambio` con el actor. Borrador convoca y no envía; en
+  campo hace todo; cerrada no convoca ni envía. Las cargas entran en
+  cualquier estado.
+- **Agregar panelistas a mano es convocar.** Las líneas se resuelven con
+  `ingesta.resolver_identificadores` (las reglas de la ingesta: correo en
+  minúsculas, celular E.164 con una sola titular) y lo resuelto pasa por
+  `encuestas.convocar`. No creen personas ni escriban un segundo alta de
+  audiencia.
+- **Un envío es un trabajo de la vía diferida** con destino `mensaje`: el
+  índice de la `0029` impide lanzar dos veces el mismo mensaje, y el gate
+  (`preferencias.filtrar_contactables`, que también mira el canal aceptado)
+  se reaplica en cada lote. No manden mensajes dentro de la request.
+- **Nadie recibe dos veces el mismo envío.** Cada persona se registra en
+  `envio` y se commitea apenas sale; un reintento de Cloud Tasks saltea a
+  quien ya tiene fila en ese trabajo. «No enviado aún» mira `envio`, y **un
+  fallido cuenta como no enviado**.
+- **El primer mensaje recibido convoca** (`convocado = true` con esa fecha);
+  los siguientes no, y un agradecimiento a quien ya respondió tampoco.
+- **Una plantilla que no está aprobada no se asocia ni se envía**, y un botón
+  que no lleva a la `url_alchemer` de la encuesta se avisa **antes de
+  guardar** (`409 url_distinta`). En el modal la confirmación es una
+  casilla.
+- **El webhook de Meta es su propia función** (`whatsappwebhook`), porque la
+  firma va sobre el cuerpo crudo. Falla cerrado sin `WHATSAPP_APP_SECRET`, y
+  un estado de entrega nunca retrocede.
+- **Enviar es `enviar_mensajes`** (admin y operaciones), no `fieldear`.
+
 ## Reglas de negocio que el código debe respetar
 
 - No se puede convocar ni incluir en muestreo a una persona sin `consentimiento` **vigente** para la finalidad correspondiente.
