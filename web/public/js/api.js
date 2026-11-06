@@ -247,6 +247,11 @@ export const encuestas = {
       ids_persona: idsPersona, todo_el_panel: !!todoElPanel,
     }),
   participacion: (id) => GET(`/encuestas/${id}/participacion`),
+  /* R-CF.1 — quién cambió el estado, cuándo, de qué a qué. */
+  historialDeEstado: (id) => GET(`/encuestas/${id}/estados`),
+  /* R-CF.2 — sumar panelistas a mano: una línea por persona (id_persona,
+     correo o celular). Pasa por la convocatoria de siempre. */
+  agregarPanelistas: (id, lineas) => POST(`/encuestas/${id}/panelistas`, { lineas }),
   cruce: (id) => GET(`/encuestas/${id}/cruce`),
   // R3.12.a — la muestra para precargar en la plataforma de campo.
   muestra: (id, conContacto = false) =>
@@ -425,6 +430,25 @@ export const flow = {
   enviar: (encuestaId, idsPersona) =>
     POST(`/encuestas/${encuestaId}/whatsapp`,
          idsPersona ? { ids_persona: idsPersona } : {}),
+};
+
+/* D85 · R-CF.4 a R-CF.8 — los mensajes de una encuesta (invitación,
+   recordatorios, agradecimiento) y su envío. La vista previa sale de la
+   misma ruta que envía (`solo_revisar`), y el envío corre en lotes por la
+   vía diferida: se sigue con `ingestas.ver`. */
+export const mensajes = {
+  plantillas: () => GET('/mensajes/plantillas'),
+  listar: (encuestaId) => GET(`/encuestas/${encuestaId}/mensajes`),
+  crear: (encuestaId, datos) => POST(`/encuestas/${encuestaId}/mensajes`, datos),
+  editar: (encuestaId, mensajeId, datos) =>
+    PATCH(`/encuestas/${encuestaId}/mensajes/${mensajeId}`, datos),
+  borrar: (encuestaId, mensajeId) =>
+    DELETE(`/encuestas/${encuestaId}/mensajes/${mensajeId}`),
+  previa: (encuestaId, mensajeId, publico) =>
+    POST(`/encuestas/${encuestaId}/mensajes/${mensajeId}/envio`,
+         { publico, solo_revisar: true }),
+  enviar: (encuestaId, mensajeId, publico) =>
+    POST(`/encuestas/${encuestaId}/mensajes/${mensajeId}/envio`, { publico }),
 };
 
 /* R3.14 — el catálogo de atributos demográficos.

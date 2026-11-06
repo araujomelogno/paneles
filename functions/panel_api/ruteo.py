@@ -30,6 +30,7 @@ from . import (
     encuestas,
     encuestas_borrado,
     esquema,
+    mensajes,
     estadisticas,
     inscripciones,
     lista_negra,
@@ -583,7 +584,8 @@ def ver_encuesta(ctx, actor, params, cuerpo, consulta):
                                   completa=True)
 
 
-@ruta("PATCH", "/encuestas/<encuesta_id>", "fieldear", requisito="R1.5, R-EU.2")
+@ruta("PATCH", "/encuestas/<encuesta_id>", "fieldear",
+      requisito="R1.5, R-EU.2, R-CF.1, R-CF.3")
 def cambiar_encuesta(ctx, actor, params, cuerpo, consulta):
     """El estado (`estado`) y/o los datos del estudio (nombre, fecha de
     campo, público objetivo, descripción, clientes)."""
@@ -591,7 +593,9 @@ def cambiar_encuesta(ctx, actor, params, cuerpo, consulta):
     cuerpo = cuerpo or {}
     resultado = None
     if cuerpo.get("estado"):
-        resultado = encuestas.cambiar_estado(ctx.boveda, encuesta_id, cuerpo["estado"])
+        # R-CF.1 — cualquier transición, registrada con quién la hizo.
+        resultado = encuestas.cambiar_estado(ctx.boveda, encuesta_id, cuerpo["estado"],
+                                             actor=actor)
     datos = {k: v for k, v in cuerpo.items() if k != "estado"}
     if datos:
         resultado = encuestas.editar(
@@ -603,6 +607,25 @@ def cambiar_encuesta(ctx, actor, params, cuerpo, consulta):
     ctx.boveda.commit()
     ctx.semantica.commit()
     return 200, resultado
+
+
+@ruta("GET", "/encuestas/<encuesta_id>/estados", "leer", requisito="R-CF.1")
+def historial_de_estado(ctx, actor, params, cuerpo, consulta):
+    """Los cambios de estado de la encuesta: quién, cuándo, de qué a qué."""
+    return 200, {"items": encuestas.historial_de_estado(
+        ctx.boveda, _entero(params["encuesta_id"]))}
+
+
+@ruta("POST", "/encuestas/<encuesta_id>/panelistas", "fieldear", requisito="R-CF.2")
+def agregar_panelistas(ctx, actor, params, cuerpo, consulta):
+    """Suma panelistas a la audiencia, de a uno o pegando una lista (uno por
+    línea: id_persona, correo o celular). No crea a nadie; pasa por
+    `encuestas.convocar` y devuelve el resultado línea por línea."""
+    salida = encuestas.agregar_panelistas(
+        ctx.boveda, _entero(params["encuesta_id"]), (cuerpo or {}).get("lineas"),
+        actor=actor)
+    ctx.boveda.commit()
+    return 200, salida
 
 
 @ruta("POST", "/encuestas/desde-consulta", "fieldear", requisito="R-EU.5")
@@ -672,6 +695,7 @@ def convocar(ctx, actor, params, cuerpo, consulta):
         _entero(params["encuesta_id"]),
         cuerpo.get("ids_persona"),
         todo_el_panel=bool(cuerpo.get("todo_el_panel")),
+        actor=actor,
     )
     ctx.boveda.commit()
     return 200, resultado
@@ -679,9 +703,75 @@ def convocar(ctx, actor, params, cuerpo, consulta):
 
 @ruta("GET", "/encuestas/<encuesta_id>/participacion", "leer")
 def ver_participacion(ctx, actor, params, cuerpo, consulta):
-    return 200, {
-        "items": encuestas.listar_participacion(ctx.boveda, _entero(params["encuesta_id"]))
-    }
+    encuesta_id = _entero(params["encuesta_id"])
+    items = encuestas.listar_participacion(ctx.boveda, encuesta_id)
+    # R-CF.6 / R-CF.7 — los mensajes que se le enviaron a cada panelista, con
+    # su estado de entrega.
+    envios = mensajes.envios_por_persona(ctx.boveda, encuesta_id)
+    for item in items:
+        item["mensajes"] = envios.get(item["id_persona"], [])
+    return 200, {"items": items}
+
+
+# ── D85 · Los mensajes de la encuesta (R-CF.4 a R-CF.8) ──────────────
+
+@ruta("GET", "/mensajes/plantillas", "leer", requisito="R-CF.4")
+def plantillas_para_mensajes(ctx, actor, params, cuerpo, consulta):
+    """Las plantillas aprobadas que sirven para un mensaje —de botón de URL,
+    de Flow o de solo texto—, con su botón y cuántos parámetros lleva el
+    texto, y de dónde puede salir cada parámetro."""
+    return 200, mensajes.plantillas_para_mensajes()
+
+
+@ruta("GET", "/encuestas/<encuesta_id>/mensajes", "leer", requisito="R-CF.4")
+def listar_mensajes(ctx, actor, params, cuerpo, consulta):
+    return 200, {"items": mensajes.listar(ctx.boveda, _entero(params["encuesta_id"])),
+                 "publicos": mensajes.PUBLICOS}
+
+
+@ruta("POST", "/encuestas/<encuesta_id>/mensajes", "fieldear", requisito="R-CF.4, R-CF.8")
+def crear_mensaje(ctx, actor, params, cuerpo, consulta):
+    """Un mensaje nuevo: WhatsApp (plantilla aprobada y de dónde sale cada
+    parámetro) o correo (asunto y cuerpo). Si el botón de la plantilla no
+    coincide con la URL de Alchemer, `409 url_distinta` hasta confirmar."""
+    salida = mensajes.guardar(ctx.boveda, _entero(params["encuesta_id"]), cuerpo,
+                              actor=actor)
+    ctx.boveda.commit()
+    return 201, salida
+
+
+@ruta("PATCH", "/encuestas/<encuesta_id>/mensajes/<mensaje_id>", "fieldear",
+      requisito="R-CF.4, R-CF.8")
+def editar_mensaje(ctx, actor, params, cuerpo, consulta):
+    salida = mensajes.guardar(ctx.boveda, _entero(params["encuesta_id"]), cuerpo,
+                              actor=actor, mensaje_id=_entero(params["mensaje_id"]))
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("DELETE", "/encuestas/<encuesta_id>/mensajes/<mensaje_id>", "fieldear",
+      requisito="R-CF.4")
+def borrar_mensaje(ctx, actor, params, cuerpo, consulta):
+    """Solo un mensaje que nunca se envió: su registro es lo que dice a quién
+    se le escribió."""
+    salida = mensajes.borrar(ctx.boveda, _entero(params["encuesta_id"]),
+                             _entero(params["mensaje_id"]))
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("POST", "/encuestas/<encuesta_id>/mensajes/<mensaje_id>/envio", "enviar_mensajes",
+      requisito="R-CF.5, R-CF.6")
+def enviar_mensaje(ctx, actor, params, cuerpo, consulta):
+    """Envía el mensaje a un público (`todos`, `no_enviado`,
+    `no_contestaron`, `respondieron`). Con `solo_revisar`, la vista previa:
+    a cuántos les llega y quiénes quedan afuera, por motivo. Sin él, lo
+    encola en lotes (`202`) y la pantalla sigue el avance."""
+    cuerpo = cuerpo or {}
+    return mensajes.lanzar(
+        ctx.boveda, _entero(params["encuesta_id"]), _entero(params["mensaje_id"]),
+        cuerpo.get("publico") or mensajes.NO_ENVIADO, actor=actor,
+        solo_revisar=_revision_pedida(cuerpo), encolador=ctx.encolador)
 
 
 @ruta("GET", "/encuestas/<encuesta_id>/muestra", "leer", requisito="R3.12")

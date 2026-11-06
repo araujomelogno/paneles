@@ -34,6 +34,7 @@ ORIGEN_CARGA = "carga"
 ORIGENES = (ORIGEN_PANEL, ORIGEN_CONSULTA, ORIGEN_CARGA)
 
 _COLUMNAS = ("id, panel_id, tipo, origen, nombre, fecha_campo, publico_objetivo, "
+             "url_alchemer, "
              "descripcion, estado, ref_estudio, creado_en, flow_id, "
              "flow_plantilla, flow_idioma")
 
@@ -134,6 +135,8 @@ def _serializar(fila):
         "fecha_campo": fila["fecha_campo"].isoformat() if fila["fecha_campo"] else None,
         "publico_objetivo": fila.get("publico_objetivo"),
         "descripcion": fila.get("descripcion"),
+        # R-CF.3 — a dónde lleva el botón del mensaje, con el parámetro.
+        "url_alchemer": fila.get("url_alchemer"),
         "estado": fila["estado"],
         "ref_estudio": str(fila["ref_estudio"]),
         "creado_en": fila["creado_en"].isoformat(),
@@ -273,6 +276,9 @@ def editar(conn, encuesta_id, cambios, conn_semantica=None):
         if campo in cambios:
             columnas.append(campo)
             valores.append(_texto(cambios.get(campo)))
+    if "url_alchemer" in cambios:
+        columnas.append("url_alchemer")
+        valores.append(url_alchemer_valida(cambios.get("url_alchemer")))
     # `fecha_estudio` es el nombre con que la carga la mostraba: se acepta
     # igual, es la misma fecha.
     fecha = "fecha_campo" if "fecha_campo" in cambios else (
@@ -307,20 +313,68 @@ def sincronizar_fecha(conn_boveda, conn_semantica, encuesta_id, solo_si_vacia=Fa
         solo_si_vacia=solo_si_vacia)
 
 
-def cambiar_estado(conn, encuesta_id, estado):
+def url_alchemer_valida(crudo):
+    """R-CF.3 — la URL de Alchemer, terminada en el parámetro que recibe el
+    `id_persona` (`…?pid=`). Vacía es `None`: la encuesta todavía no tiene."""
+    url = (crudo or "").strip()
+    if not url:
+        return None
+    if not url.lower().startswith(("https://", "http://")) or any(c.isspace() for c in url):
+        raise DatosInvalidos(
+            "La URL de Alchemer tiene que empezar con https:// y no tener espacios.",
+            {"campo": "url_alchemer"})
+    if not url.endswith("="):
+        raise DatosInvalidos(
+            "La URL de Alchemer tiene que terminar en el parámetro que recibe al "
+            "panelista, por ejemplo `…/estudio?pid=`: el sistema le agrega el "
+            "id_persona al final.", {"campo": "url_alchemer"})
+    return url
+
+
+def enlace_de(encuesta, id_persona):
+    """El enlace a la encuesta de una persona: la URL de Alchemer más su
+    `id_persona`, que vuelve como columna en el SAV (R-CF.3)."""
+    return f"{encuesta['url_alchemer']}{id_persona}" if encuesta.get("url_alchemer") else None
+
+
+def cambiar_estado(conn, encuesta_id, estado, actor=None):
+    """R-CF.1 — cualquier transición, en cualquier sentido (reabrir una
+    cerrada incluido), y registrada: quién, cuándo, de qué a qué."""
     if estado not in ESTADOS:
         raise DatosInvalidos(
             f"Estado desconocido: {estado!r}.", {"estados_validos": list(ESTADOS)}
         )
-    if not db.ejecutar(
-        conn, "update encuesta set estado = %s where id = %s", (estado, encuesta_id)
-    ):
+    anterior = db.una(conn, "select estado from encuesta where id = %s for update",
+                      (encuesta_id,))
+    if not anterior:
         raise NoEncontrado(f"No existe la encuesta {encuesta_id}.")
+    if anterior["estado"] != estado:
+        db.ejecutar(conn, "update encuesta set estado = %s where id = %s",
+                    (estado, encuesta_id))
+        db.ejecutar(
+            conn,
+            """insert into encuesta_estado_cambio
+                      (encuesta_id, estado_anterior, estado_nuevo, actor_uid, actor_email)
+               values (%s, %s, %s, %s, %s)""",
+            (encuesta_id, anterior["estado"], estado, getattr(actor, "uid", None),
+             getattr(actor, "email", None)))
     return obtener(conn, encuesta_id)
 
 
+def historial_de_estado(conn, encuesta_id):
+    """R-CF.1 — los cambios de estado, el más reciente primero."""
+    obtener(conn, encuesta_id)
+    return [{"estado_anterior": f["estado_anterior"], "estado_nuevo": f["estado_nuevo"],
+             "actor": f["actor_email"] or f["actor_uid"] or "sistema",
+             "creado_en": f["creado_en"].isoformat()}
+            for f in db.todas(
+                conn,
+                """select * from encuesta_estado_cambio where encuesta_id = %s
+                    order by creado_en desc, id desc""", (encuesta_id,))]
+
+
 def convocar(conn, encuesta_id, ids_persona=None, todo_el_panel=False,
-             _desde_consulta=False):
+             _desde_consulta=False, actor=None, a_mano=False):
     """Crea las participaciones de la ola.
 
     Gate: nadie sin `contacto_participacion` vigente entra en la convocatoria
@@ -332,7 +386,9 @@ def convocar(conn, encuesta_id, ids_persona=None, todo_el_panel=False,
         raise Conflicto("La encuesta está cerrada: no se puede convocar más gente.")
     # R-EU.5 — la audiencia de una independiente es la foto de la consulta
     # con que se creó: no se le convoca a ningún panel ni se le suma gente.
-    if encuesta["tipo"] == INDEPENDIENTE and not _desde_consulta:
+    # R-CF.2 — sumar panelistas de a uno o en lista sí vale para una
+    # independiente: es ajustar la audiencia sin rehacerla.
+    if encuesta["tipo"] == INDEPENDIENTE and not (_desde_consulta or a_mano):
         raise Conflicto(
             "Una encuesta independiente no se convoca: su audiencia se fija al "
             "crearla desde el resultado de una consulta.",
@@ -376,7 +432,7 @@ def convocar(conn, encuesta_id, ids_persona=None, todo_el_panel=False,
             (encuesta_id, id_persona),
         )
     if encuesta["estado"] == "borrador" and habilitadas:
-        cambiar_estado(conn, encuesta_id, "en_campo")
+        cambiar_estado(conn, encuesta_id, "en_campo", actor=actor)
 
     return {
         "encuesta_id": encuesta_id,
@@ -386,6 +442,106 @@ def convocar(conn, encuesta_id, ids_persona=None, todo_el_panel=False,
         "en_lista_negra": len(en_lista_negra),
     }
 
+
+
+# ── R-CF.2 · Agregar panelistas a mano ───────────────────────────────
+
+AGREGADO = "agregado"
+YA_ESTABA = "ya_estaba"
+NO_CORRESPONDE = "no_corresponde"
+AMBIGUO = "ambiguo"
+EN_LISTA_NEGRA = "en_lista_negra"
+SIN_CONSENTIMIENTO = "sin_consentimiento"
+FORMATO_INVALIDO = "formato_invalido"
+
+RESULTADOS_DE_AGREGAR = {
+    AGREGADO: "Agregado",
+    YA_ESTABA: "Ya estaba",
+    NO_CORRESPONDE: "No corresponde a ningún panelista",
+    AMBIGUO: "Ambiguo: el celular es de más de una persona",
+    EN_LISTA_NEGRA: "En lista negra",
+    SIN_CONSENTIMIENTO: "Sin consentimiento de contacto",
+    FORMATO_INVALIDO: "Formato inválido",
+}
+
+TOPE_DE_LINEAS = 500
+
+
+def _tipo_de_linea(valor):
+    """Qué identificador parece: un uuid es un id_persona, una arroba es un
+    correo, y lo demás se prueba como celular."""
+    if mod_ingesta._UUID.match(valor):
+        return mod_ingesta.POR_ID_PERSONA
+    if "@" in valor:
+        return mod_ingesta.POR_EMAIL
+    return mod_ingesta.POR_CELULAR
+
+
+def agregar_panelistas(conn, encuesta_id, texto, actor=None):
+    """R-CF.2 — suma a la audiencia panelistas de a uno o en lista, uno por
+    línea y con identificadores mezclados (id_persona, correo o celular).
+
+    **No crea a nadie**: lo que no corresponde a un panelista se informa. Cada
+    identificador se resuelve con `ingesta.resolver_identificadores`, la misma
+    que usa la ingesta: el correo en minúsculas, el celular en E.164 y con una
+    sola titular (si no, `ambiguo`). Lo que se encuentra entra por
+    `convocar()`, **el mismo camino**, con sus controles: encuesta cerrada,
+    lista negra y consentimiento de contacto. El resultado va línea por línea.
+    """
+    lineas = [l.strip() for l in str(texto or "").splitlines()]
+    lineas = [l for l in lineas if l]
+    if not lineas:
+        raise DatosInvalidos("No hay ningún panelista para agregar.")
+    if len(lineas) > TOPE_DE_LINEAS:
+        raise DatosInvalidos(f"Se pegaron {len(lineas)} líneas y el tope es "
+                             f"{TOPE_DE_LINEAS} por vez.")
+    encuesta = obtener(conn, encuesta_id)
+    if encuesta["estado"] == "cerrada":
+        raise Conflicto("La encuesta está cerrada: no admite agregar panelistas. "
+                        "Reabrila primero.", {"motivo": "encuesta_cerrada"})
+
+    por_tipo = {}
+    for linea in dict.fromkeys(lineas):
+        por_tipo.setdefault(_tipo_de_linea(linea), []).append(linea)
+    resueltos, motivos = {}, {}
+    for tipo, valores in por_tipo.items():
+        mapa, no = mod_ingesta.resolver_identificadores(conn, tipo, valores)
+        resueltos.update(mapa)
+        motivos.update(no)
+
+    resultado = {}
+    for linea, motivo in motivos.items():
+        resultado[linea] = (AMBIGUO if motivo == mod_ingesta.CELULAR_COMPARTIDO
+                            else NO_CORRESPONDE if motivo == mod_ingesta.NO_ENCONTRADO
+                            else FORMATO_INVALIDO)
+
+    ids = list(dict.fromkeys(resueltos.values()))
+    ya = {str(f["id_persona"]) for f in db.todas(
+        conn, """select id_persona from participacion
+                  where encuesta_id = %s and convocado and id_persona = any(%s::uuid[])""",
+        (encuesta_id, ids))} if ids else set()
+    vetados = lista_negra.activas_de(conn, ids) if ids else set()
+    nuevos = [i for i in ids if i not in ya and i not in vetados]
+    sin_consentimiento = set()
+    if nuevos:
+        salida = convocar(conn, encuesta_id, ids_persona=nuevos, actor=actor,
+                          a_mano=True)
+        sin_consentimiento = {str(i) for i in salida["sin_consentimiento"]}
+    for linea, id_persona in resueltos.items():
+        resultado[linea] = (YA_ESTABA if id_persona in ya
+                            else EN_LISTA_NEGRA if id_persona in vetados
+                            else SIN_CONSENTIMIENTO if id_persona in sin_consentimiento
+                            else AGREGADO)
+
+    detalle = [{"linea": l, "resultado": resultado[l],
+                "etiqueta": RESULTADOS_DE_AGREGAR[resultado[l]],
+                "id_persona": resueltos.get(l)}
+               for l in dict.fromkeys(lineas)]
+    conteo = {clave: 0 for clave in RESULTADOS_DE_AGREGAR}
+    for fila in detalle:
+        conteo[fila["resultado"]] += 1
+    return {"encuesta_id": encuesta_id, "lineas": detalle, "conteo": conteo,
+            "etiquetas": RESULTADOS_DE_AGREGAR}
 
 def crear_desde_consulta(conn, nombre, resultado, actor=None, fecha_campo=None,
                          publico_objetivo=None, descripcion=None, clientes=None,

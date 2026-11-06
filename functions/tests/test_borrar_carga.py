@@ -143,6 +143,24 @@ def test_la_vista_previa_dice_quien_se_va_quien_se_queda_y_por_que(
     assert previa["borrado_en_curso"] is None
 
 
+def test_a_quien_se_le_escribio_desde_la_encuesta_se_conserva(ctx, actor, escenario):
+    """D85 — el registro de envíos es una vida propia: una baja se lo
+    llevaría, y con él la constancia de a quién se le escribió."""
+    conn = ctx.boveda
+    mensaje = db.una(
+        conn, """insert into encuesta_mensaje (encuesta_id, nombre, canal, asunto, cuerpo)
+                 values (%s, 'Gracias', 'correo', 'Gracias', 'Gracias {nombre}')
+                 returning id""", (escenario["carga"]["encuesta_id"],))
+    db.ejecutar(conn, """insert into envio (encuesta_mensaje_id, id_persona, canal, estado)
+                         values (%s, %s, 'correo', 'aceptado')""",
+                (mensaje["id"], escenario["ids"]["A"]))
+    conn.commit()
+    previa = _revisar(ctx, actor, escenario["carga"])
+    assert previa["se_dan_de_baja"] == 1
+    assert {m["motivo"]: m["personas"] for m in previa["conservadas_por_motivo"]}[
+        "mensajes"] == 1
+
+
 def test_la_vista_previa_no_toca_nada(ctx, actor, escenario):
     _revisar(ctx, actor, escenario["carga"])
     assert cargas.obtener(ctx.boveda, escenario["carga"]["id"])["personas"] == 6

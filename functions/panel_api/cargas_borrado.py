@@ -89,6 +89,9 @@ PANEL = "panel"
 PARTICIPACION = "participacion"
 PUNTOS = "puntos"
 CANJE = "canje"
+# D85 — se le escribió desde una encuesta: el registro de a quién se le
+# escribió es una vida propia, y la baja se lo llevaría.
+MENSAJES = "mensajes"
 OTRO_ESTUDIO = "respuestas_de_otro_estudio"
 MOTIVOS = {
     REUTILIZADA: "ya existía: la carga la reutilizó",
@@ -97,6 +100,7 @@ MOTIVOS = {
     PARTICIPACION: "participó en una encuesta",
     PUNTOS: "tiene movimientos de puntos",
     CANJE: "tiene canjes",
+    MENSAJES: "recibió mensajes de una encuesta",
     OTRO_ESTUDIO: "tiene respuestas de otro estudio",
 }
 
@@ -126,7 +130,9 @@ def _clasificar(conn_boveda, conn_semantica, carga_id, ref_estudio, ids=None):
                exists (select 1 from puntos_movimiento pm
                         where pm.id_persona = pc.id_persona)       as puntos,
                exists (select 1 from canje c
-                        where c.id_persona = pc.id_persona)        as canje
+                        where c.id_persona = pc.id_persona)        as canje,
+               exists (select 1 from envio e
+                        where e.id_persona = pc.id_persona)        as mensajes
           from persona_carga pc
           join carga c on c.id = pc.carga_id
          where pc.carga_id = %s
@@ -141,7 +147,8 @@ def _clasificar(conn_boveda, conn_semantica, carga_id, ref_estudio, ids=None):
         if f["origen"] != "creada":
             clasificacion[id_persona] = REUTILIZADA
             continue
-        motivo = next((m for m in (OTRA_CARGA, PANEL, PARTICIPACION, PUNTOS, CANJE)
+        motivo = next((m for m in (OTRA_CARGA, PANEL, PARTICIPACION, PUNTOS, CANJE,
+                                    MENSAJES)
                        if f[m]), None)
         clasificacion[id_persona] = motivo
         if motivo is None:

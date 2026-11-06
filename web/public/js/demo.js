@@ -115,10 +115,14 @@ const bd = {
   series: [],              // R4.1.b — series comparables entre olas
   auditoriaSeries: [],     // R4.1.b — el rastro va en la bóveda, no del lado semántico
   pesosOptimizador: {},    // R4.2 — por panel; vacío = rigen los defaults
+  cambiosDeEstado: [],     // D85 · R-CF.1 — quién cambió el estado de una encuesta
+  mensajes: [],            // D85 · R-CF.4 — los mensajes de cada encuesta
+  envios: [],              // D85 · R-CF.6 — un registro por persona y por envío
+  trabajos: [],            // D85 · los envíos «en diferido» de la copia demo
   secuencias: {
     panel: 1, encuesta: 1, revision: 1, consentimiento: 1, semantica: 1,
     guardada: 1, auditoria: 1, reident: 1, carga: 1, atributo: 1,
-    serie: 1, tematica: 1,
+    serie: 1, tematica: 1, mensaje: 1, trabajo: 1,
   },
 };
 
@@ -521,6 +525,7 @@ function sembrar() {
       panel_id: null, resuelto_por: null, resuelto_en: null, motivo_rechazo: null,
       origen: 'landing', creado_en: diasAtras(2) },
   );
+  sembrarConvocatoriaDemo();
 }
 
 /* ── Operaciones del store de bóveda ────────────────────────────────── */
@@ -1272,6 +1277,11 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   const partes = camino.split('/').filter(Boolean);
   const clave = `${metodo} ${camino}`;
 
+  // D85 — la convocatoria desde la encuesta: estado, panelistas a mano,
+  // mensajes y su envío.
+  const convocatoria = responderConvocatoriaDemo(metodo, partes, cuerpo || {}, consulta || {});
+  if (convocatoria !== undefined) return convocatoria;
+
   if (clave === 'GET /yo') {
     return { uid: 'demo', email: 'demo@equipos.com.uy', rol: 'admin', nombre: 'Modo demo' };
   }
@@ -1643,7 +1653,15 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   if (metodo === 'PATCH' && partes[0] === 'encuestas' && partes.length === 2) {
     const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
     if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
-    if (cuerpo.estado) encuesta.estado = cuerpo.estado;
+    if (cuerpo.estado) cambiarEstadoDemo(encuesta, cuerpo.estado);
+    if ('url_alchemer' in cuerpo) {
+      const url = String(cuerpo.url_alchemer || '').trim() || null;
+      if (url && (!/^https?:\/\/\S+$/.test(url) || !url.endsWith('='))) {
+        throw new ErrorDemo('La URL de Alchemer tiene que empezar con https:// y terminar en el '
+          + 'parámetro que recibe al panelista (…?pid=).', 400);
+      }
+      encuesta.url_alchemer = url;
+    }
     ['nombre', 'publico_objetivo', 'descripcion', 'fecha_campo'].forEach((campo) => {
       if (campo in cuerpo) encuesta[campo] = (cuerpo[campo] ?? '').toString().trim() || null;
     });
@@ -1711,6 +1729,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   }
 
   if (metodo === 'GET' && partes[0] === 'encuestas' && partes[2] === 'participacion') {
+    const envios = enviosPorPersonaDemo(Number(partes[1]));
     return {
       items: bd.participaciones
         .filter((p) => p.encuesta_id === Number(partes[1]))
@@ -1729,6 +1748,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
             nombre: persona?.nombre, email: persona?.email,
             id_en_origen: bd.alias.find((a) => a.id_persona === p.id_persona)?.id_en_origen,
             consiente_semantico: vigente(p.id_persona, 'uso_semantico'),
+            mensajes: envios[p.id_persona] || [],
           };
         }),
     };
@@ -4583,4 +4603,354 @@ export function espiarSemantica() {
       embedding: r.embedding,
     })),
   };
+}
+
+/* ── D85 · Convocatoria desde la encuesta (R-CF.1 a R-CF.8) ───────── */
+
+/* Las plantillas aprobadas para mensajes: las de botón de URL (cuya base
+   fija Meta y a la que se le agrega el id_persona), una de solo texto y las
+   de Flow de R4.5. `recordatorio_otra` lleva a otra encuesta a propósito:
+   es el caso que el aviso de `url_distinta` existe para frenar. */
+const URL_OLA_1 = 'https://survey.alchemer.com/s3/7001234/ola-1?pid=';
+const PLANTILLAS_MENSAJE_DEMO = [
+  { nombre: 'invitacion_estudio', idioma: 'es', estado: 'APPROVED', categoria: 'MARKETING',
+    cuerpo: 'Hola {{1}}, te invitamos a responder «{{2}}». Son unos minutos.',
+    boton_url: { indice: 0, url: `${URL_OLA_1}{{1}}`, texto: 'Responder', dinamico: true,
+                 base: URL_OLA_1 },
+    parametros_cuerpo: 2, flow_id: null },
+  { nombre: 'recordatorio_estudio', idioma: 'es', estado: 'APPROVED', categoria: 'UTILITY',
+    cuerpo: 'Hola {{1}}, la encuesta sigue abierta. Si querés, completala acá.',
+    boton_url: { indice: 0, url: `${URL_OLA_1}{{1}}`, texto: 'Completar', dinamico: true,
+                 base: URL_OLA_1 },
+    parametros_cuerpo: 1, flow_id: null },
+  { nombre: 'recordatorio_otra', idioma: 'es', estado: 'APPROVED', categoria: 'UTILITY',
+    cuerpo: 'Hola {{1}}, todavía podés responder.',
+    boton_url: { indice: 0, url: 'https://survey.alchemer.com/s3/7009999/otra?pid={{1}}',
+                 texto: 'Responder', dinamico: true,
+                 base: 'https://survey.alchemer.com/s3/7009999/otra?pid=' },
+    parametros_cuerpo: 1, flow_id: null },
+  { nombre: 'gracias', idioma: 'es', estado: 'APPROVED', categoria: 'UTILITY',
+    cuerpo: '¡Gracias {{1}}! Ya registramos tu respuesta.', boton_url: null,
+    parametros_cuerpo: 1, flow_id: null },
+  ...PLANTILLAS_DEMO.map((p) => ({ ...p, boton_url: null, parametros_cuerpo: 0 })),
+];
+const FUENTES_DE_PARAMETRO_DEMO = {
+  nombre_panelista: 'Nombre del panelista', nombre_encuesta: 'Nombre de la encuesta',
+};
+const PUBLICOS_DEMO = {
+  todos: 'Todos', no_enviado: 'No enviado aún',
+  no_contestaron: 'No contestaron', respondieron: 'Respondieron',
+};
+const MOTIVOS_DE_EXCLUSION_DEMO = {
+  lista_negra: 'En lista negra', sin_consentimiento: 'Sin consentimiento de contacto',
+  sin_preferencia_whatsapp: 'No aceptó WhatsApp como canal',
+  sin_preferencia_email: 'No aceptó el correo como canal',
+  sin_celular: 'Sin celular', celular_invalido: 'Celular inválido', sin_email: 'Sin correo',
+};
+const RESULTADOS_DE_AGREGAR_DEMO = {
+  agregado: 'Agregado', ya_estaba: 'Ya estaba',
+  no_corresponde: 'No corresponde a ningún panelista',
+  ambiguo: 'Ambiguo: el celular es de más de una persona',
+  en_lista_negra: 'En lista negra', sin_consentimiento: 'Sin consentimiento de contacto',
+  formato_invalido: 'Formato inválido',
+};
+const RECIBIDOS_DEMO = ['aceptado', 'entregado', 'leido'];
+
+function cambiarEstadoDemo(encuesta, nuevo, actor = 'demo@equipos.com.uy') {
+  if (!['borrador', 'en_campo', 'cerrada'].includes(nuevo)) {
+    throw new ErrorDemo(`Estado desconocido: ${nuevo}.`, 400);
+  }
+  if (encuesta.estado === nuevo) return;
+  bd.cambiosDeEstado.push({ encuesta_id: encuesta.id, estado_anterior: encuesta.estado,
+                            estado_nuevo: nuevo, actor, creado_en: ahora() });
+  encuesta.estado = nuevo;
+}
+
+function mensajeDemo(m) {
+  const suyos = bd.envios.filter((e) => e.encuesta_mensaje_id === m.id);
+  return {
+    ...m,
+    recibieron: new Set(suyos.filter((e) => RECIBIDOS_DEMO.includes(e.estado))
+      .map((e) => e.id_persona)).size,
+    fallidos: suyos.filter((e) => e.estado === 'fallido').length,
+    ultimo_envio: suyos.length ? suyos[suyos.length - 1].enviado_en : null,
+  };
+}
+
+function guardarMensajeDemo(encuesta, cuerpo, existente = null) {
+  const nombre = String(cuerpo.nombre || '').trim();
+  if (!nombre) throw new ErrorDemo('El mensaje necesita un nombre: «Invitación», «Recordatorio 2»…', 400);
+  if (bd.mensajes.some((m) => m.encuesta_id === encuesta.id && m !== existente
+      && m.nombre.toLowerCase() === nombre.toLowerCase())) {
+    throw new ErrorDemo(`La encuesta ya tiene un mensaje «${nombre}».`, 409, { campo: 'nombre' });
+  }
+  const canal = cuerpo.canal || 'whatsapp';
+  const valores = { nombre, canal, plantilla: null, plantilla_idioma: null, parametros: [],
+                    url_boton: null, asunto: null, cuerpo: null };
+  const avisos = [];
+  if (canal === 'whatsapp') {
+    const plantilla = PLANTILLAS_MENSAJE_DEMO.find((p) => p.nombre === cuerpo.plantilla
+      && (!cuerpo.plantilla_idioma || p.idioma === cuerpo.plantilla_idioma));
+    if (!plantilla) throw new ErrorDemo('Elegí una plantilla aprobada.', 400);
+    const parametros = cuerpo.parametros || [];
+    if (parametros.length !== plantilla.parametros_cuerpo) {
+      throw new ErrorDemo(`La plantilla tiene ${plantilla.parametros_cuerpo} parámetro(s) en el `
+        + `texto y se indicaron ${parametros.length}.`, 400);
+    }
+    const boton = plantilla.boton_url;
+    let distinta = null;
+    if (boton && !encuesta.url_alchemer) {
+      distinta = 'La encuesta todavía no tiene su URL de Alchemer: no se puede comprobar que '
+        + 'el botón lleve a esta encuesta.';
+    } else if (boton && boton.base !== encuesta.url_alchemer) {
+      distinta = `El botón de la plantilla lleva a ${boton.base} y la encuesta está en `
+        + `${encuesta.url_alchemer}: la gente iría a otra encuesta.`;
+    }
+    if (distinta) {
+      if (!cuerpo.confirmar_url_distinta) {
+        throw new ErrorDemo(distinta, 409, { motivo: 'url_distinta' });
+      }
+      avisos.push(distinta);
+    }
+    Object.assign(valores, { plantilla: plantilla.nombre, plantilla_idioma: plantilla.idioma,
+                             parametros, url_boton: boton?.base || null });
+  } else {
+    if (!String(cuerpo.asunto || '').trim() || !String(cuerpo.cuerpo || '').trim()) {
+      throw new ErrorDemo('Un mensaje por correo necesita asunto y cuerpo.', 400);
+    }
+    Object.assign(valores, { asunto: cuerpo.asunto.trim(), cuerpo: cuerpo.cuerpo.trim() });
+    if (!encuesta.url_alchemer) {
+      avisos.push('La encuesta no tiene URL de Alchemer: el correo va a salir sin enlace.');
+    }
+  }
+  const mensaje = existente || { id: bd.secuencias.mensaje++, encuesta_id: encuesta.id,
+                                 creado_en: ahora() };
+  Object.assign(mensaje, valores);
+  if (!existente) bd.mensajes.push(mensaje);
+  return { ...mensajeDemo(mensaje), avisos };
+}
+
+function publicoDemo(encuestaId, mensajeId, cual) {
+  const recibio = (id) => bd.envios.some((e) => e.encuesta_mensaje_id === mensajeId
+    && e.id_persona === id && RECIBIDOS_DEMO.includes(e.estado));
+  return bd.participaciones.filter((p) => p.encuesta_id === encuestaId)
+    .filter((p) => (cual === 'no_enviado' ? !recibio(p.id_persona)
+      : cual === 'no_contestaron' ? !p.respondio
+        : cual === 'respondieron' ? p.respondio : true))
+    .map((p) => p.id_persona);
+}
+
+function contactablesDemo(ids, canal) {
+  const excluidos = {};
+  const contactables = [];
+  ids.forEach((id) => {
+    const persona = bd.personas.find((x) => x.id_persona === id);
+    const excluir = (motivo) => { excluidos[motivo] = (excluidos[motivo] || 0) + 1; };
+    if (listaNegraDe(id)) return excluir('lista_negra');
+    if (!vigente(id, 'contacto_participacion')) return excluir('sin_consentimiento');
+    const preferencia = canal === 'correo' ? 'email' : 'whatsapp';
+    if (!bd.canales.some((c) => c.id_persona === id && c.canal === preferencia && c.activa)) {
+      return excluir(`sin_preferencia_${preferencia}`);
+    }
+    if (canal === 'whatsapp' && !persona?.celular) return excluir('sin_celular');
+    if (canal === 'whatsapp' && !/^\+\d{8,15}$/.test(persona.celular)) return excluir('celular_invalido');
+    if (canal === 'correo' && !persona?.email) return excluir('sin_email');
+    contactables.push(id);
+  });
+  return { contactables, excluidos };
+}
+
+function previaDemo(encuesta, mensaje, cual) {
+  const ids = publicoDemo(encuesta.id, mensaje.id, cual);
+  const { contactables, excluidos } = contactablesDemo(ids, mensaje.canal);
+  const ya = contactables.filter((id) => bd.envios.some((e) => e.encuesta_mensaje_id === mensaje.id
+    && e.id_persona === id && RECIBIDOS_DEMO.includes(e.estado)));
+  const motivos = [];
+  if (encuesta.estado !== 'en_campo') {
+    motivos.push(encuesta.estado === 'cerrada'
+      ? 'La encuesta está cerrada: no se envían mensajes.'
+      : 'La encuesta está en borrador: los mensajes se envían con la encuesta en campo.');
+  }
+  if (!contactables.length) motivos.push('Nadie del público elegido puede recibir este mensaje.');
+  return {
+    encuesta_id: encuesta.id, mensaje: mensajeDemo(mensaje), publico: cual,
+    publico_etiqueta: PUBLICOS_DEMO[cual], en_el_publico: ids.length,
+    recibiran: contactables.length, ya_recibieron: ya.length, excluidos,
+    excluidos_total: Object.values(excluidos).reduce((n, v) => n + v, 0),
+    etiquetas: MOTIVOS_DE_EXCLUSION_DEMO,
+    avisos: ya.length ? [`${ya.length} persona(s) ya recibieron este mensaje y lo van a recibir `
+      + 'de nuevo. Para no repetírselo, elegí «No enviado aún».'] : [],
+    motivos, puede_enviar: !motivos.length, envio_en_curso: null, _destinatarios: contactables,
+  };
+}
+
+/* La copia demo «envía» en el acto y deja el trabajo terminado: la pantalla
+   lo sigue igual que a uno de verdad. El primer mensaje que alguien recibe
+   lo deja convocado (R-CF.6). */
+function enviarDemo(encuesta, mensaje, cual) {
+  const vista = previaDemo(encuesta, mensaje, cual);
+  if (!vista.puede_enviar) {
+    throw new ErrorDemo(`No se puede enviar este mensaje: ${vista.motivos.join(' ')}`, 409,
+                        { motivos: vista.motivos });
+  }
+  const trabajoId = bd.secuencias.trabajo++;
+  vista._destinatarios.forEach((id) => {
+    bd.envios.push({ encuesta_mensaje_id: mensaje.id, id_persona: id, canal: mensaje.canal,
+                     trabajo_id: trabajoId, enviado_en: ahora(), estado: 'aceptado', error: null });
+    const participacion = bd.participaciones.find(
+      (p) => p.encuesta_id === encuesta.id && p.id_persona === id);
+    if (participacion && !participacion.respondio && !participacion.convocado) {
+      Object.assign(participacion, { convocado: true, convocado_en: ahora() });
+    }
+  });
+  const n = vista._destinatarios.length;
+  bd.trabajos.push({
+    trabajo_id: trabajoId, destino: { tipo: 'mensaje', id: mensaje.id },
+    estado: 'terminada', estado_etiqueta: 'Terminado', terminal: true,
+    lotes_total: 1, lotes_ok: 1, lotes_fallidos: 0, filas_total: n, filas_procesadas: n,
+    porcentaje: 100, operacion: 'envio_mensaje', creado_en: ahora(), fallidos: [],
+    resumen: { enviados: n, fallidos: 0, salteados: 0, excluidos_al_enviar: 0,
+               operacion: 'envio_mensaje', mensaje_id: mensaje.id },
+  });
+  return { trabajo_id: trabajoId, estado: 'encolada', recibiran: n };
+}
+
+function agregarPanelistasDemo(encuesta, texto) {
+  if (encuesta.estado === 'cerrada') {
+    throw new ErrorDemo('La encuesta está cerrada: no se agregan panelistas. Reabrila para '
+      + 'sumar gente.', 409, { motivo: 'encuesta_cerrada' });
+  }
+  const lineas = String(texto || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const resultado = lineas.map((linea) => {
+    let candidatas;
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(linea)) {
+      candidatas = bd.personas.filter((p) => p.id_persona === linea.toLowerCase());
+    } else if (linea.includes('@')) {
+      candidatas = bd.personas.filter((p) => (p.email || '').toLowerCase() === linea.toLowerCase());
+    } else {
+      const numero = celularDemo(linea);
+      if (!numero) return { linea, resultado: 'formato_invalido', id_persona: null };
+      candidatas = bd.personas.filter((p) => celularDemo(p.celular) === numero);
+      if (candidatas.length > 1) return { linea, resultado: 'ambiguo', id_persona: null };
+    }
+    if (!candidatas.length) return { linea, resultado: 'no_corresponde', id_persona: null };
+    const id = candidatas[0].id_persona;
+    const ya = bd.participaciones.find((p) => p.encuesta_id === encuesta.id
+      && p.id_persona === id && p.convocado);
+    if (ya) return { linea, resultado: 'ya_estaba', id_persona: id };
+    if (listaNegraDe(id)) return { linea, resultado: 'en_lista_negra', id_persona: id };
+    if (!vigente(id, 'contacto_participacion')) {
+      return { linea, resultado: 'sin_consentimiento', id_persona: id };
+    }
+    const existente = bd.participaciones.find(
+      (p) => p.encuesta_id === encuesta.id && p.id_persona === id);
+    if (existente) Object.assign(existente, { convocado: true, convocado_en: ahora() });
+    else {
+      bd.participaciones.push({
+        encuesta_id: encuesta.id, id_persona: id, origen: 'convocatoria', convocado: true,
+        convocado_en: ahora(), respondio: false, respondio_en: null, calidad_estado: 'pendiente',
+      });
+    }
+    if (encuesta.estado === 'borrador') cambiarEstadoDemo(encuesta, 'en_campo');
+    return { linea, resultado: 'agregado', id_persona: id };
+  });
+  const conteo = Object.fromEntries(Object.keys(RESULTADOS_DE_AGREGAR_DEMO).map((k) => [k, 0]));
+  resultado.forEach((r) => { conteo[r.resultado] += 1; });
+  return {
+    encuesta_id: encuesta.id,
+    lineas: resultado.map((r) => ({ ...r, etiqueta: RESULTADOS_DE_AGREGAR_DEMO[r.resultado] })),
+    conteo, etiquetas: RESULTADOS_DE_AGREGAR_DEMO,
+  };
+}
+
+function enviosPorPersonaDemo(encuestaId) {
+  const salida = {};
+  bd.envios.forEach((e) => {
+    const mensaje = bd.mensajes.find((m) => m.id === e.encuesta_mensaje_id);
+    if (mensaje?.encuesta_id !== encuestaId) return;
+    (salida[e.id_persona] = salida[e.id_persona] || []).push({
+      mensaje: mensaje.nombre, canal: e.canal, enviado_en: e.enviado_en,
+      estado: e.estado, error: e.error });
+  });
+  return salida;
+}
+
+function responderConvocatoriaDemo(metodo, partes, cuerpo, consulta) {
+  if (metodo === 'GET' && partes[0] === 'mensajes' && partes[1] === 'plantillas') {
+    return { plantillas: PLANTILLAS_MENSAJE_DEMO, configurado: true, faltan: [], avisos: [],
+             fuentes_de_parametro: FUENTES_DE_PARAMETRO_DEMO };
+  }
+  if (partes[0] === 'ingestas') {
+    if (metodo === 'GET' && partes.length === 1) {
+      return { items: bd.trabajos.filter((t) => (!consulta.destino_tipo
+        || t.destino.tipo === consulta.destino_tipo)
+        && (!consulta.destino_id || t.destino.id === Number(consulta.destino_id)))
+        .reverse().slice(0, Number(consulta.limite || 20)) };
+    }
+    const trabajo = bd.trabajos.find((t) => t.trabajo_id === Number(partes[1]));
+    if (metodo === 'GET' && trabajo) return trabajo;
+    return undefined;
+  }
+  if (partes[0] !== 'encuestas' || partes.length < 3) return undefined;
+  const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
+  if (!['estados', 'panelistas', 'mensajes'].includes(partes[2])) return undefined;
+  if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
+
+  if (metodo === 'GET' && partes[2] === 'estados') {
+    return { items: bd.cambiosDeEstado.filter((c) => c.encuesta_id === encuesta.id).reverse() };
+  }
+  if (metodo === 'POST' && partes[2] === 'panelistas') {
+    return agregarPanelistasDemo(encuesta, cuerpo.lineas);
+  }
+  if (partes[2] === 'mensajes' && partes.length === 3) {
+    if (metodo === 'GET') {
+      return { items: bd.mensajes.filter((m) => m.encuesta_id === encuesta.id).map(mensajeDemo),
+               publicos: PUBLICOS_DEMO };
+    }
+    if (metodo === 'POST') return guardarMensajeDemo(encuesta, cuerpo);
+  }
+  const mensaje = bd.mensajes.find((m) => m.id === Number(partes[3])
+    && m.encuesta_id === encuesta.id);
+  if (!mensaje) throw new ErrorDemo('No existe el mensaje.', 404);
+  if (partes.length === 4 && metodo === 'PATCH') return guardarMensajeDemo(encuesta, cuerpo, mensaje);
+  if (partes.length === 4 && metodo === 'DELETE') {
+    if (bd.envios.some((e) => e.encuesta_mensaje_id === mensaje.id)) {
+      throw new ErrorDemo(`El mensaje «${mensaje.nombre}» ya se envió: no se borra.`, 409);
+    }
+    bd.mensajes = bd.mensajes.filter((m) => m !== mensaje);
+    return { borrado: mensaje.id };
+  }
+  if (partes[4] === 'envio' && metodo === 'POST') {
+    const cual = cuerpo.publico || 'no_enviado';
+    if (cuerpo.solo_revisar) {
+      const { _destinatarios, ...vista } = previaDemo(encuesta, mensaje, cual);
+      return vista;
+    }
+    return enviarDemo(encuesta, mensaje, cual);
+  }
+  return undefined;
+}
+
+/* La Ola 1 de la semilla: su URL de Alchemer, la invitación que se le mandó
+   y cómo le fue a cada envío (R-CF.6, R-CF.7), y sus cambios de estado. */
+function sembrarConvocatoriaDemo() {
+  const ola = bd.encuestas.find((e) => e.nombre === 'Ola 1 — Consumo de bebidas');
+  if (!ola) return;
+  ola.url_alchemer = URL_OLA_1;
+  bd.cambiosDeEstado.push(
+    { encuesta_id: ola.id, estado_anterior: 'borrador', estado_nuevo: 'en_campo',
+      actor: 'sistema', creado_en: diasAtras(40) },
+    { encuesta_id: ola.id, estado_anterior: 'en_campo', estado_nuevo: 'cerrada',
+      actor: 'demo@equipos.com.uy', creado_en: diasAtras(20) });
+  const invitacion = { id: bd.secuencias.mensaje++, encuesta_id: ola.id, nombre: 'Invitación',
+    canal: 'whatsapp', plantilla: 'invitacion_estudio', plantilla_idioma: 'es',
+    parametros: ['nombre_panelista', 'nombre_encuesta'], url_boton: URL_OLA_1,
+    asunto: null, cuerpo: null, creado_en: diasAtras(40) };
+  bd.mensajes.push(invitacion);
+  const estados = ['leido', 'entregado', 'leido', 'fallido', 'aceptado', 'leido'];
+  bd.participaciones.filter((p) => p.encuesta_id === ola.id).slice(0, estados.length)
+    .forEach((p, i) => bd.envios.push({
+      encuesta_mensaje_id: invitacion.id, id_persona: p.id_persona, canal: 'whatsapp',
+      trabajo_id: null, enviado_en: diasAtras(40), estado: estados[i],
+      error: estados[i] === 'fallido' ? 'El número no tiene WhatsApp (131026).' : null }));
 }

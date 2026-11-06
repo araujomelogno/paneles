@@ -68,6 +68,10 @@ ALTA_CLAVE = "alta_clave"
 RECUPERACION_CLAVE = "recuperacion_clave"
 ACCESO_USUARIO = "acceso_usuario"
 PRUEBA = "prueba"
+# R-CF.8 — un mensaje de una encuesta por correo. El asunto y el cuerpo los
+# escribe el equipo en el sistema; el enlace se arma con la URL de Alchemer
+# más el `id_persona` (`mensajes.correo_de`).
+MENSAJE_ENCUESTA = "mensaje_encuesta"
 
 _FIRMA = (
     "\n\n—\nEquipos Consultores · Panel de opinión\n"
@@ -130,6 +134,17 @@ PLANTILLAS = {
         ),
     },
 }
+# El asunto y el cuerpo vienen ya armados: la plantilla solo les pone la
+# firma. `{asunto}` y `{cuerpo}` son valores, no se vuelven a interpretar, así
+# que una llave en lo que escribió el equipo no rompe el formato.
+# Sin asunto ni cuerpo (nunca desde un mensaje, que los exige al guardarse)
+# se arma igual, como cualquier otro tipo: con un asunto propio y el
+# contenido como cuerpo.
+PLANTILLAS[MENSAJE_ENCUESTA] = {
+    "asunto": "{asunto}", "texto": "{cuerpo}",
+    "por_defecto": {"asunto": "Un mensaje de tu panel de opinión"},
+}
+
 TIPOS = tuple(PLANTILLAS)
 
 
@@ -148,7 +163,8 @@ def armar(tipo, contenido, **datos):
     plantilla = PLANTILLAS.get(tipo)
     if not plantilla:
         raise ValueError(f"Tipo de correo desconocido: {tipo!r}.")
-    valores = {"contenido": contenido, "minutos": 10, "horas": 24, **datos}
+    valores = {"contenido": contenido, "cuerpo": contenido, "minutos": 10, "horas": 24,
+               **plantilla.get("por_defecto", {}), **datos}
     return (plantilla["asunto"].format(**valores),
             plantilla["texto"].format(**valores) + _FIRMA)
 
