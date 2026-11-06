@@ -33,6 +33,30 @@ La consecuencia para quien escribe código acá: **una invariante de cumplimient
 - La fatiga es la excepción deliberada: se expone como **hechos** (`v_fatiga_panelista`) y cada consumidor pone su umbral. El consentimiento es legal y no se negocia; la fatiga es negocio.
 - El origen de cada fila de auditoría se deriva de la conexión (`sistema_de_la_conexion()`, sobre `session_user`), nunca de un parámetro del llamador.
 
+Desde la superficie de selección cualitativa (D84, `boveda/0034`), tres más:
+
+- **COLOQUIO ve nombre y contacto antes de convocar, pero solo por
+  `identificar_candidatos()`**, y sus tres límites viven en la función:
+  - la referencia de la sesión y el actor humano son obligatorios;
+  - deja una fila de `reidentificacion` por persona devuelta, con motivo
+    `seleccion_cuali`;
+  - acepta como mucho 200 ids por llamada.
+
+  No le agreguen un camino sin referencia, ni suban el tope, ni la usen
+  para resolver resultados enteros. `contacto_para_convocatoria()` sigue
+  exigiendo una convocatoria declarada: son dos etapas con dos motivos.
+- **El filtro por atributo ocurre en la base** (`f_persona_convocable_filtrada`):
+  - lo desconocido es error, nunca un filtro ignorado;
+  - un atributo cargado va con `exists` sobre `persona_atributo`;
+  - un derivado va por `f_atributo_persona`, que es la única
+    implementación de la edad y el tramo.
+
+  No resuelvan atributos derivados leyendo `persona_atributo`.
+- **Las piezas nuevas de la superficie reaplican el gate adentro**
+  (`v_persona_convocable`) y no exponen `persona_atributo` ni
+  `f_atributo_persona` directo. La ficha del candidato no tiene PII ni deja
+  registro: es lo que la búsqueda ya devolvió.
+
 `scripts/verificar_coloquio.py` se conecta **como `coloquio_app`** y comprueba todo eso, incluida una lista blanca de privilegios efectivos que vive en el repo. Si una migración abre un acceso de más, esa prueba rompe. Correrlo después de tocar cualquier `grant`, vista o función de la superficie externa.
 
 Cada chequeo termina en **pasado, fallido u omitido** (D62). Un chequeo que en ese entorno no puede probar lo que quiere —el intruso contra Cloud SQL, la cardinalidad sobre vistas vacías— levanta `Omitido` con su motivo: no lo conviertan en pasado ni lo dejen fallando. Una batería que falla siempre deja de leerse. Y el chequeo de auditoría manda como `p_actor` un email de usuario, que es el contrato: probar con el rol de la conexión verifica el nombre del rol, no la auditoría.

@@ -37,6 +37,11 @@ MOTIVOS_REIDENTIFICACION = (
     # pero une identidad y contenido, que es lo que los dos stores mantienen
     # separado. Se registra por eso, con etiqueta propia.
     "respuestas_panelista",
+    # 0034 (D84) — COLOQUIO vio nombre y contacto de los candidatos de una
+    # sesión antes de convocarlos (`identificar_candidatos()`). Propio, y
+    # distinto de `convocatoria`, para separar «lo miró para elegir» de «lo
+    # miró para llamar».
+    "seleccion_cuali",
 )
 
 ACCIONES_USUARIO = (
