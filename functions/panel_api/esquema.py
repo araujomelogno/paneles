@@ -202,6 +202,13 @@ MIGRACIONES_BOVEDA = (
     ("0033_origen_de_la_encuesta.sql", (
         "encuesta.origen", "encuesta_origen_por_defecto()",
     )),
+    # ── La superficie de selección cualitativa de COLOQUIO (R5.9 a R5.13,
+    # D84). Aditiva: no toca nada de la 0014 ni de la 0021.
+    ("0034_superficie_seleccion_cuali.sql", (
+        "v_atributo_catalogo", "atributos_de_personas()",
+        "f_persona_convocable_filtrada()", "ficha_candidato()",
+        "identificar_candidatos()",
+    )),
 )
 
 # Objetos que una migración creó y una posterior **retiró** (los tiró sin

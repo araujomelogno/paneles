@@ -74,6 +74,9 @@ RELACIONES_PERMITIDAS = {
     "v_fatiga_panelista": {"SELECT"},
     "v_finalidad": {"SELECT"},
     "v_texto_consentimiento_activo": {"SELECT"},
+    # 0034 · R5.9 — el vocabulario de atributos. No tiene `id_persona`: es
+    # catálogo, no dato de persona.
+    "v_atributo_catalogo": {"SELECT"},
 }
 
 FUNCIONES_PERMITIDAS = {
@@ -96,6 +99,13 @@ FUNCIONES_PERMITIDAS = {
     "f_persona_convocable",
     # La de `v_persona_finalidad_vigente`, por el mismo motivo.
     "f_persona_finalidad_vigente",
+    # 0034 · la superficie de selección cualitativa (D84). Las cuatro
+    # reaplican el gate adentro y son `security definer` por lo mismo que
+    # `f_persona_convocable`: el consumidor no ve las tablas.
+    "atributos_de_personas",          # R5.10
+    "f_persona_convocable_filtrada",  # R5.11
+    "ficha_candidato",                # R5.12
+    "identificar_candidatos",         # R5.13 — nombre y contacto, auditado
 }
 
 # ── La clave de cada relación que expone personas ─────────────────────
@@ -191,6 +201,11 @@ class Escenario:
         # Consintió y `paneles` la convocó, pero COLOQUIO no: es contra ella
         # que se prueba que la convocatoria se verifica **por sistema**.
         self.sin_convocatoria = None
+        # 0034 — consintió y nadie la convocó ni la declaró, en ningún
+        # sistema. Es solo de `identificar_no_habilita_el_contacto`: la de
+        # arriba la declara otro chequeo, y el resultado no puede depender
+        # del orden en que corran.
+        self.candidata = None
         self.panel_id = None
 
     def __enter__(self):
@@ -243,6 +258,13 @@ class Escenario:
                    values (%s, 'contacto_participacion', 'vigente', %s)""",
                 (self.sin_convocatoria, marca))
 
+            self.candidata = self._persona(cur, f"{marca}-cand", "099000444")
+            cur.execute(
+                """insert into consentimiento
+                          (id_persona, finalidad, estado, version_texto)
+                   values (%s, 'contacto_participacion', 'vigente', %s)""",
+                (self.candidata, marca))
+
             cur.execute(
                 """insert into encuesta (panel_id, nombre, estado)
                    values (%s, %s, 'en_campo') returning id""",
@@ -274,18 +296,26 @@ class Escenario:
                 (self.convocable, f"{marca}-sesion"))
         return self
 
+    # 0034 — nacidas en 1901: una edad derivada de más de 120 años no la
+    # tiene ningún panelista real, así que filtrar por ella aísla al
+    # escenario aunque la bóveda tenga decenas de miles de convocables.
+    NACIMIENTO = "1901-01-01"
+    EDAD_MINIMA = 120
+
     def _persona(self, cur, documento, celular):
         cur.execute(
-            """insert into persona (documento, nombre, celular, email, estado)
-               values (%s, 'Persona de verificación', %s, %s, 'activa')
+            """insert into persona (documento, nombre, celular, email, estado,
+                                    fecha_nacimiento)
+               values (%s, 'Persona de verificación', %s, %s, 'activa', %s)
                returning id_persona""",
-            (documento, f"+598{celular}", f"{documento}@ejemplo.invalid"))
+            (documento, f"+598{celular}", f"{documento}@ejemplo.invalid",
+             self.NACIMIENTO))
         return cur.fetchone()["id_persona"]
 
     def __exit__(self, *_):
         with self.conn.cursor() as cur:
             for quien in (self.convocable, self.sin_consentimiento,
-                          self.sin_convocatoria):
+                          self.sin_convocatoria, self.candidata):
                 if quien:
                     # `borrado_pendiente` no cascadea: no tiene FK a `persona`
                     # a propósito, porque la baja borra la persona y el
@@ -807,6 +837,165 @@ def un_rol_sin_registrar_no_consigue_nada(dsn_intruso, escenario):
         intruso.close()
 
 
+# ── 0034 · La superficie de selección cualitativa (R5.9 a R5.13, D84) ──
+
+def lee_el_catalogo_de_atributos(coloquio, dueno):
+    """R5.9 — el vocabulario se lee, y no trae datos de persona."""
+    with coloquio.cursor() as cur:
+        cur.execute("select clave, tipo, es_especial, categorias "
+                    "from v_atributo_catalogo order by orden, clave")
+        filas = cur.fetchall()
+        columnas = {c.name for c in cur.description}
+    if "id_persona" in columnas:
+        raise Falla("`v_atributo_catalogo` expone `id_persona`: es catálogo, "
+                    "no dato de persona")
+    if not all(isinstance(f["categorias"], list) for f in filas):
+        raise Falla("alguna fila de `v_atributo_catalogo` no trae sus "
+                    "categorías como lista")
+    return f"{len(filas)} atributos activos, con `es_especial` y sus categorías"
+
+
+def _filtrada(cur, filtros, finalidad="contacto_participacion"):
+    import json
+
+    cur.execute("select id_persona from f_persona_convocable_filtrada(%s, %s::jsonb, 5000)",
+                (finalidad, json.dumps(filtros)))
+    return {str(f["id_persona"]) for f in cur.fetchall()}
+
+
+def la_busqueda_por_atributo_respeta_el_gate(coloquio, escenario):
+    """R5.11 — filtra por un atributo del catálogo en la base, respeta el
+    gate y rechaza una clave que no existe en vez de ignorarla."""
+    with coloquio.cursor() as cur:
+        ids = _filtrada(cur, {"edad": {"min": escenario.EDAD_MINIMA}})
+    if str(escenario.convocable) not in ids or str(escenario.sin_convocatoria) not in ids:
+        raise Falla("el filtro por edad derivada no devolvió a las convocables "
+                    "del escenario")
+    if str(escenario.sin_consentimiento) in ids:
+        raise Falla("la búsqueda por atributo devolvió a quien no consintió")
+    error = _niega(coloquio,
+                   "select * from f_persona_convocable_filtrada("
+                   "'contacto_participacion', %s::jsonb, 10)",
+                   ('{"no_existe": {"en": ["x"]}}',))
+    if "no está en el catálogo" not in error:
+        raise Falla(f"una clave inventada no dio el error esperado: {error}")
+    return "filtra por edad derivada · gate aplicado · clave inventada: error"
+
+
+def los_atributos_son_solo_del_gate(coloquio, escenario):
+    """R5.10 — los atributos de un conjunto, solo de quien está en la vista,
+    y con tope."""
+    with coloquio.cursor() as cur:
+        cur.execute("select id_persona, atributo from atributos_de_personas(%s::uuid[])",
+                    ([str(escenario.convocable), str(escenario.sin_consentimiento)],))
+        filas = cur.fetchall()
+    de = {str(f["id_persona"]) for f in filas}
+    if str(escenario.convocable) not in de:
+        raise Falla("no devolvió los atributos de quien consintió")
+    if str(escenario.sin_consentimiento) in de:
+        raise Falla("devolvió atributos de quien no consintió")
+    error = _niega(coloquio,
+                   "select * from atributos_de_personas("
+                   "array(select gen_random_uuid() from generate_series(1, 501)))")
+    if "tope es 500" not in error:
+        raise Falla(f"con 501 ids no dio el error del tope: {error}")
+    return f"{len(filas)} valores de la convocable · nada de la otra · tope 500"
+
+
+def la_ficha_del_candidato_no_identifica(coloquio, escenario, dueno):
+    """R5.12 — sin un solo dato identificatorio y sin auditoría: es lo que
+    la búsqueda ya devolvió."""
+    with dueno.cursor() as cur:
+        cur.execute("select count(*) as n from reidentificacion where id_persona = %s",
+                    (escenario.convocable,))
+        antes = cur.fetchone()["n"]
+    with coloquio.cursor() as cur:
+        cur.execute("select ficha_candidato(%s) as ficha", (escenario.convocable,))
+        ficha = cur.fetchone()["ficha"]
+    for campo in ("nombre", "documento", "email", "celular", "fecha_nacimiento"):
+        if campo in ficha:
+            raise Falla(f"la ficha del candidato trae «{campo}»")
+    texto = str(ficha)
+    if "ejemplo.invalid" in texto or "Persona de verificación" in texto \
+            or "099000" in texto:
+        raise Falla("la ficha del candidato trae un dato identificatorio")
+    with dueno.cursor() as cur:
+        cur.execute("select count(*) as n from reidentificacion where id_persona = %s",
+                    (escenario.convocable,))
+        if cur.fetchone()["n"] != antes:
+            raise Falla("abrir la ficha seudónima escribió en `reidentificacion`")
+    error = _niega(coloquio, "select ficha_candidato(%s)", (escenario.sin_consentimiento,))
+    if "No hay un candidato" not in error:
+        raise Falla(f"una persona fuera de la vista no dio no encontrado: {error}")
+    return (f"{len(ficha.get('atributos', []))} atributos, sin PII ni auditoría · "
+            "fuera de la vista: no encontrado")
+
+
+REFERENCIA_DE_PRUEBA = "VERIF-COLOQUIO-sesion-seleccion"
+
+
+def identificar_queda_auditado_por_sesion(coloquio, escenario, dueno):
+    """R5.13 (D84) — nombre y contacto antes de convocar, con los tres
+    límites: por sesión, auditado una fila por persona, y con tope."""
+    with coloquio.cursor() as cur:
+        cur.execute(
+            "select * from identificar_candidatos(%s::uuid[], %s, %s)",
+            ([str(escenario.convocable), str(escenario.sin_consentimiento)],
+             REFERENCIA_DE_PRUEBA, ACTOR_DE_PRUEBA))
+        filas = cur.fetchall()
+    if [str(f["id_persona"]) for f in filas] != [str(escenario.convocable)]:
+        raise Falla(f"tenía que devolver solo a la convocable y devolvió "
+                    f"{[str(f['id_persona']) for f in filas]}")
+    if not (filas[0]["nombre"] and filas[0]["email"] and filas[0]["celular"]):
+        raise Falla("no devolvió nombre, email y celular")
+    with dueno.cursor() as cur:
+        cur.execute(
+            """select id_persona, motivo, sistema, actor_email
+                 from reidentificacion
+                where contexto ->> 'referencia' = %s
+                  and id_persona = any(%s::uuid[])""",
+            (REFERENCIA_DE_PRUEBA,
+             [str(escenario.convocable), str(escenario.sin_consentimiento)]))
+        auditoria = cur.fetchall()
+    if len(auditoria) != 1 or str(auditoria[0]["id_persona"]) != str(escenario.convocable):
+        raise Falla(f"tenía que dejar una fila, de la convocable, y dejó {len(auditoria)}")
+    fila = auditoria[0]
+    if (fila["motivo"], fila["sistema"], fila["actor_email"]) != (
+            "seleccion_cuali", "coloquio", ACTOR_DE_PRUEBA):
+        raise Falla(f"la auditoría quedó como {fila['motivo']}/{fila['sistema']}/"
+                    f"{fila['actor_email']}")
+    for sql, parametros, esperado in (
+            ("select * from identificar_candidatos(%s::uuid[], null, %s)",
+             ([str(escenario.convocable)], ACTOR_DE_PRUEBA), "referencia"),
+            ("select * from identificar_candidatos(%s::uuid[], %s, null)",
+             ([str(escenario.convocable)], REFERENCIA_DE_PRUEBA), "actor"),
+            ("select * from identificar_candidatos("
+             "array(select gen_random_uuid() from generate_series(1, 201)), %s, %s)",
+             (REFERENCIA_DE_PRUEBA, ACTOR_DE_PRUEBA), "tope es 200")):
+        error = _niega(coloquio, sql, parametros)
+        if esperado not in error:
+            raise Falla(f"sin {esperado} no dio el error esperado: {error}")
+    return ("solo la convocable · una fila seleccion_cuali/coloquio con su sesión · "
+            "sin referencia, sin actor o con 201: error")
+
+
+def identificar_no_habilita_el_contacto(coloquio, escenario, dueno):
+    """Identificar es la etapa anterior: `contacto_para_convocatoria()` sigue
+    exigiendo una convocatoria declarada (DoD 6 del addendum)."""
+    with coloquio.cursor() as cur:
+        cur.execute("select * from identificar_candidatos(%s::uuid[], %s, %s)",
+                    ([str(escenario.candidata)], REFERENCIA_DE_PRUEBA,
+                     ACTOR_DE_PRUEBA))
+        if len(cur.fetchall()) != 1:
+            raise Falla("no identificó a la candidata sin convocatoria")
+    error = _niega(coloquio,
+                   "select contacto_para_convocatoria(%s, 'celular', p_actor => %s)",
+                   (escenario.candidata, ACTOR_DE_PRUEBA))
+    if "no hay motivo para leer su contacto" not in error:
+        raise Falla(f"rechazó por otro motivo: {error}")
+    return "identificada para elegir · el contacto sigue exigiendo convocatoria"
+
+
 # ════════════════════════════════════════════════════════════════════
 #  La batería
 # ════════════════════════════════════════════════════════════════════
@@ -820,6 +1009,7 @@ SIN_DATOS = (
     ("lee la superficie del contrato", lee_la_superficie),
     ("no lee las tablas", no_lee_las_tablas),
     ("no resuelve atributos por su cuenta", no_resuelve_atributos_por_su_cuenta),
+    ("lee el catálogo de atributos", lee_el_catalogo_de_atributos),
 )
 
 # Con escenario: necesitan datos de prueba, así que escriben.
@@ -843,6 +1033,11 @@ CON_DATOS = (
     ("la cascada de baja llega y se cierra", la_cascada_llega_y_se_cierra),
     ("no confirma el borrado de otro", no_confirma_por_otro),
     ("un rol sin registrar no consigue nada", un_rol_sin_registrar_no_consigue_nada),
+    ("la búsqueda por atributo respeta el gate", la_busqueda_por_atributo_respeta_el_gate),
+    ("los atributos son solo del gate", los_atributos_son_solo_del_gate),
+    ("la ficha del candidato no identifica", la_ficha_del_candidato_no_identifica),
+    ("identificar queda auditado por sesión", identificar_queda_auditado_por_sesion),
+    ("identificar no habilita el contacto", identificar_no_habilita_el_contacto),
 )
 
 # Los de `CON_DATOS` que no escriben: en `--solo-lectura` corren sin
@@ -851,7 +1046,9 @@ CORREN_SIN_ESCENARIO = (una_fila_por_clave,)
 
 # Cómo se llama a cada uno de `CON_DATOS`.
 _SOLO_COLOQUIO_Y_ESCENARIO = (solo_ve_a_quien_consintio, un_canal_por_vez,
-                              la_declaracion_tiene_tope)
+                              la_declaracion_tiene_tope,
+                              la_busqueda_por_atributo_respeta_el_gate,
+                              los_atributos_son_solo_del_gate)
 
 MOTIVO_INTRUSO_EN_CLOUD_SQL = (
     "no verificable contra Cloud SQL (toda conexión exige credenciales, y el "

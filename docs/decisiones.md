@@ -5086,3 +5086,131 @@ presentación. Esquema en `boveda/0033`.
 `panelistas.js`. Pruebas:
 `functions/tests/test_respondentes_y_busqueda_por_origen.py`,
 `functions/tests/test_pantallas_respondentes_y_busqueda.py`.
+
+## D84 · COLOQUIO ve nombre y contacto antes de convocar, por sesión, auditado y sobre un conjunto tildado; filtra por cualquier atributo en la base
+
+**El pedido.** `specs/ADDENDUM_paneles_superficie_cuali.md` (R5.9 a R5.13),
+que pide COLOQUIO para su pantalla de selección (sus R1.14 a R1.17). La
+superficie de la Fase 5 le daba lo justo para convocar: quién tiene
+consentimiento, con cuatro segmentadores fijos, y el contacto de quien ya
+tiene una convocatoria declarada. La selección pide cuatro cosas más:
+
+- filtrar por cualquier atributo del catálogo;
+- mostrar los atributos como columnas;
+- abrir una ficha;
+- ver de quién se trata antes de decidir.
+
+Esquema en `boveda/0034`.
+
+### La decisión: la identidad está disponible en la selección
+
+**Qué se afloja.** La Fase 5 decía que el contacto no se mira: se usa al
+convocar. `contacto_para_convocatoria()` se niega sin una convocatoria
+declarada («no hay motivo para leer su contacto»).
+
+**Por qué.** En cualitativo se eligen doce personas entre cientos, y el
+coordinador de campo decide a quién llamar viendo quién es. Con códigos
+opacos esa tarea no se puede hacer. Por eso nombre, celular y correo están
+disponibles en la etapa de selección, antes de declarar la convocatoria.
+
+**Lo que no se afloja.** Son tres límites y los tres viven en la función
+(`identificar_candidatos()`), no en la interfaz de COLOQUIO:
+
+1. **Por sesión, no una búsqueda libre.** `p_referencia`, el id de la
+   sesión de COLOQUIO, es obligatoria y queda en el contexto de cada fila de
+   auditoría. No es una forma de traducir cualquier uuid a una persona.
+2. **Auditado, una fila por persona.** Se escribe en `reidentificacion`
+   antes de devolver, solo por quien efectivamente se devuelve. Cada fila
+   lleva:
+   - el motivo propio `seleccion_cuali`, distinto de `convocatoria`, para
+     separar en una revisión «lo miró para elegir» de «lo miró para
+     llamar»;
+   - el sistema, que sale de la conexión;
+   - el actor humano, que es obligatorio.
+3. **Una acción sobre un conjunto tildado, no una carga de página.** Tope
+   de 200 ids por llamada.
+
+Si COLOQUIO termina llamándola con doscientos ids en cada búsqueda, la
+auditoría lo registra todo y deja de señalar nada. Lo que lo muestra es el
+volumen de `seleccion_cuali` por usuario y por sesión, comparado con el
+tamaño de las listas cortas (§7 del addendum). Esa es la métrica que dice si
+esta decisión envejeció bien.
+
+**El gate no se toca.** Solo se identifica a quien está en
+`v_persona_convocable` con `contacto_participacion` vigente. Eso deja afuera
+a la lista negra (D80), a quien se dio de baja y a quien no consintió el
+contacto. Los que faltan no vienen, y no se dice por qué.
+`contacto_para_convocatoria()` no cambia: sigue exigiendo una convocatoria
+declarada y sigue siendo la vía del momento de convocar.
+
+### El resto de la superficie
+
+- **`v_atributo_catalogo`**: los atributos activos con sus categorías
+  activas, en orden. Es vocabulario, no dato de persona, y no tiene
+  `id_persona`. Expone `es_especial`: si la bóveda no manda la marca, el
+  consumidor no puede respetarla.
+- **`atributos_de_personas(ids, momento)`**: `f_atributo_persona` acotada a
+  un conjunto, con el gate y con tope de 500.
+  - Conserva `momento`, porque los valores envejecen (0010).
+  - Devuelve solo las filas que existen. Un atributo sin valor no viene
+    nulo: no viene.
+- **`f_persona_convocable_filtrada(finalidad, filtros, límite)`**: el
+  filtro por atributo ocurre en la base. Parte del gate, con la finalidad
+  pedida, y achica el conjunto de a un atributo.
+  - **Operadores:** `en` para categóricos y derivados; `min` y `max` para
+    numéricos, y para los derivados con valor numérico (la edad, como pide
+    el ejemplo del addendum); `desde` y `hasta` para fechas.
+  - **Combinación:** las categorías del mismo atributo se suman (o); los
+    atributos distintos se cruzan (y).
+  - **Un atributo cargado** se pregunta con un `exists` correlacionado sobre
+    `persona_atributo`, con la vigencia de la 0010. Es `exists` y no `join`:
+    un `join` que multiplica filas es la lección de la 0021.
+  - **Un derivado** (edad, tramo) no vive en `persona_atributo`: se calcula
+    de la fecha de nacimiento o de una edad declarada que envejece. Se
+    pregunta a `f_atributo_persona`, que es la única implementación de esa
+    precedencia. La función no nombra a la edad ni al tramo: decide por el
+    tipo del atributo.
+  - **Lo desconocido es error**, no un filtro ignorado: una clave fuera del
+    catálogo, un atributo inactivo, un operador que no corresponde al tipo,
+    una categoría que no existe o una finalidad desconocida. Un filtro que
+    no se aplicó devuelve más gente de la pedida, que es la peor falla de
+    un muestreo. La categoría inexistente va más allá de lo que pide el
+    addendum, por la misma razón: «terciaria» por «terciario» no puede dar
+    cero personas sin que nadie lo diga.
+  - **Devuelve** `(id_persona, finalidades)` y nada más. El límite va de 1
+    a 5000.
+- **`ficha_candidato(id, momento)`**: estado, enrolamiento, atributos con
+  procedencia y marca especial, y paneles activos. No trae ningún dato
+  identificatorio y no deja registro de reidentificación. Fuera de la vista
+  responde no encontrado.
+
+**Privilegios.** Cada función nace con `execute` a `public`: primero
+`revoke`, después `grant` a `coloquio_app`. Las cuatro son
+`security definer`, como `f_persona_convocable`, porque el consumidor no ve
+las tablas. `verificar_coloquio.py` suma las cinco a su lista blanca y seis
+chequeos nuevos: pasó de 18 a 24. Al escenario se sumó una persona que
+consintió y que nadie convocó ni declaró. La usa solo el chequeo de
+«identificar no habilita el contacto», porque otro chequeo declara la
+convocatoria de la persona que se usaba antes, y el resultado no puede
+depender del orden en que corran.
+
+**Latencia medida** (cluster de pruebas, 20.000 convocables, caché
+caliente):
+
+| Pedido | Tiempo |
+|---|---|
+| Un atributo | ≈ 0,45 s |
+| Tres atributos, uno derivado | ≈ 0,6 s |
+| Los atributos de 200 personas | ≈ 0,6 s |
+
+Casi todo el tiempo se va en evaluar `v_persona_convocable`, que ya trae la
+demografía, y no en el filtro. Es el punto de partida de la segunda métrica
+del §7.
+
+**Retención.** `reidentificacion` crece con filas cortas. Conviene fijarle
+retención antes de que importe; queda anotado y no entra acá.
+
+**Dónde vive.** `db/boveda/0034_superficie_seleccion_cuali.sql`,
+`functions/panel_api/auditoria.py` (`MOTIVOS_REIDENTIFICACION`),
+`esquema.py`, `scripts/verificar_coloquio.py`. Pruebas:
+`functions/tests/test_superficie_seleccion_cuali.py`.
