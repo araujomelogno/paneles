@@ -1,10 +1,10 @@
 """R4.5 — Envío de encuestas por WhatsApp Flow; D85 — mensajes de una
-encuesta y su webhook de estados.
+encuesta.
 
-**El sistema envía y escucha estados, nada más.** No recibe respuestas, no
-crea ni edita Flows ni plantillas. Desde D85 (R-CF.7) recibe el webhook de
-**estados** de Meta —entregado, leído, fallido—, firmado y verificado
-(`firma_valida`); los mensajes entrantes que traiga se ignoran. El Flow y la plantilla se arman en Meta y acá se
+**El sistema solo envía.** No recibe respuestas ni estados de entrega, no
+crea ni edita Flows ni plantillas. (Los estados de entrega por webhook,
+R-CF.7, quedaron para una versión posterior: el envío guarda el id que
+devuelve Meta para poder sumarlos.) El Flow y la plantilla se arman en Meta y acá se
 referencian por id; el analista baja las respuestas de Meta y las ingesta por
 el flujo de siempre. Eso deja el modelo de ingesta sin tocar, que es
 deliberado: WhatsApp es un canal de envío, no una plataforma de recolección.
@@ -439,60 +439,3 @@ def enviar_plantilla(destino, plantilla, idioma, textos=None, id_persona=None,
     mensajes = respuesta.get("messages") or [{}]
     return {"message_id": mensajes[0].get("id"), "respuesta": respuesta}
 
-
-# ── R-CF.7 · El webhook de estados ───────────────────────────────────
-#
-# Meta le avisa al sistema cuándo un mensaje se entregó, se leyó o falló. Es
-# una URL pública, así que lo que la protege es la firma: Meta firma el cuerpo
-# **crudo** con el secreto de la app (`X-Hub-Signature-256`). Sin secreto
-# configurado no se acepta nada —fallar cerrado—: un webhook sin firma
-# verificable dejaría a cualquiera marcar mensajes como leídos.
-
-def config_webhook(entorno=None):
-    entorno = os.environ if entorno is None else entorno
-    return {"verify_token": entorno.get("WHATSAPP_VERIFY_TOKEN", "").strip(),
-            "app_secret": entorno.get("WHATSAPP_APP_SECRET", "").strip()}
-
-
-def verificar_suscripcion(modo, token, desafio, entorno=None):
-    """El GET con que Meta da de alta el webhook. Devuelve el desafío si el
-    token coincide; `None` si no (o si no hay token configurado)."""
-    import hmac
-
-    esperado = config_webhook(entorno)["verify_token"]
-    if modo == "subscribe" and esperado and token \
-            and hmac.compare_digest(str(token), esperado):
-        return desafio
-    return None
-
-
-def firma_valida(cuerpo_crudo, firma, entorno=None):
-    """¿El cuerpo viene de Meta? Compara `X-Hub-Signature-256` con el HMAC del
-    cuerpo crudo. Sin secreto configurado, **no**."""
-    import hashlib
-    import hmac
-
-    secreto = config_webhook(entorno)["app_secret"]
-    if not secreto or not firma or not str(firma).startswith("sha256="):
-        return False
-    calculada = hmac.new(secreto.encode(), cuerpo_crudo or b"",
-                         hashlib.sha256).hexdigest()
-    return hmac.compare_digest(str(firma)[len("sha256="):], calculada)
-
-
-def estados_del_webhook(cuerpo):
-    """`[{id, estado, error}]` de los estados que trae un aviso de Meta. Lo
-    que no es un estado (mensajes entrantes, otros campos) se ignora."""
-    salida = []
-    for entrada in (cuerpo or {}).get("entry") or []:
-        for cambio in entrada.get("changes") or []:
-            for estado in (cambio.get("value") or {}).get("statuses") or []:
-                errores = estado.get("errors") or []
-                salida.append({
-                    "id": estado.get("id"),
-                    "estado": (estado.get("status") or "").lower(),
-                    "error": "; ".join(
-                        (e.get("title") or e.get("message") or str(e.get("code")))
-                        for e in errores) or None,
-                })
-    return salida

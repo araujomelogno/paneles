@@ -5295,8 +5295,8 @@ sabía desde la plataforma a quién se le escribió.
   El registro (`envio`) es una fila por persona y por envío: cuándo, quién
   lo lanzó, aceptado con el id de Meta o fallido con el motivo. Sin PII: la
   persona va por id, y una baja se lleva sus filas.
-- **Los estados de entrega llegan por un webhook propio (R-CF.7)**:
-  `whatsappwebhook`, una función aparte de `api`, porque la firma
+- **Los estados de entrega llegan por un webhook propio (R-CF.7)**
+  —**diferido en D86**, antes de desplegarse—: `whatsappwebhook`, una función aparte de `api`, porque la firma
   `X-Hub-Signature-256` se calcula sobre el cuerpo **crudo**. Falla
   cerrado: sin `WHATSAPP_APP_SECRET` no se acepta ningún aviso. Un estado
   **no retrocede** (los avisos llegan desordenados): entregado y leído solo
@@ -5318,9 +5318,50 @@ sesión y saber en tiempo real quién respondió.
 **Dónde vive.** `db/boveda/0035_convocatoria_y_mensajes.sql`,
 `functions/panel_api/mensajes.py` (nuevo), `encuestas.py`
 (`cambiar_estado`, `historial_de_estado`, `agregar_panelistas`,
-`url_alchemer`), `whatsapp.py` (botón de URL, envío con parámetros,
-webhook), `diferida.py`, `correo.py`, `auth.py`, `ruteo.py`,
-`functions/main.py` (`whatsappwebhook`, dos secretos),
+`url_alchemer`), `whatsapp.py` (botón de URL, envío con parámetros),
+`diferida.py`, `correo.py`, `auth.py`, `ruteo.py`,
 `web/public/js/paginas/encuestas.js`, `api.js`, `demo.js`. Pruebas:
 `functions/tests/test_convocatoria_y_mensajes.py`,
 `functions/tests/test_pantallas_convocatoria_y_mensajes.py`.
+
+## D86 · Los estados de entrega por webhook (R-CF.7) quedan para una versión posterior
+
+**El motivo.** La URL de devolución de llamada de la app de Meta ya la usa
+otro sistema, y Meta admite **una sola** por app. Dar de alta
+`whatsappwebhook` dejaba sin avisos a ese sistema. Se decidió antes del
+primer despliegue de D85.
+
+- **Sale lo que no se va a desplegar**:
+  - la función `whatsappwebhook` de `main.py`;
+  - los secretos `WHATSAPP_VERIFY_TOKEN` y `WHATSAPP_APP_SECRET` de
+    `SECRETOS`;
+  - lo que los leía en `whatsapp.py` (`config_webhook`,
+    `verificar_suscripcion`, `firma_valida`, `estados_del_webhook`);
+  - `mensajes.aplicar_estados`, con sus pruebas.
+
+  `test_main.py` exige que todo lo que el código lee esté declarado, así
+  que dejar el código con los secretos fuera de `SECRETOS` no era una
+  opción. La implementación está en el commit `f07b009` (PR #74): con la
+  firma sobre el cuerpo crudo, falla cerrado y los estados sin retroceder.
+- **Un envío queda `aceptado` o `fallido`.** «Aceptado» quiere decir que
+  Meta (o Workspace) lo tomó, no que llegó. La pantalla muestra *Enviado* o
+  *Falló*.
+- **Lo que queda para sumarlo sin perder nada**:
+  - `envio.id_mensaje_meta`, con su índice único, guardado en cada envío
+    aceptado;
+  - el `check` de `envio.estado`, que ya admite `entregado` y `leido`;
+  - `mensajes.RECIBIDOS`, que ya los cuenta como recibidos.
+
+  Sumarlos es una función nueva y un alta en Meta, sin migración. Los envíos
+  hechos mientras tanto quedan en `aceptado`: Meta no reenvía estados
+  viejos.
+- **Para retomarlo** hay tres caminos, a evaluar entonces: liberar la URL
+  de la app, que el sistema que la usa reenvíe los avisos de estado, o una
+  segunda app de Meta suscrita a la misma cuenta de WhatsApp Business con
+  su propia URL.
+
+**Dónde vive.** `functions/main.py`, `functions/panel_api/whatsapp.py`,
+`mensajes.py`, `web/public/js/paginas/encuestas.js`, `demo.js`,
+`docs/DESPLIEGUE - convocatoria y mensajes.md`. Pruebas:
+`test_convocatoria_y_mensajes.py` (`test_el_envio_queda_aceptado_o_fallido_y_guarda_el_id_de_meta`,
+`test_no_hay_funcion_de_webhook_que_desplegar`).

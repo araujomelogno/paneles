@@ -3065,10 +3065,10 @@ function pintarAgregados(salida) {
 
 /* R-CF.4 — los mensajes de la encuesta. */
 const ETIQUETA_DE_CANAL = { whatsapp: 'WhatsApp', correo: 'Correo' };
+/* Un envío queda aceptado (Meta o Workspace lo tomaron) o fallido. Entregado
+   y leído llegarían por el webhook de Meta (R-CF.7), que quedó diferido. */
 const ESTADO_DE_ENVIO = {
-  aceptado: ['Enviado', ''],
-  entregado: ['Entregado', 'badge-on'],
-  leido: ['Leído', 'badge-on'],
+  aceptado: ['Enviado', 'badge-on'],
   fallido: ['Falló', 'badge-off'],
 };
 const puedeEnviarMensajes = () => ['admin', 'operaciones'].includes(contexto.actor?.rol);

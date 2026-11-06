@@ -10,7 +10,8 @@ modo demo, en Chromium.
   guardar igual es una casilla dentro del modal (R-CF.4).
 * El envío muestra la vista previa con los excluidos y el reenvío, y termina
   con su resumen (R-CF.5).
-* Cada panelista muestra los mensajes que recibió y cómo le fue (R-CF.6/7).
+* Cada panelista muestra los mensajes que recibió: enviado o falló (R-CF.6;
+  entregado y leído llegarían con R-CF.7, diferido).
 """
 
 import pytest
@@ -97,7 +98,7 @@ def test_el_detalle_muestra_la_url_los_mensajes_y_como_le_fue_a_cada_uno(pagina)
     assert "Mensajes" in pagina.locator("#participacion th").all_text_contents()
     estados = pagina.locator("#participacion [data-estado-envio]")
     vistos = {e.get_attribute("data-estado-envio") for e in estados.all()}
-    assert {"leido", "entregado", "fallido", "aceptado"} <= vistos
+    assert vistos == {"aceptado", "fallido"}
     # Cerrada: no se agregan panelistas, y el envío no se ofrece.
     assert pagina.locator("#agregar-panelistas").count() == 0
     assert pagina.locator("[data-enviar-mensaje]").first.is_disabled()
