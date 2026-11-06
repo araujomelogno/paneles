@@ -12,13 +12,10 @@ aceptación de la spec, requisito por requisito:
 * R-CF.4 — mensajes: plantilla aprobada, parámetros, aviso de URL distinta.
 * R-CF.5 / R-CF.6 — los cuatro públicos, la vista previa, el envío en
   lotes, el registro, nunca dos veces, y el primero convoca.
-* R-CF.7 — el webhook: firma, estados, sin retroceder.
+* R-CF.7 (diferido) — los estados de entrega no llegan todavía: el envío
+  queda aceptado o fallido y guarda el id de Meta para sumarlos después.
 * R-CF.8 — el canal correo.
 """
-
-import hashlib
-import hmac
-import json
 
 import pytest
 
@@ -32,8 +29,7 @@ from conftest import consentimientos
 
 URL = "https://survey.alchemer.com/s3/1234567/estudio?pid="
 ENTORNO = {"WHATSAPP_TOKEN": "t", "WHATSAPP_PHONE_NUMBER_ID": "111",
-           "WHATSAPP_WABA_ID": "222", "WHATSAPP_APP_SECRET": "secreto-de-la-app",
-           "WHATSAPP_VERIFY_TOKEN": "token-de-alta"}
+           "WHATSAPP_WABA_ID": "222"}
 
 
 def _plantilla(nombre, url=URL + "{{1}}", estado="APPROVED", cuerpo="Hola {{1}}, "
@@ -455,45 +451,38 @@ def test_enviar_es_de_operaciones_y_admin(ctx, actor, meta, ola):
 
 
 # ════════════════════════════════════════════════════════════════════
-#  R-CF.7 · El webhook de estados
+#  R-CF.7 (diferido) · Sin estados de entrega, con el id de Meta
 # ════════════════════════════════════════════════════════════════════
 
-def _aviso(*estados):
-    return {"entry": [{"changes": [{"value": {"statuses": [
-        {"id": i, "status": s, **({"errors": [{"title": "Número no existe"}]}
-                                   if s == "failed" else {})}
-        for i, s in estados]}}]}]}
-
-
-def test_el_webhook_verifica_la_firma_y_falla_cerrado(meta, monkeypatch):
-    cuerpo = json.dumps(_aviso(("wamid.1", "delivered"))).encode()
-    firma = "sha256=" + hmac.new(b"secreto-de-la-app", cuerpo, hashlib.sha256).hexdigest()
-    assert whatsapp.firma_valida(cuerpo, firma)
-    assert not whatsapp.firma_valida(cuerpo + b" ", firma)
-    assert not whatsapp.firma_valida(cuerpo, None)
-    monkeypatch.setenv("WHATSAPP_APP_SECRET", "")
-    assert not whatsapp.firma_valida(cuerpo, firma)
-    # El alta: solo con el token.
-    assert whatsapp.verificar_suscripcion("subscribe", "token-de-alta", "42") == "42"
-    assert whatsapp.verificar_suscripcion("subscribe", "otro", "42") is None
-
-
-def test_los_estados_avanzan_y_no_retroceden(ctx, actor, meta, ola):
+def test_el_envio_queda_aceptado_o_fallido_y_guarda_el_id_de_meta(ctx, actor, meta, ola):
+    """Sin webhook, nada pasa a entregado ni leído. Cada aceptado guarda el
+    id que devolvió Meta: es lo que deja sumar los estados más adelante."""
     mensaje = _mensaje(ctx, actor, ola["encuesta"]["id"])
+    falla = ola["ids"][0]
+    celular = db.una(ctx.boveda, "select celular from persona where id_persona = %s",
+                     (falla,))["celular"]
+    meta.rechazar.add(preferencias.normalizar_celular(celular))
     _enviar(ctx, actor, ola["encuesta"]["id"], mensaje["id"], "todos")
-    estados = whatsapp.estados_del_webhook(_aviso(
-        ("wamid.1", "delivered"), ("wamid.1", "read"), ("wamid.1", "delivered"),
-        ("wamid.2", "failed"), ("wamid.3", "sent"), ("wamid.no-es-nuestro", "read")))
-    assert mensajes.aplicar_estados(ctx.boveda, estados) == 3
-    por_id = {f["id_mensaje_meta"]: f for f in db.todas(
-        ctx.boveda, "select id_mensaje_meta, estado, error from envio")}
-    assert por_id["wamid.1"]["estado"] == "leido"
-    assert por_id["wamid.2"]["estado"] == "fallido"
-    assert por_id["wamid.2"]["error"] == "Número no existe"
-    assert por_id["wamid.3"]["estado"] == "aceptado"
-    # Un fallido vuelve a «No enviado aún».
-    _, previa = _envio(ctx, actor, ola["encuesta"]["id"], mensaje["id"], "no_enviado", True)
-    assert previa["recibiran"] == 1
+    filas = db.todas(ctx.boveda, """select id_persona, estado, id_mensaje_meta
+                                      from envio where encuesta_mensaje_id = %s""",
+                     (mensaje["id"],))
+    assert {f["estado"] for f in filas} == {"aceptado", "fallido"}
+    for f in filas:
+        if str(f["id_persona"]) == falla:
+            assert f["estado"] == "fallido" and f["id_mensaje_meta"] is None
+        else:
+            assert f["estado"] == "aceptado" and f["id_mensaje_meta"]
+    assert len({f["id_mensaje_meta"] for f in filas if f["id_mensaje_meta"]}) == len(filas) - 1
+
+
+def test_no_hay_funcion_de_webhook_que_desplegar():
+    """R-CF.7 quedó diferido: la URL de callback de la app de Meta la usa
+    otro sistema y Meta admite una sola. Ni la función ni sus secretos."""
+    import pathlib
+
+    main = (pathlib.Path(__file__).resolve().parents[1] / "main.py").read_text()
+    for ausente in ("whatsappwebhook", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET"):
+        assert ausente not in main, ausente
 
 
 # ════════════════════════════════════════════════════════════════════

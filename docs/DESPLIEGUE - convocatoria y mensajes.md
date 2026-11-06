@@ -1,17 +1,24 @@
 # Despliegue — convocatoria desde la encuesta: estado, panelistas a mano y mensajes
 
-**Spec:** `specs/SPEC_convocatoria_y_mensajes.md` (R-CF.1 a R-CF.8, P0 y P1) ·
-**Decisión:** D85
+**Spec:** `specs/SPEC_convocatoria_y_mensajes.md` (R-CF.1 a R-CF.8, P0 y P1,
+**menos R-CF.7**) · **Decisiones:** D85 y D86
 **Proyecto:** `gestion-paneles` · **Región:** `southamerica-east1`
 **Precondición:** la bóveda al día hasta la **`0034`** (superficie de
 selección cualitativa, D84), y encuestas y cargas unificadas (D81)
 desplegado.
 
+> **R-CF.7 (estados de entrega por webhook) no entra en este despliegue**
+> (D86). La URL de devolución de llamada de la app de Meta ya la usa otro
+> sistema, y Meta admite una sola. **No se toca la configuración del webhook
+> en Meta.** Los envíos quedan como *Enviado* (aceptado) o *Falló*. Cada
+> envío aceptado guarda el id que devuelve Meta, así que los estados se
+> pueden sumar más adelante sin perder lo enviado.
+
 **Qué cambia:**
 
 | | Bóveda | Semántico | Secret Manager | Meta | Código |
 |---|---|---|---|---|---|
-| | `0035` (aditiva) | nada | 2 secretos nuevos | alta del webhook | backend, frontend, una función nueva |
+| | `0035` (aditiva) | nada | nada | nada | backend y frontend |
 
 - **La `0035`**:
   - `encuesta.url_alchemer`;
@@ -20,23 +27,18 @@ desplegado.
   - `mensaje` como destino de la vía diferida.
 
   No borra ni reescribe datos.
-- **Dos secretos nuevos**, declarados en `SECRETOS` de `functions/main.py`:
-  - `WHATSAPP_VERIFY_TOKEN`: el que se escribe en Meta al dar de alta el
-    webhook;
-  - `WHATSAPP_APP_SECRET`: con él se comprueba la firma de cada aviso.
-
-  **Tienen que existir antes del `firebase deploy`**: un secreto declarado
-  que no existe en Secret Manager hace fallar el despliegue.
-- **Una función nueva**, `whatsappwebhook`: la URL pública a la que Meta
-  manda los estados de entrega.
 - **Un permiso de aplicación nuevo**, `enviar_mensajes` (admin y
   operaciones). No hay que dar de alta a nadie: sale del rol.
 
-**Qué NO cambia:** ningún rol de base, permiso de IAM, cola ni variable de
-`functions/.env`. El envío usa la cola de siempre (`procesaringesta`), las
-credenciales de WhatsApp de R4.5 (`WHATSAPP_TOKEN`,
-`WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_WABA_ID`) y el correo de R-MAIL
-(`SMTP_PASSWORD`).
+**Qué NO cambia:**
+- ningún secreto, rol de base, permiso de IAM, cola ni variable de
+  `functions/.env`;
+- ninguna función nueva: no hay `whatsappwebhook`;
+- la configuración de la app en Meta.
+
+El envío usa la cola de siempre (`procesaringesta`), las credenciales de
+WhatsApp de R4.5 (`WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`,
+`WHATSAPP_WABA_ID`) y el correo de R-MAIL (`SMTP_PASSWORD`).
 
 **COLOQUIO:** nada que avisar. Las tablas nuevas no tienen `grant` y no se
 toca ninguna vista ni función de su superficie. La batería tiene que seguir
@@ -45,8 +47,7 @@ en **24 de 24**.
 ### Orden en una línea
 
 proyecto fijado → `0035` → verificar esquema → token de COLOQUIO y batería
-→ secretos → desplegar → webhook en Meta → envío de prueba → primer envío
-real.
+→ desplegar → envío de prueba → primer envío real.
 
 La `0035` va **antes** del código: el código nuevo lee `url_alchemer` y las
 tablas nuevas, y el anterior no las nota.
@@ -66,8 +67,8 @@ ls db/boveda/0035_convocatoria_y_mensajes.sql
 ```
 
 `gcloud config get-value project` tiene que decir **`gestion-paneles`**. Si
-dice otra cosa, no seguir: todo lo que viene (Secret Manager, tokens,
-despliegue) iría a otro proyecto.
+dice otra cosa, no seguir: todo lo que viene (tokens, despliegue) iría a
+otro proyecto.
 
 ## Paso 2 · Túnel y DSN de la bóveda
 
@@ -102,8 +103,11 @@ Qué hace:
 
 - agrega `encuesta.url_alchemer`;
 - crea `encuesta_estado_cambio`, `encuesta_mensaje` y `envio`, con sus
-  índices y `check`. `envio` tiene un índice único parcial sobre
-  `id_mensaje_meta`, que es por donde el webhook busca;
+  índices y `check`. Dos detalles de `envio` son para R-CF.7 más adelante:
+  - un índice único parcial sobre `id_mensaje_meta`, que es por donde un
+    webhook buscaría cada envío;
+  - el `check` de `estado`, que ya admite `entregado` y `leido`. Hoy solo
+    se escriben `aceptado` y `fallido`;
 - amplía `ingesta_trabajo_destino_check` a `('encuesta', 'carga',
   'mensaje')`;
 - activa RLS en las tres tablas y hace `revoke all … from public`.
@@ -142,90 +146,25 @@ Tiene que terminar en **24 de 24**, sin fallidos. Ninguna tabla nueva tiene
 `grant`, así que la lista blanca no cambia. Si algún chequeo de privilegios
 falla, la `0035` abrió algo de más: no seguir.
 
-## Paso 6 · Los dos secretos
-
-**`WHATSAPP_VERIFY_TOKEN`.** Lo elegimos nosotros: una cadena al azar que
-después se pega en Meta (paso 8).
-
-```bash
-openssl rand -hex 24 | tr -d '\n' \
-  | firebase functions:secrets:set WHATSAPP_VERIFY_TOKEN --data-file - --project="$PROYECTO"
-```
-
-**`WHATSAPP_APP_SECRET`.** Es la clave secreta de la app de Meta:
-**developers.facebook.com → la app → Configuración → Básica → Clave secreta
-de la app → Mostrar**.
-
-```bash
-printf '%s' "<clave secreta de la app>" \
-  | firebase functions:secrets:set WHATSAPP_APP_SECRET --data-file - --project="$PROYECTO"
-```
-
-Comprobar que quedaron, y sin salto de línea (muestra el valor: hacerlo en
-una terminal propia):
-
-```bash
-firebase functions:secrets:access WHATSAPP_VERIFY_TOKEN --project="$PROYECTO" | wc -c   # 48
-firebase functions:secrets:access WHATSAPP_APP_SECRET   --project="$PROYECTO" | wc -c   # 32
-```
-
-Si da uno más, se guardó con salto de línea: repetir. Y que la línea con la
-clave no quede en el historial de la terminal.
-
-Los dos ya están declarados en `SECRETOS` (`test_main.py` falla si falta o
-sobra uno). No hay que tocar código.
-
-## Paso 7 · Desplegar
+## Paso 6 · Desplegar
 
 ```bash
 firebase deploy --only functions,hosting --project="$PROYECTO"
 ```
 
-Despliega también la función nueva, `whatsappwebhook`. Su URL:
+No se crea ninguna función ni se pide ningún secreto nuevo. Comprobar que
+no quedó un webhook desplegado:
 
 ```bash
-gcloud functions describe whatsappwebhook --region="$REGION" --gen2 \
-  --format='value(serviceConfig.uri)'
+gcloud functions list --regions="$REGION" --format='value(name)' | grep -c whatsappwebhook
 ```
 
-Anotarla para el paso 8.
+Tiene que dar **`0`**. Si da `1`, viene de un despliegue de prueba anterior:
+`firebase deploy` ofrece borrarla por no estar en el código, y hay que
+aceptar. Así se borra solo la función de nuestro proyecto, sin tocar lo que
+está configurado en Meta.
 
-**Comprobar la verificación de suscripción** (lo mismo que va a hacer Meta):
-
-```bash
-URL_WEBHOOK="<la URL de arriba>"
-TOKEN="$(firebase functions:secrets:access WHATSAPP_VERIFY_TOKEN --project="$PROYECTO")"
-curl -s "$URL_WEBHOOK?hub.mode=subscribe&hub.verify_token=$TOKEN&hub.challenge=hola"; echo
-curl -s -o /dev/null -w '%{http_code}\n' "$URL_WEBHOOK?hub.mode=subscribe&hub.verify_token=otro&hub.challenge=hola"
-curl -s -o /dev/null -w '%{http_code}\n' -X POST "$URL_WEBHOOK" -d '{}'
-```
-
-- el primero devuelve `hola`;
-- el segundo, `403`: el token no coincide;
-- el tercero, `403`: un aviso sin firma no entra.
-
-## Paso 8 · El webhook en Meta (R-CF.7)
-
-**Antes de tocar nada, ver si la app ya tiene un webhook** (es una pregunta
-abierta de la spec). Una app de Meta tiene **una sola** URL de callback: si
-ya apunta a otro sistema, cambiarla lo deja sin avisos. En ese caso, no
-seguir y decidir con quien lo use.
-
-**developers.facebook.com → la app → WhatsApp → Configuración → Webhook →
-Editar:**
-
-- **URL de devolución de llamada:** la URL de `whatsappwebhook`.
-- **Token de verificación:** el valor de `WHATSAPP_VERIFY_TOKEN`.
-- **Verificar y guardar.** Meta hace el GET del paso 7. Si falla, mirar el
-  log de la función.
-
-Después, en **Campos del webhook**, suscribir **`messages`**: los estados de
-entrega (`sent`, `delivered`, `read`, `failed`) llegan por ese campo.
-
-Sin el webhook todo funciona igual, salvo R-CF.7: los envíos quedan en
-«Enviado» (aceptado por Meta) y nunca pasan a «Entregado» o «Leído».
-
-## Paso 9 · Envío de prueba (antes del primer envío real)
+## Paso 7 · Envío de prueba (antes del primer envío real)
 
 Lo pide la spec (§11): dos o tres números del equipo, **antes** de mandarle
 nada a un panelista.
@@ -254,25 +193,29 @@ nada a un panelista.
       persona al final de la URL. Se ve en la barra del navegador:
       `?pid=<uuid>`.
 - [ ] En la sección Convocatoria, cada persona muestra el mensaje en
-      **Enviado** y, al rato, en **Entregado** o **Leído** (el webhook).
+      **Enviado**. No pasa a «Entregado» ni «Leído»: eso es R-CF.7, que
+      está diferido. Que llegó se comprueba en el teléfono.
 - [ ] Responder la encuesta, bajar el SAV de Alchemer y comprobar que el
       `id_persona` **vuelve en una columna**. Es la pregunta abierta que
       bloquea el primer campo real: si no vuelve solo, hace falta una
       pregunta oculta en Alchemer que tome el parámetro.
 
-Por SQL, lo mismo:
+Por SQL, cada envío aceptado tiene que tener su id de Meta: es lo que deja
+sumar los estados más adelante.
 
 ```sql
 select m.nombre, e.estado, e.id_mensaje_meta is not null as con_id_meta,
-       e.error, e.enviado_en, e.actualizado_en
+       e.error, e.enviado_en
   from envio e join encuesta_mensaje m on m.id = e.encuesta_mensaje_id
  order by e.id desc limit 10;
 ```
 
+`estado = 'aceptado'` con `con_id_meta = t`, o `fallido` con su `error`.
+
 Al terminar, la encuesta de prueba se puede borrar (**Borrar la
 encuesta…**): sus mensajes y su registro de envíos se van con ella.
 
-## Paso 10 · El correo (R-CF.8)
+## Paso 8 · El correo (R-CF.8)
 
 Usa el SMTP de Workspace de R-MAIL, sin configuración nueva. Para probarlo,
 un segundo mensaje en la encuesta de prueba, canal **Correo**, con
@@ -280,7 +223,8 @@ un segundo mensaje en la encuesta de prueba, canal **Correo**, con
 y que el enlace es la URL de Alchemer con el `id_persona`.
 
 Solo lo reciben quienes aceptaron el correo como canal: quien aceptó solo
-WhatsApp queda afuera, con ese motivo en la vista previa.
+WhatsApp queda afuera, con ese motivo en la vista previa. Un correo
+aceptado no tiene id de Meta (`con_id_meta = f`): es lo esperado.
 
 ---
 
@@ -291,7 +235,7 @@ WhatsApp queda afuera, con ese motivo en la vista previa.
 ```sql
 select encuesta_mensaje_id, id_persona, count(*)
   from envio
- where estado in ('aceptado', 'entregado', 'leido')
+ where estado = 'aceptado'
  group by 1, 2 having count(*) > 1;
 ```
 
@@ -307,9 +251,9 @@ select error, count(*) from envio where estado = 'fallido'
  group by 1 order by 2 desc limit 20;
 ```
 
-**El webhook**, en el log de `whatsappwebhook`: líneas
-`[webhook] estados=… actualizados=…`, y ninguna `aviso rechazado`. Si
-aparecen rechazados, el `WHATSAPP_APP_SECRET` no es el de la app.
+«Aceptado» es que Meta tomó el mensaje, no que llegó. Sin R-CF.7, un número
+que Meta acepta y después no entrega no se ve desde el sistema: para eso
+está el panel de la cuenta de WhatsApp en Meta.
 
 **El límite diario.** La spec deja abierto cuál es el límite de
 destinatarios del número de WhatsApp. Con un envío de más de mil personas,
@@ -331,14 +275,14 @@ el patrón más barato, y el sistema ya lo permite.
 
 ---
 
-## Preguntas abiertas que siguen abiertas
+## Preguntas abiertas
 
 | Pregunta | Quién | ¿Bloquea? |
 |---|---|---|
-| ¿La app de Meta ya tiene un webhook dado de alta? | Ingeniería | Paso 8 |
+| ¿El `id_persona` vuelve como columna en el SAV de Alchemer, o hace falta una pregunta oculta? | Campo | **Sí, para el primer campo real** (paso 7) |
 | ¿Cuál es el límite diario de destinatarios del número de WhatsApp? | Operaciones | No |
-| ¿El `id_persona` vuelve como columna en el SAV de Alchemer, o hace falta una pregunta oculta? | Campo | **Sí, para el primer campo real** (paso 9) |
 | ¿Hacen falta más variables de texto que el nombre del panelista y el de la encuesta? | Campo | No |
+| ¿Cómo se reciben los estados de entrega, si la URL de callback de la app la usa otro sistema? | Ingeniería | No: R-CF.7 diferido (D86) |
 
 ---
 
@@ -349,7 +293,7 @@ source scripts/pg_pruebas.sh
 cd functions && python3 -m pytest -q
 ```
 
-- `tests/test_convocatoria_y_mensajes.py` (29 pruebas):
+- `tests/test_convocatoria_y_mensajes.py`:
   - el estado: una encuesta de carga se reabre, queda registrado y se lee
     por la ruta del historial; cerrada o en borrador no envía;
   - agregar panelistas: una lista mezclada, línea por línea; cerrada
@@ -364,7 +308,9 @@ cd functions && python3 -m pytest -q
   - el reintento de un lote no reenvía, y no se lanzan dos envíos a la vez;
   - enviar es de operaciones y admin;
   - el primer mensaje convoca y los siguientes no;
-  - el webhook: firma, verificación y estados que no retroceden;
+  - el envío queda aceptado o fallido, y cada aceptado guarda su id de
+    Meta;
+  - no hay función de webhook ni sus secretos en `main.py`;
   - el correo, con el canal que cada uno aceptó.
 - `tests/test_pantallas_convocatoria_y_mensajes.py` (5, Chromium): el
   estado desde el listado y su historial, la URL y los mensajes en el
@@ -374,15 +320,14 @@ cd functions && python3 -m pytest -q
   borrar la carga.
 - `tests/test_rutas_con_pantalla.py`: las rutas `R-CF.` se usan desde una
   pantalla.
+- `tests/test_main.py`: `SECRETOS` coincide con lo que el código lee.
 
 ---
 
 ## Volver atrás
 
 **El código:** desplegar la versión anterior. La `0035` puede quedar: el
-código anterior no lee nada de lo que agrega. El webhook en Meta, en ese
-caso, apunta a una función que ya no existe: quitarlo o dejarlo (Meta
-reintenta y desiste).
+código anterior no lee nada de lo que agrega.
 
 **La migración**, si hiciera falta sacarla (borra los mensajes y el
 registro de envíos):
@@ -399,13 +344,3 @@ drop table if exists encuesta_estado_cambio;
 alter table encuesta drop column if exists url_alchemer;
 commit;
 ```
-
-Y los secretos, si no se van a usar:
-
-```bash
-firebase functions:secrets:destroy WHATSAPP_VERIFY_TOKEN --project="$PROYECTO"
-firebase functions:secrets:destroy WHATSAPP_APP_SECRET   --project="$PROYECTO"
-```
-
-Solo después de sacarlos de `SECRETOS`: un secreto declarado que no existe
-hace fallar el despliegue.

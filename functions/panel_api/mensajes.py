@@ -72,7 +72,10 @@ ACEPTADO = "aceptado"
 FALLIDO = "fallido"
 ENTREGADO = "entregado"
 LEIDO = "leido"
-# Lo que cuenta como «ya lo recibió». Un fallido no.
+# Lo que cuenta como «ya lo recibió». Un fallido no. Hoy solo se escriben
+# `aceptado` y `fallido`: entregado y leído llegarían por el webhook de Meta
+# (R-CF.7), diferido. La base ya los admite y cada envío guarda su
+# `id_mensaje_meta`, así que sumarlos no exige migrar ni pierde lo enviado.
 RECIBIDOS = (ACEPTADO, ENTREGADO, LEIDO)
 
 MOTIVOS_DE_EXCLUSION = {
@@ -598,11 +601,8 @@ def _convocar_con_el_primero(conn, encuesta_id, id_persona, mensaje_id=None):
 
 
 # ════════════════════════════════════════════════════════════════════
-#  R-CF.6 / R-CF.7 · El registro, por panelista, y el webhook
+#  R-CF.6 · El registro, por panelista
 # ════════════════════════════════════════════════════════════════════
-
-ESTADOS_DE_META = {"delivered": ENTREGADO, "read": LEIDO, "failed": FALLIDO}
-_ORDEN = {ACEPTADO: 0, ENTREGADO: 1, LEIDO: 2}
 
 
 def envios_por_persona(conn, encuesta_id):
@@ -622,29 +622,3 @@ def envios_por_persona(conn, encuesta_id):
             "error": f["error"]})
     return salida
 
-
-def aplicar_estados(conn, estados):
-    """R-CF.7 — lleva cada envío al estado que informa Meta. No retrocede:
-    los avisos llegan desordenados, y un «entregado» que llega después del
-    «leído» no lo deshace. Un «fallido» manda, salvo sobre uno ya leído."""
-    actualizados = 0
-    for aviso in estados:
-        nuevo = ESTADOS_DE_META.get(aviso.get("estado"))
-        if not nuevo or not aviso.get("id"):
-            continue
-        fila = db.una(conn, "select id, estado from envio where id_mensaje_meta = %s",
-                      (aviso["id"],))
-        if not fila:
-            continue
-        actual = fila["estado"]
-        if nuevo == FALLIDO:
-            if actual == LEIDO:
-                continue
-        elif actual == FALLIDO or _ORDEN.get(nuevo, 0) <= _ORDEN.get(actual, 0):
-            continue
-        actualizados += db.ejecutar(
-            conn, """update envio set estado = %s, error = %s, actualizado_en = now()
-                      where id = %s""",
-            (nuevo, aviso.get("error") if nuevo == FALLIDO else None, fila["id"]))
-    conn.commit()
-    return actualizados

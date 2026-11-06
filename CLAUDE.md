@@ -638,9 +638,12 @@ mensajes por WhatsApp o correo. Lo que no hay que deshacer:
   que no lleva a la `url_alchemer` de la encuesta se avisa **antes de
   guardar** (`409 url_distinta`). En el modal la confirmación es una
   casilla.
-- **El webhook de Meta es su propia función** (`whatsappwebhook`), porque la
-  firma va sobre el cuerpo crudo. Falla cerrado sin `WHATSAPP_APP_SECRET`, y
-  un estado de entrega nunca retrocede.
+- **Los estados de entrega (R-CF.7) están diferidos**: la URL de callback de
+  la app de Meta la usa otro sistema y Meta admite una sola. Un envío queda
+  `aceptado` o `fallido`. Cada aceptado guarda su `id_mensaje_meta` (con
+  índice único) y la base ya admite `entregado` y `leido`: sumarlos es una
+  función nueva, sin migrar. No den de alta un webhook sobre la URL que ya
+  está en uso.
 - **Enviar es `enviar_mensajes`** (admin y operaciones), no `fieldear`.
 
 ## Reglas de negocio que el código debe respetar

@@ -4654,7 +4654,8 @@ const RESULTADOS_DE_AGREGAR_DEMO = {
   en_lista_negra: 'En lista negra', sin_consentimiento: 'Sin consentimiento de contacto',
   formato_invalido: 'Formato inválido',
 };
-const RECIBIDOS_DEMO = ['aceptado', 'entregado', 'leido'];
+// Sin webhook (R-CF.7, diferido) un envío queda aceptado o fallido.
+const RECIBIDOS_DEMO = ['aceptado'];
 
 function cambiarEstadoDemo(encuesta, nuevo, actor = 'demo@equipos.com.uy') {
   if (!['borrador', 'en_campo', 'cerrada'].includes(nuevo)) {
@@ -4932,7 +4933,7 @@ function responderConvocatoriaDemo(metodo, partes, cuerpo, consulta) {
 }
 
 /* La Ola 1 de la semilla: su URL de Alchemer, la invitación que se le mandó
-   y cómo le fue a cada envío (R-CF.6, R-CF.7), y sus cambios de estado. */
+   y cómo le fue a cada envío (R-CF.6), y sus cambios de estado. */
 function sembrarConvocatoriaDemo() {
   const ola = bd.encuestas.find((e) => e.nombre === 'Ola 1 — Consumo de bebidas');
   if (!ola) return;
@@ -4947,7 +4948,7 @@ function sembrarConvocatoriaDemo() {
     parametros: ['nombre_panelista', 'nombre_encuesta'], url_boton: URL_OLA_1,
     asunto: null, cuerpo: null, creado_en: diasAtras(40) };
   bd.mensajes.push(invitacion);
-  const estados = ['leido', 'entregado', 'leido', 'fallido', 'aceptado', 'leido'];
+  const estados = ['aceptado', 'aceptado', 'aceptado', 'fallido', 'aceptado', 'aceptado'];
   bd.participaciones.filter((p) => p.encuesta_id === ola.id).slice(0, estados.length)
     .forEach((p, i) => bd.envios.push({
       encuesta_mensaje_id: invitacion.id, id_persona: p.id_persona, canal: 'whatsapp',
