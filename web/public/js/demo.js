@@ -2283,6 +2283,10 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
           ? [{ motivo: 'otra_carga', etiqueta: 'también vino en otra carga', personas: suyos.length - seVan - reutilizadas }] : []),
       ],
       respuestas_a_borrar: suyos.length, unidades_que_se_borran: 0,
+      // R-HIS.3 — en el doble no hay historial por carga: nada vuelve.
+      respuestas_que_vuelven: 0,
+      resumen_respuestas: `0 respuesta(s) vuelven al valor de una carga anterior · ${
+        suyos.length} se eliminan porque solo estaban en esta carga`,
       irreversible: true, borrado_en_curso: null,
     };
   }

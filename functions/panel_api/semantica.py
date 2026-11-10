@@ -337,6 +337,12 @@ def upsert_respuestas(conn, respuestas):
 
     `respuesta.embedding` no se escribe: mientras exista (hasta la
     semantica/0011), lo completa el trigger de la 0010 desde la unidad.
+
+    R-HIS.1 (D95) — en la **misma sentencia** queda el historial: una fila de
+    `respuesta_carga` por persona, pregunta y carga, con lo que la carga
+    trajo. Es lo que deja borrar una carga volviendo al valor de la anterior
+    en vez de borrar el estudio. Un reproceso no trae carga: actualiza la fila
+    de la carga que escribió la respuesta por última vez.
     """
     pii.validar_sin_pii(
         [{k: v for k, v in r.items() if k != "embedding"} for r in respuestas],
@@ -363,23 +369,42 @@ def upsert_respuestas(conn, respuestas):
     # quien llama ya hizo en esta transacción.
     db.ejecutar(conn, "savepoint antes_de_las_respuestas")
     try:
-        return db.ejecutar(
+        return db.una(
             conn,
             """
-            insert into respuesta
-                   (individuo_id, pregunta_id, valor_texto, texto_embebido,
-                    hash_texto, unidad_id, carga_id)
-            select * from unnest(%s::bigint[], %s::bigint[], %s::text[],
-                                 %s::text[], %s::text[], %s::bigint[],
-                                 %s::bigint[])
-            on conflict (individuo_id, pregunta_id) do update
-                    set valor_texto = excluded.valor_texto,
-                        texto_embebido = excluded.texto_embebido,
-                        hash_texto = excluded.hash_texto,
-                        unidad_id = excluded.unidad_id,
-                        -- R-EU.3: la última carga que la escribió. Un
-                        -- reproceso no trae carga y no la cambia.
-                        carga_id = coalesce(excluded.carga_id, respuesta.carga_id)
+            with escritas as (
+              insert into respuesta
+                     (individuo_id, pregunta_id, valor_texto, texto_embebido,
+                      hash_texto, unidad_id, carga_id)
+              select * from unnest(%s::bigint[], %s::bigint[], %s::text[],
+                                   %s::text[], %s::text[], %s::bigint[],
+                                   %s::bigint[])
+              on conflict (individuo_id, pregunta_id) do update
+                      set valor_texto = excluded.valor_texto,
+                          texto_embebido = excluded.texto_embebido,
+                          hash_texto = excluded.hash_texto,
+                          unidad_id = excluded.unidad_id,
+                          -- R-EU.3: la última carga que la escribió. Un
+                          -- reproceso no trae carga y no la cambia.
+                          carga_id = coalesce(excluded.carga_id, respuesta.carga_id)
+              returning individuo_id, pregunta_id, carga_id, valor_texto,
+                        hash_texto, unidad_id
+            ),
+            historial as (
+              insert into respuesta_carga
+                     (individuo_id, pregunta_id, carga_id, valor_texto,
+                      hash_texto, unidad_id)
+              select individuo_id, pregunta_id, carga_id, valor_texto,
+                     hash_texto, unidad_id
+                from escritas where carga_id is not null
+              on conflict (individuo_id, pregunta_id, carga_id) do update
+                      set valor_texto = excluded.valor_texto,
+                          hash_texto = excluded.hash_texto,
+                          unidad_id = excluded.unidad_id,
+                          escrito_en = now()
+              returning 1
+            )
+            select count(*)::int as n from escritas
             """,
             ([r["individuo_id"] for r in respuestas],
              [r["pregunta_id"] for r in respuestas],
@@ -388,7 +413,7 @@ def upsert_respuestas(conn, respuestas):
              [r["hash_texto"] for r in respuestas],
              [unidad_de[r["hash_texto"]] for r in respuestas],
              [r.get("carga_id") for r in respuestas]),
-        )
+        )["n"]
     except (psycopg.errors.NotNullViolation,
             psycopg.errors.ForeignKeyViolation) as error:
         # No debería pasar con las unidades bloqueadas; si pasa, el error
@@ -552,8 +577,11 @@ def _vecinos_exactos(conn, literal, top_n, ids_individuo):
             select u.id, u.embedding <=> %s::vector as distancia
               from unidad_evidencia u
              where (%s::bigint[] is null
-                    or u.id in (select r.unidad_id from respuesta r
-                                 where r.individuo_id = any(%s::bigint[])))
+                    -- R-HIS: una unidad que solo usa el historial por carga
+                    -- no tiene respuestas que devolver; no ocupa un lugar.
+                    and exists (select 1 from respuesta r where r.unidad_id = u.id))
+                or u.id in (select r.unidad_id from respuesta r
+                             where r.individuo_id = any(%s::bigint[]))
         )
         select id, distancia from candidatas order by distancia, id limit %s
         """,
@@ -810,6 +838,9 @@ def borrar_respuestas_de_estudio(conn, id_persona, ref_estudio):
         """,
         (str(id_persona), str(ref_estudio)),
     )
+    # R-HIS — lo que esa persona respondió en cada carga del estudio también
+    # es su contenido: se va con el retiro.
+    _borrar_historial(conn, [str(id_persona)], ref_estudio)
     borrar_veredictos_huerfanos(conn)
     return {"respuestas_borradas": n}
 
@@ -905,8 +936,133 @@ def borrar_respuestas_de_estudio_de(conn, ids_persona, ref_estudio, carga_id=Non
            and (%s::bigint is null or r.carga_id = %s::bigint)
         """,
         (ids, str(ref_estudio), carga_id, carga_id))
+    if carga_id is None:
+        _borrar_historial(conn, ids, ref_estudio)
     borrar_veredictos_huerfanos(conn)
     return n
+
+
+def _borrar_historial(conn, ids_persona, ref_estudio, carga_id=None):
+    """Las filas de `respuesta_carga` de esas personas en ese estudio (o de
+    todas, sin `ids_persona`), de todas las cargas o de una."""
+    return db.ejecutar(
+        conn,
+        """
+        delete from respuesta_carga h
+         using individuo i, pregunta p, cuestionario c
+         where h.individuo_id = i.id
+           and h.pregunta_id = p.id
+           and p.cuestionario_id = c.id
+           and c.ref_estudio = %s
+           and (%s::uuid[] is null or i.id_persona = any(%s::uuid[]))
+           and (%s::bigint is null or h.carga_id = %s::bigint)
+        """,
+        (str(ref_estudio), ids_persona, ids_persona, carga_id, carga_id))
+
+
+_RESPUESTAS_DE_LA_CARGA = """
+    select r.id, r.individuo_id, r.pregunta_id
+      from respuesta r
+      join individuo i on i.id = r.individuo_id
+      join pregunta p on p.id = r.pregunta_id
+      join cuestionario c on c.id = p.cuestionario_id
+     where c.ref_estudio = %s and r.carga_id = %s
+       and (%s::uuid[] is null or i.id_persona = any(%s::uuid[]))"""
+
+
+def revertir_carga(conn, ref_estudio, carga_id, ids_persona=None):
+    """R-HIS.2 (D95) — lo que borrar una carga le hace al store semántico,
+    para esas personas (o para todas).
+
+    1. Se borra **su** historial (`respuesta_carga` de esa carga).
+    2. Cada respuesta vigente que esa carga escribió por última vez **vuelve**
+       al valor de la carga más reciente que la tiene en su historial (por
+       cuándo se escribió), y su `carga_id` pasa a esa carga.
+    3. Recién lo que no está en ninguna otra carga **se borra**.
+
+    Era el bug de la carga 45: en una encuesta incremental la última carga
+    escribe todo el acumulado, y borrarla borraba el estudio entero aunque las
+    anteriores siguieran existiendo. Las unidades que quedan sin respuestas
+    ni historial las borra el trigger, como siempre. Devuelve `{vuelven,
+    eliminadas}`."""
+    ids = [str(i) for i in ids_persona] if ids_persona is not None else None
+    params = (str(ref_estudio), carga_id, ids, ids)
+    _borrar_capturas(conn, f"select id from ({_RESPUESTAS_DE_LA_CARGA}) x", params)
+    _borrar_historial(conn, ids, ref_estudio, carga_id)
+    vuelven = db.ejecutar(
+        conn,
+        f"""
+        with afectadas as materialized ({_RESPUESTAS_DE_LA_CARGA}),
+        anterior as (
+          select distinct on (h.individuo_id, h.pregunta_id)
+                 h.individuo_id, h.pregunta_id, h.carga_id, h.valor_texto,
+                 h.hash_texto, h.unidad_id, u.texto_embebido
+            from respuesta_carga h
+            join afectadas a on a.individuo_id = h.individuo_id
+                            and a.pregunta_id = h.pregunta_id
+            join unidad_evidencia u on u.id = h.unidad_id
+           order by h.individuo_id, h.pregunta_id, h.escrito_en desc, h.carga_id desc
+        )
+        update respuesta r
+           set valor_texto = a.valor_texto, texto_embebido = a.texto_embebido,
+               hash_texto = a.hash_texto, unidad_id = a.unidad_id,
+               carga_id = a.carga_id
+          from anterior a
+         where r.individuo_id = a.individuo_id and r.pregunta_id = a.pregunta_id
+        """,
+        params)
+    eliminadas = db.ejecutar(
+        conn,
+        f"""delete from respuesta r
+             where r.id in (select id from ({_RESPUESTAS_DE_LA_CARGA}) x)""",
+        params)
+    borrar_veredictos_huerfanos(conn)
+    return {"vuelven": vuelven, "eliminadas": eliminadas}
+
+
+def contar_reversion(conn, ref_estudio, carga_id):
+    """R-HIS.3 — la vista previa de `revertir_carga`: cuántas respuestas que
+    la carga escribió por última vez **vuelven** al valor de otra carga y
+    cuántas **se eliminan** porque solo estaban en esta."""
+    fila = db.una(
+        conn,
+        f"""
+        select count(*) filter (where exists (
+                 select 1 from respuesta_carga h
+                  where h.individuo_id = a.individuo_id
+                    and h.pregunta_id = a.pregunta_id
+                    and h.carga_id <> %s))::int as vuelven,
+               count(*) filter (where not exists (
+                 select 1 from respuesta_carga h
+                  where h.individuo_id = a.individuo_id
+                    and h.pregunta_id = a.pregunta_id
+                    and h.carga_id <> %s))::int as se_eliminan
+          from ({_RESPUESTAS_DE_LA_CARGA}) a
+        """,
+        (carga_id, carga_id, str(ref_estudio), carga_id, None, None))
+    return {"vuelven": fila["vuelven"], "se_eliminan": fila["se_eliminan"]}
+
+
+def historial_de(conn, respuesta_ids):
+    """R-HIS.5 — en qué cargas apareció cada respuesta y con qué valor:
+    `{respuesta_id: [{carga_id, valor_texto, escrito_en}]}`, la más vieja
+    primero."""
+    if not respuesta_ids:
+        return {}
+    salida = {}
+    for f in db.todas(
+            conn,
+            """select r.id as respuesta_id, h.carga_id, h.valor_texto, h.escrito_en
+                 from respuesta r
+                 join respuesta_carga h on h.individuo_id = r.individuo_id
+                                       and h.pregunta_id = r.pregunta_id
+                where r.id = any(%s::bigint[])
+                order by r.id, h.escrito_en, h.carga_id""",
+            ([int(i) for i in respuesta_ids],)):
+        salida.setdefault(f["respuesta_id"], []).append(
+            {"carga_id": f["carga_id"], "valor_texto": f["valor_texto"],
+             "escrito_en": f["escrito_en"].isoformat()})
+    return salida
 
 
 def contar_carga(conn, ref_estudio, carga_id):

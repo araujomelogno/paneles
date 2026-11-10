@@ -518,14 +518,24 @@ export async function abrirBorrado(carga) {
         convocadas) / se borran (no lo estaban)</td>
         <td class="num">${previa.participaciones?.vuelven_a_no_respondio ?? 0} /
           ${previa.participaciones?.se_borran ?? 0}</td></tr>
-      <tr class="peligro"><td>Respuestas que se borran: ${previa.unica_de_su_encuesta
+      ${previa.unica_de_su_encuesta ? '' : `<tr id="respuestas-que-vuelven"><td>Respuestas que
+        <strong>vuelven</strong> al valor de una carga anterior de la encuesta (esta carga
+        las había reemplazado)</td>
+        <td class="num">${previa.respuestas_que_vuelven ?? 0}</td></tr>`}
+      <tr class="peligro" id="respuestas-que-se-eliminan"><td>Respuestas que
+        <strong>se eliminan</strong>: ${previa.unica_de_su_encuesta
         ? 'todo el estudio (es su única carga)'
-        : 'las que escribió esta carga; las que reemplazó otra carga se quedan'}</td>
+        : 'las que solo estaban en esta carga; ninguna otra carga las contiene'}</td>
         <td class="num">${previa.respuestas_a_borrar}</td></tr>
       ${previa.unidades_que_se_borran != null ? `<tr><td>Textos embebidos que se van con
         ellas (los compartidos con otro estudio se conservan)</td>
         <td class="num">${previa.unidades_que_se_borran}</td></tr>` : ''}
     </table>
+    ${!previa.unica_de_su_encuesta && previa.respuestas_a_borrar ? `<div class="alert alert-warn"
+      id="solo-en-esta-carga"><strong>${previa.respuestas_a_borrar} respuesta(s) están solo en
+      esta carga</strong>: ninguna otra carga de la encuesta las contiene, así que se pierden.
+      Si querés conservarlas, no la borres: volvé a subir el archivo correcto como una carga
+      nueva.</div>` : ''}
     <p class="small">Si elegís darlas de baja, siguen el camino de siempre: se avisa
       a los otros sistemas que usan la bóveda (COLOQUIO) para que borren lo suyo. El
       borrado queda registrado con quién lo hizo y estos números.</p>

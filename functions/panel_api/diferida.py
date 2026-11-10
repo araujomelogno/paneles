@@ -542,6 +542,8 @@ SUMABLES = (
     "enviados", "fallidos", "salteados", "excluidos_al_enviar",
     # El borrado de una carga (`cargas_borrado`).
     "respuestas_borradas", "personas_dadas_de_baja", "personas_conservadas",
+    # R-HIS (D95) — las que volvieron al valor de una carga anterior.
+    "respuestas_revertidas",
     "personas_ya_procesadas",
 )
 CONCATENABLES = (

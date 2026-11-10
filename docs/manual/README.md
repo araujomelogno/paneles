@@ -14,6 +14,14 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Historial de respuestas por carga · 2026-11-10.** PEDIDO del historial
+> (D95). La 5.12 explica que borrar una carga **vuelve** cada respuesta al
+> valor de la carga anterior que la tenía y elimina solo lo que no está en
+> ninguna otra, con la vista previa que lo separa. La 3.5 suma en qué cargas
+> apareció cada respuesta y si cambió. La 5.4 dice que, con personas nuevas
+> sin base legal, la pantalla vuelve sola al paso 4. Una pregunta frecuente
+> nueva. Sin capturas nuevas; PDF regenerado.
+
 > **Cancelar una carga, carga mixta y cargas incrementales · 2026-11-10.**
 > PEDIDOS de cancelar una carga, carga mixta y cargas incrementales (D92 a
 > D94). La 5.4 suma **cancelar antes de confirmar no deja nada**, **detener

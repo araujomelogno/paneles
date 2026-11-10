@@ -86,13 +86,17 @@ def modal(navegador, servidor_web, carga, tmp_path):  # noqa: F811
     contexto.close()
 
 
-def _a_la_revision(modal, resumen):
+def _pedir_revision(modal, resumen):
     for texto in modal.locator(".pregunta-fila .p-texto").all():
         if texto.is_enabled() and not texto.input_value():
             texto.fill("¿Qué bebida consume?")
     modal.locator(".modal-foot .btn", has_text="Ingestar").click()
     modal.wait_for_function("window.pedidos.length >= 1")
     modal.evaluate(f"window.responder({json.dumps(resumen)})")
+
+
+def _a_la_revision(modal, resumen):
+    _pedir_revision(modal, resumen)
     modal.wait_for_selector("#reconocimiento")
 
 
@@ -124,20 +128,38 @@ def test_cerrar_con_la_cruz_tambien_cancela(modal, carga):  # noqa: F811
     modal.wait_for_function("window.canceladas.length === 1")
 
 
-def test_la_revision_muestra_existentes_nuevas_y_pide_la_evidencia(modal, revision_mixta):
-    _a_la_revision(modal, revision_mixta)
-    sync_api.expect(modal.locator("#reconocimiento-texto")).to_have_text(
-        "4 filas · 1 existentes · 3 nuevas")
+def test_personas_nuevas_sin_base_legal_llevan_solas_al_paso_4(modal, revision_mixta):
+    """R-ALT.1 (D95) — antes los pasos 4 y 5 se activaban en el formulario,
+    oculto debajo de la revisión, y había que adivinar que tocaba volver
+    atrás. Ahora se vuelve solo, con el motivo arriba y el paso 4 a la vista."""
+    _pedir_revision(modal, revision_mixta)
+    aviso = modal.locator("#ing-alerta [data-falta-alta]")
+    sync_api.expect(aviso).to_contain_text(
+        "La revisión encontró 3 persona(s) nuevas. Completá su base legal para poder "
+        "confirmar.")
+    sync_api.expect(aviso).to_contain_text("4 filas · 1 existentes · 3 nuevas")
     # La proporción inesperada, destacada (id_persona y 3 de 4 nuevas).
-    sync_api.expect(modal.locator("#aviso-proporcion")).to_contain_text(
+    sync_api.expect(modal.locator("#ing-alerta")).to_contain_text(
         "columna identificadora o su tipo")
-    # Hay a quién crear y no se declaró la evidencia: no se confirma.
-    sync_api.expect(modal.locator("#falta-alta")).to_be_visible()
-    assert modal.locator("#confirmar-importar").is_disabled()
-    # R-CAN-C.5 — el mismo aviso que el seguimiento.
-    sync_api.expect(modal.locator("#aviso-cerrar-revision")).to_have_text(AVISO)
-    modal.click("#volver-a-corregir")
+    assert modal.locator("#ing-revision").is_hidden()
     sync_api.expect(modal.locator("#bloque-alta")).to_be_visible()
+    sync_api.expect(modal.locator("#bloque-alta")).to_be_in_viewport()
+
+    # «Siguiente», con el paso 4 completo, vuelve a pedir la revisión con la
+    # evidencia.
+    modal.wait_for_function(
+        "document.querySelectorAll('#cons-contacto-var option').length > 1")
+    # Crear personas pide marcar con qué se las identifica (el correo).
+    fila = modal.locator(".pregunta-fila").filter(
+        has=modal.locator('.p-codigo[value="MAIL"]'))
+    fila.locator(".p-rol").select_option("email")
+    modal.select_option("#cons-contacto-var", "P1")
+    modal.fill("#cons-contacto-valor", "1")
+    modal.locator("#ing-alerta [data-siguiente-alta]").click()
+    modal.wait_for_function("window.pedidos.length >= 2")
+    pedido = modal.evaluate("window.pedidos[1]")
+    assert pedido["solo_revisar"] is True
+    assert pedido["evidencia_consentimiento"]["contacto_participacion"]["variable"] == "P1"
 
 
 def test_confirmar_no_cancela_y_el_seguimiento_ofrece_detener(modal, revision_mixta):
@@ -162,6 +184,8 @@ def test_confirmar_no_cancela_y_el_seguimiento_ofrece_detener(modal, revision_mi
         };
     }""")
     _a_la_revision(modal, resumen)
+    # R-CAN-C.5 — la revisión dice lo mismo que el seguimiento.
+    sync_api.expect(modal.locator("#aviso-cerrar-revision")).to_have_text(AVISO)
     modal.click("#confirmar-importar")
     modal.wait_for_function("window.pedidos.length >= 2")
     modal.evaluate("window.responder({ trabajo_id: 77, lotes_total: 4, filas_total: 4 })")

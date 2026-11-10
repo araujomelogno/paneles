@@ -3,10 +3,13 @@
 **Desde D81 (R-EU.10) una carga es un archivo de una encuesta**, y borrarla
 responde a «esto lo cargué mal»:
 
-* se borran **las respuestas que esa carga escribió por última vez**
-  (`respuesta.carga_id`); las que una carga posterior reemplazó se quedan,
-  porque son de la otra. Si era la única carga de la encuesta, se va el
-  cuestionario entero, como antes;
+* las **respuestas que esa carga escribió por última vez**
+  (`respuesta.carga_id`) **vuelven al valor de la carga anterior** que las
+  tenía, y se borra solo lo que ninguna otra carga contiene (D95,
+  `semantica.revertir_carga`: en una encuesta incremental la última carga
+  escribe todo el acumulado, y borrarla borraba el estudio entero). Las que
+  una carga posterior reemplazó se quedan, porque son de la otra. Si era la
+  única carga de la encuesta, se va el cuestionario entero, como antes;
 * la participación de quien **solo** estaba en esta carga: si fue
   convocada, vuelve a `respondio = false`; si no, se borra;
 * las personas que la carga **creó** y no tienen otra vida se **ofrecen**
@@ -217,10 +220,16 @@ def previa(conn_boveda, conn_semantica, carga_id, dar_de_baja_creadas=False):
     unica = _unica(conn_boveda, carga)
     if unica:
         estudio = semantica.contar_estudio(conn_semantica, carga["ref_estudio"])
+        vuelven = 0
     else:
-        estudio = {"respuestas": semantica.contar_carga(
-            conn_semantica, carga["ref_estudio"], carga_id),
+        # R-HIS.3 (D95) — las que esta carga escribió por última vez: las que
+        # otra carga también trae vuelven a ese valor; se eliminan solo las
+        # que no están en ninguna otra.
+        reversion = semantica.contar_reversion(
+            conn_semantica, carga["ref_estudio"], carga_id)
+        estudio = {"respuestas": reversion["se_eliminan"],
                    "unidades_que_se_borran": None}
+        vuelven = reversion["vuelven"]
     return {
         "carga": {"id": carga["id"], "nombre": carga["nombre"],
                   "ref_estudio": str(carga["ref_estudio"]),
@@ -231,9 +240,18 @@ def previa(conn_boveda, conn_semantica, carga_id, dar_de_baja_creadas=False):
         "dar_de_baja_creadas": bool(dar_de_baja_creadas),
         "participaciones": _participaciones(conn_boveda, carga_id),
         "respuestas_a_borrar": estudio["respuestas"],
+        "respuestas_que_vuelven": vuelven,
+        "resumen_respuestas": resumen_de_respuestas(vuelven, estudio["respuestas"]),
         "unidades_que_se_borran": estudio["unidades_que_se_borran"],
         "irreversible": True,
     }
+
+
+def resumen_de_respuestas(vuelven, se_eliminan):
+    """R-HIS.3 — «4 respuestas vuelven al valor de una carga anterior · 0 se
+    eliminan porque solo estaban en esta carga»."""
+    return (f"{vuelven} respuesta(s) vuelven al valor de una carga anterior · "
+            f"{se_eliminan} se eliminan porque solo estaban en esta carga")
 
 
 # ── Lanzar (o reanudar) ──────────────────────────────────────────────
@@ -355,8 +373,15 @@ def procesar_lote(conn_boveda, conn_semantica, plan, ids):
     unica = plan.get("unica_de_su_encuesta", True)
     dar_de_baja = plan.get("dar_de_baja_creadas", True)
 
-    respuestas = semantica.borrar_respuestas_de_estudio_de(
-        conn_semantica, ids, ref_estudio, carga_id=None if unica else carga_id)
+    revertidas = 0
+    if unica:
+        respuestas = semantica.borrar_respuestas_de_estudio_de(
+            conn_semantica, ids, ref_estudio)
+    else:
+        # R-HIS.2 (D95) — no se borra lo que otra carga de la encuesta trae:
+        # vuelve a su valor. Se borra solo lo que estaba únicamente en esta.
+        reversion = semantica.revertir_carga(conn_semantica, ref_estudio, carga_id, ids)
+        respuestas, revertidas = reversion["eliminadas"], reversion["vuelven"]
     conn_semantica.commit()
 
     clasificacion = _clasificar(conn_boveda, conn_semantica, carga_id,
@@ -378,6 +403,7 @@ def procesar_lote(conn_boveda, conn_semantica, plan, ids):
         conservadas += 1
 
     return {"operacion": OPERACION, "respuestas_borradas": respuestas,
+            "respuestas_revertidas": revertidas,
             "personas_dadas_de_baja": dadas_de_baja,
             "personas_conservadas": conservadas,
             "personas_ya_procesadas": ya_procesadas}
@@ -438,8 +464,9 @@ def finalizar(conn_boveda, conn_semantica, borrado_id):
     if unica:
         semantica.borrar_estudio(conn_semantica, borrado["ref_estudio"])
     elif carga:
-        semantica.borrar_respuestas_de_carga(
-            conn_semantica, borrado["ref_estudio"], carga["id"])
+        # Lo que quede de la carga, de quien sea (personas ya sin vínculo):
+        # la misma regla que en los lotes (R-HIS.2).
+        semantica.revertir_carga(conn_semantica, borrado["ref_estudio"], carga["id"])
     conn_semantica.commit()
 
     # Las respuestas se cuentan contra el estudio y no por lote: un lote que
@@ -507,7 +534,10 @@ def _final(borrado):
             "estado": borrado["estado"], "carga": borrado["carga_nombre"],
             "personas_dadas_de_baja": borrado["personas_dadas_de_baja"],
             "personas_conservadas": borrado["personas_conservadas"],
-            "respuestas_borradas": borrado["respuestas_borradas"]}
+            "respuestas_borradas": borrado["respuestas_borradas"],
+            # R-HIS (D95) — las que volvieron al valor de otra carga.
+            "respuestas_revertidas": (borrado["previa"] or {}).get(
+                "respuestas_que_vuelven", 0)}
 
 
 def al_terminar_el_trabajo(conn_boveda, conn_semantica, plan):

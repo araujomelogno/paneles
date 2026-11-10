@@ -5764,3 +5764,71 @@ borrado de encuestas.
 Pruebas (las tres decisiones):
 `functions/tests/test_pedido_cancelar_mixta_incrementales.py`,
 `functions/tests/test_pantallas_cancelar_mixta_incrementales.py`.
+
+
+## D95 · Borrar una carga vuelve al valor de la anterior: el historial de respuestas por carga
+
+**El pedido.** `specs/PEDIDO_historial_respuestas_por_carga.md`. Severidad
+crítica: en la encuesta «Encuesta Prueba - 10-11-26» las cargas 39, 41 y 42
+—incrementales— escribieron sus respuestas; la 45, con las mismas personas,
+pasó a ser la última que las escribió (`respuesta.carga_id = 45`); al borrarla
+el cuestionario quedó con 4 preguntas y 0 respuestas, aunque las otras tres
+cargas seguían existiendo.
+
+**La causa** era la regla de R-EU.10 (D81): *«se eliminan las respuestas que
+esa carga escribió por última vez»*. En una encuesta incremental la última
+carga escribe **todo**. La regla correcta: si la respuesta también está en una
+carga que sigue existiendo, vuelve a ese valor; se borra solo lo que ninguna
+otra carga contiene. Para eso hace falta saber qué traía cada carga.
+
+- **R-HIS.1 — `respuesta_carga`** (`semantica/0013`): una fila por persona,
+  pregunta y carga. En el store **semántico**: es contenido, y la separación
+  entre identidad y contenido se mantiene. Sin vectores: FK compuesta a la
+  unidad de evidencia, como `respuesta`. La escribe `upsert_respuestas` **en
+  la misma sentencia** que la respuesta vigente (un `with … returning`), así
+  que no hay un segundo camino de escritura. Un reproceso, que no trae carga,
+  actualiza la fila de la carga que escribió la respuesta por última vez.
+- **Una unidad que solo usa el historial no es huérfana**: hace falta para
+  volver a ese valor sin pagar otro embedding. `borrar_unidades_huerfanas()`
+  mira las dos tablas y corre también tras borrar o cambiar historial. El
+  recall exacto sin filtro no devuelve esas unidades (no tienen respuestas
+  que mostrar); el índice HNSW, que no admite filtro (D71), puede incluir
+  alguna: son pocas —solo los valores que cambiaron entre cargas— y no
+  devuelven a nadie.
+- **R-HIS.2 — `semantica.revertir_carga`**: borra el historial de la carga;
+  cada respuesta que esa carga escribió por última vez vuelve al valor de la
+  carga **más reciente** (por cuándo se escribió) que la tiene, con su
+  `carga_id`; recién lo que no está en ninguna otra se borra. La usan los
+  lotes de `cargas_borrado` y su cierre. La participación ya se decidía por
+  `persona_carga`: quien sigue en otra carga la conserva.
+- **R-HIS.3** — la vista previa separa `respuestas_que_vuelven` de
+  `respuestas_a_borrar` (`semantica.contar_reversion`), con la frase, y avisa
+  cuando hay respuestas que solo esa carga contiene.
+- **R-HIS.4** — borrar la encuesta borra el cuestionario y el historial se
+  va en cascada. El retiro de `uso_semantico` de un estudio y el reproceso
+  que descarta una respuesta también se llevan su historial: si no, borrar
+  una carga la podría devolver.
+- **R-HIS.5** — «Respuestas procesadas» dice en qué cargas apareció cada
+  respuesta y, si cambió, el valor de cada una (`semantica.historial_de`;
+  los nombres de las cargas los pone la ruta desde la bóveda).
+
+**La migración** crea el historial de las respuestas vigentes, en su carga
+actual. Lo anterior a la última carga nunca se guardó y no se inventa: para
+lo ya cargado, borrar una carga vieja usa la regla nueva con lo que haya.
+Corrida de prueba y verificación en `scripts/migrar_historial_de_respuestas.py`.
+
+**R-ALT.1 — los pasos 4 y 5 a la vista.** Desde D93 la revisión activaba los
+pasos de base legal y canales en el formulario, que estaba oculto debajo del
+panel de revisión. Ahora, si hay personas nuevas sin base legal, la pantalla
+**vuelve sola al formulario** con el aviso *«La revisión encontró N personas
+nuevas. Completá su base legal para poder confirmar.»*, el paso 4 a la vista
+y **Siguiente**, que revisa de nuevo. Y se arregló que con un `.csv` o un
+`.xlsx` la evidencia no viajaba (solo se mandaba con un `.sav`).
+
+**Dónde vive.** `db/semantica/0013_historial_de_respuestas.sql`,
+`scripts/migrar_historial_de_respuestas.py`, `functions/panel_api/semantica.py`,
+`cargas_borrado.py`, `reproceso.py`, `ficha.py`, `diferida.py`,
+`web/public/js/paginas/encuestas.js`, `web/public/js/paginas/cargas.js`,
+`web/public/js/respuestas.js`, `web/public/js/demo.js`. Pruebas:
+`functions/tests/test_pedido_historial_respuestas_por_carga.py`,
+`functions/tests/test_pantallas_cancelar_mixta_incrementales.py`.

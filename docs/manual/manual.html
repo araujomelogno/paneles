@@ -476,6 +476,13 @@
   puede filtrar por estudio, buscar por texto y activar <strong>Ver el texto
   embebido</strong>, que muestra exactamente lo que se vectorizó.</p>
 
+  <p>En una encuesta que se cargó varias veces, la columna de procedencia
+  dice además <strong>en qué cargas apareció</strong> cada respuesta. Si
+  <strong>cambió</strong> entre una y otra —por ejemplo, entre el parcial y el
+  final—, aparece <em>Cambió entre cargas</em>, y al desplegarlo, el valor que
+  traía cada carga. Lo cargado antes de que el sistema guardara este
+  historial muestra solo la última carga.</p>
+
   <p>Cada estudio lleva su <strong>fecha</strong>: la de campo de la encuesta
   o la <strong>fecha del estudio</strong> de la carga. Es lo que ordena las
   respuestas en el tiempo. Si una carga no declaró fecha, sus respuestas
@@ -1591,9 +1598,12 @@
   <div class="aviso">
     <div class="t">El consentimiento se pide solo si hay a quién crear</div>
     <p>Si todas las filas son de personas que ya existen, no se pide nada. Si
-    hay personas nuevas para crear, la revisión lo dice y aparece en el
-    formulario el paso <strong>4 · Personas nuevas: base legal del alta</strong>
-    (sección 5.5): hay que volver a corregir, declararlo y revisar de nuevo. La
+    hay personas nuevas para crear y todavía no se declaró su base legal, la
+    pantalla <strong>vuelve sola al formulario</strong>, con el aviso
+    <em>«La revisión encontró N personas nuevas. Completá su base legal para
+    poder confirmar.»</em> arriba y el paso <strong>4 · Personas nuevas: base
+    legal del alta</strong> (sección 5.5) a la vista, junto con el 5 (canales).
+    Completado, <strong>Siguiente</strong> vuelve a la revisión. La
     evidencia —y los canales aceptados— se aplican <strong>solo a las que se
     crean</strong>: a quien ya existía no se le registra nada.</p>
     <p>En una encuesta con convocatoria, quien no vino con el id_persona del
@@ -2347,7 +2357,15 @@
   escribió:</p>
 
   <ul class="puntos">
-    <li>sus respuestas, no las de las otras cargas;</li>
+    <li>sus respuestas, no las de las otras cargas. En una encuesta
+    incremental cada archivo trae el acumulado, así que la última carga es la
+    que escribió <em>todas</em> las respuestas vigentes. Borrarla
+    <strong>no</strong> las borra: cada respuesta que otra carga de la
+    encuesta también traía <strong>vuelve</strong> al valor de la más reciente
+    de ellas, y se elimina solo lo que no está en ninguna otra. La vista
+    previa lo separa —<em>«4 respuestas vuelven al valor de una carga anterior
+    · 0 se eliminan porque solo estaban en esta carga»</em>— y avisa
+    explícitamente si hay respuestas que solo esta carga contiene;</li>
     <li>quien estaba solo en esa carga pierde su participación, o vuelve a
     «no respondió» si estaba convocado;</li>
     <li>las personas que la carga creó se dan de baja <strong>solo si se
@@ -5302,6 +5320,14 @@
   <p>Esas filas traen un id_persona que no existe: un enlace mal copiado o de
   alguien que se dio de baja. No se crea a nadie con ellas y no entran. Si son
   muchas, revisá que la columna identificadora sea la correcta (5.4).</p>
+
+  <h4>Borré la última carga de una encuesta incremental y desaparecieron las respuestas</h4>
+  <p>Desde esta versión no pasa: borrar una carga vuelve cada respuesta al
+  valor de la carga anterior que la tenía (5.12). Lo cargado <strong>antes</strong>
+  de esta versión solo tiene registro de la última carga: si una carga vieja
+  se borró y se perdieron respuestas, la salida es volver a subir el último
+  archivo correcto como una carga nueva de la encuesta. Las personas quedan
+  como «ya estaba» y sus respuestas vuelven.</p>
 
   <h4>Una persona figura «ya estaba» en una carga</h4>
   <p>Estaba en una carga anterior de la misma encuesta: el export trae el
