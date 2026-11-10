@@ -2430,6 +2430,26 @@ function abrirIngesta(destino, alTerminar) {
       $('#bloque-alta', caja).classList.remove('hidden');
       $('#bloque-canales', caja)?.classList.remove('hidden');
     }
+    if (faltaAlta) {
+      /* R-ALT.1 (D95) — los pasos 4 y 5 viven en el formulario. Mostrarlos
+         con la revisión a la vista era activarlos en algo oculto: el usuario
+         tenía que adivinar que debía volver atrás. Se vuelve solo, con el
+         motivo arriba y el paso 4 a la vista; «Siguiente» revisa de nuevo. */
+      const r = resumen.reconocimiento;
+      const destacadas = (r.advertencias || []).filter((a) => a.destacada);
+      avisarEnIngesta(`<div class="alert alert-warn" data-falta-alta>
+          <p><strong>La revisión encontró ${r.a_crear + r.en_revision} persona(s)
+          nuevas. Completá su base legal para poder confirmar.</strong></p>
+          <p class="small">${esc(r.texto)}. ${esc(r.detalle_nuevas || '')}</p>
+          <button class="btn btn-orange btn-sm" data-siguiente-alta>Siguiente</button></div>`
+        + destacadas.map((a) => alerta(a.mensaje, 'error')).join(''));
+      $$('[data-siguiente-alta]', caja).forEach((boton) => {
+        // El mismo camino que «Ingestar»: vuelve a pedir la revisión.
+        boton.onclick = () => $('.modal-foot [data-accion="1"]', caja)?.click();
+      });
+      $('#bloque-alta', caja).scrollIntoView({ block: 'start' });
+      return false;
+    }
     revision$.innerHTML = identidadDeLaRevision(resumen, cuerpo)
       + reconocimientoHtml(resumen.reconocimiento, faltaAlta)
       + avisosDeLaCarga(resumen) + resumenHtml(resumen) + (esCarga ? `
@@ -2885,8 +2905,10 @@ function abrirIngesta(destino, alTerminar) {
     return datosArchivo.savBase64
       ? { ...comun, archivo_base64: datosArchivo.savBase64, origen: 'sav',
           ...extraSav }
+      // La evidencia del paso 4 viaja también con un .csv o un .xlsx: desde
+      // la carga mixta (D93) cualquier archivo puede traer personas nuevas.
       : { ...comun, filas: datosArchivo.filas,
-          origen: datosArchivo.origen || undefined };
+          origen: datosArchivo.origen || undefined, ...extraSav };
   }
 
   function enviarIngesta(cuerpo, avance) {

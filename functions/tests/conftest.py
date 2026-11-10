@@ -77,6 +77,9 @@ TABLAS_BOVEDA = [
 # prueba haya definido, para que no se filtren a la siguiente.
 CLAVES_DEL_NUCLEO = ("sexo", "localidad", "tramo_etario", "edad")
 TABLAS_SEMANTICA = ["respuesta", "pregunta", "individuo", "cuestionario",
+                    # R-HIS (D95) — el historial por carga; cascadea, pero
+                    # se nombra para que el truncate no dependa de eso.
+                    "respuesta_carga",
                     # R-VER.10 — las capturas del modo de depuración.
                     "verificacion_captura",
                     # R-CS — los veredictos de las ejecuciones completas.

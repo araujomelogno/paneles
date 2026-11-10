@@ -283,6 +283,9 @@ MIGRACIONES_SEMANTICA = (
     )),
     # ── R-EU.3 / R-EU.10 · qué carga escribió cada respuesta (D81) ──
     ("0012_respuesta_carga.sql", ("respuesta.carga_id",)),
+    # ── R-HIS · el historial de cada respuesta por carga (D95). Cambia
+    # datos: crea el historial de las respuestas vigentes.
+    ("0013_historial_de_respuestas.sql", ("respuesta_carga",)),
 )
 
 STORES = {

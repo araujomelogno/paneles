@@ -29,7 +29,7 @@ tramo etario juntos pueden señalar a una persona en un panel chico. La ficha
 no es reidentificación, pero tampoco es anónima.
 """
 
-from . import atributos, auditoria, db
+from . import atributos, auditoria, db, semantica
 
 MOTIVO_RESPUESTAS = "respuestas_panelista"
 
@@ -203,7 +203,7 @@ def respuestas(conn_semantica, id_persona, *, ref_estudio=None, busqueda=None,
         select c.ref_estudio, c.nombre as estudio, c.fecha_campo,
                p.codigo as pregunta_codigo, p.texto as pregunta_texto,
                p.tipo as pregunta_tipo, p.orden as pregunta_orden,
-               r.valor_texto, r.texto_embebido,
+               r.id as respuesta_id, r.valor_texto, r.texto_embebido,
                count(*) over () as total
           from respuesta r
           join individuo i    on i.id = r.individuo_id
@@ -222,6 +222,8 @@ def respuestas(conn_semantica, id_persona, *, ref_estudio=None, busqueda=None,
          patron, patron, patron, tamano, (pagina - 1) * tamano))
 
     total = filas[0]["total"] if filas else 0
+    # R-HIS.5 (D95) — en qué cargas apareció cada respuesta y si cambió.
+    historial = semantica.historial_de(conn_semantica, [f["respuesta_id"] for f in filas])
     return {
         "items": [
             {
@@ -238,6 +240,9 @@ def respuestas(conn_semantica, id_persona, *, ref_estudio=None, busqueda=None,
                 # «¿Qué marca fumás? → 11427» en vez de «→ Nevada», y esa
                 # respuesta está en la base pero es inútil para buscar.
                 "texto_embebido": f["texto_embebido"],
+                "cargas": historial.get(f["respuesta_id"], []),
+                "cambio_entre_cargas": len({h["valor_texto"] for h in
+                                            historial.get(f["respuesta_id"], [])}) > 1,
             }
             for f in filas
         ],
@@ -258,6 +263,14 @@ def respuestas_con_registro(conn_boveda, conn_semantica, id_persona, *,
     depende de que quien escriba la próxima ruta se acuerde.
     """
     salida = respuestas(conn_semantica, id_persona, **filtros)
+    # Los nombres de las cargas viven en la bóveda.
+    ids = sorted({h["carga_id"] for r in salida["items"] for h in r["cargas"]})
+    nombres = {f["id"]: f["nombre"] for f in db.todas(
+        conn_boveda, "select id, nombre from carga where id = any(%s::bigint[])",
+        (ids,))} if ids else {}
+    for item in salida["items"]:
+        for h in item["cargas"]:
+            h["nombre"] = nombres.get(h["carga_id"])
     auditoria.registrar_reidentificacion(
         conn_boveda, [str(id_persona)], actor=actor, motivo=MOTIVO_RESPUESTAS,
         contexto={"respuestas_vistas": len(salida["items"]),

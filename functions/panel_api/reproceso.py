@@ -547,8 +547,16 @@ def procesar_lote(conn_boveda, conn_semantica, plan, ids, proveedor=None):
             })
 
     if a_borrar:
+        # R-HIS (D95) — una respuesta que el reproceso decide que no va se
+        # lleva su historial por carga: si no, borrar una carga la podría
+        # devolver desde una carga anterior.
         db.ejecutar(conn_semantica,
-                    "delete from respuesta where id = any(%s::bigint[])",
+                    """with borradas as (
+                         delete from respuesta where id = any(%s::bigint[])
+                         returning individuo_id, pregunta_id)
+                       delete from respuesta_carga h using borradas b
+                        where h.individuo_id = b.individuo_id
+                          and h.pregunta_id = b.pregunta_id""",
                     (a_borrar,))
 
     reembebidas = textos_embebidos = 0

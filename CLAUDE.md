@@ -492,7 +492,9 @@ Desde R-TEM / R-CAR (D74, D75, D76, `boveda/0027` y `0028`) cada carga tiene sus
 - **Borrar una carga deshace lo que trajo**, no todo lo que aparece en ella
   (D78, `cargas_borrado.py`, `boveda/0030`; D81): las respuestas que ella
   escribió (`respuesta.carga_id`; si es la única carga de su encuesta, todo
-  el estudio), y —**solo si se elige** `dar_de_baja_creadas`— las personas
+  el estudio) **vuelven al valor de la carga anterior que las tenía** y se
+  borra solo lo que ninguna otra contiene (D95, `semantica.revertir_carga`
+  sobre `respuesta_carga`), y —**solo si se elige** `dar_de_baja_creadas`— las personas
   que **creó y no tienen otra vida** se dan de baja **por
   `bajas.retirar()`** (así COLOQUIO recibe su `borrado_pendiente`); las
   demás se conservan sin el vínculo. No lo reemplacen por un `delete from
@@ -745,6 +747,26 @@ Desde los PEDIDOS de cancelar una carga, carga mixta y cargas incrementales
   (`cargas.reasignar_primera_aparicion`). La ficha agrupa por encuesta y la
   composición de una carga es lo que esa carga **sumó** (sin `repetida`);
   `canales_carga` sigue aplicando a todos.
+
+## Qué traía cada carga: el historial de respuestas
+
+Desde el PEDIDO del historial (D95, `semantica/0013`): borrar la última carga
+de una encuesta incremental borraba el estudio entero, porque esa carga
+escribe todo el acumulado.
+
+- **`respuesta_carga` guarda qué traía cada carga** (persona, pregunta,
+  carga), en el store semántico y sin vectores propios. Se escribe en la
+  **misma sentencia** que la respuesta vigente (`upsert_respuestas`): no
+  escriban una respuesta sin su historial ni agreguen un segundo camino.
+- **Borrar una carga revierte** (`semantica.revertir_carga`): vuelve al valor
+  de la carga más reciente que lo tiene y borra solo lo que no está en
+  ninguna otra. No vuelvan a un `delete … where carga_id = …`.
+- **Una unidad que usa el historial no es huérfana**
+  (`borrar_unidades_huerfanas()` mira las dos tablas): es el valor al que se
+  vuelve sin pagar otro embedding. Todo lo que borra respuestas por un
+  motivo de fondo —el retiro de un estudio, el reproceso que descarta una
+  respuesta— se lleva también su historial; si no, borrar una carga la
+  podría devolver.
 
 ## Reglas de negocio que el código debe respetar
 

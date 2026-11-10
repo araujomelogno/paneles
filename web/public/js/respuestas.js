@@ -95,7 +95,8 @@ export function activar(caja, idPersona, estudios, { prefijo = 'resp' } = {}) {
                 <td>${esc(f.respuesta || '—')}
                     ${conEmbebido ? `<div class="small muted mono embebido">${esc(f.texto_embebido)}</div>` : ''}</td>
                 <td class="small">${esc(f.estudio)}<br>
-                    <span class="muted">${f.fecha_campo ? esc(fechaCorta(f.fecha_campo)) : 'sin fecha de campo'}</span></td>
+                    <span class="muted">${f.fecha_campo ? esc(fechaCorta(f.fecha_campo)) : 'sin fecha de campo'}</span>
+                    ${historialDeCargas(f)}</td>
             </tr>`).join('')}</tbody>
         </table></div>
         <div class="toolbar paginado">
@@ -138,4 +139,22 @@ export async function estudiosDe(idPersona) {
   } catch {
     return null;
   }
+}
+
+
+/* R-HIS.5 (D95) — en qué cargas de la encuesta apareció la respuesta y, si
+   cambió entre una y otra (el parcial y el final), con qué valor en cada
+   una. Sin historial —lo cargado antes de que existiera— no dice nada. */
+function historialDeCargas(f) {
+  const cargas = f.cargas || [];
+  if (!cargas.length) return '';
+  const nombre = (h) => h.nombre || `carga ${h.carga_id}`;
+  if (!f.cambio_entre_cargas) {
+    return `<div class="small muted" data-cargas-respuesta>En ${cargas.length === 1
+      ? 'la carga' : 'las cargas'} ${esc(cargas.map(nombre).join(' · '))}</div>`;
+  }
+  return `<details class="small" data-cargas-respuesta>
+    <summary class="muted">Cambió entre cargas</summary>
+    <ul class="puntos">${cargas.map((h) => `<li>${esc(nombre(h))}: ${
+      esc(h.valor_texto || '—')}</li>`).join('')}</ul></details>`;
 }

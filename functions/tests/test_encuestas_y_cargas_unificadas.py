@@ -386,7 +386,10 @@ def test_borrar_una_carga_deshace_solo_lo_que_esa_carga_escribio(ctx, actor, est
     _, previa = cargas_borrado.lanzar(ctx.boveda, ctx.semantica, dos["id"],
                                       solo_revisar=True)
     assert previa["unica_de_su_encuesta"] is False
-    assert previa["respuestas_a_borrar"] == 2            # las de B y C, de «Dos»
+    # D95 — la de B también estaba en «Uno»: vuelve a ese valor. Se elimina
+    # solo la de C, que estaba únicamente en «Dos».
+    assert previa["respuestas_que_vuelven"] == 1
+    assert previa["respuestas_a_borrar"] == 1
     assert previa["se_dan_de_baja"] == 0                 # sin la opción, nadie
 
     cargas_borrado.lanzar(ctx.boveda, ctx.semantica, dos["id"],
@@ -395,8 +398,9 @@ def test_borrar_una_carga_deshace_solo_lo_que_esa_carga_escribio(ctx, actor, est
     _procesar(ctx)
 
     respuestas = _respuestas(ctx.semantica, estudio["ref_estudio"])
-    # Solo queda lo que escribió «Uno»: la de B la había pisado «Dos».
-    assert set(respuestas) == {(a, "P1")}
+    # Queda lo que traía «Uno»: la de B vuelve a su valor (antes de D95 se
+    # borraba, porque «Dos» la había escrito por última vez).
+    assert set(respuestas) == {(a, "P1"), (b, "P1")}
     participaciones = _participaciones(ctx.boveda, estudio["id"])
     assert a in participaciones and b in participaciones
     assert c not in participaciones                      # solo estaba en «Dos»
