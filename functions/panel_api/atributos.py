@@ -240,7 +240,9 @@ CLAVES_RESERVADAS = frozenset(
      "tematica", "tematicas",
      # D80 — `cliente` es la dimensión del filtro y `clientes` la columna;
      # `lista_negra` es la marca de los resultados.
-     "cliente", "clientes", "lista_negra"})
+     "cliente", "clientes", "lista_negra",
+     # D90 — `encuesta` es la dimensión del criterio de participación (R-AU.1).
+     "encuesta"})
 
 
 def _clave_valida(crudo, que="atributo"):

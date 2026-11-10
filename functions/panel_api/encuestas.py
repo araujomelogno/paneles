@@ -31,12 +31,13 @@ TIPOS = (DE_PANEL, INDEPENDIENTE)
 ORIGEN_PANEL = "panel"
 ORIGEN_CONSULTA = "consulta"
 ORIGEN_CARGA = "carga"
-ORIGENES = (ORIGEN_PANEL, ORIGEN_CONSULTA, ORIGEN_CARGA)
+# R-AU.3 (D90, boveda/0036) — una independiente creada vacía desde la sección
+# Encuestas: su audiencia se arma a mano o desde consultas, en pasos.
+ORIGEN_MANUAL = "manual"
+ORIGENES = (ORIGEN_PANEL, ORIGEN_CONSULTA, ORIGEN_CARGA, ORIGEN_MANUAL)
 
 _COLUMNAS = ("id, panel_id, tipo, origen, nombre, fecha_campo, publico_objetivo, "
-             "url_alchemer, "
-             "descripcion, estado, ref_estudio, creado_en, flow_id, "
-             "flow_plantilla, flow_idioma")
+             "url_alchemer, descripcion, estado, ref_estudio, creado_en")
 
 
 def _fecha(crudo):
@@ -73,7 +74,7 @@ def _exigir_panel_activo(conn, panel_id):
 
 def crear(conn, panel_id, nombre, fecha_campo=None, tipo=None,
           publico_objetivo=None, descripcion=None, clientes=None,
-          estado="borrador", origen=None):
+          estado="borrador", origen=None, url_alchemer=None):
     """Abre un estudio. De panel (`panel_id`) o independiente (sin panel).
 
     Los datos del estudio viven acá (R-EU.2): las cargas que se le hagan no
@@ -110,12 +111,13 @@ def crear(conn, panel_id, nombre, fecha_campo=None, tipo=None,
         conn,
         f"""
         insert into encuesta (panel_id, tipo, origen, nombre, fecha_campo,
-                              publico_objetivo, descripcion, estado)
-             values (%s, %s, %s, %s, %s, %s, %s, %s)
+                              publico_objetivo, descripcion, estado, url_alchemer)
+             values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
           returning {_COLUMNAS}
         """,
         (panel_id if tipo == DE_PANEL else None, tipo, origen, nombre,
-         _fecha(fecha_campo), _texto(publico_objetivo), _texto(descripcion), estado),
+         _fecha(fecha_campo), _texto(publico_objetivo), _texto(descripcion), estado,
+         url_alchemer_valida(url_alchemer) if url_alchemer else None),
     )
     from . import clientes as mod_clientes
 
@@ -140,16 +142,6 @@ def _serializar(fila):
         "estado": fila["estado"],
         "ref_estudio": str(fila["ref_estudio"]),
         "creado_en": fila["creado_en"].isoformat(),
-        # R4.5 — la configuración de WhatsApp Flow. `None` en las encuestas
-        # que no son de Flow, que son todas las anteriores a Fase 4.
-        "flow_id": fila.get("flow_id"),
-        "flow_plantilla": fila.get("flow_plantilla"),
-        "flow_idioma": fila.get("flow_idioma"),
-        # Una encuesta es de Flow por tener plantilla elegida. El `flow_id`
-        # se resuelve de ella y puede faltar si Meta no contestó al
-        # configurar; eso no la vuelve «no Flow», la vuelve no enviable
-        # todavía, que es lo que informa `estado_flow`.
-        "es_flow": bool(fila.get("flow_plantilla")),
     }
 
 
@@ -210,7 +202,12 @@ def tiene_audiencia(conn, encuesta_id):
         (encuesta_id,)))
 
 
-def listar(conn, panel_id=None, tipo=None):
+def listar(conn, panel_id=None, tipo=None, estado=None, cliente_id=None):
+    """El listado de encuestas. R-ENC.2 (D90) — además del panel y el tipo,
+    por estado y por cliente; los filtros se combinan."""
+    if estado is not None and estado not in ESTADOS:
+        raise DatosInvalidos(f"Estado desconocido: {estado!r}.",
+                             {"estados_validos": list(ESTADOS)})
     filas = db.todas(
         conn,
         f"""
@@ -227,9 +224,13 @@ def listar(conn, panel_id=None, tipo=None):
           from encuesta e left join panel p on p.id = e.panel_id
          where (%s::bigint is null or e.panel_id = %s::bigint)
            and (%s::text is null or e.tipo = %s::text)
+           and (%s::text is null or e.estado = %s::text)
+           and (%s::bigint is null or exists (
+                 select 1 from encuesta_cliente ec
+                  where ec.encuesta_id = e.id and ec.cliente_id = %s::bigint))
          order by e.creado_en desc
         """,
-        (panel_id, panel_id, tipo, tipo),
+        (panel_id, panel_id, tipo, tipo, estado, estado, cliente_id, cliente_id),
     )
     from . import clientes as mod_clientes
 
@@ -543,27 +544,149 @@ def agregar_panelistas(conn, encuesta_id, texto, actor=None):
     return {"encuesta_id": encuesta_id, "lineas": detalle, "conteo": conteo,
             "etiquetas": RESULTADOS_DE_AGREGAR}
 
+def _seleccion_de_la_consulta(conn, resultado, definicion, cantidad=None,
+                              segmento_completo=False):
+    """R-ALE.3 / R-AU.2 — a quiénes toma una encuesta de una consulta.
+
+    Devuelve `(ids, modo, semilla)`, en el orden de la selección:
+
+    * `segmento_completo` (solo sin criterios semánticos): todo el segmento,
+      no solo lo que se mostró, en el orden del sorteo.
+    * una demográfica con `cantidad`: las primeras `cantidad` **del sorteo**
+      con la semilla del resultado —la misma selección que se vio, extendida
+      si se piden más de las que entraban en pantalla—, nunca las primeras por
+      nombre.
+    * una semántica: la selección vigente, la sorteada o la del ranking según
+      el modo elegido; con `cantidad`, sus primeras `cantidad`.
+    """
+    from . import consultas, demografia
+
+    resultado = resultado or {}
+    seleccion = resultado.get("seleccion") or {}
+    definicion = definicion or resultado.get("definicion") or {}
+    semilla = consultas.normalizar_semilla(seleccion.get("semilla")
+                                           or definicion.get("semilla"))
+    criterios = definicion.get("criterios") or resultado.get("criterios") or []
+    semanticos = [c for c in criterios
+                  if isinstance(c, str) or (c or {}).get("tipo") == "semantico"]
+    if cantidad is not None:
+        try:
+            cantidad = int(cantidad)
+        except (TypeError, ValueError):
+            raise DatosInvalidos("La cantidad tiene que ser un número.") from None
+        if cantidad < 1:
+            raise DatosInvalidos("La cantidad tiene que ser al menos 1.")
+
+    if segmento_completo or (cantidad is not None and not semanticos and criterios):
+        if semanticos:
+            raise DatosInvalidos(
+                "Todo el segmento solo se puede tomar de una consulta sin criterios "
+                "semánticos: en una semántica la selección es la que se verificó.",
+                {"motivo": "segmento_con_semanticos"})
+        normalizada = consultas.normalizar_definicion(
+            {**definicion, "criterios": criterios}, conn)
+        semilla = semilla or consultas.nueva_semilla()
+        ids = demografia.ids_del_segmento(
+            conn, [c for c in normalizada["criterios"] if c["tipo"] == "demografico"],
+            panel_id=normalizada["panel_id"], semilla=semilla,
+            limite=None if segmento_completo else cantidad)
+        return (ids, consultas.SEGMENTO_COMPLETO if segmento_completo
+                else consultas.ALEATORIO, semilla)
+
+    ids = list(dict.fromkeys(str(item["id_persona"]) for item in resultado.get("items") or []
+                             if item.get("id_persona")))
+    if cantidad is not None:
+        ids = ids[:cantidad]
+    modo = seleccion.get("modo") or (consultas.ALEATORIO if not semanticos
+                                     else consultas.RANKING)
+    return ids, modo, semilla
+
+
+def _sumar_audiencia(conn, encuesta, ids, modo, semilla, definicion, via, actor=None,
+                     pedidas=None, fue_semantica=False):
+    """Suma a la audiencia, por **el mismo camino que convocar** (lista negra
+    y consentimiento de contacto), a quienes no estaban, y deja el paso
+    registrado en `encuesta_audiencia_agregado`: quién, cuándo, la definición
+    de la consulta, el modo, la semilla y cuántas personas. La audiencia se
+    reconstruye paso a paso."""
+    import json
+
+    from . import auditoria
+
+    ya = {str(f["id_persona"]) for f in db.todas(
+        conn, """select id_persona from participacion
+                  where encuesta_id = %s and convocado and id_persona = any(%s::uuid[])""",
+        (encuesta["id"], ids))} if ids else set()
+    existentes = {str(f["id_persona"]) for f in db.todas(
+        conn, "select id_persona from persona where id_persona = any(%s::uuid[])",
+        (ids,))} if ids else set()
+    nuevos = [i for i in ids if i in existentes and i not in ya]
+    convocatoria = {"convocados_nuevos": 0, "convocados_total": 0,
+                    "sin_consentimiento": [], "en_lista_negra": 0}
+    if nuevos:
+        convocatoria = convocar(conn, encuesta["id"], nuevos, _desde_consulta=True,
+                                actor=actor)
+    excluidas = {
+        "ya_estaban": len(ya),
+        "en_lista_negra": convocatoria["en_lista_negra"],
+        "sin_consentimiento": len(convocatoria["sin_consentimiento"]),
+        "no_encontrados": len(ids) - len(existentes),
+    }
+    agregadas = convocatoria["convocados_total"]
+    db.ejecutar(
+        conn,
+        """insert into encuesta_audiencia_agregado
+                  (encuesta_id, via, modo, semilla, definicion, pedidas,
+                   en_la_seleccion, agregadas, excluidas, actor_uid, actor_email)
+           values (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s, %s)""",
+        (encuesta["id"], via, modo, semilla,
+         json.dumps(definicion or {}, ensure_ascii=False, default=str), pedidas,
+         len(ids), agregadas, json.dumps(excluidas), getattr(actor, "uid", None),
+         getattr(actor, "email", None)))
+    if fue_semantica and ids:
+        # Fijar una lista de personas a partir de una consulta semántica es,
+        # como crear un panel desde ella (R3.11), el momento en que la
+        # consulta deja de ser una pregunta: queda como reidentificación.
+        auditoria.registrar_reidentificacion(
+            conn, ids, actor=actor, motivo="convocatoria",
+            contexto={"encuesta_id": encuesta["id"], "nombre": encuesta["nombre"],
+                      "personas": len(ids), "via": via})
+    return {"en_la_seleccion": len(ids), "agregadas": agregadas,
+            "excluidas": excluidas, "modo": modo, "semilla": semilla}
+
+
+def _fue_semantica(resultado, definicion):
+    return bool([c for c in ((definicion or (resultado or {}).get("definicion") or {})
+                             .get("criterios") or [])
+                 if isinstance(c, str) or (c or {}).get("tipo") == "semantico"]) \
+        or bool((resultado or {}).get("diagnostico", {}).get("abrio_semantica"))
+
+
 def crear_desde_consulta(conn, nombre, resultado, actor=None, fecha_campo=None,
                          publico_objetivo=None, descripcion=None, clientes=None,
-                         definicion=None):
+                         definicion=None, segmento_completo=False, cantidad=None,
+                         url_alchemer=None):
     """R-EU.5 — «crear encuesta con estos panelistas».
 
-    Una encuesta **independiente** cuya audiencia es la **foto** del
-    resultado: las personas de ese momento quedan convocadas
+    Una encuesta **independiente** cuya audiencia es la **foto** de la
+    selección: las personas de ese momento quedan convocadas
     (`participacion.convocado`) y la consulta no se vuelve a ejecutar. No se
     asocia a ningún panel. Quien está en la lista negra o no tiene
     `contacto_participacion` vigente queda afuera, y el resumen dice cuántos y
     por qué (la regla es la de siempre: `convocar`).
 
+    R-ALE.3 (D89) — la audiencia es **la selección vigente** (la sorteada, o
+    la del ranking si se eligió ranking), no las primeras por nombre; de una
+    demográfica se puede tomar además **todo el segmento**. La encuesta
+    guarda cómo se armó: modo y semilla (`encuesta_audiencia_agregado`).
+
     Fijar una lista de personas a partir de una consulta semántica es, como
     crear un panel desde ella (R3.11), un momento en que la consulta deja de
     ser una pregunta: queda registrado como reidentificación.
     """
-    from . import auditoria
-
-    ids = [str(item["id_persona"]) for item in (resultado or {}).get("items") or []
-           if item.get("id_persona")]
-    ids = list(dict.fromkeys(ids))
+    ids, modo, semilla = _seleccion_de_la_consulta(
+        conn, resultado, definicion, cantidad=cantidad,
+        segmento_completo=segmento_completo)
     if not ids:
         raise DatosInvalidos(
             "El resultado no tiene ningún individuo, así que no hay audiencia "
@@ -571,31 +694,79 @@ def crear_desde_consulta(conn, nombre, resultado, actor=None, fecha_campo=None,
     encuesta = crear(conn, None, nombre, fecha_campo=fecha_campo,
                      tipo=INDEPENDIENTE, origen=ORIGEN_CONSULTA,
                      publico_objetivo=publico_objetivo,
-                     descripcion=descripcion, clientes=clientes)
-    existentes = {str(f["id_persona"]) for f in db.todas(
-        conn, "select id_persona from persona where id_persona = any(%s::uuid[])",
-        (ids,))}
-    convocatoria = convocar(conn, encuesta["id"], [i for i in ids if i in existentes],
-                            _desde_consulta=True)
-    fue_semantica = bool(
-        (definicion or (resultado or {}).get("definicion") or {}).get("criterios")
-    ) or bool((resultado or {}).get("diagnostico"))
-    if fue_semantica:
-        auditoria.registrar_reidentificacion(
-            conn, ids, actor=actor, motivo="convocatoria",
-            contexto={"encuesta_id": encuesta["id"], "nombre": encuesta["nombre"],
-                      "personas": len(ids), "via": "encuesta_desde_consulta"})
+                     descripcion=descripcion, clientes=clientes,
+                     url_alchemer=url_alchemer)
+    fue_semantica = _fue_semantica(resultado, definicion)
+    paso = _sumar_audiencia(
+        conn, encuesta, ids, modo, semilla,
+        definicion or (resultado or {}).get("definicion"), "crear_desde_consulta",
+        actor=actor, pedidas=cantidad, fue_semantica=fue_semantica)
     return {
         **obtener(conn, encuesta["id"], completa=True),
         "audiencia": {
             "en_el_resultado": len(ids),
-            "convocados": convocatoria["convocados_total"],
-            "sin_consentimiento": len(convocatoria["sin_consentimiento"]),
-            "en_lista_negra": convocatoria["en_lista_negra"],
-            "no_encontrados": len(ids) - len(existentes),
+            "convocados": paso["agregadas"],
+            "sin_consentimiento": paso["excluidas"]["sin_consentimiento"],
+            "en_lista_negra": paso["excluidas"]["en_lista_negra"],
+            "no_encontrados": paso["excluidas"]["no_encontrados"],
+            "modo": modo, "semilla": semilla,
         },
         "registrado_como_reidentificacion": fue_semantica,
     }
+
+
+def agregar_audiencia_desde_consulta(conn, encuesta_id, resultado, definicion=None,
+                                     actor=None, cantidad=None, segmento_completo=False):
+    """R-AU.2 (D90) — «Agregar a la encuesta X» desde el resultado de una
+    consulta: una cantidad (sorteada con semilla, o según el modo elegido en
+    una semántica) o todo el segmento (sin criterios semánticos).
+
+    Entra por el mismo camino que convocar —lista negra, consentimiento de
+    contacto— y quien ya estaba en la audiencia no cuenta dos veces. Una
+    encuesta cerrada no admite agregar. Queda registrado el paso.
+    """
+    encuesta = obtener(conn, encuesta_id)
+    if encuesta["estado"] == "cerrada":
+        raise Conflicto("La encuesta está cerrada: no admite agregar audiencia. "
+                        "Reabrila primero.", {"motivo": "encuesta_cerrada"})
+    if encuesta["panel_id"]:
+        _exigir_panel_activo(conn, encuesta["panel_id"])
+    ids, modo, semilla = _seleccion_de_la_consulta(
+        conn, resultado, definicion, cantidad=cantidad,
+        segmento_completo=segmento_completo)
+    if not ids:
+        raise DatosInvalidos("La selección no tiene ninguna persona para agregar.")
+    paso = _sumar_audiencia(
+        conn, encuesta, ids, modo, semilla,
+        definicion or (resultado or {}).get("definicion"), "agregar_desde_consulta",
+        actor=actor, pedidas=cantidad, fue_semantica=_fue_semantica(resultado, definicion))
+    return {"encuesta_id": encuesta_id, **paso,
+            "etiquetas": MOTIVOS_DE_AUDIENCIA,
+            **conteos(conn, encuesta_id)}
+
+
+MOTIVOS_DE_AUDIENCIA = {
+    "ya_estaban": "Ya estaban en la audiencia",
+    "en_lista_negra": "En lista negra",
+    "sin_consentimiento": "Sin consentimiento de contacto",
+    "no_encontrados": "Ya no existen (se dieron de baja)",
+}
+
+
+def pasos_de_audiencia(conn, encuesta_id):
+    """R-AU.2 — cómo se armó la audiencia desde consultas, paso a paso: el
+    más viejo primero, para leerla en el orden en que se hizo."""
+    obtener(conn, encuesta_id)
+    return [{
+        "via": f["via"], "modo": f["modo"], "semilla": f["semilla"],
+        "definicion": f["definicion"], "pedidas": f["pedidas"],
+        "en_la_seleccion": f["en_la_seleccion"], "agregadas": f["agregadas"],
+        "excluidas": f["excluidas"],
+        "actor": f["actor_email"] or f["actor_uid"] or "sistema",
+        "creado_en": f["creado_en"].isoformat(),
+    } for f in db.todas(
+        conn, """select * from encuesta_audiencia_agregado where encuesta_id = %s
+                  order by creado_en, id""", (encuesta_id,))]
 
 
 def listar_participacion(conn, encuesta_id):
@@ -622,26 +793,128 @@ def listar_participacion(conn, encuesta_id):
         """,
         (encuesta_id,),
     )
-    return [
-        {
-            "id_persona": str(f["id_persona"]),
-            "nombre": f["nombre"],
-            "email": f["email"],
-            "id_en_origen": f["id_en_origen"],
-            # `convocado_en` no es una fecha de convocatoria si `convocado`
-            # es falso: es cuándo se creó la fila (la carga que lo trajo).
-            # La pantalla mira `convocado` antes de mostrarla.
-            "convocado": f["convocado"],
-            "convocado_en": f["convocado_en"].isoformat() if f["convocado"] else None,
-            "registrado_en": f["convocado_en"].isoformat(),
-            "respondio": f["respondio"],
-            "respondio_en": f["respondio_en"].isoformat() if f["respondio_en"] else None,
-            "calidad_estado": f["calidad_estado"],
-            "consiente_semantico": f["consiente_semantico"],
-            "es_panelista": f["es_panelista"],
-        }
-        for f in filas
-    ]
+    return [_fila_de_participacion(f) for f in filas]
+
+
+POR_PAGINA_PARTICIPACION = 50
+
+
+def _si_no(valor):
+    """`sí`/`no` (o `true`/`false`, `1`/`0`) → bool; vacío → None."""
+    if valor in (None, ""):
+        return None
+    texto = str(valor).strip().lower()
+    if texto in ("si", "sí", "true", "1", "s"):
+        return True
+    if texto in ("no", "false", "0", "n"):
+        return False
+    raise DatosInvalidos(f"Filtro inválido: {valor!r} (sí o no).")
+
+
+def pagina_de_participacion(conn, encuesta_id, pagina=1, por_pagina=None, buscar=None,
+                            respondio=None, convocado=None, mensaje_id=None,
+                            recibio=None):
+    """R-ENC.1 (D90) — la lista de respondentes o de convocatoria, **paginada
+    en el servidor**, con búsqueda y filtros.
+
+    Una encuesta como la de ANTEL tiene más de mil personas: traerlas todas
+    de una vez dejaba la pantalla sin forma de encontrar a nadie. Se busca
+    por nombre o identificador (id_persona, correo o id en el origen) y se
+    filtra por respondió, convocado y por un mensaje de la encuesta
+    (`recibio`: lo recibió o no; por defecto, lo recibió). Los conteos de
+    arriba son de toda la encuesta, no de la página.
+    """
+    obtener(conn, encuesta_id)
+    por_pagina = max(1, min(int(por_pagina or POR_PAGINA_PARTICIPACION), 200))
+    pagina = max(1, int(pagina or 1))
+    respondio, convocado = _si_no(respondio), _si_no(convocado)
+    recibio = True if recibio in (None, "") else _si_no(recibio)
+    texto = (buscar or "").strip()
+    donde = ["pa.encuesta_id = %(encuesta)s"]
+    if texto:
+        donde.append("""(p.nombre ilike %(patron)s or p.email ilike %(patron)s
+                          or pa.id_persona::text ilike %(prefijo)s
+                          or exists (select 1 from alias_origen a
+                                      where a.id_persona = pa.id_persona
+                                        and a.id_en_origen ilike %(patron)s))""")
+    if respondio is not None:
+        donde.append("pa.respondio = %(respondio)s")
+    if convocado is not None:
+        donde.append("pa.convocado = %(convocado)s")
+    if mensaje_id:
+        from . import mensajes
+
+        mensajes.obtener(conn, encuesta_id, int(mensaje_id))
+        negado = "" if recibio else "not "
+        donde.append(f"""{negado}exists (select 1 from envio e
+                                  where e.encuesta_mensaje_id = %(mensaje)s
+                                    and e.id_persona = pa.id_persona
+                                    and e.estado = any(%(recibidos)s))""")
+    from . import mensajes as mod_mensajes
+
+    parametros = {"encuesta": encuesta_id, "patron": f"%{texto}%", "prefijo": f"{texto}%",
+                  "respondio": respondio, "convocado": convocado,
+                  "mensaje": int(mensaje_id) if mensaje_id else None,
+                  "recibidos": list(mod_mensajes.RECIBIDOS),
+                  "limite": por_pagina, "desde": (pagina - 1) * por_pagina}
+    condicion = " and ".join(donde)
+    total = db.una(
+        conn,
+        f"""select count(*)::int as n from participacion pa
+              join persona p on p.id_persona = pa.id_persona where {condicion}""",
+        parametros)["n"]
+    filas = db.todas(
+        conn,
+        f"""
+        select pa.id_persona, pa.convocado, pa.convocado_en, pa.respondio,
+               pa.respondio_en, pa.calidad_estado, p.nombre, p.email,
+               exists (select 1 from consentimiento c
+                        where c.id_persona = pa.id_persona
+                          and c.finalidad = 'uso_semantico'
+                          and c.estado = 'vigente') as consiente_semantico,
+               (select id_en_origen from alias_origen a
+                 where a.id_persona = pa.id_persona limit 1) as id_en_origen,
+               exists (select 1 from membresia m
+                        where m.id_persona = pa.id_persona
+                          and m.estado = 'activo') as es_panelista
+          from participacion pa join persona p on p.id_persona = pa.id_persona
+         where {condicion}
+         order by p.nombre nulls last, pa.id_persona
+         limit %(limite)s offset %(desde)s
+        """, parametros)
+    items = [_fila_de_participacion(f) for f in filas]
+    envios = mod_mensajes.envios_por_persona(conn, encuesta_id,
+                                             ids_persona=[i["id_persona"] for i in items])
+    for item in items:
+        item["mensajes"] = envios.get(item["id_persona"], [])
+    return {
+        "items": items, "total": total, "pagina": pagina, "por_pagina": por_pagina,
+        "paginas": max(1, -(-total // por_pagina)),
+        "filtros": {"buscar": texto or None, "respondio": respondio,
+                    "convocado": convocado, "mensaje_id": parametros["mensaje"],
+                    "recibio": recibio if mensaje_id else None},
+        "conteos": conteos(conn, encuesta_id),
+    }
+
+
+def _fila_de_participacion(f):
+    return {
+        "id_persona": str(f["id_persona"]),
+        "nombre": f["nombre"],
+        "email": f["email"],
+        "id_en_origen": f["id_en_origen"],
+        # `convocado_en` no es una fecha de convocatoria si `convocado`
+        # es falso: es cuándo se creó la fila (la carga que lo trajo).
+        # La pantalla mira `convocado` antes de mostrarla.
+        "convocado": f["convocado"],
+        "convocado_en": f["convocado_en"].isoformat() if f["convocado"] else None,
+        "registrado_en": f["convocado_en"].isoformat(),
+        "respondio": f["respondio"],
+        "respondio_en": f["respondio_en"].isoformat() if f["respondio_en"] else None,
+        "calidad_estado": f["calidad_estado"],
+        "consiente_semantico": f["consiente_semantico"],
+        "es_panelista": f["es_panelista"],
+    }
 
 
 def marcar_respuesta(conn, encuesta_id, ids_persona, respondio=True):
@@ -1117,177 +1390,11 @@ def verificar_cruce(conn_boveda, conn_semantica, encuesta_id):
     }
 
 
-# ── R4.5 · Envío por WhatsApp Flow ──────────────────────────────────
+# ── R4.5 · El envío por WhatsApp Flow ────────────────────────────────
 #
-# El envío es una acción **sobre** una convocatoria que ya existe: la
-# convocatoria se registra igual que siempre (`participacion`) y esto no la
-# reemplaza. Por eso el estado del envío vive en `participacion` y no en una
-# tabla aparte, y por eso se puede convocar sin enviar y enviar después.
-
-def configurar_flow(conn, encuesta_id, plantilla=None, idioma=None,
-                    entorno=None, pedir=None):
-    """Marca la encuesta como de WhatsApp Flow eligiendo **una plantilla**.
-
-    Lo único que se elige es la plantilla; el idioma y el `flow_id` salen de
-    ella. Pedir los tres por separado era pedir tres veces el mismo dato y
-    dejar que se contradigan: nada impedía configurar una plantilla con el
-    Flow de otra, y eso recién se descubría al validar o al enviar.
-
-    El `flow_id` se guarda igual, resuelto de la plantilla, por dos motivos:
-    queda registrado qué Flow usó esa ola aunque después la plantilla cambie,
-    y el envío no depende de que Meta conteste para saber qué se configuró.
-
-    **No falla si Meta no contesta.** Una plantilla recién mandada a aprobar
-    puede tardar días, y la configuración tiene que poder guardarse igual: lo
-    que no se pudo resolver queda en `null` y `estado_flow` lo informa.
-    """
-    from . import whatsapp
-
-    obtener(conn, encuesta_id)
-    plantilla = (plantilla or "").strip() or None
-    idioma = (idioma or "").strip() or None
-    flow_id = None
-
-    if plantilla:
-        encontrada = whatsapp.buscar_plantilla(
-            plantilla, idioma, entorno=entorno, pedir=pedir)
-        if encontrada:
-            idioma = encontrada["idioma"]
-            flow_id = encontrada["flow_id"]
-
-    db.ejecutar(
-        conn,
-        "update encuesta set flow_id = %s, flow_plantilla = %s, flow_idioma = %s "
-        "where id = %s",
-        (flow_id, plantilla, idioma, encuesta_id),
-    )
-    return obtener(conn, encuesta_id)
-
-
-def estado_flow(conn, encuesta_id, entorno=None, pedir=None):
-    """¿Se puede convocar por WhatsApp? Valida contra Meta **antes** de enviar.
-
-    Las plantillas requieren aprobación y la revisión demora; un Flow válido
-    no hace enviable una plantilla rechazada. Descubrirlo recién al enviar
-    significa haber convocado a gente a la que no se le puede mandar nada.
-    """
-    from . import whatsapp
-
-    encuesta = obtener(conn, encuesta_id)
-    if not encuesta["es_flow"]:
-        return {"encuesta_id": encuesta_id, "es_flow": False,
-                "puede_enviar": False,
-                "motivos": ["La encuesta no está configurada como Flow."]}
-    salida = whatsapp.validar_configuracion(
-        encuesta["flow_plantilla"], encuesta["flow_idioma"],
-        entorno=entorno, pedir=pedir)
-    salida.update({"encuesta_id": encuesta_id, "es_flow": True})
-    return salida
-
-
-def destinatarios_whatsapp(conn, encuesta_id, solo_pendientes=True):
-    """Quiénes de los convocados pueden recibir el Flow, y quiénes no y por qué.
-
-    **La regla de los dos ejes** (R4.4): consentimiento de finalidad vigente
-    *y* preferencia de WhatsApp activa, más celular válido. Los excluidos van
-    discriminados por motivo porque cada uno se arregla distinto.
-    """
-    from . import preferencias
-
-    obtener(conn, encuesta_id)
-    filas = db.todas(
-        conn,
-        """
-        select id_persona, envio_estado from participacion
-         where encuesta_id = %s
-        """,
-        (encuesta_id,),
-    )
-    convocados = [str(f["id_persona"]) for f in filas]
-    ya_enviados = {str(f["id_persona"]) for f in filas
-                   if f["envio_estado"] == "enviado"}
-
-    contactables, excluidos = preferencias.filtrar_contactables(
-        conn, convocados, preferencias.WHATSAPP)
-
-    # Reintentar no puede volver a enviarle a quien ya recibió: sería un
-    # mensaje duplicado, y por ese camino se queman el canal y la paciencia.
-    pendientes = [i for i in contactables if i not in ya_enviados]
-    return {
-        "encuesta_id": encuesta_id,
-        "convocados": len(convocados),
-        "destinatarios": pendientes if solo_pendientes else contactables,
-        "ya_enviados": sorted(ya_enviados),
-        "excluidos": excluidos,
-        "excluidos_total": sum(len(v) for v in excluidos.values()),
-    }
-
-
-def enviar_por_whatsapp(conn, encuesta_id, ids_persona=None, entorno=None,
-                        pedir=None, enviar=None):
-    """Manda el Flow a los convocados que cumplen. Devuelve el parte por persona.
-
-    No se puede enviar si la configuración no está validada: es la baranda de
-    R4.5, y evita el caso feo de convocar y descubrir después que la plantilla
-    estaba rechazada.
-    """
-    from . import whatsapp
-
-    encuesta = obtener(conn, encuesta_id)
-    estado = estado_flow(conn, encuesta_id, entorno=entorno, pedir=pedir)
-    if not estado["puede_enviar"]:
-        raise Conflicto(
-            "No se puede enviar por WhatsApp todavía.",
-            {"motivos": estado["motivos"], "encuesta_id": encuesta_id})
-
-    seleccion = destinatarios_whatsapp(conn, encuesta_id)
-    destinatarios = seleccion["destinatarios"]
-    if ids_persona:
-        pedidos = {str(i) for i in ids_persona}
-        destinatarios = [i for i in destinatarios if i in pedidos]
-    if not destinatarios:
-        return {**seleccion, "enviados": 0, "fallidos": 0, "detalle": []}
-
-    celulares = {
-        str(f["id_persona"]): f["celular"]
-        for f in db.todas(
-            conn,
-            "select id_persona, celular from persona where id_persona = any(%s::uuid[])",
-            (destinatarios,))
-    }
-
-    enviados, fallidos, detalle = 0, 0, []
-    for id_persona in destinatarios:
-        try:
-            resultado = (enviar or whatsapp.enviar_flow)(
-                celulares.get(id_persona),
-                encuesta["flow_plantilla"], encuesta["flow_idioma"],
-                # R4.5 — el `flow_token` **es** el `id_persona`: es lo que
-                # vuelve con las respuestas y lo que hace que la ingesta
-                # mapee directo, sin PII y sin adivinar.
-                flow_token=id_persona,
-                entorno=entorno, pedir=pedir)
-            db.ejecutar(
-                conn,
-                "update participacion set enviado_en = now(), "
-                "envio_estado = 'enviado', envio_error = null "
-                "where encuesta_id = %s and id_persona = %s",
-                (encuesta_id, id_persona))
-            enviados += 1
-            detalle.append({"id_persona": id_persona, "estado": "enviado",
-                            "message_id": resultado.get("message_id")})
-        except Exception as error:      # noqa: BLE001 — se informa, no se propaga
-            # Un fallo por persona no puede voltear el envío entero: el resto
-            # de la ola tiene que salir igual, y el fallido se reintenta.
-            mensaje = getattr(error, "mensaje", None) or str(error)
-            db.ejecutar(
-                conn,
-                "update participacion set envio_estado = 'fallido', "
-                "envio_error = %s where encuesta_id = %s and id_persona = %s",
-                (mensaje[:500], encuesta_id, id_persona))
-            fallidos += 1
-            detalle.append({"id_persona": id_persona, "estado": "fallido",
-                            "error": mensaje})
-    conn.commit()
-    return {**seleccion, "enviados": enviados, "fallidos": fallidos,
-            "detalle": detalle}
+# D87 — la sección «WhatsApp Flow» se unificó en los mensajes de la encuesta
+# (`mensajes.py`): el Flow es un tipo de botón de la plantilla de un mensaje,
+# con los mismos cuatro públicos, la misma regla de elegibilidad y el mismo
+# registro en `envio`. Lo que la sección vieja envió se migró a `envio`
+# (boveda/0036). Las columnas `encuesta.flow_*` y `participacion.envio_*`
+# quedan sin uso hasta que una versión posterior las quite: nada las escribe.

@@ -67,8 +67,11 @@ aparte, y queda registrada (ver `auditoria.py`).
 """
 
 import csv
+import hashlib
 import io
 import json
+import re
+import secrets
 import time
 import uuid
 
@@ -180,6 +183,53 @@ SEMANTICO_PRIMERO = "semantico_primero"
 ESTRATEGIAS = (DEMOGRAFICO_PRIMERO, SEMANTICO_PRIMERO)
 
 SIN_EVIDENCIA = "sin_evidencia"
+
+# R-ALE (D89) — cómo se eligen las personas que se muestran.
+#
+# * `ranking`: las que mejor cumplen el criterio. Es lo de siempre para una
+#   consulta semántica.
+# * `aleatorio`: un sorteo con semilla. Una consulta sin criterios semánticos
+#   es **siempre** aleatoria (R-ALE.1): mostrar las primeras por nombre
+#   sesgaba por sexo y generación, y ese sesgo pasaba a la audiencia de la
+#   encuesta. En una semántica se elige (R-ALE.2): un sorteo entre quienes
+#   superan el umbral, verificando en el orden del sorteo y reemplazando a
+#   quien no cumple.
+RANKING, ALEATORIO = "ranking", "aleatorio"
+SELECCIONES = (RANKING, ALEATORIO)
+SEGMENTO_COMPLETO = "segmento_completo"
+
+TOPE_ALEATORIO = 4
+"""R-ALE.2 — en el modo aleatorio semántico se verifican, como mucho,
+`TOPE_ALEATORIO × limite` personas del sorteo. Con un umbral laxo el pool se
+llena de gente que no va a cumplir y los reemplazos no terminan nunca: el
+tope pone un techo al gasto y el resultado lo dice."""
+
+
+def nueva_semilla():
+    """Una semilla nueva por ejecución. Corta, para que se pueda leer y
+    copiar desde la pantalla."""
+    return secrets.token_hex(6)
+
+
+def normalizar_semilla(crudo):
+    if crudo in (None, ""):
+        return None
+    semilla = str(crudo).strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", semilla):
+        raise DatosInvalidos("La semilla tiene que ser letras, números, «-» o «_» "
+                             "(hasta 64).", {"campo": "semilla"})
+    return semilla
+
+
+def orden_de_sorteo(id_persona, semilla):
+    """La clave del sorteo de una persona: `md5(id_persona || semilla)`, la
+    misma cuenta que `demografia.ORDEN_DE_SORTEO` hace en SQL."""
+    return hashlib.md5(f"{id_persona}{semilla}".encode()).hexdigest()
+
+
+def sortear(ids, semilla):
+    """Los ids en el orden del sorteo (desempate por id, como en SQL)."""
+    return sorted((str(i) for i in ids), key=lambda i: (orden_de_sorteo(i, semilla), i))
 
 
 class _Reloj:
@@ -344,6 +394,15 @@ def normalizar_definicion(cruda, conn=None):
     else:
         presupuesto = None
 
+    # R-ALE — el modo de selección y la semilla. La semilla solo se guarda
+    # si se pidió (rehacer una selección, la página siguiente, exportar lo
+    # que se ve): sin ella, cada ejecución sortea con una nueva.
+    seleccion = (cruda.get("seleccion") or RANKING)
+    seleccion = str(seleccion).strip().lower()
+    if seleccion not in SELECCIONES:
+        raise DatosInvalidos(f"Modo de selección desconocido: {seleccion!r}.",
+                             {"selecciones_validas": list(SELECCIONES)})
+
     distancia_maxima = cruda.get("distancia_maxima")
     if distancia_maxima not in (None, ""):
         try:
@@ -369,6 +428,11 @@ def normalizar_definicion(cruda, conn=None):
         "tipo_embedding_criterio": tipo_criterio,
         "presupuesto_usd": presupuesto,
         "distancia_maxima": distancia_maxima,
+        "seleccion": seleccion,
+        "semilla": normalizar_semilla(cruda.get("semilla")),
+        # La página de una demográfica (R-ALE.1): con la misma semilla, dos
+        # páginas no repiten ni pierden a nadie.
+        "pagina": _entero(cruda.get("pagina"), 1, 1_000_000),
     }
 
 
@@ -1236,14 +1300,28 @@ def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None, actor=None)
 
     # ── R2.4: puramente demográfica, entera en la bóveda ──
     if not semanticos:
+        # R-ALE.1 — sin criterios semánticos la selección es siempre un
+        # sorteo con semilla: las primeras por nombre no representan al
+        # segmento. Ordenarlas en pantalla no cambia quiénes son.
+        semilla = definicion["semilla"] or nueva_semilla()
+        definicion["seleccion"], definicion["semilla"] = ALEATORIO, semilla
         desde = time.perf_counter()
         resultado = demografia.consultar(
             ctx.boveda, demograficos,
             panel_id=definicion["panel_id"],
             finalidad=definicion_cruda.get("finalidad") if definicion_cruda else None,
             limite=definicion["limite"],
+            desplazamiento=(definicion["pagina"] - 1) * definicion["limite"],
+            semilla=semilla,
         )
-        reloj.marca("consulta_demografica", desde, personas=resultado["total"])
+        reloj.marca("consulta_demografica", desde, personas=resultado["total"],
+                    seleccion=ALEATORIO)
+        resultado["seleccion"] = {"modo": ALEATORIO, "semilla": semilla}
+        resultado["paginacion"] = {
+            "pagina": definicion["pagina"], "por_pagina": definicion["limite"],
+            "total": resultado["total"],
+            "paginas": max(1, -(-resultado["total"] // definicion["limite"])),
+        }
         # SC2 — el resultado demográfico es seudónimo, igual que el semántico.
         # Hasta acá traía nombre y correo, y la pantalla los mostraba sin que
         # quedara registrada ninguna reidentificación: el camino más
@@ -1338,6 +1416,18 @@ def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None, actor=None)
                 ids_persona=ids,
             )
 
+    if definicion["seleccion"] == ALEATORIO:
+        # R-ALE.2 — un sorteo entre quienes superan el umbral, verificado en
+        # el orden del sorteo. Necesita el segmento entero (el pool es exacto),
+        # así que no depende de la estrategia de puente.
+        try:
+            return _ejecutar_aleatoria(
+                ctx, definicion, demograficos, semanticos, personas_en_segmento,
+                reloj, degradaciones, reranker, verificador, verificacion,
+                ejecucion_id, tokens_rerank_al_empezar, actor)
+        finally:
+            _persistir_captura(ctx, verificacion.get("captura"))
+
     por_criterio = {}
     try:
         for criterio in semanticos:
@@ -1408,6 +1498,7 @@ def ejecutar(ctx, definicion_cruda, reranker=None, verificador=None, actor=None)
         },
         "degradaciones": degradaciones,
         "verificacion": _resumen_verificacion(informes, items, excluidos),
+        "seleccion": {"modo": RANKING, "semilla": None},
         "costo": {
             "usd": costo_consulta.costo(
                 tarifas, tokens["verificacion_entrada"], tokens["verificacion_salida"],
@@ -1463,22 +1554,245 @@ def registrar_ejecucion(conn, ejecucion_id, definicion, resultado, actor=None):
                    if k != "motivo"},
         "total": resultado.get("total"),
         "excluidos": len(resultado.get("excluidos") or []),
+        # R-ALE — cómo se eligieron las personas: rehacer y auditar.
+        "seleccion": resultado.get("seleccion"),
     }
+    seleccion = resultado.get("seleccion") or {}
     try:
         db.ejecutar(
             conn,
             """insert into consulta_ejecucion
                       (id, alcance, modo, tipo, definicion, estado, costo_real_usd,
-                       diagnostico, creado_por, terminado_en)
-               values (%s, %s, %s, %s, %s::jsonb, 'terminada', %s, %s::jsonb, %s, now())""",
+                       diagnostico, creado_por, terminado_en, seleccion, semilla)
+               values (%s, %s, %s, %s, %s::jsonb, 'terminada', %s, %s::jsonb, %s, now(),
+                       %s, %s)""",
             (ejecucion_id, EXPLORATORIO, definicion["modo"], resultado.get("tipo"),
              json.dumps(definicion, ensure_ascii=False, default=str),
              (resultado.get("costo") or {}).get("usd"),
-             json.dumps(diagnostico, ensure_ascii=False, default=str), actor))
+             json.dumps(diagnostico, ensure_ascii=False, default=str), actor,
+             seleccion.get("modo"), seleccion.get("semilla")))
         conn.commit()
     except Exception as error:  # noqa: BLE001
         conn.rollback()
         print(f"[consultas] no se pudo registrar la ejecución: {type(error).__name__}")
+
+
+# ════════════════════════════════════════════════════════════════════
+#  R-ALE.2 — Aleatorio entre los que cumplen
+# ════════════════════════════════════════════════════════════════════
+
+def _pool_aleatorio(ctx, criterio, definicion, ids_segmento, reloj, verificacion):
+    """`{id_persona: [evidencias]}` de un criterio: quienes tienen evidencia
+    por debajo del umbral de confianza (`umbral_distancia`), con el recall
+    **exacto** sobre el segmento (`semantica.unidades_elegibles`, a fuerza
+    bruta: el índice sirve para «los N más cercanos» y acá se quieren todos).
+    De cada persona, sus mejores `MAX_EVIDENCIAS_POR_INDIVIDUO` evidencias,
+    como en el ranking."""
+    etiqueta = criterio["etiqueta"]
+    desde = time.perf_counter()
+    tipo = mod_embeddings.tipo_de_criterio(pedido=definicion.get("tipo_embedding_criterio"))
+    vector = ctx.embeddings.embeber_criterio([criterio["texto"]], tipo=tipo)[0]
+    verificacion.setdefault("tokens_embedding", 0)
+    verificacion["tokens_embedding"] += costo_consulta.tokens_de(criterio["texto"])
+    reloj.marca("embedding", desde, criterio=etiqueta, dims=len(vector), input_type=tipo)
+
+    desde = time.perf_counter()
+    unidades = semantica.unidades_elegibles(
+        ctx.semantica, vector, ids_segmento, distancia_maxima=definicion["umbral_distancia"])
+    distancia = {u["hash_texto"]: u["distancia"] for u in unidades}
+    respuestas = semantica.respuestas_de_unidades(
+        ctx.semantica, list(distancia), ids_segmento) if distancia else []
+    por_persona = {}
+    for r in respuestas:
+        r["distancia"] = distancia[r["hash_texto"]]
+        por_persona.setdefault(r["id_persona"], []).append(r)
+    for id_persona, evidencias in por_persona.items():
+        evidencias.sort(key=lambda c: (c["distancia"], c["respuesta_id"]))
+        por_persona[id_persona] = evidencias[:MAX_EVIDENCIAS_POR_INDIVIDUO]
+    reloj.marca("pool_aleatorio", desde, criterio=etiqueta, unidades=len(unidades),
+                respuestas=len(respuestas), personas=len(por_persona),
+                umbral=definicion["umbral_distancia"])
+    return por_persona
+
+
+def _ejecutar_aleatoria(ctx, definicion, demograficos, semanticos, personas_en_segmento,
+                        reloj, degradaciones, reranker, verificador, verificacion,
+                        ejecucion_id, tokens_rerank_al_empezar, actor):
+    """R-ALE.2 — aleatorio entre los que cumplen:
+
+    1. El **pool**: quienes tienen evidencia por debajo del umbral de
+       confianza en cada criterio semántico, en el segmento y con
+       `uso_semantico` vigente (el gate).
+    2. Se **sortean** con semilla (`sortear`, la cuenta de R-ALE.1).
+    3. Se **verifican** las sorteadas, en el orden del sorteo.
+    4. Quien no queda `cumple` en todos los criterios **se reemplaza** por la
+       siguiente del sorteo, hasta llegar a la cantidad pedida o agotar el
+       pool (o el tope de gasto, `TOPE_ALEATORIO`).
+
+    Sortear antes de verificar da el mismo resultado estadístico que
+    verificar todo el pool y después sortear, verificando casi solo lo
+    necesario. La regla de agregación es la de siempre (`hallazgo_de`), y una
+    evidencia sin verificar **no aprueba**: quien la tiene se reemplaza y se
+    cuenta aparte, nunca como `dudoso`.
+    """
+    semilla = definicion["semilla"] or nueva_semilla()
+    definicion["semilla"] = semilla
+    limite = definicion["limite"]
+
+    desde = time.perf_counter()
+    ids_segmento = demografia.ids_del_segmento(
+        ctx.boveda, demograficos, panel_id=definicion["panel_id"],
+        finalidad=consentimiento.SEMANTICO)
+    reloj.marca("ids_del_segmento", desde, personas=len(ids_segmento))
+
+    pools = {c["orden"]: _pool_aleatorio(ctx, c, definicion, ids_segmento, reloj,
+                                         verificacion)
+             for c in semanticos}
+    pool = set.intersection(*(set(p) for p in pools.values())) if pools else set()
+    sorteo = sortear(pool, semilla)
+
+    desde = time.perf_counter()
+    juicios = {c["orden"]: {} for c in semanticos}
+    informes_por_criterio = {c["orden"]: [] for c in semanticos}
+    elegidas, por_criterio = [], {c["orden"]: {} for c in semanticos}
+    reemplazadas = sin_verificar = verificadas = cursor = 0
+    tope = TOPE_ALEATORIO * limite
+    while len(elegidas) < limite and cursor < len(sorteo) and verificadas < tope:
+        tanda = sorteo[cursor: cursor + min(limite - len(elegidas), tope - verificadas)]
+        cursor += len(tanda)
+        for criterio in semanticos:
+            ya = juicios[criterio["orden"]]
+            nuevas = {}
+            for id_persona in tanda:
+                for evidencia in pools[criterio["orden"]][id_persona]:
+                    clave = clave_unidad(evidencia)
+                    if clave not in ya:
+                        nuevas.setdefault(clave, evidencia)
+            if nuevas:
+                emitidos, informe = _verificar_unidades(
+                    verificacion, criterio["texto"], criterio["etiqueta"],
+                    list(nuevas.values()), verificador, degradaciones)
+                informes_por_criterio[criterio["orden"]].append(informe)
+                ya.update(zip(nuevas, emitidos))
+        for id_persona in tanda:
+            verificadas += 1
+            hallazgos = {
+                c["orden"]: hallazgo_de(
+                    c, pools[c["orden"]][id_persona],
+                    [juicios[c["orden"]][clave_unidad(e)]
+                     for e in pools[c["orden"]][id_persona]])
+                for c in semanticos}
+            if all(h["veredicto"] == mod_verificacion.CUMPLE and not h["pendientes_de_verificar"]
+                   for h in hallazgos.values()):
+                elegidas.append(id_persona)
+                for orden, hallazgo in hallazgos.items():
+                    por_criterio[orden][id_persona] = hallazgo
+            elif any(h["veredicto"] == mod_verificacion.SIN_VERIFICAR
+                     or h["pendientes_de_verificar"] for h in hallazgos.values()) and not any(
+                    h["veredicto"] == mod_verificacion.NO_CUMPLE for h in hallazgos.values()):
+                sin_verificar += 1
+            else:
+                reemplazadas += 1
+    tope_alcanzado = len(elegidas) < limite and cursor < len(sorteo)
+
+    # La combinación de siempre: el detalle por criterio, el estado y el
+    # contrato con COLOQUIO. Todas cumplen, así que todas quedan.
+    items, _ = _combinar(definicion, por_criterio, definicion["umbral_distancia"])
+    puesto = {id_persona: i for i, id_persona in enumerate(sorteo)}
+    items.sort(key=lambda i: puesto[i["id_persona"]])
+    for item in items:
+        item["sorteo"] = puesto[item["id_persona"]] + 1
+    reloj.marca("verificacion_aleatoria", desde, pool=len(sorteo), verificadas=verificadas,
+                elegidas=len(elegidas), reemplazadas=reemplazadas,
+                sin_verificar=sin_verificar, tope_alcanzado=tope_alcanzado)
+
+    informes = [{"criterio": c["etiqueta"],
+                 **_sumar_informes(informes_por_criterio[c["orden"]],
+                                   evidencias=len(juicios[c["orden"]])),
+                 "unidades": len(juicios[c["orden"]]),
+                 "respuestas_cubiertas": len(juicios[c["orden"]]),
+                 "irrelevantes": 0}
+                for c in semanticos]
+    for informe in informes:
+        informe["irrelevantes"] = informe["veredictos"].get(mod_verificacion.IRRELEVANTE, 0)
+    tokens = {
+        "verificacion_entrada": sum(i["tokens"]["entrada"] for i in informes),
+        "verificacion_salida": sum(i["tokens"]["salida"] for i in informes),
+        "rerank": (getattr(reranker, "tokens", 0) or 0) - tokens_rerank_al_empezar,
+        "embedding": verificacion.get("tokens_embedding", 0),
+    }
+    tarifas = costo_consulta.Tarifas.desde_entorno()
+    avisos = []
+    if len(elegidas) < limite and not tope_alcanzado:
+        avisos.append(f"Solo hay {len(elegidas)} persona(s) que cumplen: se pidieron "
+                      f"{limite} y el pool se agotó.")
+    if tope_alcanzado:
+        avisos.append(f"Se verificaron {verificadas} personas (el tope es {TOPE_ALEATORIO} "
+                      f"por cada una pedida) y cumplieron {len(elegidas)}. Con un umbral "
+                      f"más estricto el pool trae menos gente que no cumple.")
+    if sin_verificar:
+        avisos.append(f"{sin_verificar} persona(s) del sorteo quedaron sin verificar y se "
+                      f"reemplazaron: una evidencia sin verificar no aprueba.")
+    resultado = {
+        "tipo": "mixta" if demograficos else "semantica",
+        "version_contrato": VERSION_CONTRATO,
+        "alcance": EXPLORATORIO,
+        "modo": definicion["modo"],
+        "panel_id": definicion["panel_id"],
+        "criterios": definicion["criterios"],
+        "parametros": {
+            "limite": limite,
+            "umbral_distancia": definicion["umbral_distancia"],
+            "tipo_embedding_criterio": mod_embeddings.tipo_de_criterio(
+                pedido=definicion.get("tipo_embedding_criterio")),
+        },
+        "puente": {
+            "estrategia": DEMOGRAFICO_PRIMERO,
+            "motivo": ("Selección aleatoria: el pool es exacto sobre el segmento con "
+                       "uso semántico vigente, así que se resuelve primero en la bóveda."),
+            "personas_en_segmento": personas_en_segmento,
+            "gate": consentimiento.SEMANTICO,
+        },
+        "seleccion": {
+            "modo": ALEATORIO, "semilla": semilla,
+            "pool": len(sorteo), "sorteadas": cursor, "verificadas": verificadas,
+            "reemplazadas": reemplazadas, "sin_verificar": sin_verificar,
+            "quedaron": len(elegidas), "pedidas": limite,
+            "tope_alcanzado": tope_alcanzado, "avisos": avisos,
+        },
+        "total": len(items),
+        "items": items,
+        "excluidos": [],
+        "recorte": {
+            "personas_verificadas": verificadas, "personas_pertinentes": len(elegidas),
+            "en_ranking": len(items), "mostradas": len(items), "recortado": False,
+            "limite": limite, "top_k": definicion["top_k"],
+        },
+        "degradaciones": degradaciones,
+        "verificacion": _resumen_verificacion(informes, items, []),
+        "costo": {
+            "usd": costo_consulta.costo(
+                tarifas, tokens["verificacion_entrada"], tokens["verificacion_salida"],
+                tokens["rerank"], tokens["embedding"]),
+            "tokens": tokens,
+            "tarifas": tarifas.como_dict(),
+        },
+        "diagnostico": {
+            "ms_total": reloj.ms_total,
+            "etapas": reloj.etapas,
+            "abrio_semantica": True,
+            "reranker": None,
+            "verificador": verificador.nombre,
+            "ejecucion_id": ejecucion_id,
+            "tipo_embedding_criterio": mod_embeddings.tipo_de_criterio(
+                pedido=definicion.get("tipo_embedding_criterio")),
+            "captura_depuracion": verificacion.get("captura") is not None,
+            "verificacion": [{k: v for k, v in informe.items() if k != "lotes"}
+                             for informe in informes],
+        },
+    }
+    registrar_ejecucion(ctx.boveda, ejecucion_id, definicion, resultado, actor=actor)
+    return resultado
 
 
 def _persistir_captura(ctx, captura):

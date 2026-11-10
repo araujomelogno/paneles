@@ -64,6 +64,9 @@ TABLAS_BOVEDA = [
     # D85 — los mensajes y su registro cascadean desde la encuesta, pero se
     # nombran para que el truncate no dependa de eso.
     "envio", "encuesta_mensaje", "encuesta_estado_cambio",
+    # D88 / D90 — la auditoría de los canales de una carga y los pasos de la
+    # audiencia de una encuesta cascadean, pero se nombran por lo mismo.
+    "carga_canal_registro", "encuesta_audiencia_agregado",
 ]
 
 # R3.14 — el catálogo de atributos **no** se trunca: `sexo`, `localidad`,

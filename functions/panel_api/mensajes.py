@@ -28,6 +28,13 @@ agradecimiento a quien ya respondió tampoco la convoca —ya respondió—.
 
 **«No contestaron» son las respuestas ingestadas**, no las de Alchemer en
 tiempo real (non-goal de la spec). Recordar sobre la última carga alcanza.
+
+**El Flow es un botón, no una sección (D87).** Una plantilla de WhatsApp lleva
+un botón de URL (la encuesta en Alchemer, con el `id_persona` al final) o uno
+de Flow (el `id_persona` va como `flow_token`, como en R4.5). Es un atributo
+de la plantilla: los dos tipos tienen los mismos cuatro públicos, la misma
+regla de elegibilidad y el mismo registro en `envio`. Para uno de Flow, «Flow
+publicado y plantilla aprobada» se exige al guardar y al enviar.
 """
 
 import json
@@ -45,6 +52,11 @@ CANALES = (WHATSAPP, CORREO)
 # El canal del mensaje → la preferencia de canal que tiene que tener la
 # persona (R4.4).
 PREFERENCIA_DE = {WHATSAPP: preferencias.WHATSAPP, CORREO: preferencias.EMAIL}
+
+# D87 — el tipo de botón de la plantilla de un mensaje de WhatsApp.
+BOTON_URL = "url"
+BOTON_FLOW = "flow"
+BOTONES = {BOTON_URL: "Botón de URL", BOTON_FLOW: "Botón de Flow"}
 
 # Qué puede ir en cada `{{n}}` del texto de una plantilla. Un conjunto fijo:
 # lo que no está acá no se manda.
@@ -107,6 +119,9 @@ def _serializar(fila, conteos=None):
         "plantilla_idioma": fila["plantilla_idioma"],
         "parametros": fila["parametros"] or [],
         "url_boton": fila["url_boton"],
+        # D87 — `url`, `flow` o None (sin botón, o un correo).
+        "boton": fila.get("boton"),
+        "flow_id": fila.get("flow_id"),
         "asunto": fila["asunto"],
         "cuerpo": fila["cuerpo"],
         "creado_en": fila["creado_en"].isoformat(),
@@ -150,15 +165,43 @@ def obtener(conn, encuesta_id, mensaje_id):
     return _serializar(fila, _conteos(conn, [fila["id"]]).get(fila["id"]))
 
 
+def boton_de(plantilla):
+    """D87 — qué botón lleva una plantilla: `flow` si tiene uno de Flow, `url`
+    si tiene uno de URL, None si es de solo texto."""
+    if plantilla.get("flow_id"):
+        return BOTON_FLOW
+    if plantilla.get("boton_url"):
+        return BOTON_URL
+    return None
+
+
 def plantillas_para_mensajes(entorno=None, pedir=None):
-    """R-CF.4 — las plantillas aprobadas que sirven para un mensaje: las de
-    botón de URL (la invitación y el recordatorio), las de Flow (R4.5) y las
-    de solo texto (un agradecimiento). Hoy `listar_plantillas` filtraba por
-    Flow; para los mensajes no."""
+    """R-CF.4 / D87 — las plantillas aprobadas que sirven para un mensaje: las
+    de botón de URL (la invitación y el recordatorio), las de botón de Flow
+    (la encuesta adentro de WhatsApp) y las de solo texto (un
+    agradecimiento). Cada una dice cuál es (`boton`, `boton_etiqueta`)."""
     salida = whatsapp.listar_plantillas(entorno=entorno, pedir=pedir,
                                         solo_con_flow=False)
+    for plantilla in salida.get("plantillas") or []:
+        plantilla["boton"] = boton_de(plantilla)
+        plantilla["boton_etiqueta"] = BOTONES.get(plantilla["boton"], "Solo texto")
     salida["fuentes_de_parametro"] = FUENTES_DE_PARAMETRO
+    salida["botones"] = BOTONES
+    # La lista de `listar_plantillas` avisa cuando no hay de Flow: para los
+    # mensajes no es un problema, hay de URL.
+    salida["avisos"] = [a for a in salida.get("avisos") or []
+                        if "botón de Flow" not in a]
     return salida
+
+
+def _exigir_flow_publicado(plantilla, entorno=None, pedir=None):
+    """D87 — un mensaje de Flow exige el Flow publicado, al guardar y al
+    enviar (la validación de la sección vieja, R4.5)."""
+    publicado, motivo = whatsapp.estado_del_flow(plantilla.get("flow_id"),
+                                                 entorno=entorno, pedir=pedir)
+    if not publicado:
+        raise DatosInvalidos(motivo, {"motivo": "flow_no_publicado",
+                                      "flow_id": plantilla.get("flow_id")})
 
 
 def _plantilla_aprobada(nombre, idioma, entorno=None, pedir=None):
@@ -212,7 +255,7 @@ def guardar(conn, encuesta_id, datos, actor=None, mensaje_id=None,
 
     valores = {"nombre": nombre, "canal": canal, "plantilla": None,
                "plantilla_idioma": None, "parametros": [], "url_boton": None,
-               "asunto": None, "cuerpo": None}
+               "boton": None, "flow_id": None, "asunto": None, "cuerpo": None}
     avisos = []
     if canal == WHATSAPP:
         plantilla = _plantilla_aprobada((datos.get("plantilla") or "").strip(),
@@ -228,10 +271,16 @@ def guardar(conn, encuesta_id, datos, actor=None, mensaje_id=None,
         if ajenos:
             raise DatosInvalidos(f"Parámetro desconocido: {ajenos}.",
                                  {"fuentes": list(FUENTES_DE_PARAMETRO)})
-        boton = plantilla.get("boton_url")
+        tipo_boton = boton_de(plantilla)
+        boton = plantilla.get("boton_url") if tipo_boton == BOTON_URL else None
         valores.update(plantilla=plantilla["nombre"], plantilla_idioma=plantilla["idioma"],
-                       parametros=parametros,
-                       url_boton=boton["base"] if boton else None)
+                       parametros=parametros, boton=tipo_boton,
+                       url_boton=boton["base"] if boton else None,
+                       flow_id=plantilla.get("flow_id") if tipo_boton == BOTON_FLOW else None)
+        if tipo_boton == BOTON_FLOW:
+            # D87 — Flow publicado y plantilla aprobada: lo que validaba la
+            # sección vieja, ahora al guardar el mensaje.
+            _exigir_flow_publicado(plantilla, entorno=entorno, pedir=pedir)
         if boton:
             distinta = None
             if not boton["dinamico"]:
@@ -366,8 +415,10 @@ def _motivos_para_no_enviar(conn, encuesta, mensaje, entorno=None, pedir=None):
             "en campo.")
     if mensaje["canal"] == WHATSAPP:
         try:
-            _plantilla_aprobada(mensaje["plantilla"], mensaje["plantilla_idioma"],
-                                entorno=entorno, pedir=pedir)
+            plantilla = _plantilla_aprobada(mensaje["plantilla"], mensaje["plantilla_idioma"],
+                                            entorno=entorno, pedir=pedir)
+            if mensaje.get("boton") == BOTON_FLOW:
+                _exigir_flow_publicado(plantilla, entorno=entorno, pedir=pedir)
         except DatosInvalidos as error:
             motivos.append(error.mensaje)
     else:
@@ -490,6 +541,22 @@ def _enviar_uno(conn, mensaje, encuesta, persona, entorno=None, pedir=None,
                 enviador_correo=None):
     """`(estado, id_meta, error)` de un envío. No levanta por un fallo de la
     persona: se registra como fallido y el envío sigue."""
+    if mensaje["canal"] == WHATSAPP and mensaje.get("boton") == BOTON_FLOW:
+        # D87 — el Flow, como en R4.5: el `id_persona` es el `flow_token`, lo
+        # que vuelve con las respuestas y hace que la ingesta mapee directo.
+        try:
+            resultado = whatsapp.enviar_flow(
+                preferencias.normalizar_celular(persona["celular"]) or persona["celular"],
+                mensaje["plantilla"], mensaje["plantilla_idioma"],
+                flow_token=persona["id_persona"],
+                textos=_textos(mensaje, encuesta, persona),
+                indice=mensaje.get("_indice_boton", 0),
+                entorno=entorno, pedir=pedir)
+            return ACEPTADO, resultado.get("message_id"), None
+        except whatsapp.SinConfigurar:
+            raise
+        except Exception as error:  # noqa: BLE001 — se registra, no se propaga
+            return FALLIDO, None, (getattr(error, "mensaje", None) or str(error))[:500]
     if mensaje["canal"] == WHATSAPP:
         try:
             resultado = whatsapp.enviar_plantilla(
@@ -532,7 +599,11 @@ def procesar_lote(conn, plan, filas, trabajo_id=None, entorno=None, pedir=None,
     """
     mensaje = obtener(conn, plan["encuesta_id"], plan["mensaje_id"])
     encuesta = encuestas.obtener(conn, plan["encuesta_id"])
-    if mensaje["canal"] == WHATSAPP and mensaje["url_boton"]:
+    if mensaje["canal"] == WHATSAPP and mensaje.get("boton") == BOTON_FLOW:
+        plantilla = _plantilla_aprobada(mensaje["plantilla"], mensaje["plantilla_idioma"],
+                                        entorno=entorno, pedir=pedir)
+        mensaje["_indice_boton"] = _indice_del_boton_de_flow(plantilla)
+    elif mensaje["canal"] == WHATSAPP and mensaje["url_boton"]:
         plantilla = _plantilla_aprobada(mensaje["plantilla"], mensaje["plantilla_idioma"],
                                         entorno=entorno, pedir=pedir)
         mensaje["_indice_boton"] = (plantilla.get("boton_url") or {}).get("indice", 0)
@@ -579,6 +650,11 @@ def procesar_lote(conn, plan, filas, trabajo_id=None, entorno=None, pedir=None,
             "operacion": OPERACION, "mensaje_id": mensaje["id"]}
 
 
+def _indice_del_boton_de_flow(plantilla):
+    """La posición del botón de Flow en la plantilla (Meta la pide al enviar)."""
+    return int(plantilla.get("indice_flow") or 0)
+
+
 def _convocar_con_el_primero(conn, encuesta_id, id_persona, mensaje_id=None):
     """R-CF.6 — el primer mensaje que recibe una persona en una encuesta la
     convoca, con esa fecha. Los siguientes no: no inflan la fatiga. A quien
@@ -605,18 +681,24 @@ def _convocar_con_el_primero(conn, encuesta_id, id_persona, mensaje_id=None):
 # ════════════════════════════════════════════════════════════════════
 
 
-def envios_por_persona(conn, encuesta_id):
+def envios_por_persona(conn, encuesta_id, ids_persona=None):
     """`{id_persona: [{mensaje, canal, enviado_en, estado, error}]}` de una
-    encuesta: lo que la sección de convocatoria muestra por panelista."""
+    encuesta: lo que la sección de convocatoria muestra por panelista. Con
+    `ids_persona`, solo los de esas personas (la página que se muestra)."""
     salida = {}
+    if ids_persona is not None and not ids_persona:
+        return salida
     for f in db.todas(
             conn,
-            """select e.id_persona, m.nombre as mensaje, e.canal, e.enviado_en,
-                      e.estado, e.error
+            """select e.id_persona, e.encuesta_mensaje_id, m.nombre as mensaje, e.canal,
+                      e.enviado_en, e.estado, e.error
                  from envio e join encuesta_mensaje m on m.id = e.encuesta_mensaje_id
                 where m.encuesta_id = %s
-                order by e.enviado_en, e.id""", (encuesta_id,)):
+                  and (%s::uuid[] is null or e.id_persona = any(%s::uuid[]))
+                order by e.enviado_en, e.id""",
+            (encuesta_id, ids_persona, ids_persona)):
         salida.setdefault(str(f["id_persona"]), []).append({
+            "mensaje_id": f["encuesta_mensaje_id"],
             "mensaje": f["mensaje"], "canal": f["canal"],
             "enviado_en": f["enviado_en"].isoformat(), "estado": f["estado"],
             "error": f["error"]})

@@ -10,6 +10,7 @@ import os
 import re
 
 from . import (
+    canales_carga,
     atributos,
     auditoria,
     bajas,
@@ -557,24 +558,39 @@ def reintentar_cumplimiento(ctx, actor, params, cuerpo, consulta):
 #  Encuestas, fielding e ingesta
 # ════════════════════════════════════════════════════════════════════
 
-@ruta("POST", "/encuestas", "fieldear", requisito="R1.5, R-EU.2")
+@ruta("POST", "/encuestas", "fieldear", requisito="R1.5, R-EU.2, R-AU.3")
 def crear_encuesta(ctx, actor, params, cuerpo, consulta):
-    """Abre un estudio de panel con sus datos (R-EU.2). Una independiente se
-    crea desde el resultado de una consulta (`/encuestas/desde-consulta`)."""
+    """Abre un estudio con sus datos (R-EU.2): de panel (`panel_id`) o
+    independiente (`tipo: independiente`, R-AU.3), que nace **sin audiencia**
+    y se completa a mano, desde consultas o con sus cargas. Los datos son los
+    mismos que pide la carga; las temáticas se pueden poner a mano (las de IA
+    llegan con la primera carga)."""
+    cuerpo = cuerpo or {}
+    tipo = (cuerpo.get("tipo") or encuestas.DE_PANEL).strip().lower()
     resultado = encuestas.crear(
-        ctx.boveda, _entero(cuerpo.get("panel_id")), cuerpo.get("nombre"),
-        cuerpo.get("fecha_campo"), tipo=encuestas.DE_PANEL,
+        ctx.boveda, _entero(cuerpo.get("panel_id")) if tipo == encuestas.DE_PANEL else None,
+        cuerpo.get("nombre"), cuerpo.get("fecha_campo"), tipo=tipo,
+        origen=encuestas.ORIGEN_MANUAL if tipo == encuestas.INDEPENDIENTE else None,
         publico_objetivo=cuerpo.get("publico_objetivo"),
         descripcion=cuerpo.get("descripcion"), clientes=cuerpo.get("clientes"),
+        url_alchemer=cuerpo.get("url_alchemer"),
     )
+    if cuerpo.get("tematicas"):
+        resultado["tematicas"] = tematicas.guardar_de_encuesta(
+            ctx.boveda, resultado["id"], cuerpo.get("tematicas"),
+            puede_desmarcar=actor.puede("gestionar_atributos"))
     ctx.boveda.commit()
     return 201, resultado
 
 
-@ruta("GET", "/encuestas", "leer")
+@ruta("GET", "/encuestas", "leer", requisito="R-ENC.2")
 def listar_encuestas(ctx, actor, params, cuerpo, consulta):
+    """El listado, por panel, tipo, estado y cliente (R-ENC.2): los filtros
+    se combinan."""
     return 200, {"items": encuestas.listar(
-        ctx.boveda, _entero(consulta.get("panel_id")), tipo=consulta.get("tipo"))}
+        ctx.boveda, _entero(consulta.get("panel_id")), tipo=consulta.get("tipo") or None,
+        estado=consulta.get("estado") or None,
+        cliente_id=_entero(consulta.get("cliente_id")))}
 
 
 @ruta("GET", "/encuestas/<encuesta_id>", "leer", requisito="R-EU.2")
@@ -628,20 +644,46 @@ def agregar_panelistas(ctx, actor, params, cuerpo, consulta):
     return 200, salida
 
 
-@ruta("POST", "/encuestas/desde-consulta", "fieldear", requisito="R-EU.5")
+@ruta("POST", "/encuestas/desde-consulta", "fieldear", requisito="R-EU.5, R-ALE.3")
 def encuesta_desde_consulta(ctx, actor, params, cuerpo, consulta):
     """«Crear encuesta con estos panelistas»: una encuesta independiente con
-    la foto del resultado como audiencia. Quedan afuera la lista negra y
-    quien no tiene `contacto_participacion`, y se informa cuántos."""
+    la selección vigente como audiencia —la sorteada, o la del ranking—, o
+    con todo el segmento de una demográfica (`segmento_completo`). Quedan
+    afuera la lista negra y quien no tiene `contacto_participacion`, y se
+    informa cuántos. Guarda cómo se armó: modo y semilla."""
     cuerpo = cuerpo or {}
     salida = encuestas.crear_desde_consulta(
         ctx.boveda, cuerpo.get("nombre"), cuerpo.get("resultado") or {},
         actor=actor, fecha_campo=cuerpo.get("fecha_campo"),
         publico_objetivo=cuerpo.get("publico_objetivo"),
         descripcion=cuerpo.get("descripcion"), clientes=cuerpo.get("clientes"),
-        definicion=cuerpo.get("definicion"))
+        definicion=cuerpo.get("definicion"),
+        segmento_completo=_bandera(cuerpo.get("segmento_completo")),
+        cantidad=cuerpo.get("cantidad"), url_alchemer=cuerpo.get("url_alchemer"))
     ctx.boveda.commit()
     return 201, salida
+
+
+@ruta("POST", "/encuestas/<encuesta_id>/audiencia", "fieldear", requisito="R-AU.2")
+def agregar_audiencia(ctx, actor, params, cuerpo, consulta):
+    """«Agregar a la encuesta X» desde el resultado de una consulta: una
+    `cantidad` (sorteada con semilla, o según el modo de una semántica) o
+    `segmento_completo`. Por el camino de convocar; queda registrado."""
+    cuerpo = cuerpo or {}
+    salida = encuestas.agregar_audiencia_desde_consulta(
+        ctx.boveda, _entero(params["encuesta_id"]), cuerpo.get("resultado") or {},
+        definicion=cuerpo.get("definicion"), actor=actor,
+        cantidad=cuerpo.get("cantidad"),
+        segmento_completo=_bandera(cuerpo.get("segmento_completo")))
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("GET", "/encuestas/<encuesta_id>/audiencia", "leer", requisito="R-AU.2")
+def pasos_de_audiencia(ctx, actor, params, cuerpo, consulta):
+    """Cómo se armó la audiencia desde consultas, paso a paso."""
+    return 200, {"items": encuestas.pasos_de_audiencia(
+        ctx.boveda, _entero(params["encuesta_id"]))}
 
 
 @ruta("POST", "/encuestas/<encuesta_id>/cargas", "ingestar", requisito="R-EU.1")
@@ -701,16 +743,19 @@ def convocar(ctx, actor, params, cuerpo, consulta):
     return 200, resultado
 
 
-@ruta("GET", "/encuestas/<encuesta_id>/participacion", "leer")
+@ruta("GET", "/encuestas/<encuesta_id>/participacion", "leer", requisito="R-ENC.1")
 def ver_participacion(ctx, actor, params, cuerpo, consulta):
-    encuesta_id = _entero(params["encuesta_id"])
-    items = encuestas.listar_participacion(ctx.boveda, encuesta_id)
-    # R-CF.6 / R-CF.7 — los mensajes que se le enviaron a cada panelista, con
-    # su estado de entrega.
-    envios = mensajes.envios_por_persona(ctx.boveda, encuesta_id)
-    for item in items:
-        item["mensajes"] = envios.get(item["id_persona"], [])
-    return 200, {"items": items}
+    """R-ENC.1 — la lista de respondentes o de convocatoria, de a 50,
+    paginada en el servidor: `pagina`, `buscar` (nombre o identificador),
+    `respondio`, `convocado` (sí/no) y `mensaje_id` con `recibio` (sí/no).
+    Cada panelista trae los mensajes que se le enviaron (R-CF.6)."""
+    return 200, encuestas.pagina_de_participacion(
+        ctx.boveda, _entero(params["encuesta_id"]),
+        pagina=_entero(consulta.get("pagina"), 1),
+        por_pagina=_entero(consulta.get("por_pagina")),
+        buscar=consulta.get("buscar"), respondio=consulta.get("respondio"),
+        convocado=consulta.get("convocado"), mensaje_id=_entero(consulta.get("mensaje_id")),
+        recibio=consulta.get("recibio"))
 
 
 # ── D85 · Los mensajes de la encuesta (R-CF.4 a R-CF.8) ──────────────
@@ -1099,7 +1144,7 @@ def _dimensiones_y_cruce(consulta):
     return dimensiones, cruce_de
 
 
-@ruta("GET", "/composicion", "leer", requisito="R-ORG.2, R-ORG.3, R-EU.11")
+@ruta("GET", "/composicion", "leer", requisito="R-ORG.2, R-ORG.3, R-EU.11, R-COMP.1")
 def ver_composicion_de_ambito(ctx, actor, params, cuerpo, consulta):
     """La composición de un ámbito: `ambito=todos`, `ambito=panel&panel_id=…`,
     `ambito=carga&carga_id=…` o `ambito=encuesta&encuesta_id=…` (R-EU.11:
@@ -1127,6 +1172,11 @@ def ver_composicion_de_ambito(ctx, actor, params, cuerpo, consulta):
             ctx.boveda, composicion.universo_de_ambito(ambito, referencia, estado),
             salida["miembros"],
             incluir_especiales=actor.puede("tematicas_especiales"))
+    # R-COMP.1 — el umbral de base chica es configurable; se puede pedir otro
+    # para esta vista (`base_chica`).
+    if _entero(consulta.get("base_chica")):
+        composicion.con_base_chica(salida, max(1, _entero(consulta.get("base_chica"))))
+    salida["vistas_de_cruce"] = composicion.VISTAS_DE_CRUCE
     return 200, salida
 
 
@@ -1757,7 +1807,9 @@ def crear_carga(ctx, actor, params, cuerpo, consulta):
         modo_relevamiento_otro=cuerpo.get("modo_relevamiento_otro"),
         exigir_origen=True,
         # R-CLI.1 — para quién se hizo el estudio, al abrir la carga.
-        clientes=cuerpo.get("clientes"))
+        clientes=cuerpo.get("clientes"),
+        # R-AU.3 — los mismos datos del estudio que «Nueva encuesta».
+        url_alchemer=cuerpo.get("url_alchemer"))
     ctx.boveda.commit()
     return 201, carga
 
@@ -1944,6 +1996,33 @@ def proponer_tematicas_de_carga(ctx, actor, params, cuerpo, consulta):
     return 200, salida
 
 
+@ruta("GET", "/cargas/<carga_id>/canales", "leer", requisito="R-CAN.2")
+def canales_de_carga(ctx, actor, params, cuerpo, consulta):
+    """Los canales que se declararon para la gente de la carga (al cargarla o
+    después), quién, cuándo y con qué texto; y los textos que se ofrecen."""
+    carga_id = _entero(params["carga_id"])
+    cargas.obtener(ctx.boveda, carga_id)
+    return 200, {"historial": canales_carga.historial(ctx.boveda, carga_id),
+                 "textos": canales_carga.textos_disponibles(ctx.boveda),
+                 "canales": canales_carga.ETIQUETAS,
+                 "motivos": canales_carga.MOTIVOS}
+
+
+@ruta("POST", "/cargas/<carga_id>/canales", "gestionar_canales", requisito="R-CAN.2, R-CAN.3")
+def registrar_canales_de_carga(ctx, actor, params, cuerpo, consulta):
+    """R-CAN.2 — «Registrar canales aceptados» para todas las personas de una
+    carga ya hecha: `canales` (`{canal: versión del texto}`). Con
+    `solo_revisar`, la vista previa de la misma ruta. Quien revocó el canal no
+    se toca (R-CAN.3). Queda auditado."""
+    cuerpo = cuerpo or {}
+    salida = canales_carga.registrar_en_bloque(
+        ctx.boveda, _entero(params["carga_id"]), cuerpo.get("canales"), actor=actor,
+        solo_revisar=_revision_pedida(cuerpo))
+    if not salida["solo_revisar"]:
+        ctx.boveda.commit()
+    return 200, salida
+
+
 @ruta("PATCH", "/cargas/<carga_id>", "ingestar", requisito="R-ORG.4")
 def editar_carga(ctx, actor, params, cuerpo, consulta):
     """Corrige los datos del estudio. Se refleja en todas las fichas que
@@ -2019,7 +2098,7 @@ def _propuesta_de_tematicas(ctx, carga, disponibles):
 
 @ruta("POST", "/cargas/<carga_id>/ingesta", "ingestar",
       requisito="R3.13, R-TEM.2, R-TEM.13, R-ING.2, R-ING.3, R-EU.1, R-EU.3, "
-                "R-EU.4, R-EU.6")
+                "R-EU.4, R-EU.6, R-CAN.1")
 def ingestar_carga(ctx, actor, params, cuerpo, consulta):
     """Ingesta el archivo de una carga en su encuesta. **El** flujo de
     ingesta (D81): el de la sección Panelistas y el de Encuestas son este.
@@ -2034,8 +2113,11 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
       qué implica (R-EU.6).
     * `tematicas` — la propuesta: la primera carga del estudio la pide para
       todas sus preguntas; las siguientes, solo para las nuevas (R-EU.2).
+    * `canales` — con `canales_aceptados` (`{canal: versión del texto}`),
+      cuántas personas quedarían con cada canal y cuántas no, por motivo
+      (R-CAN.1). Declararlos exige `gestionar_canales`.
     """
-    from . import encuestas_borrado
+    from . import canales_carga, encuestas_borrado
 
     carga_id = _entero(params["carga_id"])
     carga = cargas.obtener(ctx.boveda, carga_id)
@@ -2068,6 +2150,11 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
     origen = cuerpo.get("origen") or "carga"
     tipo_id = cuerpo.get("tipo_identificador")
     de_panel = encuesta["tipo"] == encuestas.DE_PANEL
+    # R-CAN.1 — los canales aceptados, con su texto. Se validan antes de nada
+    # (sin texto no se registra) y declararlos es de quien gestiona canales.
+    canales_aceptados = canales_carga.normalizar(ctx.boveda, cuerpo.get("canales_aceptados"))
+    if canales_aceptados:
+        actor.exigir("gestionar_canales")
     repetido = cargas.archivo_repetido(ctx.boveda, encuesta["id"], huella,
                                        excepto=carga_id)
 
@@ -2116,6 +2203,10 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
             }
         else:
             resumen["tematicas"] = None
+        resumen["canales"] = canales_carga.previa_de_archivo(
+            ctx.boveda, encuesta["id"], filas, columna_id, tipo_id, origen,
+            canales_aceptados, demograficas=demograficas,
+            crea_personas=cuerpo.get("modo") == "crear_individuos")
         return 200, resumen
 
     # R-EU.3 — el mismo archivo dos veces: se avisó en la revisión, y
@@ -2153,6 +2244,11 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
         plan = _con_constancia_de_dedup(
             _plan_de(cuerpo, columna_id=columna_id, origen=origen,
                      preguntas=preguntas, demograficas=demograficas), filas)
+        if canales_aceptados:
+            # R-CAN.1 — congelados con el plan: cada lote registra los canales
+            # de sus personas, y la auditoría dice quién los declaró.
+            plan["canales_aceptados"] = canales_aceptados
+            plan["canales_declarados_por"] = actor.email or actor.uid
     salida = diferida.encolar(
         ctx.boveda, "carga", carga_id, plan,
         filas, actor=actor, encolador=ctx.encolador, cronometro=cronometro)
@@ -2579,53 +2675,11 @@ def revocar_canal(ctx, actor, params, cuerpo, consulta):
     return 200, salida
 
 
-@ruta("GET", "/whatsapp/plantillas", "leer", requisito="R4.5")
-def plantillas_de_whatsapp(ctx, actor, params, cuerpo, consulta):
-    """Las plantillas aprobadas de la cuenta que tienen un botón de Flow.
-
-    Es lo que alimenta el selector de la encuesta. Cada una trae su idioma y
-    su `flow_id` adentro: no hay nada más que elegir."""
-    return 200, whatsapp.listar_plantillas(
-        solo_con_flow=not _bandera(consulta.get("todas")))
-
-
-@ruta("PUT", "/encuestas/<encuesta_id>/flow", "fieldear", requisito="R4.5")
-def configurar_flow(ctx, actor, params, cuerpo, consulta):
-    """Elige la plantilla. El idioma y el Flow salen de ella."""
-    salida = encuestas.configurar_flow(
-        ctx.boveda, _entero(params["encuesta_id"]),
-        plantilla=(cuerpo or {}).get("plantilla"),
-        idioma=(cuerpo or {}).get("idioma"))
-    ctx.boveda.commit()
-    return 200, salida
-
-
-@ruta("GET", "/encuestas/<encuesta_id>/flow", "leer", requisito="R4.5")
-def estado_flow(ctx, actor, params, cuerpo, consulta):
-    """Valida contra Meta que el Flow esté publicado y la plantilla aprobada.
-
-    Se consulta **antes** de convocar: una plantilla rechazada no se arregla
-    sola y descubrirlo al enviar significa haber convocado a gente a la que no
-    se le puede mandar nada."""
-    return 200, encuestas.estado_flow(ctx.boveda, _entero(params["encuesta_id"]))
-
-
-@ruta("GET", "/encuestas/<encuesta_id>/whatsapp", "leer", requisito="R4.5")
-def destinatarios_whatsapp(ctx, actor, params, cuerpo, consulta):
-    """A quiénes se les puede enviar y a quiénes no, discriminado por motivo."""
-    return 200, encuestas.destinatarios_whatsapp(
-        ctx.boveda, _entero(params["encuesta_id"]))
-
-
-@ruta("POST", "/encuestas/<encuesta_id>/whatsapp", "enviar_whatsapp",
-      requisito="R4.5")
-def enviar_whatsapp(ctx, actor, params, cuerpo, consulta):
-    """Manda el Flow. No es automático al convocar: es una acción explícita.
-
-    Reintentar no reenvía a quien ya recibió."""
-    return 200, encuestas.enviar_por_whatsapp(
-        ctx.boveda, _entero(params["encuesta_id"]),
-        ids_persona=(cuerpo or {}).get("ids_persona"))
+# D87 — la sección «WhatsApp Flow» de la encuesta (R4.5) se unificó en los
+# mensajes: `PUT/GET /encuestas/<id>/flow`, `GET/POST /encuestas/<id>/whatsapp`
+# y `GET /whatsapp/plantillas` ya no existen. Un mensaje con plantilla de Flow
+# se arma y se envía por las rutas de mensajes (`/mensajes/plantillas`,
+# `/encuestas/<id>/mensajes…`), con los mismos públicos y el mismo registro.
 
 
 @ruta("GET", "/diagnostico/contacto", "leer", requisito="R4.3, R4.5")

@@ -14,6 +14,35 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Mensajes, canales, selección aleatoria y audiencias · 2026-11-10.**
+> PEDIDO del 06/11/26 (D87 a D90). Cambios por sección:
+>
+> - 3.7: los canales se pueden declarar en bloque para una carga.
+> - 5 y 5.1: «Nueva encuesta» con selector de tipo (de panel o
+>   independiente, que nace sin audiencia), el mismo formulario de datos del
+>   estudio que la carga, temáticas a mano y el listado filtrado por estado y
+>   por cliente.
+> - 5.6: **reescrita**. Ya no hay sección «WhatsApp Flow»: el Flow es un
+>   mensaje con plantilla de botón de Flow, con los cuatro públicos. Lo
+>   enviado con la sección vieja quedó migrado.
+> - 5.11: la encuesta desde una consulta toma la selección vigente (sorteada
+>   o del ranking) o todo el segmento, y guarda modo y semilla.
+> - 5.13: la lista de la encuesta, de a 50, con búsqueda y filtros.
+> - **5.14, Agregar audiencia desde una consulta**, nueva.
+> - 6.10: las demográficas son un sorteo con semilla; *Volver a sortear*,
+>   páginas y orden de lectura.
+> - **6.12, Selección por ranking o aleatoria** y **6.13, Filtrar por
+>   participación en una encuesta**, nuevas.
+> - 7.4: los cruces en cantidad, % de columna, de fila y del total, con
+>   bases y bases chicas.
+> - **15.13, Registrar los canales aceptados**, nueva.
+>
+> Cuatro preguntas frecuentes y cuatro términos nuevos. **Sin capturas
+> nuevas** en esta entrega: las de la sección «WhatsApp Flow» (53 y 60) se
+> sacaron del manual porque esa pantalla ya no existe. El PDF está
+> regenerado con este texto (`generar_pdf.mjs`, 190 páginas); las capturas
+> de las pantallas nuevas quedan para cuando se rehagan con `capturar.mjs`.
+
 > **Clientes, lista negra y mejoras · 2026-10-21.** Spec de clientes y
 > lista negra (D80). Cambios por sección:
 >

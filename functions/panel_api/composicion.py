@@ -459,6 +459,96 @@ def _validar_cruce(conn, dimension_a, dimension_b):
         raise DatosInvalidos("El cruce necesita dos dimensiones distintas.")
 
 
+# R-COMP.1 (D90) — cómo se lee un cruce: en cantidad o en porcentaje de
+# columna, de fila o del total, cada porcentaje con **su base** y las bases
+# chicas marcadas. Las cuentas se hacen acá, una vez, y la pantalla elige qué
+# vista mostrar: una copia en JavaScript divergiría, y lo que divergiría es el
+# número que se usa para comparar grupos.
+VISTAS_DE_CRUCE = {
+    "n": "Cantidad (N)",
+    "columna": "% de columna",
+    "fila": "% de fila",
+    "total": "% del total",
+}
+BASE_CHICA_POR_DEFECTO = 30
+
+
+def umbral_base_chica(entorno=None):
+    """Debajo de cuántos casos una base es «chica». Configurable
+    (`COMPOSICION_BASE_CHICA`): algunos estudios usan 50 o 100."""
+    import os
+
+    entorno = os.environ if entorno is None else entorno
+    try:
+        valor = int(str(entorno.get("COMPOSICION_BASE_CHICA", "")).strip())
+    except ValueError:
+        return BASE_CHICA_POR_DEFECTO
+    return valor if valor > 0 else BASE_CHICA_POR_DEFECTO
+
+
+def tabla_de_cruce(celdas, dimension_a, dimension_b, umbral=None):
+    """Las cuatro vistas de un cruce, a partir de sus celdas.
+
+    `n` son las cantidades; `columna` (cada columna suma 100 %), `fila` (cada
+    fila suma 100 %) y `total` (la tabla suma 100 %) son proporciones, con la
+    base de cada una —el total de su columna, de su fila o de la tabla— y
+    `bases_chicas` marca las que están por debajo del umbral.
+    """
+    umbral = umbral or umbral_base_chica()
+    filas = sorted({c[dimension_a] for c in celdas}, key=str)
+    columnas = sorted({c[dimension_b] for c in celdas}, key=str)
+    n = {(c[dimension_a], c[dimension_b]): c["observados"] for c in celdas}
+    matriz = [[n.get((f, c), 0) for c in columnas] for f in filas]
+    por_fila = [sum(fila) for fila in matriz]
+    por_columna = [sum(matriz[i][j] for i in range(len(filas))) for j in range(len(columnas))]
+    total = sum(por_fila)
+
+    def proporcion(valor, base):
+        return round(valor / base, 4) if base else None
+
+    return {
+        "filas": filas,
+        "columnas": columnas,
+        "umbral_base_chica": umbral,
+        "totales": {"filas": por_fila, "columnas": por_columna, "total": total},
+        "vistas": {
+            "n": {"etiqueta": VISTAS_DE_CRUCE["n"], "valores": matriz},
+            "columna": {
+                "etiqueta": VISTAS_DE_CRUCE["columna"],
+                "valores": [[proporcion(matriz[i][j], por_columna[j])
+                             for j in range(len(columnas))] for i in range(len(filas))],
+                "bases": {"columnas": por_columna},
+                "bases_chicas": {"columnas": [b < umbral for b in por_columna]},
+            },
+            "fila": {
+                "etiqueta": VISTAS_DE_CRUCE["fila"],
+                "valores": [[proporcion(matriz[i][j], por_fila[i])
+                             for j in range(len(columnas))] for i in range(len(filas))],
+                "bases": {"filas": por_fila},
+                "bases_chicas": {"filas": [b < umbral for b in por_fila]},
+            },
+            "total": {
+                "etiqueta": VISTAS_DE_CRUCE["total"],
+                "valores": [[proporcion(matriz[i][j], total)
+                             for j in range(len(columnas))] for i in range(len(filas))],
+                "bases": {"total": total},
+                "bases_chicas": {"total": total < umbral},
+            },
+        },
+    }
+
+
+def con_base_chica(salida, umbral):
+    """Rehace las tablas de los cruces de una composición con otro umbral de
+    base chica (el que se pidió en la consulta)."""
+    for clave in ("cruce", "cruce_convocados"):
+        cruce = salida.get(clave)
+        if cruce:
+            a, b = cruce["dimensiones"]
+            cruce["tabla"] = tabla_de_cruce(cruce["celdas"], a, b, umbral)
+    return salida
+
+
 def _cruce(conn, universo, dimension_a, dimension_b, momento=None):
     _validar_cruce(conn, dimension_a, dimension_b)
     total = _contar(conn, universo)
@@ -488,16 +578,22 @@ def _cruce(conn, universo, dimension_a, dimension_b, momento=None):
             "El universo de referencia se carga por dimensión (marginales), no "
             "por celda cruzada: el cruce es descriptivo."
         ),
-        "celdas": [
-            {
-                dimension_a: f["a"],
-                dimension_b: f["b"],
-                "observados": f["observados"],
-                "proporcion_observada": round(f["observados"] / total, 4) if total else 0.0,
-            }
-            for f in filas
-        ],
+        "celdas": celdas_de(filas, dimension_a, dimension_b, total),
+        "tabla": tabla_de_cruce(celdas_de(filas, dimension_a, dimension_b, total),
+                                dimension_a, dimension_b),
     }
+
+
+def celdas_de(filas, dimension_a, dimension_b, total):
+    return [
+        {
+            dimension_a: f["a"],
+            dimension_b: f["b"],
+            "observados": f["observados"],
+            "proporcion_observada": round(f["observados"] / total, 4) if total else 0.0,
+        }
+        for f in filas
+    ]
 
 
 def cruce(conn, panel_id, dimension_a, dimension_b, estado="activo",
@@ -773,6 +869,12 @@ def _composicion_de_encuesta(conn, encuesta_id, pedidas, cruce_de=None):
     if cruce_de:
         salida["cruce"] = {"ambito": salida["ambito"],
                            **_cruce(conn, respondentes, cruce_de[0], cruce_de[1])}
+        if con_audiencia:
+            # R-COMP.1 — la misma tabla para los convocados: la comparación de
+            # convocados y respondentes también se lee en porcentaje.
+            salida["cruce_convocados"] = {
+                "ambito": salida["ambito"],
+                **_cruce(conn, convocados, cruce_de[0], cruce_de[1])}
     return salida
 
 

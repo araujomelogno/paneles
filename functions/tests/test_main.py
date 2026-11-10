@@ -89,6 +89,9 @@ NO_SON_SECRETOS = frozenset({
     # D72 — hasta cuántas respuestas el recall sin filtro es exacto. Es una
     # decisión de operación (latencia contra exactitud), no una credencial.
     "RECALL_EXACTO_HASTA",
+    # D90 · R-COMP.1 — debajo de cuántos casos una base del cruce es chica.
+    # Es una decisión de investigación (30, 50, 100), no una credencial.
+    "COMPOSICION_BASE_CHICA",
 })
 
 

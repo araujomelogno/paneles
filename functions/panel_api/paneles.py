@@ -260,7 +260,11 @@ def desde_consulta(conn, nombre, resultado, definicion=None, descripcion=None,
         returning id, nombre, descripcion, estado, creado_en
         """,
         (nombre, (descripcion or "").strip() or None,
-         json.dumps(definicion or (resultado or {}).get("definicion") or {},
+         # R-ALE.3 (D89) — con la definición va cómo se eligieron las
+         # personas (ranking o sorteo) y la semilla: si alguien pregunta por
+         # qué estas y no otras, la respuesta queda registrada.
+         json.dumps({**(definicion or (resultado or {}).get("definicion") or {}),
+                     "seleccion_aplicada": (resultado or {}).get("seleccion")},
                     default=str),
          consulta_id, getattr(actor, "uid", None)),
     )

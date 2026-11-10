@@ -60,15 +60,12 @@ PERMISOS = {
     # Va con quien ya podía enrolar: es parte de la ficha de la persona, no
     # una capacidad aparte.
     "gestionar_canales": {"admin", "operaciones"},
-    # R4.5 — mandar la encuesta por WhatsApp. Es dinero (cada conversación se
-    # cobra) y es reputación del número emisor: un envío masivo mal dirigido
-    # quema el canal para todos. Por eso no lo tiene el analista, que sí puede
-    # fieldear e ingestar.
-    "enviar_whatsapp": {"admin", "operaciones"},
-    # D85 · R-CF.5 — enviar un mensaje de una encuesta, por WhatsApp o por
-    # correo. Mismo motivo y mismos roles que `enviar_whatsapp`: es dinero y
-    # es la reputación del número y de la cuenta de correo. Armar los
-    # mensajes es `fieldear`; lanzarlos, esto.
+    # D85 · R-CF.5 — enviar un mensaje de una encuesta, por WhatsApp (botón
+    # de URL o de Flow, D87) o por correo. Es dinero (cada conversación se
+    # cobra) y es la reputación del número y de la cuenta de correo: un envío
+    # masivo mal dirigido quema el canal para todos. Por eso no lo tiene el
+    # analista, que sí fieldea e ingesta. Armar los mensajes es `fieldear`;
+    # lanzarlos, esto. (Reemplaza a `enviar_whatsapp` de R4.5.)
     "enviar_mensajes": {"admin", "operaciones"},
     # R4.1.b — declarar que dos preguntas de olas distintas son la misma
     # medición. Es una decisión metodológica, así que es del analista tanto

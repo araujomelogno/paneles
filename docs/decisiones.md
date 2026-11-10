@@ -5365,3 +5365,174 @@ primer despliegue de D85.
 `docs/DESPLIEGUE - convocatoria y mensajes.md`. Pruebas:
 `test_convocatoria_y_mensajes.py` (`test_el_envio_queda_aceptado_o_fallido_y_guarda_el_id_de_meta`,
 `test_no_hay_funcion_de_webhook_que_desplegar`).
+
+## D87 · «WhatsApp Flow» se unifica en «Mensajes»: el Flow es un botón de la plantilla
+
+**El pedido.** `specs/PEDIDO_unificar_mensajes_y_canal_en_carga_06_11_26.md`,
+parte 1. En el detalle de una encuesta convivían dos secciones que hacían lo
+mismo —mandarle una plantilla de WhatsApp a la audiencia— con públicos,
+registro y conteo de convocados distintos (la de Flow contaba toda la
+participación; el listado, solo a los convocados). Con cada cambio se iban a
+separar más.
+
+- **El tipo de botón es un atributo de la plantilla** (`encuesta_mensaje.boton`:
+  `url` | `flow`, y su `flow_id`). La lista de plantillas de un mensaje
+  incluye las de botón de URL, las de Flow y las de solo texto, cada una
+  rotulada (`mensajes.plantillas_para_mensajes`).
+- **Un mensaje de Flow se envía con `whatsapp.enviar_flow`**, con el
+  `id_persona` como `flow_token`, igual que R4.5 (ahora también con los
+  `{{n}}` del cuerpo). Tiene los mismos cuatro públicos, la misma regla de
+  elegibilidad (`preferencias.filtrar_contactables`) y el mismo registro en
+  `envio`.
+- **«Flow publicado y plantilla aprobada»** —la validación de la sección
+  vieja— se exige **al guardar y al enviar** el mensaje
+  (`whatsapp.estado_del_flow`).
+- **Se quitó la sección y sus rutas** (`PUT/GET /encuestas/<id>/flow`,
+  `GET/POST /encuestas/<id>/whatsapp`, `GET /whatsapp/plantillas`), las
+  funciones de `encuestas.py` que las atendían y el permiso
+  `enviar_whatsapp` (lo reemplaza `enviar_mensajes`, con los mismos roles).
+  Lo que recibe y procesa las respuestas de un Flow no cambió: se ingestan
+  por el flujo de siempre y el `flow_token` mapea como `id_persona`.
+- **La migración de lo ya enviado** (`boveda/0036`): un mensaje «WhatsApp
+  Flow» por cada encuesta que usó la sección vieja, y una fila en `envio` por
+  participación enviada (aceptado, con su `enviado_en`) o fallida (con su
+  `envio_error`). Sin eso, «No enviado aún» le repetiría el Flow a quien ya
+  lo recibió. Tiene corrida de prueba y verificación
+  (`scripts/migrar_flow_a_mensajes.py`) y es re-ejecutable.
+- **`participacion.enviado_en`, `envio_estado` y `envio_error` dejaron de
+  escribirse y no se borran**: se quitan en una versión posterior, una vez
+  verificado que nada las lee. Lo mismo `encuesta.flow_*`.
+
+**Dónde vive.** `db/boveda/0036_mensajes_canales_seleccion_y_audiencias.sql`,
+`functions/panel_api/mensajes.py`, `whatsapp.py`, `encuestas.py`, `ruteo.py`,
+`auth.py`, `scripts/migrar_flow_a_mensajes.py`,
+`web/public/js/paginas/encuestas.js`, `demo.js`. Pruebas:
+`functions/tests/test_pedido_flow_en_mensajes.py`,
+`functions/tests/test_fase4_contacto.py`.
+
+## D88 · Los canales aceptados se declaran para una carga entera, con su texto, y un revocado no se reactiva en bloque
+
+**El problema.** Para recibir un mensaje hacen falta el consentimiento de
+contacto y la preferencia de canal (R4.4). La carga registraba lo primero y
+nunca lo segundo: nadie que hubiera entrado por una carga podía recibir
+mensajes (en ANTEL, 1.002 personas afuera por «no aceptó recibir WhatsApp»).
+
+- **R-CAN.1 — al cargar.** Junto a la evidencia de consentimiento se declaran
+  los canales aceptados (WhatsApp, correo) con **la versión del texto**,
+  elegida de los textos publicados de contacto (como R7.1). Sin texto no se
+  registra. La revisión muestra la vista previa (`canales_carga.
+  previa_de_archivo`): cuántas quedarían con cada canal y cuántas no, por
+  motivo. La declaración se congela en el plan y **cada lote** registra los
+  canales de sus personas (`cargas.ingestar` → `canales_carga.aplicar`).
+- **R-CAN.2 — en bloque, para una carga hecha.** «Registrar canales
+  aceptados» en el detalle de la carga, para todas sus personas
+  (`persona_carga`), con vista previa por la misma ruta (`solo_revisar`).
+  Exige `gestionar_canales`, también al declararlos en la ingesta.
+- **Se escribe por `preferencias.otorgar`**, con `origen = 'carga'` y la
+  versión: no hay un segundo camino de escritura de `preferencia_canal`.
+- **R-CAN.3 — un canal revocado no se reactiva en bloque.** `otorgar`
+  reactiva (es la persona diciendo que sí de nuevo), y eso es correcto en la
+  landing, el portal o la ficha; en una declaración en bloque no: quien pidió
+  no recibir más WhatsApp volvería a recibirlo porque una carga vieja decía
+  que sí. Se saltea y se informa como «revocó el canal».
+- **Quien ya lo tenía no se toca**: su evidencia (landing, portal) se
+  conserva.
+- **Queda auditado** en `carga_canal_registro`: quién, cuándo, por qué vía,
+  qué canales con qué texto, a cuántas personas y el resultado por canal.
+- **Si el texto de una carga alcanza como aceptación de un canal es una
+  lectura de protección de datos.** Se construye igual; usarlo sobre cargas
+  reales queda sujeto a esa validación, y por eso se exige elegir el texto.
+
+**Dónde vive.** `functions/panel_api/canales_carga.py` (nuevo), `cargas.py`,
+`diferida.py`, `ruteo.py`, `web/public/js/canales.js` (nuevo),
+`web/public/js/paginas/cargas.js`, `encuestas.js`. Pruebas:
+`functions/tests/test_pedido_canales_en_la_carga.py`.
+
+## D89 · La selección de una consulta es un sorteo con semilla, o el ranking si se elige
+
+**El problema.** Una consulta demográfica contaba bien el segmento pero
+mostraba `order by p.nombre limit 50`, y «Crear encuesta con estos
+panelistas» tomaba exactamente esas personas. El nombre está asociado al
+sexo y a la generación: el sesgo pasaba directo a la audiencia.
+
+- **R-ALE.1 — una consulta sin criterios semánticos es siempre un sorteo**:
+  `md5(id_persona::text || semilla)` (`demografia.ORDEN_DE_SORTEO`), no
+  `random()`. Misma semilla y mismos datos, misma selección; paginación
+  estable (con `random()` cada página saldría de otro sorteo). Cada ejecución
+  genera una semilla nueva, que se muestra y se guarda
+  (`consulta_ejecucion.seleccion`, `semilla`, y en el diagnóstico). «Volver a
+  sortear» es la misma consulta sin la semilla. Ordenar la tabla en pantalla
+  es de lectura: no cambia quiénes son.
+- **R-ALE.2 — en una semántica se elige**: `ranking` (lo de siempre) o
+  `aleatorio` entre los que cumplen (`consultas._ejecutar_aleatoria`). El
+  pool son quienes tienen evidencia bajo `umbral_distancia`, con el recall
+  **exacto** sobre el segmento con `uso_semantico` (`semantica.
+  unidades_elegibles`); se sortean con la misma cuenta en Python
+  (`consultas.sortear`), se verifican en ese orden y quien no queda `cumple`
+  en todos los criterios se reemplaza por el siguiente. La regla de
+  agregación es la de siempre (`hallazgo_de`) y **una evidencia sin
+  verificar no aprueba**: se reemplaza y se cuenta aparte. Un tope de
+  `TOPE_ALEATORIO × limite` verificaciones pone techo al gasto. El resultado
+  informa pool, sorteadas, verificadas, reemplazadas y quedaron, y «solo hay
+  N que cumplen» si el pool se agota. En la completa, el modo y la semilla se
+  guardan con la ejecución y el sorteo es entre las confirmadas, al leer.
+- **R-ALE.3 — la audiencia es la selección vigente**: la sorteada o la del
+  ranking; desde una demográfica, además, **todo el segmento**. La encuesta
+  guarda cómo se armó (`encuesta_audiencia_agregado`: modo, semilla,
+  definición, cuántas) y el panel lo anota en `origen_definicion`
+  (`seleccion_aplicada`).
+- **R-ALE.4 — la exportación respeta la selección y el orden**: el CSV se
+  pide con la semilla y la página del resultado que se ve.
+- **La sección Muestreo no cambia**: su orden no es aleatorio por diseño
+  (rotación y respuesta). Si el desempate final debería ser aleatorio queda
+  para evaluar.
+
+**Dónde vive.** `functions/panel_api/demografia.py`, `consultas.py`,
+`consulta_completa.py`, `encuestas.py`, `paneles.py`,
+`web/public/js/paginas/consultas.js`. Pruebas:
+`functions/tests/test_pedido_seleccion_aleatoria.py`.
+
+## D90 · La audiencia se arma en pasos, las listas paginan en el servidor y los cruces se leen en porcentaje
+
+**El pedido.** Parte 4: una encuesta independiente solo nacía desde una
+consulta y no se podía ampliar; las listas de la encuesta traían a todos de
+una vez; el listado no filtraba por estado; los cruces eran solo cantidades.
+
+- **R-AU.3 — «Nueva encuesta» con selector de tipo.** Una independiente se
+  crea vacía (`encuesta.origen = 'manual'`, `boveda/0036`) y se completa a
+  mano, desde consultas o con sus cargas. Pide **los mismos datos del estudio
+  que la carga** con **el mismo componente** (`web/public/js/estudio.js`:
+  nombre, fecha, público objetivo, clientes, URL de Alchemer, descripción),
+  que también usan «Datos del estudio» y «Crear encuesta» desde una consulta.
+  Por eso la carga suma la URL de Alchemer. Las temáticas se ponen a mano; las
+  de IA llegan con la primera carga.
+- **R-AU.1 — criterio de participación en una encuesta**: «está en la
+  audiencia» (`convocado`) o «respondió» (`respondio`), incluir o excluir,
+  resuelto en la bóveda sobre `participacion` como cualquier criterio
+  demográfico (`demografia.DIMENSION_ENCUESTA`). `encuesta` es clave
+  reservada de atributos.
+- **R-AU.2 — agregar audiencia desde una consulta.** Abre Consultas con el
+  criterio «no está en la audiencia de esta encuesta» puesto y el botón
+  «Agregar a la encuesta X»: una cantidad (sorteada con la semilla, o según el
+  modo de una semántica) o todo el segmento. Entra por `encuestas.convocar`
+  —lista negra, consentimiento— y cada paso queda en
+  `encuesta_audiencia_agregado` (quién, cuándo, definición, modo, semilla,
+  cuántas entraron y cuántas no, por motivo). Una cerrada no lo admite.
+- **R-ENC.1 — las listas de respondentes y convocatoria paginan de a 50 en el
+  servidor** (`encuestas.pagina_de_participacion`), con búsqueda por nombre o
+  identificador y filtros por respondió, convocado y mensaje recibido. Los
+  mensajes de cada persona se leen solo para la página.
+- **R-ENC.2 — el listado filtra por estado y cliente**, combinados.
+- **R-COMP.1 — los cruces en N, % de columna, % de fila y % del total**, con
+  la base de cada porcentaje y las bases chicas marcadas
+  (`COMPOSICION_BASE_CHICA`, 30 por defecto, o `base_chica` en la consulta).
+  Las cuentas las hace el servidor una vez (`composicion.tabla_de_cruce`); la
+  pantalla solo elige la vista y la recuerda en la sesión. En una encuesta
+  con audiencia, el cruce de convocados también (`cruce_convocados`).
+
+**Dónde vive.** `functions/panel_api/encuestas.py`, `demografia.py`,
+`composicion.py`, `cargas.py`, `ruteo.py`, `web/public/js/estudio.js`
+(nuevo), `web/public/js/paginas/encuestas.js`, `consultas.js`,
+`composicion.js`, `panelistas.js`. Pruebas:
+`functions/tests/test_pedido_audiencias_listados_y_composicion.py`,
+`functions/tests/test_pantallas_pedido_mensajes_canales_seleccion.py`.

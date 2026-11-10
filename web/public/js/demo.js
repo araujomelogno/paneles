@@ -106,6 +106,8 @@ const bd = {
   ],
   cargas: [],              // R3.13 — lotes incorporados sin panel
   vinculos: [],            // R-ORG.1 — de qué carga proviene cada persona
+  registrosDeCanales: [],  // R-CAN — los canales declarados para una carga
+  pasosDeAudiencia: [],    // R-AU.2 — cómo se armó la audiencia de cada encuesta
   tematicas: [],           // R-TEM.1 — el vocabulario compartido de temáticas
   cargaTematicas: [],      // R-TEM.1 — qué temáticas cubre cada carga
   clientes: [],            // R-CLI.1 — para quién se hizo cada estudio
@@ -341,15 +343,10 @@ function sembrar() {
 
   // Y una sin convocar en el panel que sí tiene universo de referencia: es
   // la que deja ver el muestreo de la Fase 3 haciendo lo suyo, priorizando
-  // la brecha contra un objetivo cargado. Va configurada como Flow de
-  // WhatsApp (R4.5): sin una así, la pantalla de envío no tendría nada que
-  // mostrar y el estado del Flow no se podría ver nunca.
-  const movilidad = crearEncuesta(nacional.id, 'Ola 3 — Movilidad urbana',
-                                  '2026-10-10');
-  Object.assign(movilidad, {
-    flow_plantilla: 'invitacion_ola', flow_idioma: 'es',
-    flow_id: '7412880031', es_flow: true,
-  });
+  // la brecha contra un objetivo cargado. Su mensaje es un WhatsApp Flow
+  // (D87): el Flow es un botón de la plantilla, no una sección aparte (lo
+  // siembra `sembrarConvocatoriaDemo`).
+  crearEncuesta(nacional.id, 'Ola 3 — Movilidad urbana', '2026-10-10');
 
   // R3.13 — una carga externa ya hecha: gente incorporada con sus respuestas
   // que **no** es panelista. Sin esto el filtro «sin panel» de la pantalla de
@@ -1593,6 +1590,10 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
       items: bd.encuestas
         .filter((e) => !panelId || e.panel_id === panelId)
         .filter((e) => !consulta.tipo || e.tipo === consulta.tipo)
+        // R-ENC.2 — por estado y por cliente, combinados.
+        .filter((e) => !consulta.estado || e.estado === consulta.estado)
+        .filter((e) => !consulta.cliente_id
+          || (e.clientes || []).map(Number).includes(Number(consulta.cliente_id)))
         .map((e) => ({
           ...e,
           panel: bd.paneles.find((p) => p.id === e.panel_id)?.nombre ?? null,
@@ -1606,16 +1607,43 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   }
 
   if (clave === 'POST /encuestas') {
-    const panel = bd.paneles.find((p) => p.id === Number(cuerpo.panel_id));
+    // R-AU.3 — de panel o independiente (vacía, origen «manual»).
+    const independiente = cuerpo.tipo === 'independiente';
+    const panel = independiente ? null : bd.paneles.find((p) => p.id === Number(cuerpo.panel_id));
     if (panel?.estado === 'archivado') {
       throw new ErrorDemo('El panel está archivado: no recibe encuestas ni convocatorias.', 409);
     }
-    return encuestaCompleta(crearEncuesta(Number(cuerpo.panel_id), cuerpo.nombre,
+    if (!String(cuerpo.nombre || '').trim()) throw new ErrorDemo('La encuesta necesita un nombre.', 400);
+    const encuesta = crearEncuesta(independiente ? null : Number(cuerpo.panel_id), cuerpo.nombre,
       cuerpo.fecha_campo, {
+        ...(independiente ? { origen: 'manual' } : {}),
         publico_objetivo: (cuerpo.publico_objetivo || '').trim() || null,
         descripcion: (cuerpo.descripcion || '').trim() || null,
+        url_alchemer: (cuerpo.url_alchemer || '').trim() || null,
         clientes: clientesDemo(cuerpo.clientes),
-      }));
+      });
+    return encuestaCompleta(encuesta);
+  }
+
+  /* R-AU.2 — agregar audiencia desde una consulta, y cómo se armó. */
+  if (partes[0] === 'encuestas' && partes[2] === 'audiencia') {
+    const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
+    if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
+    if (metodo === 'GET') {
+      return { items: bd.pasosDeAudiencia.filter((p) => p.encuesta_id === encuesta.id) };
+    }
+    if (encuesta.estado === 'cerrada') {
+      throw new ErrorDemo('La encuesta está cerrada: no admite agregar audiencia.', 409,
+                          { motivo: 'encuesta_cerrada' });
+    }
+    return {
+      encuesta_id: encuesta.id,
+      ...sumarAudienciaDemo(encuesta, cuerpo, 'agregar_desde_consulta'),
+      etiquetas: { ya_estaban: 'Ya estaban en la audiencia', en_lista_negra: 'En lista negra',
+                   sin_consentimiento: 'Sin consentimiento de contacto',
+                   no_encontrados: 'Ya no existen (se dieron de baja)' },
+      ...conteosDeEncuesta(encuesta.id),
+    };
   }
 
   /* R-EU.5 — una encuesta independiente desde un resultado: la foto de ese
@@ -1623,23 +1651,21 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   if (clave === 'POST /encuestas/desde-consulta') {
     const nombre = (cuerpo.nombre || '').trim();
     if (!nombre) throw new ErrorDemo('La encuesta necesita un nombre.', 400);
-    const ids = [...new Set(((cuerpo.resultado || {}).items || cuerpo.resultado || [])
-      .map((i) => i.id_persona).filter(Boolean))];
-    const existentes = ids.filter((id) => bd.personas.some((p) => p.id_persona === id));
     const encuesta = crearEncuesta(null, nombre, cuerpo.fecha_campo, {
       origen: 'consulta',
       publico_objetivo: (cuerpo.publico_objetivo || '').trim() || null,
       descripcion: (cuerpo.descripcion || '').trim() || null,
+      url_alchemer: (cuerpo.url_alchemer || '').trim() || null,
       clientes: clientesDemo(cuerpo.clientes),
     });
-    const convocatoria = convocar(encuesta.id, { ids_persona: existentes });
+    const paso = sumarAudienciaDemo(encuesta, cuerpo, 'crear_desde_consulta');
     return {
       ...encuestaCompleta(encuesta),
       audiencia: {
-        en_el_resultado: ids.length, convocados: convocatoria.convocados_total,
-        sin_consentimiento: convocatoria.sin_consentimiento.length,
-        en_lista_negra: convocatoria.en_lista_negra,
-        no_encontrados: ids.length - existentes.length,
+        en_el_resultado: paso.en_la_seleccion, convocados: paso.agregadas,
+        sin_consentimiento: paso.excluidas.sin_consentimiento,
+        en_lista_negra: paso.excluidas.en_lista_negra,
+        no_encontrados: paso.excluidas.no_encontrados, modo: paso.modo, semilla: paso.semilla,
       },
     };
   }
@@ -1730,8 +1756,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
 
   if (metodo === 'GET' && partes[0] === 'encuestas' && partes[2] === 'participacion') {
     const envios = enviosPorPersonaDemo(Number(partes[1]));
-    return {
-      items: bd.participaciones
+    const todos = bd.participaciones
         .filter((p) => p.encuesta_id === Number(partes[1]))
         .map((p) => {
           const persona = bd.personas.find((x) => x.id_persona === p.id_persona);
@@ -1750,7 +1775,26 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
             consiente_semantico: vigente(p.id_persona, 'uso_semantico'),
             mensajes: envios[p.id_persona] || [],
           };
-        }),
+        });
+    // R-ENC.1 — de a 50, con búsqueda y filtros, en el «servidor».
+    const si = (v) => (v === undefined || v === '' ? null : ['si', 'sí', '1', 'true'].includes(v));
+    const texto = String(consulta.buscar || '').toLowerCase();
+    const mensajeId = Number(consulta.mensaje_id || 0);
+    const recibio = consulta.recibio === undefined ? true : si(consulta.recibio);
+    const filtrados = todos.filter((p) => (!texto || [p.nombre, p.email, p.id_persona,
+      p.id_en_origen].some((v) => String(v || '').toLowerCase().includes(texto)))
+      && (si(consulta.respondio) === null || p.respondio === si(consulta.respondio))
+      && (si(consulta.convocado) === null || p.convocado === si(consulta.convocado))
+      && (!mensajeId || bd.envios.some((e) => e.encuesta_mensaje_id === mensajeId
+        && e.id_persona === p.id_persona && e.estado !== 'fallido') === recibio))
+      .sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || '')));
+    const porPagina = Number(consulta.por_pagina) || 50;
+    const pagina = Number(consulta.pagina) || 1;
+    return {
+      items: filtrados.slice((pagina - 1) * porPagina, pagina * porPagina),
+      total: filtrados.length, pagina, por_pagina: porPagina,
+      paginas: Math.max(1, Math.ceil(filtrados.length / porPagina)),
+      conteos: conteosDeEncuesta(Number(partes[1])),
     };
   }
 
@@ -1830,99 +1874,9 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     }
   }
 
-  /* R4.5 — las plantillas de la cuenta de WhatsApp.
-
-     La copia demo no llama a Meta: devuelve un catálogo fijo con la forma
-     que devuelve la API. Las tres están para mostrar los tres casos que la
-     pantalla tiene que distinguir: la que sirve, la que existe en dos
-     idiomas —y por eso son dos plantillas distintas— y ninguna sin botón de
-     Flow, porque el backend las filtra antes de que lleguen acá. */
-  if (clave === 'GET /whatsapp/plantillas') {
-    return { plantillas: PLANTILLAS_DEMO, configurado: true, faltan: [],
-             sin_flow: 1, avisos: [] };
-  }
-
-  /* R4.5 — el canal de WhatsApp de una encuesta. */
-  if (partes[0] === 'encuestas' && partes[2] === 'flow') {
-    const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
-    if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
-    if (metodo === 'PUT') {
-      const nombre = (cuerpo.plantilla || '').trim() || null;
-      const idioma = (cuerpo.idioma || '').trim() || null;
-      // El idioma y el `flow_id` salen de la plantilla, no del formulario.
-      const candidatas = PLANTILLAS_DEMO.filter((p) =>
-        p.nombre === nombre && (!idioma || p.idioma === idioma));
-      const elegida = candidatas.length === 1 ? candidatas[0] : null;
-      Object.assign(encuesta, {
-        flow_plantilla: nombre,
-        flow_idioma: elegida ? elegida.idioma : idioma,
-        flow_id: elegida ? elegida.flow_id : null,
-      });
-      encuesta.es_flow = !!encuesta.flow_plantilla;
-      return encuesta;
-    }
-    // La copia demo no llama a Meta: responde como si el Flow estuviera
-    // publicado y la plantilla aprobada, que es el caso que interesa recorrer.
-    const resuelta = !!(encuesta.es_flow && encuesta.flow_id);
-    const ambigua = encuesta.es_flow && !encuesta.flow_id
-      && PLANTILLAS_DEMO.filter((p) => p.nombre === encuesta.flow_plantilla);
-    return {
-      encuesta_id: encuesta.id, es_flow: !!encuesta.es_flow,
-      flow_id: encuesta.flow_id, plantilla: encuesta.flow_plantilla,
-      idioma: encuesta.flow_idioma,
-      puede_enviar: resuelta,
-      motivos: resuelta ? [] : (
-        !encuesta.es_flow
-          ? ['La encuesta no está configurada como Flow.']
-          : [`Hay ${(ambigua || []).length} plantillas «${encuesta.flow_plantilla}», `
-             + `una por idioma. Hay que elegir cuál: son plantillas distintas y `
-             + `se aprueban por separado.`]),
-      idiomas_disponibles: resuelta ? undefined
-        : (ambigua || []).map((p) => p.idioma).sort(),
-      flow: resuelta ? { nombre: 'Invitación a la ola', estado: 'PUBLISHED' } : undefined,
-      plantilla_estado: resuelta ? 'APPROVED' : undefined,
-      texto_boton: resuelta ? 'Responder la encuesta' : undefined,
-    };
-  }
-
-  if (partes[0] === 'encuestas' && partes[2] === 'whatsapp') {
-    const encuestaId = Number(partes[1]);
-    const convocados = bd.participaciones.filter((p) => p.encuesta_id === encuestaId);
-    const excluidos = {};
-    const destinatarios = [];
-    const yaEnviados = [];
-    convocados.forEach((p) => {
-      const persona = bd.personas.find((x) => x.id_persona === p.id_persona);
-      const excluir = (motivo) => {
-        (excluidos[motivo] = excluidos[motivo] || []).push(p.id_persona);
-      };
-      if (!vigente(p.id_persona, 'contacto_participacion')) return excluir('sin_consentimiento');
-      const preferencia = bd.canales.find(
-        (c) => c.id_persona === p.id_persona && c.canal === 'whatsapp' && c.activa);
-      if (!preferencia) return excluir('sin_preferencia_whatsapp');
-      if (!persona?.celular) return excluir('sin_celular');
-      if (!/^\+\d{8,15}$/.test(persona.celular)) return excluir('celular_invalido');
-      if (p.envio_estado === 'enviado') { yaEnviados.push(p.id_persona); return; }
-      destinatarios.push(p.id_persona);
-    });
-    const seleccion = {
-      encuesta_id: encuestaId, convocados: convocados.length,
-      destinatarios, ya_enviados: yaEnviados, excluidos,
-      excluidos_total: Object.values(excluidos).reduce((n, v) => n + v.length, 0),
-    };
-    if (metodo === 'GET') return seleccion;
-
-    // El envío. Reintentar no le vuelve a mandar a quien ya recibió.
-    destinatarios.forEach((idPersona) => {
-      const participacion = convocados.find((p) => p.id_persona === idPersona);
-      Object.assign(participacion,
-                    { enviado_en: ahora(), envio_estado: 'enviado' });
-    });
-    return {
-      ...seleccion, enviados: destinatarios.length, fallidos: 0,
-      detalle: destinatarios.map((i) => ({ id_persona: i, estado: 'enviado' })),
-    };
-  }
+  /* R4.5 — la sección «WhatsApp Flow» se unificó en los mensajes (D87): ya
+     no hay `/whatsapp/plantillas`, `/encuestas/<id>/flow` ni
+     `/encuestas/<id>/whatsapp`. */
 
   if (clave === 'GET /diagnostico/contacto') {
     return {
@@ -1935,9 +1889,9 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
                  avisos: ['Sin desafío configurado: la landing no distingue un '
                           + 'envío automatizado de una persona.'] },
       whatsapp: { configurado: false, faltan: ['token', 'phone_number_id'],
-                  avisos: ['Sin credenciales de WhatsApp: una encuesta se puede '
-                           + 'configurar como Flow, pero el envío queda '
-                           + 'deshabilitado.'] },
+                  avisos: ['Sin credenciales de WhatsApp: los mensajes por '
+                           + 'WhatsApp (botón de URL o de Flow) no se pueden '
+                           + 'armar ni enviar.'] },
     };
   }
 
@@ -2261,6 +2215,21 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
 
   if (metodo === 'POST' && partes[0] === 'cargas' && partes[2] === 'ingesta') {
     return ingestarCarga(Number(partes[1]), cuerpo);
+  }
+
+  /* R-CAN.2 (D88) — los canales aceptados de la gente de una carga. */
+  if (partes[0] === 'cargas' && partes[2] === 'canales') {
+    const carga = bd.cargas.find((c) => c.id === Number(partes[1]));
+    if (!carga) throw new ErrorDemo('No existe la carga.', 404);
+    if (metodo === 'GET') {
+      return {
+        historial: bd.registrosDeCanales.filter((r) => r.carga_id === carga.id).reverse(),
+        textos: bd.textosConsentimiento.filter((t) => t.activo
+          && t.finalidad === 'contacto_participacion'),
+        canales: CANALES_DE_CARGA_DEMO, motivos: MOTIVOS_DE_CANALES_DEMO,
+      };
+    }
+    return registrarCanalesDemo(carga, cuerpo.canales || {}, Boolean(cuerpo.solo_revisar));
   }
 
   if (metodo === 'GET' && partes[0] === 'encuestas' && partes[2] === 'cruce') {
@@ -3980,8 +3949,28 @@ function accesoDemo(email, motivo) {
   };
 }
 
+/* R-ALE (D89) — el sorteo de la demo: un hash determinístico de
+   `id_persona + semilla` (el servidor usa md5; acá alcanza con que la misma
+   semilla dé el mismo orden). */
+function claveDeSorteoDemo(idPersona, semilla) {
+  let h = 2166136261;
+  for (const c of `${idPersona}${semilla}`) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); }
+  return (h >>> 0).toString(16).padStart(8, '0') + idPersona;
+}
+const sortearDemo = (ids, semilla) => [...ids].sort(
+  (a, b) => claveDeSorteoDemo(a, semilla).localeCompare(claveDeSorteoDemo(b, semilla)));
+const semillaNuevaDemo = () => Math.random().toString(16).slice(2, 14);
+
 /* Los criterios demográficos se resuelven sobre la bóveda del demo. */
 function cumpleDemografico(persona, criterio) {
+  if (criterio.dimension === 'encuesta') {
+    // R-AU.1 — en la audiencia (convocado) o respondió, para incluir o excluir.
+    const fila = bd.participaciones.find((p) => p.encuesta_id === Number(criterio.valor)
+      && p.id_persona === persona.id_persona);
+    const tiene = !!fila && (criterio.relacion === 'respondio' ? fila.respondio
+      : fila.convocado !== false);
+    return criterio.operador === 'not_in' ? !tiene : tiene;
+  }
   const valores = {
     sexo: persona.sexo, localidad: persona.localidad,
     tramo_etario: tramoEtario(persona.fecha_nacimiento),
@@ -4047,10 +4036,20 @@ function correrConsulta(cuerpo) {
         tramo_etario: tramoEtario(p.fecha_nacimiento),
       }));
     marca('consulta_demografica', desde, { personas: items.length });
+    // R-ALE.1 — un sorteo con semilla, paginado: nunca las primeras por nombre.
+    const semilla = cuerpo.semilla || semillaNuevaDemo();
+    const limite = Number(cuerpo.limite) || 50;
+    const pagina = Number(cuerpo.pagina) || 1;
+    const porId = Object.fromEntries(items.map((i) => [i.id_persona, i]));
+    const sorteados = sortearDemo(Object.keys(porId), semilla).map((id) => porId[id]);
     return {
       tipo: 'demografica', store: 'boveda', abrio_semantica: false, modo, seudonimo: true,
       criterios, panel_id: panelId, finalidad_exigida: cuerpo.finalidad || null,
-      total: items.length, items, excluidos: [], degradaciones: [],
+      total: items.length, items: sorteados.slice((pagina - 1) * limite, pagina * limite),
+      seleccion: { modo: 'aleatorio', semilla },
+      paginacion: { pagina, por_pagina: limite, total: items.length,
+                    paginas: Math.max(1, Math.ceil(items.length / limite)) },
+      excluidos: [], degradaciones: [],
       puente: {
         estrategia: null,
         motivo: 'La consulta no tiene criterios semánticos: se resuelve entera en '
@@ -4243,6 +4242,31 @@ function correrConsulta(cuerpo) {
   marca('combinacion', desdeCombinar, {
     modo, candidatos: items.length + excluidos.length, excluidos: excluidos.length,
   });
+  // R-ALE.2 — aleatorio entre los que cumplen: un sorteo del pool, verificado
+  // en ese orden, reemplazando a quien no cumple.
+  let seleccion = { modo: 'ranking', semilla: null };
+  let mostrados = items.slice(0, Number(cuerpo.limite) || 50);
+  if (cuerpo.seleccion === 'aleatorio') {
+    const semilla = cuerpo.semilla || semillaNuevaDemo();
+    const limite = Number(cuerpo.limite) || 50;
+    const cumplen = new Set(items.filter((i) => i.criterios.every(
+      (d) => d.tipo !== 'semantico' || d.veredicto === 'cumple')).map((i) => i.id_persona));
+    const pool = sortearDemo([...cumplen, ...excluidos.map((e) => e.id_persona)], semilla);
+    const elegidos = [];
+    let verificadas = 0;
+    for (const id of pool) {
+      if (elegidos.length >= limite) break;
+      verificadas += 1;
+      if (cumplen.has(id)) elegidos.push(id);
+    }
+    mostrados = elegidos.map((id, n) => ({ ...items.find((i) => i.id_persona === id), sorteo: n + 1 }));
+    seleccion = { modo: 'aleatorio', semilla, pool: pool.length, sorteadas: verificadas,
+                  verificadas, reemplazadas: verificadas - elegidos.length, sin_verificar: 0,
+                  quedaron: elegidos.length, pedidas: limite,
+                  avisos: elegidos.length < limite
+                    ? [`Solo hay ${elegidos.length} persona(s) que cumplen: se pidieron ${limite} `
+                       + 'y el pool se agotó.'] : [] };
+  }
 
   return {
     tipo: demograficos.length ? 'mixta' : 'semantica',
@@ -4254,8 +4278,9 @@ function correrConsulta(cuerpo) {
     puente: {
       estrategia, motivo, personas_en_segmento: habilitadas.size, gate: 'uso_semantico',
     },
-    total: items.length,
-    items: items.slice(0, Number(cuerpo.limite) || 50),
+    total: seleccion.modo === 'aleatorio' ? mostrados.length : items.length,
+    items: mostrados,
+    seleccion,
     excluidos,
     degradaciones: [{
       etapa: 'modo_demo',
@@ -4489,8 +4514,75 @@ function composicionDemo(panelId, consulta, otro = null) {
         };
       }),
     };
+    salida.cruce.tabla = tablaDeCruceDemo(salida.cruce.celdas, a, b,
+                                          Number(consulta.base_chica) || 30);
   }
+  salida.vistas_de_cruce = { n: 'Cantidad (N)', columna: '% de columna', fila: '% de fila',
+                             total: '% del total' };
   return salida;
+}
+
+/* R-COMP.1 — las cuatro vistas de un cruce, como `composicion.tabla_de_cruce`. */
+function tablaDeCruceDemo(celdas, a, b, umbral = 30) {
+  const filas = [...new Set(celdas.map((c) => c[a]))].sort();
+  const columnas = [...new Set(celdas.map((c) => c[b]))].sort();
+  const n = filas.map((f) => columnas.map((c) => celdas.find(
+    (x) => x[a] === f && x[b] === c)?.observados || 0));
+  const porFila = n.map((fila) => fila.reduce((s, v) => s + v, 0));
+  const porColumna = columnas.map((_, j) => n.reduce((s, fila) => s + fila[j], 0));
+  const total = porFila.reduce((s, v) => s + v, 0);
+  const p = (v, base) => (base ? Number((v / base).toFixed(4)) : null);
+  return {
+    filas, columnas, umbral_base_chica: umbral,
+    totales: { filas: porFila, columnas: porColumna, total },
+    vistas: {
+      n: { etiqueta: 'Cantidad (N)', valores: n },
+      columna: { etiqueta: '% de columna', valores: n.map((fila) => fila.map((v, j) => p(v, porColumna[j]))),
+                 bases: { columnas: porColumna }, bases_chicas: { columnas: porColumna.map((x) => x < umbral) } },
+      fila: { etiqueta: '% de fila', valores: n.map((fila, i) => fila.map((v) => p(v, porFila[i]))),
+              bases: { filas: porFila }, bases_chicas: { filas: porFila.map((x) => x < umbral) } },
+      total: { etiqueta: '% del total', valores: n.map((fila) => fila.map((v) => p(v, total))),
+               bases: { total }, bases_chicas: { total: total < umbral } },
+    },
+  };
+}
+
+/* R-ALE.3 / R-AU.2 — sumar a la audiencia desde una consulta: la selección
+   vigente (o una cantidad de ella) o todo el segmento, por el camino de
+   convocar, y el paso registrado. */
+function sumarAudienciaDemo(encuesta, cuerpo, via) {
+  const resultado = cuerpo.resultado || {};
+  const semilla = resultado.seleccion?.semilla || null;
+  let ids = (resultado.items || []).map((i) => i.id_persona).filter(Boolean);
+  let modo = resultado.seleccion?.modo || 'ranking';
+  const demografica = resultado.tipo === 'demografica';
+  if ((cuerpo.segmento_completo || (cuerpo.cantidad && demografica)) && demografica) {
+    const todo = correrConsulta({ ...(cuerpo.definicion || {}), semilla, limite: 100000 });
+    ids = todo.items.map((i) => i.id_persona);
+    if (!cuerpo.segmento_completo) ids = ids.slice(0, Number(cuerpo.cantidad));
+    modo = cuerpo.segmento_completo ? 'segmento_completo' : 'aleatorio';
+  } else if (cuerpo.cantidad) {
+    ids = ids.slice(0, Number(cuerpo.cantidad));
+  }
+  ids = [...new Set(ids)];
+  if (!ids.length) throw new ErrorDemo('La selección no tiene ninguna persona para agregar.', 400);
+  const ya = ids.filter((id) => bd.participaciones.some((p) => p.encuesta_id === encuesta.id
+    && p.id_persona === id && p.convocado !== false));
+  const existentes = ids.filter((id) => bd.personas.some((p) => p.id_persona === id));
+  const nuevos = existentes.filter((id) => !ya.includes(id));
+  const convocatoria = nuevos.length ? convocar(encuesta.id, { ids_persona: nuevos })
+    : { convocados_total: 0, sin_consentimiento: [], en_lista_negra: 0 };
+  const paso = {
+    encuesta_id: encuesta.id, via, modo, semilla, definicion: cuerpo.definicion || null,
+    pedidas: cuerpo.cantidad || null, en_la_seleccion: ids.length,
+    agregadas: convocatoria.convocados_total,
+    excluidas: { ya_estaban: ya.length, en_lista_negra: convocatoria.en_lista_negra,
+                 sin_consentimiento: convocatoria.sin_consentimiento.length,
+                 no_encontrados: ids.length - existentes.length },
+    actor: 'demo@equipos.com.uy', creado_en: ahora(),
+  };
+  bd.pasosDeAudiencia.push(paso);
+  return paso;
 }
 
 function olasDemo(panelId) {
@@ -4605,12 +4697,65 @@ export function espiarSemantica() {
   };
 }
 
+/* ── D88 · Los canales aceptados de una carga (R-CAN) ──────────── */
+
+const CANALES_DE_CARGA_DEMO = { whatsapp: 'WhatsApp', email: 'Correo' };
+const MOTIVOS_DE_CANALES_DEMO = {
+  sin_celular_valido: 'Sin celular válido', sin_correo: 'Sin correo',
+  revoco_el_canal: 'Revocó el canal',
+};
+
+/* Lo mismo que `canales_carga.registrar_en_bloque`: quien ya lo tenía no se
+   toca, quien lo revocó tampoco (R-CAN.3), y sin dato no se registra. */
+function registrarCanalesDemo(carga, declaracion, soloRevisar) {
+  const elegidos = Object.entries(declaracion).filter(([, v]) => v);
+  if (!elegidos.length) {
+    throw new ErrorDemo('Elegí al menos un canal, con la versión del texto con que lo '
+      + 'aceptaron.', 400);
+  }
+  const ids = [...new Set(bd.vinculos.filter((v) => v.carga_id === carga.id)
+    .map((v) => v.id_persona))];
+  const canales = {};
+  elegidos.forEach(([canal, version]) => {
+    const resultado = { etiqueta: CANALES_DE_CARGA_DEMO[canal], version_texto: version,
+                        registrados: 0, ya_lo_tenian: 0, no: {} };
+    ids.forEach((id) => {
+      const persona = bd.personas.find((p) => p.id_persona === id);
+      const existente = bd.canales.find((c) => c.id_persona === id && c.canal === canal);
+      const no = (motivo) => { resultado.no[motivo] = (resultado.no[motivo] || 0) + 1; };
+      if (existente?.activa) { resultado.ya_lo_tenian += 1; return; }
+      if (existente) { no('revoco_el_canal'); return; }
+      if (canal === 'whatsapp' && !/^\+\d{8,15}$/.test(persona?.celular || '')) {
+        no('sin_celular_valido'); return;
+      }
+      if (canal === 'email' && !(persona?.email || '').includes('@')) { no('sin_correo'); return; }
+      resultado.registrados += 1;
+      if (!soloRevisar) {
+        bd.canales.push({ id_persona: id, canal, estado: 'activa', activa: true,
+                          version_texto: version, origen: 'carga', otorgado_en: ahora(),
+                          revocado_en: null });
+      }
+    });
+    resultado.quedaran = resultado.registrados + resultado.ya_lo_tenian;
+    resultado.no_total = Object.values(resultado.no).reduce((n, v) => n + v, 0);
+    canales[canal] = resultado;
+  });
+  if (!soloRevisar) {
+    bd.registrosDeCanales.push({
+      id: bd.registrosDeCanales.length + 1, carga_id: carga.id, via: 'bloque',
+      canales: Object.fromEntries(elegidos), personas: ids.length, resultado: canales,
+      actor: 'demo@equipos.com.uy', creado_en: ahora() });
+  }
+  return { carga_id: carga.id, personas: ids.length, motivos: MOTIVOS_DE_CANALES_DEMO,
+           solo_revisar: soloRevisar, canales };
+}
+
 /* ── D85 · Convocatoria desde la encuesta (R-CF.1 a R-CF.8) ───────── */
 
 /* Las plantillas aprobadas para mensajes: las de botón de URL (cuya base
    fija Meta y a la que se le agrega el id_persona), una de solo texto y las
-   de Flow de R4.5. `recordatorio_otra` lleva a otra encuesta a propósito:
-   es el caso que el aviso de `url_distinta` existe para frenar. */
+   de botón de Flow (D87). `recordatorio_otra` lleva a otra encuesta a
+   propósito: es el caso que el aviso de `url_distinta` existe para frenar. */
 const URL_OLA_1 = 'https://survey.alchemer.com/s3/7001234/ola-1?pid=';
 const PLANTILLAS_MENSAJE_DEMO = [
   { nombre: 'invitacion_estudio', idioma: 'es', estado: 'APPROVED', categoria: 'MARKETING',
@@ -4632,8 +4777,13 @@ const PLANTILLAS_MENSAJE_DEMO = [
   { nombre: 'gracias', idioma: 'es', estado: 'APPROVED', categoria: 'UTILITY',
     cuerpo: '¡Gracias {{1}}! Ya registramos tu respuesta.', boton_url: null,
     parametros_cuerpo: 1, flow_id: null },
-  ...PLANTILLAS_DEMO.map((p) => ({ ...p, boton_url: null, parametros_cuerpo: 0 })),
-];
+  ...PLANTILLAS_DEMO.map((p) => ({ ...p, boton_url: null, parametros_cuerpo: 0,
+                                   indice_flow: 0 })),
+].map((p) => ({
+  ...p,
+  boton: p.flow_id ? 'flow' : p.boton_url ? 'url' : null,
+  boton_etiqueta: p.flow_id ? 'Botón de Flow' : p.boton_url ? 'Botón de URL' : 'Solo texto',
+}));
 const FUENTES_DE_PARAMETRO_DEMO = {
   nombre_panelista: 'Nombre del panelista', nombre_encuesta: 'Nombre de la encuesta',
 };
@@ -4687,7 +4837,7 @@ function guardarMensajeDemo(encuesta, cuerpo, existente = null) {
   }
   const canal = cuerpo.canal || 'whatsapp';
   const valores = { nombre, canal, plantilla: null, plantilla_idioma: null, parametros: [],
-                    url_boton: null, asunto: null, cuerpo: null };
+                    url_boton: null, boton: null, flow_id: null, asunto: null, cuerpo: null };
   const avisos = [];
   if (canal === 'whatsapp') {
     const plantilla = PLANTILLAS_MENSAJE_DEMO.find((p) => p.nombre === cuerpo.plantilla
@@ -4698,7 +4848,7 @@ function guardarMensajeDemo(encuesta, cuerpo, existente = null) {
       throw new ErrorDemo(`La plantilla tiene ${plantilla.parametros_cuerpo} parámetro(s) en el `
         + `texto y se indicaron ${parametros.length}.`, 400);
     }
-    const boton = plantilla.boton_url;
+    const boton = plantilla.boton === 'flow' ? null : plantilla.boton_url;
     let distinta = null;
     if (boton && !encuesta.url_alchemer) {
       distinta = 'La encuesta todavía no tiene su URL de Alchemer: no se puede comprobar que '
@@ -4714,7 +4864,8 @@ function guardarMensajeDemo(encuesta, cuerpo, existente = null) {
       avisos.push(distinta);
     }
     Object.assign(valores, { plantilla: plantilla.nombre, plantilla_idioma: plantilla.idioma,
-                             parametros, url_boton: boton?.base || null });
+                             parametros, url_boton: boton?.base || null,
+                             boton: plantilla.boton, flow_id: plantilla.flow_id || null });
   } else {
     if (!String(cuerpo.asunto || '').trim() || !String(cuerpo.cuerpo || '').trim()) {
       throw new ErrorDemo('Un mensaje por correo necesita asunto y cuerpo.', 400);
@@ -4879,7 +5030,8 @@ function enviosPorPersonaDemo(encuestaId) {
 function responderConvocatoriaDemo(metodo, partes, cuerpo, consulta) {
   if (metodo === 'GET' && partes[0] === 'mensajes' && partes[1] === 'plantillas') {
     return { plantillas: PLANTILLAS_MENSAJE_DEMO, configurado: true, faltan: [], avisos: [],
-             fuentes_de_parametro: FUENTES_DE_PARAMETRO_DEMO };
+             fuentes_de_parametro: FUENTES_DE_PARAMETRO_DEMO,
+             botones: { url: 'Botón de URL', flow: 'Botón de Flow' } };
   }
   if (partes[0] === 'ingestas') {
     if (metodo === 'GET' && partes.length === 1) {
@@ -4946,7 +5098,7 @@ function sembrarConvocatoriaDemo() {
   const invitacion = { id: bd.secuencias.mensaje++, encuesta_id: ola.id, nombre: 'Invitación',
     canal: 'whatsapp', plantilla: 'invitacion_estudio', plantilla_idioma: 'es',
     parametros: ['nombre_panelista', 'nombre_encuesta'], url_boton: URL_OLA_1,
-    asunto: null, cuerpo: null, creado_en: diasAtras(40) };
+    boton: 'url', flow_id: null, asunto: null, cuerpo: null, creado_en: diasAtras(40) };
   bd.mensajes.push(invitacion);
   const estados = ['aceptado', 'aceptado', 'aceptado', 'fallido', 'aceptado', 'aceptado'];
   bd.participaciones.filter((p) => p.encuesta_id === ola.id).slice(0, estados.length)
@@ -4954,4 +5106,13 @@ function sembrarConvocatoriaDemo() {
       encuesta_mensaje_id: invitacion.id, id_persona: p.id_persona, canal: 'whatsapp',
       trabajo_id: null, enviado_en: diasAtras(40), estado: estados[i],
       error: estados[i] === 'fallido' ? 'El número no tiene WhatsApp (131026).' : null }));
+  // D87 — la Ola 3 usó la sección «WhatsApp Flow»: lo enviado quedó migrado
+  // a un mensaje con botón de Flow, como lo deja la 0036.
+  const movilidad = bd.encuestas.find((e) => e.nombre === 'Ola 3 — Movilidad urbana');
+  if (movilidad) {
+    bd.mensajes.push({ id: bd.secuencias.mensaje++, encuesta_id: movilidad.id,
+      nombre: 'WhatsApp Flow', canal: 'whatsapp', plantilla: 'invitacion_ola',
+      plantilla_idioma: 'es', parametros: [], url_boton: null, boton: 'flow',
+      flow_id: '7412880031', asunto: null, cuerpo: null, creado_en: diasAtras(10) });
+  }
 }

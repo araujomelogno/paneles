@@ -220,25 +220,29 @@ export const cumplimiento = {
 };
 
 export const encuestas = {
-  listar: (panelId, tipo) => GET('/encuestas', {
-    ...(panelId ? { panel_id: panelId } : {}), ...(tipo ? { tipo } : {}) }),
+  /* R-ENC.2 (D90) — además del panel y el tipo, por estado y por cliente. */
+  listar: (panelId, tipo, { estado, clienteId } = {}) => GET('/encuestas', {
+    ...(panelId ? { panel_id: panelId } : {}), ...(tipo ? { tipo } : {}),
+    ...(estado ? { estado } : {}), ...(clienteId ? { cliente_id: clienteId } : {}) }),
   ver: (id) => GET(`/encuestas/${id}`),
-  /* R-EU.2 — los datos del estudio viven en la encuesta. */
-  crear: (panelId, nombre, fechaCampo, { publicoObjetivo, descripcion, clientes } = {}) =>
-    POST('/encuestas', {
-      panel_id: panelId, nombre, fecha_campo: fechaCampo,
-      publico_objetivo: publicoObjetivo || null, descripcion: descripcion || null,
-      clientes: clientes || [],
-    }),
+  /* R-EU.2 — los datos del estudio viven en la encuesta. R-AU.3 — de panel
+     (`panel_id`) o independiente (`tipo: 'independiente'`), con los datos del
+     formulario común (`estudio.js`) y las temáticas puestas a mano. */
+  crear: (datos) => POST('/encuestas', datos),
   cambiarEstado: (id, estadoEncuesta) => PATCH(`/encuestas/${id}`, { estado: estadoEncuesta }),
   editar: (id, cambios) => PATCH(`/encuestas/${id}`, cambios),
   /* R-EU.1 — ingestar en una encuesta es abrir una carga y seguir el flujo
      de la carga (`cargas.analizar`, `cargas.ingestar`). */
   nuevaCarga: (id, datos) => POST(`/encuestas/${id}/cargas`, datos),
   guardarTematicas: (id, tematicas) => PUT(`/encuestas/${id}/tematicas`, { tematicas }),
-  /* R-EU.5 — «crear encuesta con estos panelistas»: la foto del resultado. */
+  /* R-EU.5 — «crear encuesta con estos panelistas»: la foto de la selección
+     vigente. R-ALE.3 — o de todo el segmento (`segmento_completo`). */
   desdeConsulta: (nombre, resultado, definicion, datos = {}) =>
     POST('/encuestas/desde-consulta', { nombre, resultado, definicion, ...datos }),
+  /* R-AU.2 — sumar a la audiencia desde el resultado de una consulta: una
+     `cantidad` sorteada o `segmento_completo`. Y cómo se armó, paso a paso. */
+  agregarAudiencia: (id, cuerpo) => POST(`/encuestas/${id}/audiencia`, cuerpo),
+  pasosDeAudiencia: (id) => GET(`/encuestas/${id}/audiencia`),
   /* R-EU.9 — borrar un estudio. La vista previa sale de la misma ruta. */
   previaDeBorrado: (id) => POST(`/encuestas/${id}/borrado`, { solo_revisar: true }),
   borrar: (id, confirmacion) => POST(`/encuestas/${id}/borrado`, { confirmacion }),
@@ -246,7 +250,9 @@ export const encuestas = {
     POST(`/encuestas/${id}/convocatoria`, {
       ids_persona: idsPersona, todo_el_panel: !!todoElPanel,
     }),
-  participacion: (id) => GET(`/encuestas/${id}/participacion`),
+  /* R-ENC.1 — de a 50, paginada en el servidor: `pagina`, `buscar`,
+     `respondio`, `convocado`, `mensaje_id` y `recibio`. */
+  participacion: (id, consulta = {}) => GET(`/encuestas/${id}/participacion`, consulta),
   /* R-CF.1 — quién cambió el estado, cuándo, de qué a qué. */
   historialDeEstado: (id) => GET(`/encuestas/${id}/estados`),
   /* R-CF.2 — sumar panelistas a mano: una línea por persona (id_persona,
@@ -415,22 +421,8 @@ export const canales = {
     pedir('DELETE', `/panelistas/${idPersona}/canales/${canal}`),
 };
 
-/* R4.5 — el envío de una encuesta por WhatsApp Flow. El sistema solo envía:
-   las respuestas se bajan de Meta y se ingestan por el flujo de siempre. */
-export const flow = {
-  /* Las plantillas aprobadas de la cuenta que tienen botón de Flow. Es lo
-     único que se elige: el idioma y el `flow_id` vienen adentro de cada una,
-     así que pedirlos aparte era pedir tres veces el mismo dato. */
-  plantillas: () => GET('/whatsapp/plantillas'),
-  configurar: (encuestaId, cuerpo) => PUT(`/encuestas/${encuestaId}/flow`, cuerpo),
-  // Valida contra Meta que el Flow esté publicado y la plantilla aprobada.
-  // Se consulta antes de convocar, no al enviar.
-  estado: (encuestaId) => GET(`/encuestas/${encuestaId}/flow`),
-  destinatarios: (encuestaId) => GET(`/encuestas/${encuestaId}/whatsapp`),
-  enviar: (encuestaId, idsPersona) =>
-    POST(`/encuestas/${encuestaId}/whatsapp`,
-         idsPersona ? { ids_persona: idsPersona } : {}),
-};
+/* R4.5 — el envío por WhatsApp Flow ya no es una sección aparte (D87): un
+   mensaje de la encuesta con plantilla de botón de Flow (`mensajes`). */
 
 /* D85 · R-CF.4 a R-CF.8 — los mensajes de una encuesta (invitación,
    recordatorios, agradecimiento) y su envío. La vista previa sale de la
@@ -503,7 +495,7 @@ export const cargas = {
      ella, no copiados en cada persona. */
   crear: (nombre, descripcion, {
     fechaEstudio, publicoObjetivo, tipoDatosOrigen, tipoDatosOrigenOtro,
-    modoRelevamiento, modoRelevamientoOtro, clientes,
+    modoRelevamiento, modoRelevamientoOtro, clientes, urlAlchemer,
   } = {}) =>
     POST('/cargas', {
       nombre, descripcion,
@@ -517,6 +509,8 @@ export const cargas = {
       modo_relevamiento_otro: modoRelevamientoOtro || null,
       // R-CLI.1 — para quién se hizo el estudio; nombres, los nuevos se crean.
       clientes: clientes || [],
+      // R-AU.3 — los mismos datos del estudio que «Nueva encuesta».
+      url_alchemer: urlAlchemer || null,
     }),
   /* R-CAR.1 — sin consulta, todas (los selectores); la sección Cargas
      filtra por temática (`tematica_id`) y busca por nombre (`q`). */
@@ -534,6 +528,12 @@ export const cargas = {
      la carga que se les pueden asociar. */
   tematicas: (cargaId) => GET(`/cargas/${cargaId}/tematicas`),
   editar: (cargaId, cambios) => PATCH(`/cargas/${cargaId}`, cambios),
+  /* R-CAN.2 (D88) — los canales declarados para la gente de la carga, su
+     historial y los textos que se ofrecen. Registrar en bloque tiene vista
+     previa por la misma ruta (`solo_revisar`). */
+  canales: (cargaId) => GET(`/cargas/${cargaId}/canales`),
+  registrarCanales: (cargaId, canales, soloRevisar = false) =>
+    POST(`/cargas/${cargaId}/canales`, { canales, ...(soloRevisar ? { solo_revisar: true } : {}) }),
   // PEDIDO del celular, parte 3 — borrar una carga. La vista previa sale de
   // la misma ruta que borra (`solo_revisar`), como la revisión de una carga.
   // R-EU.10 — dar de baja a las personas que la carga creó es una opción.
