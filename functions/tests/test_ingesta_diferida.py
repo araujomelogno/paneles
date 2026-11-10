@@ -630,12 +630,13 @@ def test_los_estados_del_codigo_son_los_del_catalogo(conn_boveda):
         conn_boveda, "select codigo from estado_ingesta")}
     assert del_catalogo == {diferida.ENCOLADA, diferida.PROCESANDO,
                             diferida.TERMINADA, diferida.TERMINADA_CON_ERRORES,
-                            diferida.FALLIDA}
+                            diferida.FALLIDA, diferida.DETENIDA}
 
     de_lote = {f["codigo"] for f in db.todas(
         conn_boveda, "select codigo from estado_lote_ingesta")}
     assert de_lote == {diferida.LOTE_PENDIENTE, diferida.LOTE_PROCESANDO,
-                       diferida.LOTE_OK, diferida.LOTE_FALLIDO}
+                       diferida.LOTE_OK, diferida.LOTE_FALLIDO,
+                       diferida.LOTE_CANCELADO}
 
 
 def test_el_destino_se_valida_antes_de_guardar(conn_boveda, encolador):

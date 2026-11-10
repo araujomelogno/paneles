@@ -5586,3 +5586,181 @@ fijo.
 `ruteo.py`, `web/public/js/paginas/encuestas.js`, `demo.js`. Pruebas:
 `functions/tests/test_pedido_controles_mensajes_e_identificacion.py`,
 `functions/tests/test_pantallas_controles_mensajes_e_identificacion.py`.
+
+## D92 · La carga nace provisoria, cancelar la borra, y una ingesta se puede detener
+
+**El pedido.** `specs/PEDIDO_cancelar_carga.md`. La carga se crea en el primer
+paso del flujo —antes de subir el archivo— y, si se cancelaba, quedaban una
+carga vacía y, desde Panelistas, una encuesta automática vacía en los
+listados. Y una ingesta confirmada no tenía cómo frenarse: cerrar la ventana
+no la detiene.
+
+- **R-CAN-C.1 — provisoria.** `carga.provisoria` y `encuesta.provisoria`
+  (`boveda/0037`). Las rutas que abren una carga (`POST /cargas`,
+  `POST /encuestas/<id>/cargas`) la crean provisoria; la encuesta automática
+  de Panelistas también, y una encuesta **existente** nunca. Dejan de serlo en
+  la **misma transacción** que crea el trabajo de ingesta
+  (`diferida.encolar(..., confirmar_carga=…)` → `cargas.confirmar_provisoria`,
+  dentro del savepoint: si el índice rechaza el trabajo, siguen provisorias).
+  Ningún listado las muestra: `cargas.listar`, `encuestas.listar` y las
+  estadísticas filtran `not provisoria`, y los selectores de composición, de
+  consultas y de Panelistas salen de esas listas. `obtener` las sigue
+  devolviendo: el flujo las necesita.
+- **R-CAN-C.2 — cancelar.** `POST /cargas/<id>/cancelar`
+  (`cargas.cancelar_provisoria`): borra la carga provisoria y su encuesta
+  automática si quedó sin cargas. Seguro de repetir (`no_existe`) y una carga
+  confirmada no se toca (`confirmada`): eso es el borrado de R-EU.10. En la
+  pantalla lo dispara **cerrar el modal** sin confirmar, por cualquier camino
+  (`modal({ alCerrar })` en `ui.js`).
+- **R-CAN-C.3 — lo abandonado.** Cerrar la pestaña no avisa al servidor.
+  `cargas.limpiar_provisorias` borra las provisorias con más de 24 h **y sin
+  trabajo de ingesta**, con su encuesta automática; corre al iniciar cada
+  carga nueva (sin proceso programado: US$ 0) y a mano desde Cumplimiento
+  (`POST /cumplimiento/provisorias/limpieza`). Cada corrida deja su fila en
+  `limpieza_provisoria`, también cuando no borró nada.
+- **R-CAN-C.4 — detener.** `POST /ingestas/<id>/detener` (`diferida.detener`):
+  el trabajo pasa a `detenida` y los lotes **pendientes** a `cancelado`, en la
+  misma transacción y en ese orden; un lote que ya estaba **procesando**
+  termina. Las tareas de Cloud Tasks ya encoladas no se borran de la cola: el
+  procesador **mira el estado al empezar** (`procesar_lote`) y las descarta;
+  vale también para el reintento automático de un lote fallido. `_tomar_lote`
+  no reabre una detenida y `_cerrar_si_termino` la deja detenida, con el
+  resumen de lo que entró. `detenida` no es activa: el índice de la `0029`
+  mira solo `encolada` y `procesando`, así que no bloquea una ingesta nueva.
+  `reanudar` vuelve a encolar los cancelados (con un sufijo en el nombre de
+  la tarea, que Cloud Tasks recuerda), y si mientras tanto se lanzó otra
+  ingesta del mismo destino, el índice lo rechaza. Detenida, la pantalla dice
+  cuántos lotes entraron y ofrece **Reanudar** o **Borrar lo cargado**
+  (R-EU.10). Reintentar los fallidos de una detenida pide reanudar primero.
+  Solo se detiene una ingesta: un envío, un borrado o un reproceso tienen su
+  propio fin.
+- **R-CAN-C.5 — cerrar no es cancelar.** El seguimiento y la revisión (al
+  apretar «Ingestar») lo dicen con el mismo texto
+  (`diferida.AVISO_CERRAR_NO_DETIENE`, `aviso_cerrar` en el estado).
+
+**Lo existente.** La migración deja todo con `provisoria = false`: no hay
+forma de saber qué se abandonó. `scripts/migrar_cargas_incrementales.py
+vacias` lo lista para que el equipo decida.
+
+**Dónde vive.** `db/boveda/0037_cancelar_carga_mixta_e_incrementales.sql`,
+`functions/panel_api/cargas.py`, `diferida.py`, `encuestas.py`,
+`estadisticas.py`, `ruteo.py`, `web/public/js/ui.js`,
+`web/public/js/paginas/encuestas.js`, `web/public/js/paginas/cumplimiento.js`,
+`web/public/js/paginas/cargas.js`, `web/public/js/demo.js`.
+
+## D93 · Toda carga es mixta: el sistema decide fila por fila
+
+**El pedido.** `specs/PEDIDO_carga_mixta.md`. Un archivo de Alchemer trae a
+quienes llegaron por el enlace de la convocatoria (con su `id_persona`) y a
+quienes llegaron sin él (columna vacía). La pregunta 4 —«¿Los panelistas ya
+están en el sistema?»— obligaba a elegir un modo y ninguno servía: «crear»
+descartaba toda fila con la columna vacía como `identificador_invalido`, y
+una persona nueva no puede traer un `id_persona` que todavía no existe.
+
+**La decisión.** Se eliminó la pregunta. `reconocimiento.reconocer` resuelve
+cada fila por capas y la primera que encuentra a alguien decide:
+
+1. la **columna identificadora**, según su tipo. Un `id_persona` que no
+   existe es un **enlace roto** y no una persona nueva: «id desconocido», la
+   fila no entra y no se crea a nadie. Un id de la plataforma, un documento,
+   un correo o un celular que no se encuentra sigue a la capa siguiente (y el
+   valor de un documento, correo o celular es un dato más para el dedup y el
+   alta);
+2. el **ID de respuesta** de la plataforma, si se declaró la columna
+   (R-MIX.2). Se guarda en `alias_origen` con origen `respuesta:<ref_estudio>`:
+   el ID de respuesta de Alchemer es único **dentro de una encuesta**, y con
+   un origen común la respuesta 12 de un estudio «encontraría» a la persona de
+   la respuesta 12 de otro;
+3. el **dedup** (`dedup.resolver`, con sus cautelas);
+4. **persona nueva**, si la fila trae con qué crearla (documento, correo o
+   nombre); si no, no entra y se informa.
+
+`reconocer` no escribe: la usan la revisión y la confirmación
+(`reconocimiento.aplicar`), una sola regla. La confirmación crea solo las
+nuevas, por `sav.crear_individuos` (que ahora recibe `alias_de`: la clave de
+la fila ya no es un alias, porque una fila nueva puede no traer ninguno),
+registra los identificadores de la plataforma de las demás, y deja el
+`id_persona` resuelto en una columna propia (`__id_persona`): el plan
+congelado identifica por ella con tipo `id_persona` y los lotes siguen
+llamando a `cargas.ingestar`. Lo elegido queda en `plan.identificacion`, y
+los conteos en `plan.reconocimiento` (que el estado del trabajo devuelve).
+
+- **R-MIX.3 — la vista previa.** «487 filas · 450 existentes · 35 nuevas · 2
+  con id desconocido», y de las nuevas cuántas reconoció el dedup y cuántas
+  se crean. Avisa las nuevas **sin clave** (sin ID de respuesta, correo ni
+  celular válidos: se crearían de nuevo en la carga siguiente) y destaca una
+  **proporción inesperada** (más de la mitad nuevas en una carga que esperaba
+  encontrar a su gente: tipo `id_persona` o encuesta con audiencia). Es la
+  protección que daba el modo «ya existen». Nada de eso bloquea (D63).
+- **R-MIX.4 — consentimiento solo para las nuevas.** Sin personas a crear no
+  se pide evidencia; con personas a crear la ruta la exige
+  (`sin_evidencia_de_consentimiento`) y se aplica **solo** a ellas. A quien
+  ya existe —incluida la que reconoció el dedup— no se le registra nada: su
+  consentimiento es el que tiene. Los canales del archivo (R-CAN.1) también se
+  declaran solo para las creadas (`plan.canales_para`); los de las demás se
+  registran desde la carga (R-CAN.2).
+- **R-MIX.5 — audiencia.** En una encuesta con audiencia, quien no vino con
+  el `id_persona` de la convocatoria cuenta como no convocado aunque el
+  dedup lo reconozca (`reconocimiento.no_convocados`), y su participación
+  nueva nace con `convocado = false`. A quien ya estaba convocado no se le
+  borra la convocatoria por cómo llegó su fila. Excluir a los no convocados
+  deja sin crear a las nuevas.
+
+**Lo que no cambia.** Un archivo con todas las filas identificadas carga
+igual; el dedup y sus cautelas; las personas creadas se vinculan con las
+respuestas de su propia fila en el mismo proceso.
+
+**Dónde vive.** `functions/panel_api/reconocimiento.py` (nuevo), `sav.py`,
+`cargas.py`, `ruteo.py`, `diferida.py`, `web/public/js/paginas/encuestas.js`.
+
+## D94 · Cargas incrementales: el tercer origen, `repetida`
+
+**El pedido.** `specs/PEDIDO_cargas_incrementales.md`. Una encuesta de
+Alchemer se carga varias veces mientras el campo está abierto y cada SAV trae
+el acumulado. Quien respondió al principio quedaba vinculado a todas las
+cargas y en las siguientes figuraba «reutilizado», igual que alguien de otro
+estudio: la ficha repetía la encuesta, las estadísticas inflaban los
+reutilizados y el desglose se llenaba con la propia encuesta.
+
+**Lo que no se hizo.** Dejar de registrar el vínculo: `persona_carga` lo usan
+seis módulos y el borrado decide con él si alguien estaba **solo** en una
+carga. Se sigue registrando cada aparición y se distingue la repetición.
+
+- **R-INC.1.** `persona_carga.origen` admite `repetida` (`boveda/0037`). La
+  decide `cargas.registrar_vinculos`, no quien llama: quien ya tiene un
+  vínculo con una carga **anterior** de la misma encuesta (por orden de
+  creación de la carga) queda `repetida`. Y si una carga anterior suma tarde
+  a alguien (una revisión resuelta después), las posteriores pasan a
+  `repetida`: dentro de una encuesta, a lo sumo un vínculo que no es
+  repetida por persona.
+- **R-INC.2.** La migración marca `repetida` lo ya cargado después de la
+  primera carga de cada encuesta; `scripts/migrar_cargas_incrementales.py
+  prueba` corre la `0037` y la deshace, con los cambios por encuesta, y
+  `verificar` comprueba el invariante (`CONSULTA_DUPLICADOS`).
+- **R-INC.3.** Al borrar una carga, quien tenía en ella su primera aparición
+  y sigue en una posterior pasa a tener esa como primera, `reutilizada`
+  (`cargas.reasignar_primera_aparicion`, desde `cargas_borrado`). El resto del
+  borrado no cambia: «sin otra vida» mira todos los vínculos.
+- **R-INC.4.** La ficha muestra cada encuesta una vez, con la primera carga y
+  su origen, y «también en N cargas posteriores de esta encuesta»,
+  desplegable. El estudio de origen (`origen_de`, `origen_de_varias`) tampoco
+  cuenta las repetidas.
+- **R-INC.5.** `v_carga_resumen.personas_repetidas`; la carga y el listado
+  dicen «N en el archivo · N nuevos · N reutilizados de otros estudios · N ya
+  estaban en cargas anteriores de esta encuesta»
+  (`cargas.resumen_de_personas`). El desglose de reutilizados ya contaba solo
+  `reutilizada`.
+- **R-INC.6.** La composición de **una carga** muestra a quienes esa carga
+  sumó (sin las `repetida`), con la nota. La de la encuesta no cambia.
+
+**Lo que no cambia.** `canales_carga` registra para todas las personas del
+archivo, incluidas las repetidas; `respuesta.carga_id`, la participación y el
+borrado de encuestas.
+
+**Dónde vive.** `db/boveda/0037_…`, `scripts/migrar_cargas_incrementales.py`,
+`functions/panel_api/cargas.py`, `cargas_borrado.py`, `composicion.py`,
+`estadisticas.py`, `web/public/js/origen.js`, `web/public/js/paginas/cargas.js`,
+`web/public/js/demo.js`.
+Pruebas (las tres decisiones):
+`functions/tests/test_pedido_cancelar_mixta_incrementales.py`,
+`functions/tests/test_pantallas_cancelar_mixta_incrementales.py`.

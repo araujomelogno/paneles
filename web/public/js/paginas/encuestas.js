@@ -892,6 +892,10 @@ function bloquearModal(caja) {
    mirando el pie. Si tarda más de unos segundos lo dice, para que no
    parezca colgado. */
 const SIGUE_PROCESANDO_MS = 8000;
+/* D92 · R-CAN-C.5 — cerrar no es cancelar. El mismo texto que devuelve el
+   servidor en `aviso_cerrar` (`diferida.AVISO_CERRAR_NO_DETIENE`). */
+const AVISO_CERRAR = 'El procesamiento sigue en el servidor aunque cierres esta '
+  + 'ventana. Para frenarlo, usá «Detener ingesta».';
 const PREPARANDO = 'Preparando la carga…';
 const NOTA_PREPARANDO = 'Puede tardar unos segundos con bases grandes. '
   + 'No cierres esta ventana.';
@@ -1195,7 +1199,9 @@ export function abrirCargaDePanelistas(carga, alTerminar, actor = null) {
   return abrirIngesta(
     { tipo: 'carga', id: carga.id, nombre: carga.encuesta || carga.nombre,
       carga: carga.nombre, encuesta_id: carga.encuesta_id,
-      encuesta_tipo: carga.encuesta_tipo || 'independiente', actor }, alTerminar);
+      encuesta_tipo: carga.encuesta_tipo || 'independiente', actor,
+      // D92 — una carga provisoria se borra si se cancela antes de confirmar.
+      provisoria: Boolean(carga.provisoria) }, alTerminar);
 }
 
 function abrirIngesta(destino, alTerminar) {
@@ -1226,10 +1232,21 @@ function abrirIngesta(destino, alTerminar) {
   // los ofrece a quien gestiona canales: la ruta lo exige igual.
   const conCanales = canales.puedeDeclarar(destino.actor || contexto.actor);
   let declaracionDeCanales = null;
+  /* D93 · R-MIX.4 — la evidencia de consentimiento (y los canales) se piden
+     solo si la revisión encontró personas nuevas para crear. */
+  let requiereAlta = false;
+  /* D92 · R-CAN-C.2 — cancelar o cerrar el modal antes de confirmar borra
+     la carga provisoria (y su encuesta automática). Confirmar la conserva. */
+  let confirmada = false;
 
   const caja = modal({
     titulo: `${dePanel ? 'Ingestar respuestas' : 'Cargar panelistas'} — ${encuesta.nombre}`,
     ancho: '720px',
+    alCerrar: () => {
+      if (confirmada || !destino.provisoria) return;
+      // Seguro de repetir: si ya no existe, el servidor no falla.
+      api.cargas.cancelar(destino.id).catch(() => {});
+    },
     cuerpo: `
       <div id="ing-alerta"></div>
       <div id="ing-revision" class="hidden"></div>
@@ -1291,6 +1308,20 @@ function abrirIngesta(destino, alTerminar) {
           </select>
         </div>
         <div class="field-hint" id="hint-identificador"></div>
+        <div class="form-group" style="margin:.6rem 0 0">
+          <label class="small">ID de respuesta de la plataforma (opcional)</label>
+          <select class="fselect" id="columna-respuesta" disabled>
+            <option value="">— no declarar —</option>
+          </select>
+          <div class="field-hint">Si el export trae el identificador de cada respuesta
+            (en Alchemer, el «Response ID»), declararlo hace que una persona nueva de
+            esta carga se reconozca en la siguiente aunque no tenga correo ni celular.</div>
+        </div>
+        <div class="field-hint" id="hint-mixta">Toda carga es <strong>mixta</strong>:
+          cada fila se busca por esta columna; si viene vacía o no se encuentra, por el
+          ID de respuesta y por correo o celular; si no, es una persona nueva. Un
+          id_persona que no existe es un enlace roto: no crea a nadie. La revisión
+          dice cuántas son existentes y cuántas nuevas.</div>
       </div>
 
       <!-- Fase 8 — lo que el sistema detectó sobre la calidad del texto que
@@ -1328,20 +1359,19 @@ function abrirIngesta(destino, alTerminar) {
         <button class="btn btn-outline btn-sm" id="add-pregunta" style="margin-top:0.6rem">+ Agregar pregunta</button>
       </div>
 
-      <!-- R3.9 — Solo para .sav: dar de alta a la gente en la misma carga.
-           Se muestra recién cuando el archivo es un .sav porque es el único
-           formato del que el backend puede leer la metadata; con un Excel
-           el alta sigue siendo por la pantalla de Panelistas. -->
-      <div id="bloque-sav" class="hidden">
+      <!-- D93 · R-MIX.4 — ya no se pregunta si los panelistas existen: el
+           sistema lo decide fila por fila. La base legal del alta se pide
+           solo cuando la revisión encontró personas nuevas para crear, y se
+           aplica solo a ellas. -->
+      <div id="bloque-alta" class="hidden">
         <div class="form-group">
-          <label>4 · ¿Los panelistas ya están en el sistema?</label>
-          <select class="fselect" id="modo-sav">
-            <option value="existen">Sí, ya existen: solo vincular las respuestas</option>
-            <option value="crear_individuos">No: darlos de alta en esta carga</option>
-          </select>
+          <label>4 · Personas nuevas: base legal del alta</label>
+          <div class="field-hint">La revisión encontró personas nuevas para crear. Esta
+            evidencia se aplica <strong>solo a ellas</strong>: a quien ya existe no se le
+            registra nada.</div>
         </div>
 
-        <div id="alta-sav" class="hidden">
+        <div id="alta-sav">
           <div class="aviso">
             <h4>Base legal del alta</h4>
             <p>Para crear personas desde el archivo hay que indicar
@@ -1391,10 +1421,12 @@ function abrirIngesta(destino, alTerminar) {
           </div>
         </div>
       </div>
-      ${conCanales ? `<div id="bloque-canales">${canales.bloque({
-        titulo: '5 · Canales aceptados (opcional)' })}</div>` : ''}
+      ${conCanales ? `<div id="bloque-canales" class="hidden">${canales.bloque({
+        titulo: '5 · Canales aceptados por las personas nuevas (opcional)' })}</div>` : ''}
       </div>`,
     acciones: [
+      // D92 — cerrar el modal sin confirmar borra la carga provisoria
+      // (`alCerrar`).
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
       // Ninguna acción sin respuesta visible: si `correr` revienta por algo
       // que nadie previó, el motivo aparece junto al botón y no queda como
@@ -1927,10 +1959,12 @@ function abrirIngesta(destino, alTerminar) {
   const AYUDA_IDENTIFICADOR = {
     alias: 'El id que la plataforma le puso al respondente, el mismo que se '
       + 'guardó al enrolar. Ojo: muchas plataformas generan ids nuevos en cada '
-      + 'estudio, y entonces ninguna fila va a mapear.',
+      + 'estudio, y entonces ninguna fila va a mapear por acá. Si una fila resulta '
+      + 'nueva, se le registra ese id.',
     id_persona: 'El identificador del sistema, precargado en el instrumento '
       + 'desde «Exportar muestra». Es el mapeo directo y el único que no '
-      + 'depende de lo que haga la plataforma.',
+      + 'depende de lo que haga la plataforma. Una fila vacía es una persona '
+      + 'nueva; un id que no existe es un enlace roto y no entra.',
     documento: 'Respaldo, cuando no se pudo precargar. Al terminar queda '
       + 'registrado el alias de esta plataforma, así la próxima carga ya no '
       + 'necesita el documento.',
@@ -1979,9 +2013,6 @@ function abrirIngesta(destino, alTerminar) {
     }
   }
 
-  $('#modo-sav', caja).onchange = (e) => {
-    $('#alta-sav', caja).classList.toggle('hidden', e.target.value !== 'crear_individuos');
-  };
   $('#cons-misma', caja).onchange = (e) => {
     $('#grupo-cons-semantico', caja).classList.toggle('hidden', e.target.checked);
   };
@@ -2016,6 +2047,7 @@ function abrirIngesta(destino, alTerminar) {
       select.innerHTML = datosArchivo.encabezados
         .map((h) => `<option value="${esc(h)}" ${h === probable ? 'selected' : ''}>${esc(h)}</option>`).join('');
       proponerTipo();
+      pintarColumnaRespuesta(datosArchivo.encabezados);
 
       // Precarga las preguntas con las columnas que no son la de identidad.
       // Fase 8 — con una muestra de sus valores para la vista previa: el
@@ -2095,6 +2127,7 @@ function abrirIngesta(destino, alTerminar) {
         ${esc(v.codigo)}${analisis.candidatas_a_id.includes(v.codigo) ? ' (valores únicos)' : ''}
       </option>`).join('');
     proponerTipo();
+    pintarColumnaRespuesta(analisis.variables.map((v) => v.codigo));
 
     preguntas$.innerHTML = '';
     analisis.variables
@@ -2122,11 +2155,21 @@ function abrirIngesta(destino, alTerminar) {
     await prepararAltaSav(analisis.variables);
   }
 
-  /* R3.9 — el modo «crear los individuos en esta carga». Solo aparece con un
-     .sav, y solo deja confirmar si se declaró de dónde sale la evidencia de
-     consentimiento: es la base legal del alta, no un campo más. */
+  /* R-MIX.2 — la columna del ID de respuesta, opcional. Se propone si hay
+     una que se llama así. */
+  function pintarColumnaRespuesta(codigos) {
+    const select = $('#columna-respuesta', caja);
+    const probable = codigos.find((c) => /^(response_?id|id_?respuesta|responseid)$/i.test(c));
+    select.disabled = false;
+    select.innerHTML = '<option value="">— no declarar —</option>'
+      + codigos.map((c) => `<option value="${esc(c)}" ${c === probable ? 'selected' : ''}>${
+        esc(c)}</option>`).join('');
+  }
+
+  /* R3.9 / D93 — la base legal del alta de las personas nuevas. Se prepara
+     con el archivo y se muestra solo si la revisión encontró a quién crear:
+     ahí no deja confirmar sin declarar de dónde sale la evidencia. */
   async function prepararAltaSav(variables) {
-    $('#bloque-sav', caja).classList.remove('hidden');
 
     /* R7.1 — la versión del consentimiento se elige de lo publicado. Antes
        era un campo de texto que tenía que coincidir exacto con una versión
@@ -2284,7 +2327,6 @@ function abrirIngesta(destino, alTerminar) {
     }
 
     return {
-      modo: 'crear_individuos',
       // El panel (si lo hay) lo decide el servidor por la encuesta.
       evidencia_consentimiento: {
         contacto_participacion: contacto,
@@ -2374,7 +2416,22 @@ function abrirIngesta(destino, alTerminar) {
     // nombre. «Confirmar e importar» a secas, debajo de un cartel rojo, se
     // lee como «no se puede», y es justo lo que el analista puede decidir.
     const sinClave = Boolean(resumen.sin_clave_de_dedup);
+    // D93 · R-MIX.4 — hay personas nuevas para crear y todavía no se declaró
+    // su base legal: se pide en el formulario (paso 4) y no se confirma.
+    const faltaAlta = Boolean(resumen.reconocimiento?.requiere_consentimiento)
+      && !cuerpo.evidencia_consentimiento;
+    if (resumen.reconocimiento?.requiere_consentimiento && !requiereAlta) {
+      requiereAlta = true;
+      // Con un .sav los selectores del paso 4 se armaron al analizarlo; con
+      // un .csv o un .xlsx, recién ahora, cuando hacen falta.
+      if (!datosArchivo.savBase64) {
+        prepararAltaSav(datosArchivo.encabezados.map((h) => ({ codigo: h, texto: h })));
+      }
+      $('#bloque-alta', caja).classList.remove('hidden');
+      $('#bloque-canales', caja)?.classList.remove('hidden');
+    }
     revision$.innerHTML = identidadDeLaRevision(resumen, cuerpo)
+      + reconocimientoHtml(resumen.reconocimiento, faltaAlta)
       + avisosDeLaCarga(resumen) + resumenHtml(resumen) + (esCarga ? `
       <h4>Temáticas del estudio</h4>
       <p class="small">De qué trata este estudio, y qué preguntas sustentan cada
@@ -2395,9 +2452,10 @@ function abrirIngesta(destino, alTerminar) {
       <div class="modal-foot pie-revision" style="padding-left:0;padding-right:0">
         <button class="btn btn-outline" id="volver-a-corregir">${sinClave
           ? 'Volver a corregir el mapeo' : 'Volver a corregir'}</button>
-        <button class="btn btn-orange" id="confirmar-importar">${sinClave
+        <button class="btn btn-orange" id="confirmar-importar" ${faltaAlta ? 'disabled' : ''}>${sinClave
           ? 'Continuar igual, sin clave de dedup' : 'Confirmar e importar'}</button>
-      </div>`;
+      </div>
+      <p class="small muted aviso-cerrar" id="aviso-cerrar-revision">${esc(AVISO_CERRAR)}</p>`;
     revision$.classList.remove('hidden');
     formulario$.classList.add('hidden');
     // Se engancha en el momento, antes de esperar nada más: un cambio de
@@ -2469,6 +2527,7 @@ function abrirIngesta(destino, alTerminar) {
         setTimeout(() => correr(), 0);
       };
       $('#confirmar-importar', revision$).onclick = () => {
+        if (faltaAlta) return;
         if (tipoId$.value !== cuerpo.tipo_identificador
             || $('#columna-id', caja).value !== cuerpo.columna_id) {
           $('#resumen-desactualizado', revision$).hidden = false;
@@ -2521,6 +2580,29 @@ function abrirIngesta(destino, alTerminar) {
         <div style="margin-top:.4rem"><button class="btn btn-orange btn-sm"
           id="revisar-de-nuevo">Revisar de nuevo</button></div></div>
     </div>`;
+  }
+
+  /* D93 · R-MIX.3 — cuántas filas son de personas que ya existen, cuántas
+     nuevas (y de ellas, cuántas reconoció el dedup y cuántas se crean) y
+     cuántas traen un id_persona desconocido. Una proporción de nuevas
+     inesperada va destacada: es la protección que daba el modo «ya existen»
+     contra una columna o un tipo mal elegidos. */
+  function reconocimientoHtml(r, faltaAlta) {
+    if (!r) return '';
+    const destacadas = (r.advertencias || []).filter((a) => a.destacada);
+    const resto = (r.advertencias || []).filter((a) => !a.destacada);
+    return `${destacadas.map((a) => `<div class="aviso grave" id="aviso-proporcion">
+        <h4>¿La columna identificadora es la correcta?</h4><p>${esc(a.mensaje)}</p></div>`).join('')}
+      <div class="aviso" id="reconocimiento">
+        <h4>Existentes y nuevas</h4>
+        <p><strong id="reconocimiento-texto">${esc(r.texto)}</strong></p>
+        ${r.nuevas ? `<p class="small">${esc(r.detalle_nuevas)}</p>` : ''}
+        ${resto.map((a) => alerta(a.mensaje, a.grave ? 'error' : 'warn')).join('')}
+        ${faltaAlta ? `<div class="alert alert-error" id="falta-alta">Hay
+          <strong>${r.a_crear + r.en_revision}</strong> persona(s) nuevas para crear:
+          volvé a corregir y declará en el paso 4 qué variable evidencia su
+          consentimiento. Sin eso no hay base legal para el alta.</div>` : ''}
+      </div>`;
   }
 
   /* D81 — lo que la revisión de una carga dice antes que todo lo demás:
@@ -2789,8 +2871,13 @@ function abrirIngesta(destino, alTerminar) {
       columna_id: columnaId,
       demograficas: marcadoDemografico(),
       tipo_identificador: tipoId$.value,
-      // R-CAN.1 — los canales que aceptó la gente de la carga, con su texto.
-      ...(Object.keys(canalesElegidos).length ? { canales_aceptados: canalesElegidos } : {}),
+      // R-MIX.2 — la columna del ID de respuesta, si se declaró.
+      ...($('#columna-respuesta', caja).value
+        ? { columna_respuesta: $('#columna-respuesta', caja).value } : {}),
+      // R-CAN.1 / R-MIX.4 — los canales que aceptaron las personas nuevas,
+      // con su texto. Solo si hay personas nuevas para crear.
+      ...(requiereAlta && Object.keys(canalesElegidos).length
+        ? { canales_aceptados: canalesElegidos } : {}),
       // Fase 8 — la lista de no respuesta con la que se detectó, para que
       // quede guardada con el estudio y un reproceso sepa qué se decidió.
       ...(diagnostico ? { valores_no_respuesta: listaNoRespuesta() } : {}),
@@ -2851,7 +2938,7 @@ function abrirIngesta(destino, alTerminar) {
     if (pendientes.length && !(await confirmarPendientes(pendientes))) return;
 
     let extraSav = {};
-    if (datosArchivo.savBase64 && $('#modo-sav', caja).value === 'crear_individuos') {
+    if (requiereAlta) {
       try {
         extraSav = cuerpoDeAltaSav();
       } catch (error) {
@@ -2905,6 +2992,7 @@ function abrirIngesta(destino, alTerminar) {
       indicadorPie.quitar();
       avance.medido('Encolada', 0);
       enCurso.soltar();
+      confirmada = true;
       cerrarModal();
       // R-ASYNC.1 — confirmar ya no espera el resultado: la carga quedó
       // guardada y partida en lotes, y lo que sigue es mirar cómo avanza.
@@ -3083,19 +3171,64 @@ function duracion(segundos) {
 async function seguirIngesta(trabajoId, { avance, esCarga, alTerminar,
                                           creacion }) {
   let estado = null;
-  for (;;) {
-    estado = await api.ingestas.ver(trabajoId);
-    const restante = estado.segundos_restantes;
-    // Un borrado de carga reparte personas, no filas del archivo.
-    const unidad = estado.operacion === 'borrado_carga' ? 'persona(s)' : 'fila(s)';
-    avance.medido(
-      `${estado.estado_etiqueta} · ${estado.filas_procesadas} de ${estado.filas_total} ${unidad}`
-      + (restante ? ` · faltan ~${duracion(restante)}` : ''),
-      (estado.porcentaje || 0) / 100);
-    if (estado.terminal) break;
-    await new Promise((listo) => setTimeout(listo, MS_ENTRE_CONSULTAS));
+  // D92 · R-CAN-C.4/5 — mientras corre: cerrar la ventana no la detiene, y
+  // «Detener ingesta» sí (con confirmación).
+  const control = document.createElement('div');
+  control.className = 'control-ingesta';
+  control.id = 'control-ingesta';
+  cajaDeAvance().appendChild(control);
+  let deteniendo = false;
+  const pintarControl = (e) => {
+    if (!e.aviso_cerrar) { control.innerHTML = ''; return; }
+    control.innerHTML = `<p class="small muted" id="aviso-cerrar">${esc(e.aviso_cerrar)}</p>
+      ${e.detenible ? `<button class="btn btn-outline btn-sm" id="detener-ingesta"
+        ${deteniendo ? 'disabled' : ''}>Detener ingesta</button>` : ''}`;
+    const boton = $('#detener-ingesta', control);
+    if (boton) {
+      boton.onclick = async () => {
+        const ok = await confirmar({
+          titulo: 'Detener la ingesta',
+          cuerpo: `<p>Los lotes que todavía no empezaron <strong>no se procesan</strong>;
+            el que está en curso termina. Lo que ya entró, queda.</p>
+            <p class="small muted">Después se puede reanudar, o borrar lo cargado.</p>`,
+          textoOk: 'Detener ingesta' });
+        if (!ok) return;
+        deteniendo = true;
+        boton.disabled = true;
+        try {
+          await api.ingestas.detener(trabajoId);
+        } catch (error) {
+          deteniendo = false;
+          toast(error.message, 'error');
+        }
+      };
+    }
+  };
+  try {
+    for (;;) {
+      estado = await api.ingestas.ver(trabajoId);
+      const restante = estado.segundos_restantes;
+      // Un borrado de carga reparte personas, no filas del archivo.
+      const unidad = estado.operacion === 'borrado_carga' ? 'persona(s)' : 'fila(s)';
+      avance.medido(
+        `${estado.estado_etiqueta} · ${estado.filas_procesadas} de ${estado.filas_total} ${unidad}`
+        + (restante ? ` · faltan ~${duracion(restante)}` : ''),
+        (estado.porcentaje || 0) / 100);
+      pintarControl(estado);
+      // Detenida con un lote todavía en curso: se espera a que termine para
+      // decir cuántos entraron.
+      if (estado.terminal && !estado.lotes_en_curso) break;
+      await new Promise((listo) => setTimeout(listo, MS_ENTRE_CONSULTAS));
+    }
+  } finally {
+    control.remove();
   }
   avance.cerrar();
+
+  if (estado.estado === 'detenida') {
+    avisarDeIngestaDetenida(estado, esCarga, alTerminar);
+    return estado;
+  }
 
   const titulo = estado.estado === 'terminada'
     ? 'Ingesta terminada'
@@ -3115,6 +3248,51 @@ async function seguirIngesta(trabajoId, { avance, esCarga, alTerminar,
   mostrarResumenDeIngesta(resultado, esCarga, titulo);
   if ((estado.fallidos || []).length) avisarDeLotesFallidos(estado, esCarga, alTerminar);
   return estado;
+}
+
+/* «Borrar lo cargado» lleva al borrado de carga que ya existe (R-EU.10).
+   Import diferido, como el que hace `cargas.js` en sentido contrario. */
+async function abrirBorradoDeCarga(carga) {
+  const { abrirBorrado } = await import('./cargas.js');
+  return abrirBorrado(carga);
+}
+
+/* D92 · R-CAN-C.4 — una ingesta detenida: cuántos lotes entraron y cuántos
+   no, y las dos salidas: reanudar (vuelve a encolar los cancelados) o borrar
+   lo cargado (el borrado de la carga, R-EU.10). */
+function avisarDeIngestaDetenida(estado, esCarga, alTerminar) {
+  const d = estado.detencion || {};
+  const caja = document.createElement('div');
+  caja.className = 'alert alert-warn';
+  caja.id = 'ingesta-detenida';
+  caja.innerHTML = `
+    <p><strong>La ingesta se detuvo.</strong>
+       Se procesaron <strong>${d.lotes_procesados ?? estado.lotes_ok}</strong> de
+       ${estado.lotes_total} lote(s) (${d.filas_procesadas ?? estado.filas_procesadas} de
+       ${estado.filas_total} filas); <strong>${d.lotes_sin_procesar ?? 0}</strong>
+       quedaron sin procesar. Lo que entró, quedó.</p>
+    <div class="toolbar">
+      <button class="btn btn-orange btn-sm" id="reanudar-ingesta">Reanudar</button>
+      ${estado.destino?.tipo === 'carga' ? `<button class="btn btn-outline btn-sm"
+        id="borrar-lo-cargado">Borrar lo cargado</button>` : ''}
+    </div>`;
+  cajaDeAvance().appendChild(caja);
+  $('#reanudar-ingesta', caja).onclick = async () => {
+    try {
+      const vuelta = await api.ingestas.reanudar(estado.trabajo_id);
+      caja.remove();
+      toast(`Reencolados ${vuelta.reencolados.length} lote(s).`, 'ok');
+      await reanudarIngesta(vuelta.trabajo_id, { esCarga, alTerminar });
+    } catch (error) { toast(error.message, 'error'); }
+  };
+  const borrar$ = $('#borrar-lo-cargado', caja);
+  if (borrar$) {
+    borrar$.onclick = async () => {
+      try {
+        abrirBorradoDeCarga(await api.cargas.ver(estado.destino.id));
+      } catch (error) { toast(error.message, 'error'); }
+    };
+  }
 }
 
 /* R-ASYNC.4 — qué lote falló, por qué, y el botón para reintentar ése y no

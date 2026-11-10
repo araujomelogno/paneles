@@ -47,6 +47,11 @@ const ORIGEN_EN_CARGA = {
     texto: 'reutilizada', clase: 'est-borrador',
     titulo: 'Ya existía: el dedup (o el identificador del archivo) la encontró.',
   },
+  // D94 · R-INC.1 — ya estaba en una carga anterior de esta misma encuesta.
+  repetida: {
+    texto: 'ya estaba', clase: '',
+    titulo: 'Ya estaba en una carga anterior de esta encuesta (el acumulado).',
+  },
 };
 
 export async function render(main, ctx) {
@@ -127,10 +132,12 @@ async function cargarTabla() {
             : '<span class="muted">sin dato</span>'}</td>
           <td class="small">${esc(c.publico_objetivo || '—')}</td>
           <td class="num"><strong>${c.personas ?? 0}</strong>
-              <div class="td-muted small">${c.personas_creadas ?? 0} creados ·
+              <div class="td-muted small">${c.personas_creadas ?? 0} nuevos ·
                 ${c.personas_reutilizadas
-                  ? `<a href="#" data-reutilizados="${c.id}" title="De qué otras cargas vienen">${c.personas_reutilizadas} reutilizados</a>`
-                  : '0 reutilizados'}</div></td>
+                  ? `<a href="#" data-reutilizados="${c.id}" title="De qué otros estudios vienen">${c.personas_reutilizadas} reutilizados</a>`
+                  : '0 reutilizados'}${c.personas_repetidas
+                  ? ` · <span title="Ya estaban en cargas anteriores de esta encuesta">${
+                    c.personas_repetidas} ya estaban</span>` : ''}</div></td>
           <td>${chipsDeClientes(c.clientes || [])}</td>
           <td>${chipsDeTematicas(c.tematicas)}</td>
           <td class="right"><button class="btn btn-outline btn-sm" data-carga="${c.id}">Ver</button></td>
@@ -245,14 +252,18 @@ async function renderDetalle(main, cargaId) {
         <div class="card-body">
           <div class="grid-datos">
             <div class="tarjeta-dato"><div class="valor">${carga.personas ?? 0}</div>
-              <div class="etiqueta">en total</div></div>
+              <div class="etiqueta">en el archivo</div></div>
             <div class="tarjeta-dato"><div class="valor">${carga.personas_creadas ?? 0}</div>
-              <div class="etiqueta">creados por esta carga</div></div>
+              <div class="etiqueta">nuevos</div></div>
             <div class="tarjeta-dato"><div class="valor">${carga.personas_reutilizadas ?? 0}</div>
               <div class="etiqueta">${carga.personas_reutilizadas
-                ? `<a href="#" data-reutilizados="${carga.id}">reutilizados (ya existían) · ver de dónde</a>`
-                : 'reutilizados (ya existían)'}</div></div>
+                ? `<a href="#" data-reutilizados="${carga.id}">reutilizados de otros estudios · ver de dónde</a>`
+                : 'reutilizados de otros estudios'}</div></div>
+            <div class="tarjeta-dato" id="dato-repetidas"><div class="valor">${carga.personas_repetidas ?? 0}</div>
+              <div class="etiqueta">ya estaban en cargas anteriores de esta encuesta</div></div>
           </div>
+          ${carga.resumen_personas ? `<p class="small" id="resumen-personas">${
+            esc(carga.resumen_personas)}</p>` : ''}
           <p class="small muted" style="margin-top:0.6rem">Ninguno queda en un panel
             por venir de una carga. Quien se cargó antes de la versión R-ORG no
             dejó constancia de su carga y no figura acá.</p>
@@ -451,7 +462,7 @@ async function cargarPanelistas(cargaId, desde) {
    Confirmación fuerte: hay que escribir el nombre de la carga. Es
    irreversible, y lo dice. Con una ingesta en curso no se puede; con un
    borrado a medias, confirmar lo reanuda. */
-async function abrirBorrado(carga) {
+export async function abrirBorrado(carga) {
   const caja = modal({
     titulo: `Borrar la carga — ${carga.nombre}`,
     ancho: '640px',

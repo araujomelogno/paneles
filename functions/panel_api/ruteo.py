@@ -47,6 +47,7 @@ from . import (
     ficha,
     premios,
     puntos,
+    reconocimiento,
     reproceso,
     resumen_ingesta,
     revision,
@@ -177,9 +178,7 @@ def _evidencia_normalizada(cuerpo):
     resumen muestra los valores afirmativos ya canónicos —los mismos contra
     los que se va a comparar— y no los que se tipearon.
     """
-    if (cuerpo or {}).get("modo") != "crear_individuos":
-        return None
-    declarada = cuerpo.get("evidencia_consentimiento")
+    declarada = (cuerpo or {}).get("evidencia_consentimiento")
     if not declarada:
         return None
     try:
@@ -695,15 +694,20 @@ def nueva_carga_de_encuesta(ctx, actor, params, cuerpo, consulta):
     `/cargas/<id>/analizar` y `/cargas/<id>/ingesta`."""
     encuesta_id = _entero(params["encuesta_id"])
     cuerpo = cuerpo or {}
+    # D92 · R-CAN-C.3 — cada carga nueva limpia las provisorias abandonadas.
+    limpieza = cargas.limpiar_provisorias(ctx.boveda, actor=actor)
     carga = cargas.crear(
         ctx.boveda, cuerpo.get("nombre"), cuerpo.get("descripcion"), actor,
         tipo_datos_origen=cuerpo.get("tipo_datos_origen"),
         tipo_datos_origen_otro=cuerpo.get("tipo_datos_origen_otro"),
         modo_relevamiento=cuerpo.get("modo_relevamiento"),
         modo_relevamiento_otro=cuerpo.get("modo_relevamiento_otro"),
-        exigir_origen=True, encuesta_id=encuesta_id)
+        exigir_origen=True, encuesta_id=encuesta_id,
+        # R-CAN-C.1 — provisoria hasta que se confirma la ingesta. La
+        # encuesta ya existía: ella no se vuelve provisoria.
+        provisoria=True)
     ctx.boveda.commit()
-    return 201, carga
+    return 201, {**carga, "limpieza": limpieza}
 
 
 @ruta("PUT", "/encuestas/<encuesta_id>/tematicas", "ingestar", requisito="R-EU.2")
@@ -1513,6 +1517,22 @@ def reintentar_ingesta(ctx, actor, params, cuerpo, consulta):
         encolador=ctx.encolador)
 
 
+@ruta("POST", "/ingestas/<trabajo_id>/detener", "ingestar", requisito="R-CAN-C.4")
+def detener_ingesta(ctx, actor, params, cuerpo, consulta):
+    """Detiene una ingesta encolada o procesando: los lotes pendientes
+    quedan cancelados, el que está en curso termina, y el trabajo queda
+    `detenida` (no bloquea una ingesta nueva para el mismo destino)."""
+    return 200, diferida.detener(ctx.boveda, _entero(params["trabajo_id"]),
+                                 actor=actor)
+
+
+@ruta("POST", "/ingestas/<trabajo_id>/reanudar", "ingestar", requisito="R-CAN-C.4")
+def reanudar_ingesta(ctx, actor, params, cuerpo, consulta):
+    """Vuelve a encolar los lotes cancelados de una ingesta detenida."""
+    return 200, diferida.reanudar(ctx.boveda, _entero(params["trabajo_id"]),
+                                  encolador=ctx.encolador)
+
+
 @ruta("GET", "/diagnostico/esquema", "leer")
 def diagnostico_esquema(ctx, actor, params, cuerpo, consulta):
     """Qué migraciones están aplicadas en cada store y cuáles faltan.
@@ -1795,6 +1815,8 @@ def _claves_del_catalogo(ctx):
 def crear_carga(ctx, actor, params, cuerpo, consulta):
     """Abre una carga y devuelve su `ref_estudio`, que es lo que la ata a su
     cuestionario del lado semántico."""
+    # D92 · R-CAN-C.3 — cada carga nueva limpia las provisorias abandonadas.
+    limpieza = cargas.limpiar_provisorias(ctx.boveda, actor=actor)
     carga = cargas.crear(
         ctx.boveda, cuerpo.get("nombre"), cuerpo.get("descripcion"), actor,
         # R-ORG.4 — los datos del estudio, en la carga y no en cada persona.
@@ -1810,9 +1832,12 @@ def crear_carga(ctx, actor, params, cuerpo, consulta):
         # R-CLI.1 — para quién se hizo el estudio, al abrir la carga.
         clientes=cuerpo.get("clientes"),
         # R-AU.3 — los mismos datos del estudio que «Nueva encuesta».
-        url_alchemer=cuerpo.get("url_alchemer"))
+        url_alchemer=cuerpo.get("url_alchemer"),
+        # D92 · R-CAN-C.1 — la carga y su encuesta automática nacen
+        # provisorias: cancelar las borra, confirmar las confirma.
+        provisoria=True)
     ctx.boveda.commit()
-    return 201, carga
+    return 201, {**carga, "limpieza": limpieza}
 
 
 @ruta("GET", "/cargas", "leer", requisito="R3.13, R-ORG.5, R-CAR.1")
@@ -2041,6 +2066,33 @@ def editar_carga(ctx, actor, params, cuerpo, consulta):
     return 200, salida
 
 
+@ruta("POST", "/cargas/<carga_id>/cancelar", "ingestar", requisito="R-CAN-C.2")
+def cancelar_carga(ctx, actor, params, cuerpo, consulta):
+    """«Cancelar» o cerrar el modal antes de confirmar: borra la carga
+    provisoria y su encuesta automática provisoria. Seguro de repetir; una
+    carga ya confirmada no se toca (se borra con su borrado, R-EU.10)."""
+    salida = cargas.cancelar_provisoria(ctx.boveda, _entero(params["carga_id"]))
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("GET", "/cumplimiento/provisorias", "cumplimiento", requisito="R-CAN-C.3")
+def ver_limpiezas_de_provisorias(ctx, actor, params, cuerpo, consulta):
+    """Las últimas limpiezas de cargas provisorias abandonadas —cuántas y
+    cuándo— y cuántas provisorias hay hoy."""
+    return 200, cargas.limpiezas(ctx.boveda)
+
+
+@ruta("POST", "/cumplimiento/provisorias/limpieza", "cumplimiento",
+      requisito="R-CAN-C.3")
+def limpiar_provisorias(ctx, actor, params, cuerpo, consulta):
+    """Dispara a mano la limpieza que corre al iniciar cada carga."""
+    salida = cargas.limpiar_provisorias(ctx.boveda, cargas.LIMPIEZA_MANUAL,
+                                        actor=actor)
+    ctx.boveda.commit()
+    return 200, salida
+
+
 @ruta("POST", "/cargas/<carga_id>/borrado", "borrar_carga",
       requisito="PEDIDO celular · borrar una carga, R-EU.10")
 def borrar_carga(ctx, actor, params, cuerpo, consulta):
@@ -2159,14 +2211,43 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
     repetido = cargas.archivo_repetido(ctx.boveda, encuesta["id"], huella,
                                        excepto=carga_id)
 
+    # D93 · R-MIX — toda carga es mixta: cada fila se resuelve por capas
+    # (columna identificadora, ID de respuesta, dedup, persona nueva), con la
+    # misma función para la revisión y para la confirmación. «Crea personas»
+    # ya no es un modo que se elige: es lo que dice el reconocimiento.
+    columna_respuesta = (cuerpo.get("columna_respuesta") or "").strip() or None
+    if columna_respuesta and columna_respuesta == columna_id:
+        raise DatosInvalidos(
+            "La columna del ID de respuesta tiene que ser otra que la "
+            "identificadora.", {"campo": "columna_respuesta"})
+    with cronometro.parte("reconocer"):
+        reconocido = reconocimiento.reconocer(
+            ctx.boveda, encuesta, filas, columna_id, tipo_id, origen,
+            columna_respuesta=columna_respuesta, demograficas=demograficas,
+            opciones_por_variable=opciones_por_variable)
+    crea = reconocimiento.requiere_consentimiento(reconocido)
+    modo = "crear_individuos" if crea else "existen"
+    # R-MIX.4 — la evidencia se pide (y se aplica) solo si hay a quién crear.
+    evidencia = _evidencia_normalizada(cuerpo) if crea else None
+    filas_previa = reconocimiento.filas_para_previa(filas, reconocido)
+    nuevas_previa = [f for f in filas_previa if not f[reconocimiento.COLUMNA_PERSONA]]
+
     if _revision_pedida(cuerpo):
         resumen = resumen_ingesta.resumir(
             _plan_de(cuerpo, columna_id=columna_id, origen=origen,
-                     preguntas=preguntas, demograficas=demograficas),
+                     preguntas=preguntas, demograficas=demograficas, modo=modo),
             filas, panel=encuesta.get("panel_id") if de_panel else None,
-            evidencia=_evidencia_normalizada(cuerpo),
+            evidencia=evidencia,
             destino_tipo="encuesta" if de_panel else "carga",
             nombre_destino=encuesta.get("nombre"))
+        # R-MIX.3 — los conteos: existentes, nuevas (reconocidas por el dedup
+        # y a crear) e ids desconocidos, con sus advertencias. Una proporción
+        # de nuevas inesperada se destaca: es la protección que daba el modo
+        # «ya existen» contra una columna o un tipo mal elegidos.
+        resumen["reconocimiento"] = reconocimiento.resumen(
+            reconocido, esperaba_existentes=(
+                tipo_id == mod_ingesta.POR_ID_PERSONA
+                or encuestas.tiene_audiencia(ctx.boveda, encuesta["id"])))
         resumen["encuesta"] = {"id": encuesta["id"], "nombre": encuesta["nombre"],
                                "tipo": encuesta["tipo"]}
         # R-CTL.4 — si la columna trae id_persona y se eligió otro tipo, la
@@ -2181,12 +2262,12 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
                 f"{mod_ingesta.ETIQUETAS_DE_IDENTIFICADOR.get(tipo_id or 'alias')}. "
                 f"Conviene «Trae el id_persona del sistema».")
         resumen["archivo_repetido"] = repetido
-        resumen["no_convocados"] = cargas.no_convocados(
-            ctx.boveda, encuesta["id"], filas, columna_id, tipo_id, origen)
+        resumen["no_convocados"] = reconocimiento.no_convocados(
+            ctx.boveda, encuesta["id"], reconocido)
         resumen["consentimiento_por_finalidad"] = cargas.consentimiento_por_finalidad(
-            ctx.boveda, encuesta["id"], filas, columna_id, tipo_id, origen,
-            evidencia=_evidencia_normalizada(cuerpo),
-            crea_personas=cuerpo.get("modo") == "crear_individuos")
+            ctx.boveda, encuesta["id"], filas_previa, reconocimiento.COLUMNA_PERSONA,
+            mod_ingesta.POR_ID_PERSONA, origen, evidencia=evidencia,
+            crea_personas=crea)
         # R-TEM.2 — la propuesta de temáticas aparece en la revisión, junto
         # al resto de la configuración. Sale de **lo que el resumen dice que
         # va al store semántico**: las demográficas, las de identidad y las
@@ -2215,10 +2296,12 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
             }
         else:
             resumen["tematicas"] = None
+        # R-MIX.4 — los canales, como el consentimiento, se declaran para las
+        # personas que se crean (las demás se registran desde la carga, R-CAN.2).
         resumen["canales"] = canales_carga.previa_de_archivo(
-            ctx.boveda, encuesta["id"], filas, columna_id, tipo_id, origen,
-            canales_aceptados, demograficas=demograficas,
-            crea_personas=cuerpo.get("modo") == "crear_individuos")
+            ctx.boveda, encuesta["id"], nuevas_previa, reconocimiento.COLUMNA_PERSONA,
+            mod_ingesta.POR_ID_PERSONA, origen, canales_aceptados,
+            demograficas=demograficas, crea_personas=True) if crea else None
         return 200, resumen
 
     # R-EU.3 — el mismo archivo dos veces: se avisó en la revisión, y
@@ -2228,48 +2311,64 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
             f"Este archivo es idéntico al de la carga «{repetido['nombre']}» de "
             f"esta encuesta. Si de verdad querés procesarlo otra vez, confirmalo.",
             {"motivo": "archivo_repetido", "carga": repetido})
-    # R-EU.4 — el analista puede dejar afuera a los no convocados.
-    if cuerpo.get("excluir_no_convocados"):
-        filas = cargas.excluir_ids(filas, columna_id, cargas.ids_no_convocados(
-            ctx.boveda, encuesta["id"], filas, columna_id, tipo_id, origen))
-
     db.ejecutar(ctx.boveda, "update carga set archivo_huella = %s where id = %s",
                 (huella, carga_id))
-    creacion = None
-    if cuerpo.get("modo") == "crear_individuos":
-        # Igual que en R3.9: la evidencia se valida **antes** de ingestar
-        # nada. Al revés dejaría el store semántico con respuestas de gente
-        # que no existe en la bóveda.
-        with cronometro.parte("crear_individuos"):
-            creacion = cargas.crear_individuos(
-                ctx.boveda, filas, sav.mapeo_por_campo(demograficas),
-                origen=origen, columna_id=columna_id,
-                evidencia_consentimiento=cuerpo.get("evidencia_consentimiento"),
-                actor=actor, opciones_por_variable=opciones_por_variable,
-                carga_id=carga_id,
-            )
+    duplicados = calidad.detectar_duplicados_en_filas(filas, columna_id)
+    # Igual que en R3.9: la evidencia se valida **antes** de ingestar nada
+    # (`aplicar` levanta sin escribir). Al revés dejaría el store semántico
+    # con respuestas de gente que no existe en la bóveda. R-EU.4 — el
+    # analista puede dejar afuera a los no convocados: las nuevas no se crean.
+    with cronometro.parte("crear_individuos"):
+        aplicado = reconocimiento.aplicar(
+            ctx.boveda, encuesta, carga_id, filas, reconocido, origen=origen,
+            evidencia_consentimiento=(cuerpo.get("evidencia_consentimiento")
+                                      if crea else None),
+            demograficas=demograficas, opciones_por_variable=opciones_por_variable,
+            actor=actor, excluir_no_convocados=bool(cuerpo.get("excluir_no_convocados")))
+    creacion = aplicado["creacion"]
     # Las personas tienen que estar commiteadas antes de que arranque la
     # primera tarea, y la huella también.
     ctx.boveda.commit()
+    if not aplicado["filas"]:
+        raise DatosInvalidos(
+            "Ninguna fila del archivo quedó vinculada a una persona: no hay nada "
+            "que ingestar. Revisá la columna identificadora y su tipo.",
+            {"reconocimiento": reconocimiento.resumen(reconocido)})
 
     with cronometro.parte("armar_plan"):
+        # El plan identifica por el `id_persona` ya resuelto: los lotes no
+        # vuelven a reconocer a nadie (el plan se congela al confirmar). Lo
+        # que se eligió en la pantalla queda en `identificacion`.
         plan = _con_constancia_de_dedup(
-            _plan_de(cuerpo, columna_id=columna_id, origen=origen,
-                     preguntas=preguntas, demograficas=demograficas), filas)
-        if canales_aceptados:
-            # R-CAN.1 — congelados con el plan: cada lote registra los canales
-            # de sus personas, y la auditoría dice quién los declaró.
+            _plan_de(cuerpo, columna_id=reconocimiento.COLUMNA_PERSONA,
+                     tipo_identificador=mod_ingesta.POR_ID_PERSONA, origen=origen,
+                     preguntas=preguntas, demograficas=demograficas, modo=modo),
+            filas)
+        plan["identificacion"] = {"columna_id": columna_id,
+                                  "tipo_identificador": tipo_id or mod_ingesta.POR_ALIAS,
+                                  "columna_respuesta": columna_respuesta}
+        plan["reconocimiento"] = reconocido["conteos"]
+        if canales_aceptados and creacion:
+            # R-CAN.1 / R-MIX.4 — congelados con el plan, para las personas
+            # que esta carga creó: cada lote registra los canales de las suyas,
+            # y la auditoría dice quién los declaró.
             plan["canales_aceptados"] = canales_aceptados
             plan["canales_declarados_por"] = actor.email or actor.uid
+            plan["canales_para"] = [c["id_persona"] for c in creacion.get("creados") or []]
     salida = diferida.encolar(
         ctx.boveda, "carga", carga_id, plan,
-        filas, actor=actor, encolador=ctx.encolador, cronometro=cronometro)
+        aplicado["filas"], actor=actor, encolador=ctx.encolador, cronometro=cronometro,
+        # D92 · R-CAN-C.1 — la carga (y su encuesta automática) dejan de ser
+        # provisorias en la transacción que crea el trabajo.
+        confirmar_carga=carga_id)
+    # R-CAN-C.5 — cerrar la ventana no detiene nada: se dice.
+    salida["aviso_cerrar"] = diferida.AVISO_CERRAR_NO_DETIENE
     salida["sin_clave_de_dedup"] = plan["sin_clave_de_dedup"]
     salida["encuesta_id"] = encuesta["id"]
+    salida["reconocimiento"] = reconocimiento.resumen(reconocido)
+    salida["excluidas_no_convocadas"] = aplicado["excluidas_no_convocadas"]
 
-    salida["duplicados_en_el_archivo"] = calidad.detectar_duplicados_en_filas(
-        filas, columna_id
-    )
+    salida["duplicados_en_el_archivo"] = duplicados
     if creacion is not None:
         salida["creacion_de_individuos"] = creacion
     return 202, salida

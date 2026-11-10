@@ -304,8 +304,10 @@ def estudios_de_origen(conn_boveda, limite=50):
         """select id, nombre, fecha_estudio, publico_objetivo, creado_en,
                   tipo_datos_origen, tipo_datos_origen_otro,
                   modo_relevamiento, modo_relevamiento_otro,
-                  personas_creadas, personas_reutilizadas, personas
+                  personas_creadas, personas_reutilizadas, personas,
+                  personas_repetidas
              from v_carga_resumen
+            where not provisoria
             order by coalesce(fecha_estudio, creado_en::date) desc, id desc
             limit %s""", (limite,))
     return {

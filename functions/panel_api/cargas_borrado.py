@@ -408,6 +408,9 @@ def _desvincular(conn, id_persona, carga_id):
             """delete from participacion
                 where encuesta_id = %s and id_persona = %s and not convocado""",
             (encuesta, id_persona))
+    # D94 · R-INC.3 — si esta era su primera carga en la encuesta y sigue en
+    # una posterior, esa pasa a ser la primera (`reutilizada`).
+    cargas.reasignar_primera_aparicion(conn, carga_id, [id_persona])
     db.ejecutar(conn,
                 "delete from persona_carga where id_persona = %s and carga_id = %s",
                 (id_persona, carga_id))
@@ -453,6 +456,8 @@ def finalizar(conn_boveda, conn_semantica, borrado_id):
     if carga is not None:
         # Las personas que no se procesaron por lote (no tenían vínculo)
         # no hay; las que quedaban, ya se desvincularon.
+        # D94 · R-INC.3 — lo mismo para quien todavía tenga el vínculo.
+        cargas.reasignar_primera_aparicion(conn_boveda, carga["id"])
         db.ejecutar(conn_boveda, "delete from carga where id = %s", (carga["id"],))
         _cerrar_encuesta(conn_boveda, conn_semantica, carga["encuesta_id"])
     final = db.una(

@@ -62,6 +62,15 @@ export async function render(main, ctx) {
             <button class="btn btn-outline btn-sm" id="ver-borrados">Revisar</button></div>
           <div class="card-body tight"><div id="borrados">${cargando('12vh')}</div></div>
         </div>
+
+        ${puedeCumplimiento() ? `<!-- D92 · R-CAN-C.3 — la carga nace provisoria
+             y cancelar la borra; lo que se abandonó cerrando la pestaña se
+             limpia a las 24 h, al iniciar cada carga nueva o desde acá. -->
+        <div class="card">
+          <div class="card-header"><span class="card-header-title">Cargas provisorias abandonadas</span>
+            <button class="btn btn-outline btn-sm" id="limpiar-provisorias">Limpiar ahora</button></div>
+          <div class="card-body"><div id="provisorias">${cargando('8vh')}</div></div>
+        </div>` : ''}
       </div>
 
       <div class="stack">
@@ -141,11 +150,54 @@ export async function render(main, ctx) {
   $('#reintentar').onclick = reintentar;
   $('#ver-borrados').onclick = cargarBorrados;
   if (puedeCumplimiento()) {
+    $('#limpiar-provisorias').onclick = limpiarProvisorias;
     $('#reid-filtrar').onclick = () => { filtroReid.desde_fila = 0; cargarReidentificaciones(); };
   }
   await Promise.all([cargarAuditoria(), cargarEsquema(), cargarContacto(),
                      cargarPendientes(), cargarBorrados(),
+                     puedeCumplimiento() ? cargarProvisorias() : null,
                      puedeCumplimiento() ? cargarReidentificaciones() : null]);
+}
+
+/* ── D92 · R-CAN-C.3 · La limpieza de cargas provisorias ──────────
+
+   Una carga se crea en el primer paso del flujo y queda provisoria hasta que
+   se confirma su ingesta. Cancelar la borra; cerrar la pestaña no avisa al
+   servidor, así que lo abandonado más de 24 horas sin trabajo de ingesta se
+   borra al iniciar cada carga nueva, o desde acá. Cada corrida queda
+   registrada, también cuando no había nada. */
+async function cargarProvisorias() {
+  const contenedor = $('#provisorias');
+  if (!contenedor) return;
+  try {
+    const d = await api.cumplimiento.provisorias();
+    contenedor.innerHTML = `
+      <p class="small">Hoy hay <strong>${d.provisorias}</strong> carga(s) provisoria(s)
+        —en curso o abandonadas—; <strong>${d.abandonadas}</strong> con más de ${d.horas}
+        horas. La limpieza corre sola al iniciar cada carga nueva.</p>
+      ${d.items.length ? `<div class="table-wrap"><table>
+        <thead><tr><th>Cuándo</th><th>Por</th><th class="num">Cargas</th><th class="num">Encuestas</th></tr></thead>
+        <tbody>${d.items.map((l) => `<tr>
+          <td class="small">${esc(fechaHora(l.ejecutada_en))}</td>
+          <td class="small">${l.disparada_por === 'manual'
+            ? `a mano · ${esc(l.actor || '')}` : 'al iniciar una carga'}</td>
+          <td class="num">${l.cargas_eliminadas}</td>
+          <td class="num">${l.encuestas_eliminadas}</td></tr>`).join('')}</tbody>
+      </table></div>` : '<p class="small muted">Todavía no corrió ninguna limpieza.</p>'}`;
+  } catch (error) {
+    contenedor.innerHTML = alerta(error.message);
+  }
+}
+
+async function limpiarProvisorias() {
+  try {
+    const r = await api.cumplimiento.limpiarProvisorias();
+    toast(`Limpieza: ${r.cargas_eliminadas} carga(s) y ${r.encuestas_eliminadas} `
+      + 'encuesta(s) eliminadas.', 'ok');
+    await cargarProvisorias();
+  } catch (error) {
+    toast(error.message, 'error');
+  }
 }
 
 /* ── R-AUD.1 · Reidentificaciones ─────────────────────────────────

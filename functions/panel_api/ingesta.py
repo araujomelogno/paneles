@@ -379,10 +379,10 @@ def _por_que_no_entro_nada(ids_origen, sin_mapear, motivos, bloqueadas):
     if solo_falta_alias:
         return (
             f"Ninguno de los {total} identificadores del archivo corresponde "
-            f"a un panelista que ya exista en el sistema. Si querés dar de "
-            f"alta a estas personas, elegí el modo «crear los individuos en "
-            f"esta carga». Si tenían que existir, revisá que la columna "
-            f"identificadora y el origen sean los correctos.")
+            f"a un panelista que ya exista en el sistema. Las personas nuevas "
+            f"se crean desde la carga (D93): la revisión las cuenta y pide la "
+            f"evidencia de consentimiento. Si tenían que existir, revisá que "
+            f"la columna identificadora y el origen sean los correctos.")
     if todos_sin_mapear:
         porque = ", ".join(sorted({motivos.get(i, NO_ENCONTRADO)
                                    for i in sin_mapear}))

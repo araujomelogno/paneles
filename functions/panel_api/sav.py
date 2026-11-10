@@ -1201,9 +1201,16 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
                      evidencia_consentimiento, actor=None, panel_id=None,
                      opciones_por_variable=None,
                      finalidad_obligatoria=CONTACTO,
-                     evidencia_canales=None, carga_id=None):
+                     evidencia_canales=None, carga_id=None, alias_de=None):
     """Da de alta a la gente del archivo, con el dedup de R1.2 y con la
     evidencia de consentimiento que trae el propio archivo.
+
+    `alias_de` (D93, la carga mixta): una función `fila → [(origen, valor)]`
+    con los identificadores de la plataforma que esa fila trae. Sin ella, el
+    alias es `(origen, columna_id)`, lo de siempre. Con ella, `columna_id` es
+    solo la clave de la fila: una fila nueva sin identificador no tiene un
+    alias que registrar, y registrar su clave sintética como si lo fuera
+    haría que otra fila de otra carga la «encontrara».
 
     `mapeo`: `{"nombre": "V1", "documento": "V2", ...}` — qué columna del
     archivo trae cada dato patronímico. Sale del marcado demográfico
@@ -1371,7 +1378,13 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
         # Si ya conocemos ese id en esta plataforma, no hay nada que
         # resolver: pero el consentimiento que trae el archivo es evidencia
         # nueva y se registra igual.
-        id_persona = dedup.buscar_por_alias(conn_boveda, origen, id_en_origen)
+        aliases = ([(o, v) for o, v in alias_de(fila) if o and v]
+                   if alias_de else [(origen, id_en_origen)])
+        id_persona = None
+        for alias_origen, alias_valor in aliases:
+            id_persona = dedup.buscar_por_alias(conn_boveda, alias_origen, alias_valor)
+            if id_persona:
+                break
         if id_persona:
             for entrada in consentimientos:
                 if _otorgar_si_falta(conn_boveda, id_persona,
@@ -1401,7 +1414,10 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
                         # al resolverla, la persona se crea con lo que el
                         # archivo probó, sin volver a abrirlo.
                         "consentimientos": consentimientos,
-                        "origen": origen, "id_en_origen": id_en_origen,
+                        # El alias que se registra al resolverla: el primero
+                        # que trae la fila, o ninguno (D93).
+                        "origen": aliases[0][0] if aliases else None,
+                        "id_en_origen": aliases[0][1] if aliases else None,
                         "panel_id": panel_id,
                         # R-ORG.1 — la carga de la que sale, para que al
                         # resolver la revisión quede el vínculo. Sin esto,
@@ -1429,7 +1445,8 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
 
         if resolucion.accion == dedup.REUTILIZA:
             id_persona = str(resolucion.id_persona)
-            dedup.registrar_alias(conn_boveda, id_persona, origen, id_en_origen)
+            for alias_origen, alias_valor in aliases:
+                dedup.registrar_alias(conn_boveda, id_persona, alias_origen, alias_valor)
             for entrada in consentimientos:
                 if _otorgar_si_falta(conn_boveda, id_persona,
                                      entrada["finalidad"], entrada["version_texto"]):
@@ -1455,7 +1472,8 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
             tuple(datos[c] for c in campos),
         )
         id_persona = str(nueva["id_persona"])
-        dedup.registrar_alias(conn_boveda, id_persona, origen, id_en_origen)
+        for alias_origen, alias_valor in aliases:
+            dedup.registrar_alias(conn_boveda, id_persona, alias_origen, alias_valor)
         for entrada in consentimientos:
             if _otorgar_si_falta(conn_boveda, id_persona,
                                  entrada["finalidad"], entrada["version_texto"]):

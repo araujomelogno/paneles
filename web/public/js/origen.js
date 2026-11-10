@@ -35,7 +35,10 @@ export function pintarOrigen(origen, { compacto = false } = {}) {
 
 /* R-CAR.4 — la sección «Cargas» de la ficha de la bóveda: en qué cargas
    aparece, la más reciente primero, si la creó o la reutilizó, los clientes
-   de cada carga y las temáticas que respondió **en ella**. Cada carga lleva
+   de cada carga y las temáticas que respondió. D94 · R-INC.4 — cada encuesta
+   **una vez**, con la primera carga en que apareció y su origen ahí; las
+   cargas posteriores de esa encuesta (el acumulado de una encuesta
+   incremental) van en una nota desplegable debajo. Cada carga lleva
    a su detalle (`data-ir-carga`). Debajo, si entró por la landing, un alta
    manual o una encuesta. Los clientes son confidenciales: esta sección no
    está en la ficha seudónima ni en el portal. */
@@ -56,7 +59,13 @@ export function pintarCargas(datos) {
         c.origen === 'creada' ? 'creado' : 'reutilizado'}</span></td>
       <td>${chips(c.clientes || [], 'chip-cliente')}</td>
       <td>${chips(c.tematicas || [], 'chip-tematica')}</td>
-    </tr>`).join('')}</tbody></table></div>`
+    </tr>${(c.posteriores || []).length ? `<tr class="fila-posteriores"><td colspan="5">
+      <details class="small" data-posteriores="${c.encuesta_id}">
+        <summary class="muted">${esc(c.nota_posteriores
+          || `también en ${c.posteriores.length} cargas posteriores de esta encuesta`)}</summary>
+        <span>${c.posteriores.map((p) => `<a href="#" data-ir-carga="${p.carga_id}">${
+          esc(p.nombre)}</a>`).join(' · ')}</span>
+      </details></td></tr>` : ''}`).join('')}</tbody></table></div>`
     : `<p class="small muted" style="padding:1rem 1.5rem 0">${esc(datos?.aviso
       || 'No aparece en ninguna carga.')}</p>`}
   ${ingresos.length ? `<div style="padding:.75rem 1.5rem">${ingresos.map((i) => `

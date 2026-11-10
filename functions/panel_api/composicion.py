@@ -302,14 +302,25 @@ def _universo_todos():
 def _universo_carga(carga_id):
     """R-ORG.2 — las personas vinculadas a la carga, creadas o reutilizadas.
 
+    D94 · R-INC.6 — **sin las `repetida`**: la composición de una carga
+    muestra a quienes esa carga **sumó** a la encuesta. En una encuesta
+    incremental cada archivo trae el acumulado, y contar a los repetidos
+    haría que la última carga fuera la encuesta entera. La de la encuesta
+    completa es el ámbito «una encuesta», que no cambia.
+
     Mira la carga **desde hoy**: quien se dio de baja ya no tiene fila ni
     vínculo, así que no aparece. La pantalla lo dice.
     """
     return (
         "from persona_carga pc join persona p on p.id_persona = pc.id_persona",
-        "pc.carga_id = %s",
+        "pc.carga_id = %s and pc.origen <> 'repetida'",
         (carga_id,),
     )
+
+
+# D94 · R-INC.6 — lo que la pantalla dice en el ámbito «una carga».
+NOTA_CARGA_SUMA = ("Muestra quiénes sumó esta carga. Para la encuesta completa, "
+                   "elegí el ámbito \"una encuesta\".")
 
 
 def _universo_encuesta(encuesta_id, quienes="respondieron"):
@@ -754,7 +765,9 @@ def composicion_de_ambito(conn, ambito, referencia=None, dimensiones=None,
                           carga["modo_relevamiento_etiqueta"],
                       "creado_en": carga["creado_en"]}
         motivo = MOTIVO_SIN_OBJETIVO_CARGA
-        avisos = [AVISO_CARGA]
+        avisos = [NOTA_CARGA_SUMA, AVISO_CARGA]
+        descriptor["encuesta_id"] = carga["encuesta_id"]
+        descriptor["repetidas_excluidas"] = carga.get("personas_repetidas", 0)
         quienes = "persona(s)"
 
     total = _contar(conn, universo)

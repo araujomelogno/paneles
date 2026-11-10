@@ -227,9 +227,12 @@ def test_se_puede_calcular_la_composicion_de_una_carga(ctx, bóveda_mixta, omnib
         "fecha_estudio": "2026-08-15",
         "publico_objetivo": "Población adulta de Montevideo",
         "tipo_datos_origen_etiqueta": None, "modo_relevamiento_etiqueta": None,
-        "creado_en": omnibus["creado_en"]}
+        "creado_en": omnibus["creado_en"],
+        # D94 — la encuesta de la carga, y cuántas «ya estaban» quedaron afuera.
+        "encuesta_id": omnibus["encuesta_id"], "repetidas_excluidas": 0}
     # §7 — la pantalla dice que mira el presente, no un registro histórico.
     assert composicion.AVISO_CARGA in salida["avisos"]
+    assert composicion.NOTA_CARGA_SUMA in salida["avisos"]
 
 
 def test_un_ambito_sin_objetivo_muestra_la_brecha_como_no_disponible(

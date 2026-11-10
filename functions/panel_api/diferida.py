@@ -60,11 +60,18 @@ PROCESANDO = "procesando"
 TERMINADA = "terminada"
 TERMINADA_CON_ERRORES = "terminada_con_errores"
 FALLIDA = "fallida"
+# D92 · R-CAN-C.4 — alguien la detuvo. No es activa: no bloquea una ingesta
+# nueva del mismo destino (el índice de la 0029 mira solo encolada y
+# procesando).
+DETENIDA = "detenida"
 
 LOTE_PENDIENTE = "pendiente"
 LOTE_PROCESANDO = "procesando"
 LOTE_OK = "ok"
 LOTE_FALLIDO = "fallido"
+# D92 — un lote pendiente de una ingesta detenida. No se procesa; reanudar lo
+# vuelve a encolar.
+LOTE_CANCELADO = "cancelado"
 
 # D85 — `mensaje`: un envío de un mensaje de una encuesta corre en lotes como
 # una ingesta, y el índice de la 0029 (un trabajo activo por destino) es lo
@@ -275,7 +282,8 @@ def _lotes_de(filas, tamano):
 
 
 def encolar(conn, destino_tipo, destino_id, plan, filas, actor=None,
-            tamano_lote=None, encolador=None, cronometro=None):
+            tamano_lote=None, encolador=None, cronometro=None,
+            confirmar_carga=None):
     """Persiste el trabajo, lo parte en lotes y los encola. No procesa nada.
 
     `plan` es el mapeo ya resuelto: preguntas, demográficas, `columna_id`,
@@ -289,6 +297,11 @@ def encolar(conn, destino_tipo, destino_id, plan, filas, actor=None,
 
     R-ING.3 — `cronometro` trae lo que la ruta ya midió; acá se suman
     guardar el plan, persistir los lotes y encolar.
+
+    D92 · R-CAN-C.1 — `confirmar_carga` es la carga provisoria que esta
+    ingesta confirma: ella y su encuesta automática dejan de ser provisorias
+    **en la misma transacción** que crea el trabajo. Si el índice rechaza el
+    trabajo, siguen provisorias.
     """
     cronometro = cronometro or Cronometro()
     if destino_tipo not in DESTINOS:
@@ -327,6 +340,10 @@ def encolar(conn, destino_tipo, destino_id, plan, filas, actor=None,
                 raise
             raise _en_curso(destino_tipo, destino_id,
                             trabajo_activo(conn, destino_tipo, destino_id)) from None
+        if confirmar_carga is not None:
+            from . import cargas
+
+            cargas.confirmar_provisoria(conn, confirmar_carga)
     trabajo_id = trabajo["id"]
 
     with cronometro.parte("persistir_lotes"):
@@ -414,6 +431,8 @@ def estado(conn, trabajo_id, con_lotes=False):
         "lotes_fallidos": fila["lotes_fallidos"],
         "lotes_en_curso": fila["lotes_en_curso"],
         "lotes_pendientes": fila["lotes_pendientes"],
+        # D92 — los que una detención dejó sin procesar.
+        "lotes_cancelados": fila["lotes_cancelados"],
         "filas_total": fila["filas_total"],
         "filas_procesadas": int(fila["filas_procesadas"]),
         "creado_en": fila["creado_en"].isoformat(),
@@ -434,7 +453,8 @@ def estado(conn, trabajo_id, con_lotes=False):
         conn,
         "select resumen, preparacion, plan->>'operacion' as operacion, "
         "       coalesce((plan->>'sin_clave_de_dedup')::boolean, false) "
-        "         as sin_clave_de_dedup "
+        "         as sin_clave_de_dedup, "
+        "       plan->'reconocimiento' as reconocimiento "
         "  from ingesta_trabajo where id = %s",
         (trabajo_id,))
     salida["resumen"] = (resumen or {}).get("resumen")
@@ -447,6 +467,23 @@ def estado(conn, trabajo_id, con_lotes=False):
     # una decisión que se tomó al revisar, y tiene que verse al terminar y
     # cuando alguien mire esta carga dentro de un mes.
     salida["sin_clave_de_dedup"] = bool((resumen or {}).get("sin_clave_de_dedup"))
+    # D93 — cuántas filas eran existentes, nuevas o con id desconocido.
+    salida["reconocimiento"] = (resumen or {}).get("reconocimiento")
+    # D92 · R-CAN-C.4/5 — si se puede detener, y el aviso de que cerrar la
+    # ventana no lo hace. Detenida: cuántos lotes entraron y cuántos no.
+    es_ingesta = salida["operacion"] == "ingesta"
+    salida["detenible"] = es_ingesta and fila["estado"] in ACTIVOS
+    if es_ingesta:
+        salida["aviso_cerrar"] = AVISO_CERRAR_NO_DETIENE
+    if fila["estado"] == DETENIDA:
+        salida["detencion"] = {
+            "lotes_procesados": fila["lotes_ok"],
+            "lotes_sin_procesar": (fila["lotes_cancelados"] + fila["lotes_fallidos"]
+                                   + fila["lotes_pendientes"]),
+            "lotes_en_curso": fila["lotes_en_curso"],
+            "filas_procesadas": int(fila["filas_procesadas"]),
+            "filas_total": fila["filas_total"],
+        }
     if con_lotes:
         salida["lotes"] = lotes_de(conn, trabajo_id)
     salida["fallidos"] = lotes_de(conn, trabajo_id, solo_fallidos=True)
@@ -543,10 +580,17 @@ def _tomar_lote(conn, trabajo_id, indice):
         conn,
         """update ingesta_trabajo
               set estado = %s, terminado_en = null, resumen = null
-            where id = %s and estado <> %s""",
-        (PROCESANDO, trabajo_id, PROCESANDO))
+            where id = %s and estado not in (%s, %s)""",
+        (PROCESANDO, trabajo_id, PROCESANDO, DETENIDA))
     conn.commit()
     return fila
+
+
+def _estado_del_lote(conn, trabajo_id, indice):
+    fila = db.una(conn, "select estado from ingesta_lote "
+                        " where trabajo_id = %s and indice = %s",
+                  (trabajo_id, indice))
+    return fila["estado"] if fila else None
 
 
 def _trabajo(conn, trabajo_id):
@@ -612,7 +656,8 @@ def _ingestar_el_lote(conn_boveda, conn_semantica, trabajo, filas, proveedor):
                            preguntas, filas, **comunes,
                            canales_aceptados=plan.get("canales_aceptados"),
                            canales_declarados_por=plan.get("canales_declarados_por"),
-                           trabajo_id=trabajo["id"])
+                           trabajo_id=trabajo["id"],
+                           canales_para=plan.get("canales_para"))
 
 
 def procesar_lote(conn_boveda, conn_semantica, trabajo_id, indice,
@@ -625,6 +670,14 @@ def procesar_lote(conn_boveda, conn_semantica, trabajo_id, indice,
     fallo transitorio sí se propaga, que es como se pide el reintento.
     """
     trabajo = _trabajo(conn_boveda, trabajo_id)
+    # D92 · R-CAN-C.4 — una tarea de Cloud Tasks que ya estaba encolada
+    # cuando se detuvo la ingesta llega igual: **verifica el estado al
+    # empezar** y se va sin procesar. Vale también para el reintento
+    # automático de un lote fallido: detener es detener.
+    if trabajo["estado"] == DETENIDA or _estado_del_lote(
+            conn_boveda, trabajo_id, indice) == LOTE_CANCELADO:
+        return {"estado": LOTE_CANCELADO, "trabajo_id": trabajo_id,
+                "indice": indice}
     lote = _tomar_lote(conn_boveda, trabajo_id, indice)
     if lote is None:
         # Ya lo tomó otra tarea, o ya terminó. Las dos cosas son normales con
@@ -755,6 +808,15 @@ def _cerrar_si_termino(conn, trabajo_id):
     fila = _fila_de_progreso(conn, trabajo_id)
     if fila["lotes_pendientes"] or fila["lotes_en_curso"]:
         return None
+    if fila["estado"] == DETENIDA:
+        # D92 — el lote que estaba en curso al detener terminó: la detenida
+        # sigue detenida, con el resumen de lo que sí entró.
+        resumen = consolidar(conn, trabajo_id)
+        db.ejecutar(conn, "update ingesta_trabajo set resumen = %s::jsonb "
+                          " where id = %s and estado = %s",
+                    (json.dumps(resumen, default=str), trabajo_id, DETENIDA))
+        conn.commit()
+        return {"estado": DETENIDA, "resumen": resumen}
 
     if fila["lotes_ok"] == fila["lotes_total"]:
         nuevo = TERMINADA
@@ -770,9 +832,9 @@ def _cerrar_si_termino(conn, trabajo_id):
         conn,
         """update ingesta_trabajo
               set estado = %s, resumen = %s::jsonb, terminado_en = now()
-            where id = %s and estado not in (%s, %s, %s)""",
+            where id = %s and estado not in (%s, %s, %s, %s)""",
         (nuevo, json.dumps(resumen, default=str), trabajo_id,
-         TERMINADA, TERMINADA_CON_ERRORES, FALLIDA))
+         TERMINADA, TERMINADA_CON_ERRORES, FALLIDA, DETENIDA))
     conn.commit()
     return {"estado": nuevo, "resumen": resumen}
 
@@ -788,7 +850,13 @@ def reintentar(conn, trabajo_id, indice=None, encolador=None):
     —el upsert por `(individuo, pregunta)`, la membresía por `(panel,
     persona)` y la participación por `(encuesta, persona)`—.
     """
-    _trabajo(conn, trabajo_id)
+    if _trabajo(conn, trabajo_id)["estado"] == DETENIDA:
+        # D92 — reintentar los fallidos reabriría el trabajo con sus lotes
+        # cancelados sin tocar, y cerraría «con errores» lo que alguien
+        # detuvo a propósito. Primero se reanuda.
+        raise Conflicto(
+            "Esta ingesta está detenida: reanudala para seguir.",
+            {"trabajo_id": trabajo_id, "estado": DETENIDA})
     donde = "and indice = %s" if indice is not None else ""
     parametros = [trabajo_id] + ([indice] if indice is not None else [])
     fallidos = db.todas(
@@ -833,4 +901,117 @@ def reintentar(conn, trabajo_id, indice=None, encolador=None):
         encolador.encolar(trabajo_id, fila["indice"], intento=fila["intentos"])
     salida = estado(conn, trabajo_id)
     salida["reencolados"] = [f["indice"] for f in fallidos]
+    return salida
+
+
+# ── D92 · R-CAN-C.4 · Detener una ingesta en curso, y reanudarla ─────
+
+# Lo que se puede detener: una ingesta (de una carga o de una encuesta). Un
+# envío de mensajes, un borrado o un reproceso tienen su propia lógica de
+# fin, y cortarlos a mitad no es lo que pide esta acción.
+OPERACIONES_DETENIBLES = (None, "ingesta")
+
+AVISO_CERRAR_NO_DETIENE = (
+    "El procesamiento sigue en el servidor aunque cierres esta ventana. Para "
+    "frenarlo, usá «Detener ingesta».")
+
+
+def detener(conn, trabajo_id, actor=None):
+    """Detiene una ingesta encolada o procesando.
+
+    Los lotes **pendientes** pasan a `cancelado` y no se procesan; un lote que
+    ya estaba **procesando** termina su transacción —no se corta a mitad de un
+    lote—; el trabajo pasa a `detenida`, que no es activa: no bloquea una
+    ingesta nueva para el mismo destino. Lo que entró, entró: para sacarlo
+    está el borrado de la carga (R-EU.10).
+
+    Las tareas de Cloud Tasks ya encoladas no se borran de la cola: el
+    procesador mira el estado al empezar y las descarta (`procesar_lote`).
+    """
+    trabajo = _trabajo(conn, trabajo_id)
+    operacion = (trabajo["plan"] or {}).get("operacion")
+    if operacion not in OPERACIONES_DETENIBLES:
+        raise Conflicto("Solo se puede detener una ingesta.",
+                        {"trabajo_id": trabajo_id, "operacion": operacion})
+    if trabajo["estado"] not in ACTIVOS:
+        raise Conflicto(
+            "Esta ingesta ya no está en curso: no hay nada que detener.",
+            {"trabajo_id": trabajo_id, "estado": trabajo["estado"]})
+    # Primero el trabajo y después los lotes, en la misma transacción: una
+    # tarea que toma un lote entre las dos sentencias encuentra el trabajo
+    # detenido y no lo reabre (`_tomar_lote`).
+    db.ejecutar(conn,
+                "update ingesta_trabajo set estado = %s, terminado_en = now() "
+                " where id = %s",
+                (DETENIDA, trabajo_id))
+    canceladas = db.ejecutar(
+        conn,
+        """update ingesta_lote set estado = %s, actualizado_en = now()
+            where trabajo_id = %s and estado = %s""",
+        (LOTE_CANCELADO, trabajo_id, LOTE_PENDIENTE))
+    conn.commit()
+    print(f"[ingesta] detenida trabajo={trabajo_id} lotes_cancelados={canceladas} "
+          f"por={getattr(actor, 'uid', None)}", flush=True)
+    # Si no quedaba ninguno en curso, el resumen de lo que entró se arma ya.
+    _cerrar_si_termino(conn, trabajo_id)
+    salida = estado(conn, trabajo_id)
+    salida["lotes_cancelados_ahora"] = canceladas
+    return salida
+
+
+def reanudar(conn, trabajo_id, encolador=None):
+    """Vuelve a encolar los lotes cancelados de una ingesta detenida.
+
+    El trabajo vuelve a `procesando`, y con eso a ser el activo de su
+    destino: si mientras estuvo detenido se lanzó otra ingesta para el mismo
+    destino, el índice de la 0029 lo rechaza con `IngestaEnCurso`.
+    """
+    trabajo = _trabajo(conn, trabajo_id)
+    if trabajo["estado"] != DETENIDA:
+        raise Conflicto("Solo se puede reanudar una ingesta detenida.",
+                        {"trabajo_id": trabajo_id, "estado": trabajo["estado"]})
+    cancelados = db.todas(
+        conn,
+        """select indice, intentos, filas is not null as tiene_filas
+             from ingesta_lote where trabajo_id = %s and estado = %s
+            order by indice""",
+        (trabajo_id, LOTE_CANCELADO))
+    if not cancelados:
+        raise Conflicto("Esta ingesta no tiene lotes cancelados para reanudar.",
+                        {"trabajo_id": trabajo_id})
+    sin_filas = [f["indice"] for f in cancelados if not f["tiene_filas"]]
+    if sin_filas:
+        raise Conflicto(
+            f"Los lotes {sin_filas} ya no tienen sus filas guardadas: no se "
+            f"pueden reanudar. Volvé a cargar el archivo.", {"lotes": sin_filas})
+    db.ejecutar(conn, "savepoint antes_de_reanudar")
+    try:
+        db.ejecutar(conn,
+                    "update ingesta_trabajo set estado = %s, terminado_en = null, "
+                    "       resumen = null where id = %s",
+                    (PROCESANDO, trabajo_id))
+    except psycopg.errors.UniqueViolation as error:
+        db.ejecutar(conn, "rollback to savepoint antes_de_reanudar")
+        if getattr(error.diag, "constraint_name", None) != INDICE_UNO_ACTIVO:
+            raise
+        conn.rollback()
+        raise _en_curso(trabajo["destino_tipo"], trabajo["destino_id"],
+                        trabajo_activo(conn, trabajo["destino_tipo"],
+                                       trabajo["destino_id"])) from None
+    db.ejecutar(conn,
+                """update ingesta_lote set estado = %s, actualizado_en = now()
+                    where trabajo_id = %s and estado = %s""",
+                (LOTE_PENDIENTE, trabajo_id, LOTE_CANCELADO))
+    conn.commit()
+
+    encolador = encolador or crear_encolador()
+    # El nombre de la tarea lleva el intento: la que se encoló al confirmar
+    # ya pasó por la cola (y se descartó), y Cloud Tasks recuerda su nombre.
+    # Un sufijo por reanudación evita que la rechace por duplicada.
+    sufijo = int(time.time())
+    for fila in cancelados:
+        encolador.encolar(trabajo_id, fila["indice"],
+                          intento=f"r{sufijo}-{fila['intentos']}")
+    salida = estado(conn, trabajo_id)
+    salida["reencolados"] = [f["indice"] for f in cancelados]
     return salida

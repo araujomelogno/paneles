@@ -134,8 +134,11 @@ export function activarTokens(contenedor = document) {
 /* ── Modal ──────────────────────────────────────────────────────── */
 
 let cerrarModalActual = null;
+// D92 — lo que hace el modal abierto cuando se cierra sin una acción que lo
+// resuelva (×, Escape, el fondo, Cancelar u otro modal que lo reemplaza).
+let alCerrarActual = null;
 
-export function modal({ titulo, cuerpo, acciones = [], ancho }) {
+export function modal({ titulo, cuerpo, acciones = [], ancho, alCerrar }) {
   cerrarModal();
   const contenedor = document.getElementById('modal-wrap');
   const estiloAncho = ancho ? ` style="max-width:${ancho}"` : '';
@@ -164,6 +167,7 @@ export function modal({ titulo, cuerpo, acciones = [], ancho }) {
   const alEscape = (e) => { if (e.key === 'Escape') cerrarModal(); };
   document.addEventListener('keydown', alEscape);
   cerrarModalActual = () => document.removeEventListener('keydown', alEscape);
+  alCerrarActual = alCerrar || null;
 
   activarTokens(caja);
   const primero = $('input, select, textarea', caja);
@@ -174,7 +178,10 @@ export function modal({ titulo, cuerpo, acciones = [], ancho }) {
 export function cerrarModal() {
   cerrarModalActual?.();
   cerrarModalActual = null;
+  const alCerrar = alCerrarActual;
+  alCerrarActual = null;
   document.getElementById('modal-wrap').innerHTML = '';
+  alCerrar?.();
 }
 
 /* Confirmación para operaciones que no se deshacen (bajas, borrados). */

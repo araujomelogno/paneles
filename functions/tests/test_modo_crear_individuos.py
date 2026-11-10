@@ -118,18 +118,18 @@ def test_el_modo_queda_en_el_plan_persistido(ctx, actor, ola, tmp_path):
     assert plan["evidencia_declarada"] is True
 
 
-def test_sin_modo_el_plan_dice_que_fue_el_de_siempre(ctx, actor, ola, tmp_path):
-    """Un cuerpo que no manda modo quedó registrado como `existen`, que es
-    lo que el backend hace. El plan no puede quedar en silencio: «no dice
-    nada» es justo el estado del que salió este bug."""
+def test_sin_modo_el_plan_dice_el_que_decidio_el_reconocimiento(ctx, actor, ola, tmp_path):
+    """D93 — el modo ya no se elige: lo decide el reconocimiento fila por
+    fila, y el plan lo registra igual. El plan no puede quedar en silencio:
+    «no dice nada» es justo el estado del que salió este bug."""
     panel, enc = ola
     status, resp = _ingestar(ctx, actor, enc["id"],
-                             _cuerpo(_sav(tmp_path), panel["id"], None,
-                                     con_evidencia=False))
+                             _cuerpo(_sav(tmp_path), panel["id"], None))
     assert status == 202
     plan = _plan(ctx, resp["trabajo_id"])
-    assert plan["modo"] == "existen"
-    assert plan["evidencia_declarada"] is False
+    assert plan["modo"] == "crear_individuos"            # la bóveda estaba vacía
+    assert plan["evidencia_declarada"] is True
+    assert plan["reconocimiento"]["a_crear"] == 2
 
 
 # ── Que el modo haga lo que dice ─────────────────────────────────────
@@ -172,21 +172,14 @@ def test_en_modo_crear_sin_evidencia_no_se_crea_nadie_y_lo_dice(
                   "select count(*) as n from ingesta_trabajo")["n"] == 0
 
 
-def test_el_modo_existen_sigue_comportandose_igual(ctx, actor, ola, tmp_path):
-    """No regresión: con la bóveda vacía, nadie matchea y no se crea nadie.
-    Es exactamente lo que hizo el trabajo 2 del reporte, y estaba bien."""
+def test_el_modo_existen_ya_no_frena_a_las_nuevas_sin_evidencia(ctx, actor, ola, tmp_path):
+    """D93 — «existen» ya no es un modo: con la bóveda vacía las filas son
+    personas nuevas, y sin evidencia de consentimiento la ruta no crea a
+    nadie y lo dice, en vez de cargar cero en silencio."""
     panel, enc = ola
-    status, resp = _ingestar(ctx, actor, enc["id"],
-                             _cuerpo(_sav(tmp_path), panel["id"], "existen",
-                                     con_evidencia=False))
-    assert status == 202
-    assert "creacion_de_individuos" not in resp
-
-    _procesar_lotes(ctx, resp["trabajo_id"])
-    resumen = db.una(ctx.boveda,
-                     "select resumen from ingesta_trabajo where id = %s",
-                     (resp["trabajo_id"],))["resumen"]
-    assert resumen["personas"] == 0
+    with pytest.raises(DatosInvalidos, match="evidencia de consentimiento"):
+        _ingestar(ctx, actor, enc["id"],
+                  _cuerpo(_sav(tmp_path), panel["id"], "existen", con_evidencia=False))
     assert db.una(ctx.boveda, "select count(*) as n from persona")["n"] == 0
 
 
@@ -200,7 +193,7 @@ def test_el_aviso_de_cien_por_ciento_sin_mapear_sugiere_el_modo():
         ["a1", "a2", "a3"], ["a1", "a2", "a3"],
         {i: ingesta.SIN_ALIAS for i in ["a1", "a2", "a3"]}, [])
     assert "3" in aviso
-    assert "crear los individuos" in aviso
+    assert "personas nuevas" in aviso
 
 
 def test_el_aviso_distingue_el_consentimiento_de_la_falta_de_match():

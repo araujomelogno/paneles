@@ -82,6 +82,11 @@ _CLASIFICACIONES = {
 # R-ORG.1 — los dos orígenes del vínculo persona ↔ carga.
 CREADA = "creada"
 REUTILIZADA = "reutilizada"
+# D94 · R-INC.1 — la persona ya estaba en una carga **anterior de esta misma
+# encuesta**: una encuesta de Alchemer se carga varias veces y cada SAV trae
+# el acumulado. No la decide quien llama: la decide `registrar_vinculos`.
+REPETIDA = "repetida"
+ORIGENES = (CREADA, REUTILIZADA, REPETIDA)
 
 # R-ORG.5 — la clave con la que el estudio de origen se ofrece como columna
 # de los resultados (R7.4). No es un atributo del catálogo: no se puede
@@ -125,10 +130,26 @@ def _serializar(fila):
         "creado_en": fila["creado_en"].isoformat(),
         "creado_por": fila["creado_por"],
     }
-    for clave in ("personas_creadas", "personas_reutilizadas", "personas"):
+    for clave in ("personas_creadas", "personas_reutilizadas", "personas",
+                  "personas_repetidas", "provisoria"):
         if clave in fila:
             salida[clave] = fila[clave]
+    if "personas_repetidas" in fila:
+        salida["resumen_personas"] = resumen_de_personas(fila)
     return salida
+
+
+def resumen_de_personas(fila):
+    """D94 · R-INC.5 — «487 en el archivo · 120 nuevos · 15 reutilizados de
+    otros estudios · 352 ya estaban en cargas anteriores de esta encuesta».
+    Los repetidos no son reutilizados: no vienen de otro estudio."""
+    partes = [f"{fila['personas']} en el archivo",
+              f"{fila['personas_creadas']} nuevos",
+              f"{fila['personas_reutilizadas']} reutilizados de otros estudios"]
+    if fila.get("personas_repetidas"):
+        partes.append(f"{fila['personas_repetidas']} ya estaban en cargas "
+                      f"anteriores de esta encuesta")
+    return " · ".join(partes)
 
 
 def _fecha(crudo):
@@ -215,8 +236,15 @@ def crear(conn, nombre, descripcion=None, actor=None, fecha_estudio=None,
           publico_objetivo=None, tipo_datos_origen=None,
           tipo_datos_origen_otro=None, modo_relevamiento=None,
           modo_relevamiento_otro=None, exigir_origen=False, clientes=None,
-          encuesta_id=None, archivo_huella=None, url_alchemer=None):
+          encuesta_id=None, archivo_huella=None, url_alchemer=None,
+          provisoria=False):
     """Abre una carga: una ingesta de una encuesta (R-EU.1).
+
+    D92 · R-CAN-C.1 — con `provisoria` (lo que pasa la pantalla: la carga se
+    crea en el primer paso, antes de subir el archivo) la carga queda
+    provisoria hasta que se confirma su ingesta, y la encuesta automática
+    también. Una encuesta **existente** no se vuelve provisoria: solo la
+    carga.
 
     Con `encuesta_id` la carga se suma a ese estudio y **no vuelve a pedir**
     sus datos (R-EU.2): fecha, público objetivo y clientes ya están en la
@@ -251,6 +279,9 @@ def crear(conn, nombre, descripcion=None, actor=None, fecha_estudio=None,
             publico_objetivo=publico_objetivo,
             descripcion=descripcion, clientes=clientes or [],
             estado="cerrada", url_alchemer=url_alchemer)["id"]
+        if provisoria:
+            db.ejecutar(conn, "update encuesta set provisoria = true where id = %s",
+                        (encuesta_id,))
     else:
         encuestas.obtener(conn, encuesta_id)
     fila = db.una(
@@ -258,13 +289,15 @@ def crear(conn, nombre, descripcion=None, actor=None, fecha_estudio=None,
         """
         insert into carga (nombre, descripcion, encuesta_id, archivo_huella,
                            tipo_datos_origen, tipo_datos_origen_otro,
-                           modo_relevamiento, modo_relevamiento_otro, creado_por)
-             values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           modo_relevamiento, modo_relevamiento_otro, creado_por,
+                           provisoria)
+             values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
           returning id
         """,
         (nombre, (descripcion or "").strip() or None, encuesta_id, archivo_huella,
          *tipo, *modo,
-         getattr(actor, "uid", None) or (actor if isinstance(actor, str) else None)),
+         getattr(actor, "uid", None) or (actor if isinstance(actor, str) else None),
+         bool(provisoria)),
     )
     return obtener(conn, fila["id"])
 
@@ -384,7 +417,8 @@ def obtener(conn, carga_id):
 
     fila = db.una(
         conn,
-        f"select {_COLUMNAS}, personas_creadas, personas_reutilizadas, personas "
+        f"select {_COLUMNAS}, personas_creadas, personas_reutilizadas, personas, "
+        f"personas_repetidas, provisoria "
         f"from v_carga_resumen where id = %s",
         (carga_id,),
     )
@@ -406,7 +440,8 @@ def listar(conn, busqueda=None, tematica_id=None, encuesta_id=None):
     """
     from . import clientes as mod_clientes, tematicas
 
-    condiciones, params = [], []
+    # D92 · R-CAN-C.1 — una carga provisoria no aparece en ningún listado.
+    condiciones, params = ["not r.provisoria"], []
     if tematica_id:
         condiciones.append(
             "exists (select 1 from encuesta_tematica et "
@@ -419,7 +454,8 @@ def listar(conn, busqueda=None, tematica_id=None, encuesta_id=None):
     filas = db.todas(
         conn,
         f"select {', '.join('r.' + c.strip() for c in _COLUMNAS.split(','))}, "
-        f"r.personas_creadas, r.personas_reutilizadas, r.personas "
+        f"r.personas_creadas, r.personas_reutilizadas, r.personas, "
+        f"r.personas_repetidas "
         f"from v_carga_resumen r {donde} "
         f"order by coalesce(r.fecha_estudio, r.creado_en::date) desc, "
         f"r.creado_en desc",
@@ -457,17 +493,206 @@ def registrar_vinculos(conn, carga_id, ids_persona, origen):
     ids = [str(i) for i in dict.fromkeys(i for i in (ids_persona or []) if i)]
     if not ids or carga_id is None:
         return 0
-    return db.ejecutar(
+    # D94 · R-INC.1 — quien ya tiene un vínculo con una carga **anterior** de
+    # la misma encuesta queda `repetida`: no viene de otro estudio, viene del
+    # acumulado. «Anterior» es por orden de creación de la carga, igual que
+    # en la migración (0037) y en la ficha.
+    insertados = db.ejecutar(
         conn,
         """
         insert into persona_carga (id_persona, carga_id, origen)
-        select p.id_persona, %s, %s
-          from persona p
-         where p.id_persona = any(%s::uuid[])
+        select p.id_persona, esta.id,
+               case when exists (
+                      select 1 from persona_carga o
+                        join carga oc on oc.id = o.carga_id
+                       where o.id_persona = p.id_persona
+                         and oc.encuesta_id = esta.encuesta_id
+                         and (oc.creado_en, oc.id) < (esta.creado_en, esta.id))
+                    then 'repetida' else %s end
+          from persona p, carga esta
+         where esta.id = %s and p.id_persona = any(%s::uuid[])
         on conflict (id_persona, carga_id) do nothing
         """,
-        (carga_id, origen, ids),
+        (origen, carga_id, ids),
     )
+    # Y al revés: si esta carga es la primera de la persona en la encuesta
+    # pero llegó después (una revisión que se resolvió tarde), las
+    # posteriores pasan a `repetida`. Dentro de una encuesta, a lo sumo un
+    # vínculo que no es repetida por persona.
+    db.ejecutar(
+        conn,
+        """
+        update persona_carga pc set origen = 'repetida'
+          from carga oc, carga esta
+         where esta.id = %s and oc.id = pc.carga_id
+           and oc.encuesta_id = esta.encuesta_id
+           and (oc.creado_en, oc.id) > (esta.creado_en, esta.id)
+           and pc.origen <> 'repetida'
+           and pc.id_persona = any(%s::uuid[])
+           and exists (select 1 from persona_carga mia
+                        where mia.carga_id = esta.id
+                          and mia.id_persona = pc.id_persona
+                          and mia.origen <> 'repetida')
+        """,
+        (carga_id, ids),
+    )
+    return insertados
+
+
+def reasignar_primera_aparicion(conn, carga_id, ids_persona=None):
+    """D94 · R-INC.3 — antes de quitar el vínculo de una carga que se
+    borra: cada persona que tenía en ella su **primera** aparición en la
+    encuesta y sigue en una carga **posterior** pasa a tener esa siguiente
+    como primera, con origen `reutilizada` —la persona ya existía cuando
+    entró esa carga—. Sin `ids_persona`, todas las de la carga.
+
+    No decide nada más del borrado: «sin otra vida» sigue mirando **todos**
+    los vínculos, incluidos los `repetida` (`cargas_borrado._clasificar`).
+    """
+    return db.ejecutar(
+        conn,
+        """
+        with primeras as (
+          select pc.id_persona, esta.encuesta_id
+            from persona_carga pc join carga esta on esta.id = pc.carga_id
+           where pc.carga_id = %s and pc.origen <> 'repetida'
+             and (%s::uuid[] is null or pc.id_persona = any(%s::uuid[]))
+        ),
+        siguiente as (
+          select distinct on (o.id_persona) o.id_persona, o.carga_id
+            from primeras p
+            join persona_carga o on o.id_persona = p.id_persona
+            join carga oc on oc.id = o.carga_id
+           where oc.encuesta_id = p.encuesta_id and o.carga_id <> %s
+           order by o.id_persona, oc.creado_en, oc.id
+        )
+        update persona_carga pc set origen = 'reutilizada'
+          from siguiente s
+         where pc.id_persona = s.id_persona and pc.carga_id = s.carga_id
+           and pc.origen = 'repetida'
+        """,
+        (carga_id, [str(i) for i in ids_persona] if ids_persona is not None else None,
+         [str(i) for i in ids_persona] if ids_persona is not None else None,
+         carga_id))
+
+
+# ── D92 · R-CAN-C · La carga nace provisoria ─────────────────────────
+
+# Cuánto se espera a una carga provisoria antes de darla por abandonada.
+HORAS_PARA_ABANDONADA = 24
+LIMPIEZA_AL_INICIAR = "inicio_de_carga"
+LIMPIEZA_MANUAL = "manual"
+
+
+def confirmar_provisoria(conn, carga_id):
+    """La carga y su encuesta automática dejan de ser provisorias. No hace
+    `commit`: lo llama `diferida.encolar` en la transacción que crea el
+    trabajo de ingesta (R-CAN-C.1)."""
+    db.ejecutar(conn, "update carga set provisoria = false "
+                      " where id = %s and provisoria", (carga_id,))
+    db.ejecutar(
+        conn,
+        """update encuesta set provisoria = false
+            where provisoria
+              and id = (select encuesta_id from carga where id = %s)""",
+        (carga_id,))
+
+
+def cancelar_provisoria(conn, carga_id):
+    """R-CAN-C.2 — «Cancelar» o cerrar el modal antes de confirmar: borra la
+    carga provisoria y, si la hubo, su encuesta automática provisoria.
+
+    Seguro de repetir: si ya no existe, no falla. Una carga que **no** es
+    provisoria —se confirmó su ingesta— no se toca: se borra con su borrado
+    (R-EU.10), que deshace lo que trajo."""
+    carga = db.una(conn, "select id, encuesta_id, provisoria from carga where id = %s",
+                   (carga_id,))
+    if not carga:
+        return {"carga_id": carga_id, "borrada": False, "motivo": "no_existe",
+                "encuesta_borrada": False}
+    if not carga["provisoria"]:
+        return {"carga_id": carga_id, "borrada": False, "motivo": "confirmada",
+                "encuesta_borrada": False}
+    db.ejecutar(conn, "delete from carga where id = %s and provisoria", (carga_id,))
+    encuesta = _borrar_encuesta_provisoria_vacia(conn, carga["encuesta_id"])
+    return {"carga_id": carga_id, "borrada": True, "motivo": None,
+            "encuesta_borrada": encuesta}
+
+
+def _borrar_encuesta_provisoria_vacia(conn, encuesta_id):
+    return bool(db.ejecutar(
+        conn,
+        """delete from encuesta e
+            where e.id = %s and e.provisoria
+              and not exists (select 1 from carga c where c.encuesta_id = e.id)""",
+        (encuesta_id,)))
+
+
+def limpiar_provisorias(conn, disparada_por=LIMPIEZA_AL_INICIAR, actor=None,
+                        horas=HORAS_PARA_ABANDONADA):
+    """R-CAN-C.3 — borra las cargas provisorias con más de `horas` y **sin
+    trabajo de ingesta**, junto con su encuesta automática provisoria.
+
+    Cerrar la pestaña o perder la conexión no avisa al servidor, así que el
+    cancelar explícito no alcanza. Corre al iniciar cada carga nueva —sin un
+    proceso programado— y a mano desde Cumplimiento. Cada corrida deja su
+    fila en `limpieza_provisoria`, también cuando no borró nada. No hace
+    `commit`."""
+    if disparada_por not in (LIMPIEZA_AL_INICIAR, LIMPIEZA_MANUAL):
+        raise DatosInvalidos(f"Disparador de limpieza desconocido: {disparada_por!r}.")
+    borradas = db.todas(
+        conn,
+        """delete from carga c
+            where c.provisoria
+              and c.creado_en < now() - make_interval(hours => %s)
+              and not exists (select 1 from ingesta_trabajo t
+                               where t.destino_tipo = 'carga' and t.destino_id = c.id)
+        returning c.encuesta_id""",
+        (horas,))
+    # La encuesta automática de una de ellas, y cualquier encuesta provisoria
+    # vieja que haya quedado sin cargas.
+    encuestas = db.ejecutar(
+        conn,
+        """delete from encuesta e
+            where e.provisoria
+              and (e.id = any(%s) or e.creado_en < now() - make_interval(hours => %s))
+              and not exists (select 1 from carga c where c.encuesta_id = e.id)""",
+        (list({b["encuesta_id"] for b in borradas}), horas))
+    actor_id = getattr(actor, "email", None) or getattr(actor, "uid", None) \
+        or (actor if isinstance(actor, str) else None)
+    fila = db.una(
+        conn,
+        """insert into limpieza_provisoria
+                  (disparada_por, actor, cargas_eliminadas, encuestas_eliminadas)
+           values (%s, %s, %s, %s)
+        returning id, ejecutada_en""",
+        (disparada_por, actor_id, len(borradas), encuestas))
+    if borradas or encuestas:
+        print(f"[cargas] limpieza de provisorias ({disparada_por}): "
+              f"cargas={len(borradas)} encuestas={encuestas}", flush=True)
+    return {"id": fila["id"], "ejecutada_en": fila["ejecutada_en"].isoformat(),
+            "disparada_por": disparada_por, "cargas_eliminadas": len(borradas),
+            "encuestas_eliminadas": encuestas, "horas": horas}
+
+
+def limpiezas(conn, limite=20):
+    """Las últimas corridas de la limpieza: cuántas borró y cuándo."""
+    filas = db.todas(
+        conn,
+        """select id, ejecutada_en, disparada_por, actor, cargas_eliminadas,
+                  encuestas_eliminadas
+             from limpieza_provisoria order by ejecutada_en desc, id desc limit %s""",
+        (limite,))
+    pendientes = db.una(
+        conn,
+        """select count(*)::int as provisorias,
+                  count(*) filter (where creado_en < now() - make_interval(hours => %s))::int
+                    as abandonadas
+             from carga where provisoria""", (HORAS_PARA_ABANDONADA,))
+    return {"items": [{**f, "ejecutada_en": f["ejecutada_en"].isoformat()} for f in filas],
+            "provisorias": pendientes["provisorias"],
+            "abandonadas": pendientes["abandonadas"],
+            "horas": HORAS_PARA_ABANDONADA}
 
 
 def vincular_creacion(conn, carga_id, creacion):
@@ -501,6 +726,8 @@ def origen_de(conn, id_persona):
           join carga c on c.id = pc.carga_id
           join encuesta e on e.id = c.encuesta_id
          where pc.id_persona = %s
+           -- D94 — un estudio una vez: su primera carga, no el acumulado.
+           and pc.origen <> 'repetida'
          order by coalesce(e.fecha_campo, c.creado_en::date), c.id
         """,
         (str(id_persona),),
@@ -588,7 +815,10 @@ def cargas_de_persona(conn, id_persona, incluir_especiales=False):
     datos del estudio: no se copian en la persona."""
     from . import clientes as mod_clientes, tematicas as mod_tematicas
 
-    filas = db.todas(
+    # D94 · R-INC.4 — cada encuesta **una vez**, con la primera carga en que
+    # apareció la persona y su origen ahí; las cargas posteriores de esa
+    # encuesta (el acumulado de una encuesta incremental) van como nota.
+    todas = db.todas(
         conn,
         """
         select c.id, c.nombre, c.encuesta_id, e.nombre as encuesta,
@@ -597,9 +827,20 @@ def cargas_de_persona(conn, id_persona, incluir_especiales=False):
           from persona_carga pc join carga c on c.id = pc.carga_id
           join encuesta e on e.id = c.encuesta_id
          where pc.id_persona = %s
-         order by coalesce(e.fecha_campo, c.creado_en::date) desc, c.id desc
+         order by c.encuesta_id, c.creado_en, c.id
         """,
         (str(id_persona),))
+    filas, posteriores = [], {}
+    for f in todas:
+        if f["encuesta_id"] in posteriores:
+            posteriores[f["encuesta_id"]].append(
+                {"carga_id": f["id"], "nombre": f["nombre"],
+                 "vinculado_en": f["creado_en"].isoformat()})
+        else:
+            posteriores[f["encuesta_id"]] = []
+            filas.append(f)
+    filas.sort(key=lambda f: (f["fecha_estudio"] or f["carga_creada_en"].date(),
+                              f["id"]), reverse=True)
     # Clientes y temáticas son del estudio (D81): los de la encuesta de cada
     # carga, y las temáticas que la persona respondió en ese estudio.
     por_estudio = mod_clientes.de_encuestas(conn, [f["encuesta_id"] for f in filas])
@@ -615,6 +856,8 @@ def cargas_de_persona(conn, id_persona, incluir_especiales=False):
         "origen": f["origen"], "vinculado_en": f["creado_en"].isoformat(),
         "clientes": por_estudio.get(f["encuesta_id"], []),
         "tematicas": tematicas.get(f["encuesta_id"], []),
+        "posteriores": posteriores[f["encuesta_id"]],
+        "nota_posteriores": nota_de_posteriores(len(posteriores[f["encuesta_id"]])),
     } for f in filas]
     return {
         "cargas": cargas,
@@ -622,6 +865,14 @@ def cargas_de_persona(conn, id_persona, incluir_especiales=False):
             conn, id_persona, any(c["origen"] == CREADA for c in cargas)),
         "aviso": None if cargas else SIN_VINCULO_REGISTRADO,
     }
+
+
+def nota_de_posteriores(n):
+    """R-INC.4 — «también en 2 cargas posteriores de esta encuesta»."""
+    if not n:
+        return None
+    return (f"también en {n} carga{'s' if n != 1 else ''} posterior"
+            f"{'es' if n != 1 else ''} de esta encuesta")
 
 
 SIN_CARGA_PREVIA = "sin carga previa: landing, alta manual o encuesta"
@@ -719,6 +970,8 @@ def origen_de_varias(conn, ids_persona):
           join carga c on c.id = pc.carga_id
           join encuesta e on e.id = c.encuesta_id
          where pc.id_persona = any(%s::uuid[])
+           -- D94 — el estudio de origen, una vez por encuesta.
+           and pc.origen <> 'repetida'
          order by pc.id_persona, coalesce(e.fecha_campo, c.creado_en::date), c.id
         """,
         (ids,),
@@ -746,7 +999,8 @@ def origen_de_varias(conn, ids_persona):
 def ingestar(conn_boveda, conn_semantica, carga_id, preguntas, filas,
              columna_id="id_en_origen", origen=None, proveedor=None,
              demograficas=None, tipo_identificador=None, normalizacion=None,
-             canales_aceptados=None, canales_declarados_por=None, trabajo_id=None):
+             canales_aceptados=None, canales_declarados_por=None, trabajo_id=None,
+             canales_para=None):
     """Incorpora el archivo de una carga a su encuesta. **La** ingesta (D81).
 
     Es lo que hacían, por separado, la ingesta desde una encuesta y la carga
@@ -874,8 +1128,13 @@ def ingestar(conn_boveda, conn_semantica, carga_id, preguntas, filas,
     if canales_aceptados:
         from . import canales_carga
 
+        # R-MIX.4 (D93) — desde la ingesta mixta, los canales del archivo se
+        # declaran para las personas que la carga crea (`canales_para`).
+        destinatarios = (personas_del_lote if canales_para is None else
+                         [p for p in personas_del_lote
+                          if p in {str(i) for i in canales_para}])
         resultado["canales"] = canales_carga.aplicar(
-            conn_boveda, carga_id, personas_del_lote, canales_aceptados,
+            conn_boveda, carga_id, destinatarios, canales_aceptados,
             canales_carga.VIA_INGESTA, actor=canales_declarados_por,
             trabajo_id=trabajo_id)
     return resultado
@@ -883,7 +1142,7 @@ def ingestar(conn_boveda, conn_semantica, carga_id, preguntas, filas,
 
 def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
                      evidencia_consentimiento, actor=None,
-                     opciones_por_variable=None, carga_id=None):
+                     opciones_por_variable=None, carga_id=None, alias_de=None):
     """Da de alta a la gente del archivo, sin meterla en ningún panel.
 
     Es `sav.crear_individuos` con dos diferencias, las dos deliberadas:
@@ -912,7 +1171,7 @@ def crear_individuos(conn_boveda, filas, mapeo, origen, columna_id,
         conn_boveda, filas, mapeo, origen=origen, columna_id=columna_id,
         evidencia_consentimiento=evidencia_consentimiento, actor=actor,
         panel_id=panel_id, opciones_por_variable=opciones_por_variable,
-        finalidad_obligatoria=finalidad, carga_id=carga_id,
+        finalidad_obligatoria=finalidad, carga_id=carga_id, alias_de=alias_de,
     )
     if carga_id is not None:
         resultado["vinculos_con_la_carga"] = vincular_creacion(
