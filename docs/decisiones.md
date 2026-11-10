@@ -5536,3 +5536,53 @@ una vez; el listado no filtraba por estado; los cruces eran solo cantidades.
 `composicion.js`, `panelistas.js`. Pruebas:
 `functions/tests/test_pedido_audiencias_listados_y_composicion.py`,
 `functions/tests/test_pantallas_pedido_mensajes_canales_seleccion.py`.
+
+## D91 · Lo que se valida al guardar un mensaje se vuelve a validar al enviar, y la identificación dice con qué tipo
+
+**El pedido.** `specs/PEDIDO_controles_mensajes_e_identificacion.md`. Cuatro
+huecos del mismo tipo: algo que se validaba en un momento y después podía
+dejar de ser cierto, o que fallaba sin decir por qué.
+
+- **R-CTL.1 — la URL, en cada envío.** El botón de la plantilla se comparaba
+  con la URL de Alchemer solo al guardar el mensaje. Si después cambiaba la
+  URL de la encuesta o la plantilla en Meta, WhatsApp mandaba a donde dijera
+  la plantilla mientras el correo armaba el enlace con la URL de la encuesta:
+  dos personas de la misma encuesta en lugares distintos según el canal.
+  Ahora la vista previa y **cada lote** comparan la plantilla **vigente** con
+  la URL **vigente** (`mensajes.motivos_de_la_plantilla`) y bloquean si no
+  coinciden; un lote que no cierra no manda nada y queda fallido. La casilla
+  que deja guardar con una URL distinta no alcanza para enviar. La
+  comparación es exacta, y los avisos muestran las dos URL completas, una
+  debajo de la otra (`mensajes.comparacion_de_url`, `previa.urls`). Cambiar
+  la URL de una encuesta con mensajes de WhatsApp avisa cuáles van a quedar
+  bloqueados (`encuestas._avisos_de_url`).
+- **R-CTL.2 — el encabezado.** El sistema completa el cuerpo y el botón, no
+  el encabezado. Una plantilla con encabezado de texto variable o de archivo
+  (imagen, video, documento, ubicación) hacía fallar **cada** envío en Meta.
+  `whatsapp.listar_plantillas` lee el encabezado y `mensajes.
+  encabezado_no_soportado` lo rechaza al guardar y al enviar; la lista la
+  muestra igual, con el motivo. Un encabezado de texto fijo se puede usar.
+- **R-CTL.3 — texto fijo.** Un parámetro del cuerpo puede ser un texto escrito
+  al crear el mensaje, igual para todos (`{"fuente": "texto_fijo", "valor":
+  …}`), con las reglas de Meta (sin saltos de línea, tabulaciones ni más de
+  cuatro espacios seguidos, hasta 200 caracteres). El nombre del cliente no es
+  una fuente: es confidencial (R-CLI.4).
+- **R-CTL.4 — el tipo de identificador.** Con el tipo por defecto (id de la
+  plataforma), una columna que traía el id_persona no encontraba a nadie y el
+  aviso de no convocados decía que no podía identificar a personas que
+  existen. Ahora se **propone** el tipo id_persona cuando todos los valores
+  tienen esa forma (`ingesta.tipo_sugerido`, también en el análisis de un
+  `.sav`), la revisión dice con qué tipo se identifica y avisa si los valores
+  sugieren otro, y los avisos lo nombran (`ingesta.
+  ETIQUETAS_DE_IDENTIFICADOR`). Cambiar el tipo en la revisión la marca
+  **desactualizada** y no deja confirmar hasta revisarla de nuevo.
+
+**Sin migración.** No cambia el esquema: los parámetros siguen siendo el
+`jsonb` de `encuesta_mensaje.parametros`, ahora con objetos para el texto
+fijo.
+
+**Dónde vive.** `functions/panel_api/mensajes.py`, `whatsapp.py`,
+`encuestas.py`, `ingesta.py`, `resumen_ingesta.py`, `cargas.py`, `sav.py`,
+`ruteo.py`, `web/public/js/paginas/encuestas.js`, `demo.js`. Pruebas:
+`functions/tests/test_pedido_controles_mensajes_e_identificacion.py`,
+`functions/tests/test_pantallas_controles_mensajes_e_identificacion.py`.

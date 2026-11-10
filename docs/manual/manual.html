@@ -1482,6 +1482,21 @@
       titular.</td></tr>
   </table>
 
+  <div class="aviso info">
+    <div class="t">El sistema propone el tipo, y la revisión lo dice</div>
+    <p>Si los valores de la columna elegida tienen <strong>forma de
+    id_persona</strong> —la muestra precargada que volvió de Alchemer—, el tipo
+    pasa solo a <i>Trae el id_persona del sistema</i> y la ayuda dice que es una
+    propuesta. Se puede cambiar.</p>
+    <p>La revisión empieza diciendo <strong>con qué tipo</strong> se va a
+    identificar a cada fila, y los avisos lo repiten: «2 no se pudieron
+    identificar <em>como id de la plataforma de campo</em>» no quiere decir que
+    esas personas no existan. Si en la revisión se cambia el tipo, el resumen
+    queda marcado como <strong>desactualizado</strong> y no se puede confirmar
+    hasta <i>Revisar de nuevo</i>: no se confirma una carga con un resumen
+    calculado con otro tipo.</p>
+  </div>
+
   <p>Cuando alguna fila no se puede vincular, el resultado dice <strong>por
   qué</strong>: si el valor no tiene la forma del identificador elegido (un
   id_persona, un celular), si no existe en la bóveda, si esa plataforma no
@@ -2241,10 +2256,20 @@
 
   <ul class="puntos">
     <li><b>WhatsApp:</b> se elige una plantilla <strong>aprobada por Meta</strong>
-    y qué va en cada parámetro del texto (el nombre del panelista o el de la
-    encuesta). El botón de la plantilla lleva a la encuesta con el identificador
-    de cada uno. Si el botón lleva a otra dirección que la de la encuesta, el
-    sistema lo avisa antes de guardar: guardar igual pide marcar una casilla.</li>
+    y qué va en cada parámetro del texto: el nombre del panelista, el de la
+    encuesta o un <strong>texto fijo</strong>, escrito al armar el mensaje e igual
+    para todos («hasta el viernes 14», «ganás 200 puntos»). El nombre del cliente
+    no es una opción: es confidencial. El botón de la plantilla lleva a la
+    encuesta con el identificador de cada uno. Si el botón lleva a otra dirección
+    que la de la encuesta, el sistema lo avisa antes de guardar, con las dos
+    direcciones completas una debajo de la otra: guardar igual pide marcar una
+    casilla.</li>
+    <li><b>Plantillas con encabezado:</b> una plantilla cuyo encabezado lleva un
+    <strong>texto variable</strong> o un <strong>archivo</strong> (imagen, video,
+    documento) se ve en la lista marcada <i>encabezado no soportado</i> y no se
+    puede guardar como mensaje: el sistema todavía no sabe completar ese dato, y
+    cada envío fallaría en Meta. Un encabezado de texto fijo no tiene
+    problema.</li>
     <li><b>Correo:</b> asunto y cuerpo. <code>{nombre}</code>,
     <code>{encuesta}</code> y <code>{enlace}</code> se reemplazan al enviar; si
     el cuerpo no trae el enlace, se agrega al final.</li>
@@ -2266,6 +2291,24 @@
   sin celular válido o sin correo. El envío corre en segundo plano, con su barra
   de avance, y termina con un resumen. No se puede lanzar el mismo mensaje dos
   veces a la vez.</p>
+
+  <div class="aviso grave">
+    <div class="t">En cada envío se vuelve a comparar la URL</div>
+    <p>La vista previa compara el botón de la plantilla <strong>tal como está hoy
+    en Meta</strong> con la URL de Alchemer <strong>tal como está hoy en la
+    encuesta</strong>. Si no coinciden, el envío se <strong>bloquea</strong> y
+    muestra las dos, completas, una debajo de la otra: una diferencia de
+    <code>http</code> o <code>https</code>, o de una barra al final, ya es otra
+    dirección. La casilla que permite <em>guardar</em> con una URL distinta no
+    alcanza para <em>enviar</em>: si difieren al enviar, algo cambió después, y
+    por WhatsApp la gente iría a un lugar y por correo a otro. Lo mismo con el
+    encabezado: si la plantilla cambió en Meta y ahora tiene uno que el sistema
+    no completa, el envío se bloquea. Y cada lote vuelve a comprobarlo antes de
+    mandar nada.</p>
+    <p>Al cambiar la URL de Alchemer en <strong>Datos del estudio</strong>, el
+    sistema avisa qué mensajes de WhatsApp van a quedar bloqueados hasta revisar
+    sus plantillas.</p>
+  </div>
 
   <p>En la sección Convocatoria, la columna <strong>Mensajes</strong> muestra, por
   panelista, cada mensaje con su estado: <i>Enviado</i> (WhatsApp o el correo lo
@@ -5099,6 +5142,18 @@
     <h2>Preguntas frecuentes</h2>
     <p>Situaciones habituales y su explicación.</p>
   </div>
+
+  <h4>El envío dice que el botón no lleva a la URL de la encuesta</h4>
+  <p>Alguien cambió la URL de Alchemer de la encuesta o la plantilla en Meta
+  después de armar el mensaje. La vista previa muestra las dos direcciones
+  completas: hay que corregir una de las dos (o aprobar en Meta una plantilla
+  con la URL nueva) antes de enviar (5.13).</p>
+
+  <h4>La carga dice que no pudo identificar a personas que sí existen</h4>
+  <p>Mirá con qué tipo se intentó: si la columna trae el id_persona del sistema
+  y está elegido «id de la plataforma de campo», nadie va a coincidir. Cuando los
+  valores tienen esa forma el sistema propone el tipo correcto; si se cambia en
+  la revisión, hay que revisarla de nuevo (5.4).</p>
 
   <h4>La consulta demográfica no me muestra a los mismos de la vez anterior</h4>
   <p>Es lo esperable: cada ejecución sortea con una semilla nueva. Para ver la

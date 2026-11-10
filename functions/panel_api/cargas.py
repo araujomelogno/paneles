@@ -983,17 +983,26 @@ def no_convocados(conn, encuesta_id, filas, columna_id, tipo, origen):
     if not encuestas.tiene_audiencia(conn, encuesta_id):
         return None
     fuera, mapa = _no_convocados(conn, encuesta_id, filas, columna_id, tipo, origen)
+    tipo = tipo or mod_ingesta.POR_ALIAS
+    etiqueta = mod_ingesta.ETIQUETAS_DE_IDENTIFICADOR.get(tipo, tipo)
+    sin_identificar = sum(1 for i in fuera if i not in mapa)
     return {
         "cuantos": len(fuera),
         "existentes": sum(1 for i in fuera if i in mapa),
-        "sin_identificar": sum(1 for i in fuera if i not in mapa),
+        "sin_identificar": sin_identificar,
+        # R-CTL.4 — con qué tipo se intentó identificar: «no se pudieron
+        # identificar como id de la plataforma de campo» no es «no existen».
+        "tipo_identificador": tipo,
+        "tipo_etiqueta": etiqueta,
         "ids_en_origen": fuera[:200],
         "mas": max(0, len(fuera) - 200),
         "mensaje": (
             f"{len(fuera)} persona(s) del archivo no estaban convocadas a esta "
             f"encuesta. Se incorporan marcadas «no convocado»; en una encuesta "
             f"con audiencia, casi siempre es un enlace reenviado. Podés "
-            f"excluirlas de la carga.") if fuera else None,
+            f"excluirlas de la carga."
+            + (f" {sin_identificar} no se pudieron identificar como {etiqueta}."
+               if sin_identificar else "")) if fuera else None,
     }
 
 

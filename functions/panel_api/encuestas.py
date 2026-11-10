@@ -299,7 +299,34 @@ def editar(conn, encuesta_id, cambios, conn_semantica=None):
         mod_clientes.guardar_de_encuesta(conn, encuesta_id, cambios.get("clientes") or [])
     if fecha and conn_semantica is not None:
         sincronizar_fecha(conn, conn_semantica, encuesta_id)
-    return obtener(conn, encuesta_id, completa=True)
+    salida = obtener(conn, encuesta_id, completa=True)
+    if "url_alchemer" in cambios:
+        salida["avisos"] = _avisos_de_url(conn, encuesta_id, salida.get("url_alchemer"))
+    return salida
+
+
+def _avisos_de_url(conn, encuesta_id, url):
+    """R-CTL.1 — al cambiar la URL de Alchemer, los mensajes de WhatsApp con
+    botón de URL que ya no coinciden: van a quedar bloqueados al enviar hasta
+    revisar sus plantillas. Se comparan con la base del botón con que se
+    guardó cada uno; al enviar se vuelve a comparar con la plantilla vigente."""
+    filas = db.todas(
+        conn,
+        """select nombre, url_boton from encuesta_mensaje
+            where encuesta_id = %s and canal = 'whatsapp' and boton = 'url'
+              and url_boton is distinct from %s
+            order by creado_en, id""", (encuesta_id, url))
+    if not filas:
+        return []
+    nombres = ", ".join(f"«{f['nombre']}»" for f in filas)
+    return [{
+        "motivo": "mensajes_bloqueados_por_url",
+        "mensaje": (f"{len(filas)} mensaje(s) de WhatsApp —{nombres}— llevan a otra "
+                    f"URL: van a quedar bloqueados al enviar hasta revisar sus "
+                    f"plantillas."),
+        "mensajes": [{"nombre": f["nombre"], "url_boton": f["url_boton"],
+                      "url_alchemer": url} for f in filas],
+    }]
 
 
 def sincronizar_fecha(conn_boveda, conn_semantica, encuesta_id, solo_si_vacia=False):

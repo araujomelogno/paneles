@@ -693,6 +693,12 @@ MUESTRA_FRECUENTES = 30
 MUESTRA_RAROS = 10
 
 
+def _tipo_sugerido(por_valor):
+    from . import ingesta
+
+    return ingesta.tipo_sugerido(list(por_valor or {}))
+
+
 def _muestra(por_valor):
     """`[{valor, filas}]`: los más frecuentes y los menos, sin repetir."""
     ordenados = sorted(por_valor.items(), key=lambda p: (-p[1], p[0]))
@@ -757,6 +763,9 @@ def analizar(archivo, claves_del_catalogo=(), valores_no_respuesta=None):
             # de valores reales para la vista previa del texto embebido (R8.8).
             "respuestas": sum((distribucion.get(codigo) or {}).values()),
             "muestra": _muestra(distribucion.get(codigo) or {}),
+            # R-CTL.4 — si sus valores tienen forma de id_persona, la
+            # pantalla propone ese tipo al elegirla como identificadora.
+            "tipo_identificador_sugerido": _tipo_sugerido(distribucion.get(codigo)),
         })
 
     calidad = calidad_dato.diagnosticar(

@@ -62,10 +62,24 @@ BOTONES = {BOTON_URL: "Botón de URL", BOTON_FLOW: "Botón de Flow"}
 # lo que no está acá no se manda.
 NOMBRE_PANELISTA = "nombre_panelista"
 NOMBRE_ENCUESTA = "nombre_encuesta"
+# R-CTL.3 — un valor escrito al crear el mensaje, igual para todos («hasta el
+# viernes 14», «ganás 200 puntos»). Va como `{"fuente": "texto_fijo",
+# "valor": …}`. El nombre del **cliente** no es una fuente a propósito: es
+# confidencial y el respondente no tiene por qué saber para quién es el
+# estudio (R-CLI.4).
+TEXTO_FIJO = "texto_fijo"
 FUENTES_DE_PARAMETRO = {
     NOMBRE_PANELISTA: "Nombre del panelista",
     NOMBRE_ENCUESTA: "Nombre de la encuesta",
+    TEXTO_FIJO: "Texto fijo (igual para todos)",
 }
+# Lo que Meta admite en un parámetro de texto: sin saltos de línea ni
+# tabulaciones, y sin más de cuatro espacios seguidos.
+LARGO_MAXIMO_TEXTO_FIJO = 200
+
+# R-CTL.2 — los encabezados que el sistema no sabe completar.
+ENCABEZADOS_CON_ARCHIVO = {"IMAGE": "imagen", "VIDEO": "video",
+                           "DOCUMENT": "documento", "LOCATION": "ubicación"}
 # Meta rechaza un parámetro vacío: sin nombre, se saluda igual.
 NOMBRE_POR_DEFECTO = "panelista"
 
@@ -185,12 +199,80 @@ def plantillas_para_mensajes(entorno=None, pedir=None):
     for plantilla in salida.get("plantillas") or []:
         plantilla["boton"] = boton_de(plantilla)
         plantilla["boton_etiqueta"] = BOTONES.get(plantilla["boton"], "Solo texto")
+        # R-CTL.2 — se lista igual, con el motivo: que no aparezca sería
+        # dejar a alguien buscando una plantilla aprobada que no ve.
+        plantilla["no_soportada"] = encabezado_no_soportado(plantilla)
     salida["fuentes_de_parametro"] = FUENTES_DE_PARAMETRO
     salida["botones"] = BOTONES
     # La lista de `listar_plantillas` avisa cuando no hay de Flow: para los
     # mensajes no es un problema, hay de URL.
     salida["avisos"] = [a for a in salida.get("avisos") or []
                         if "botón de Flow" not in a]
+    return salida
+
+
+def encabezado_no_soportado(plantilla):
+    """R-CTL.2 — por qué el encabezado de la plantilla no se puede completar
+    desde el sistema, o None. Un encabezado de texto fijo está bien; uno con
+    variable o con archivo haría fallar **cada** envío en Meta, porque el
+    sistema no manda ese dato."""
+    encabezado = plantilla.get("encabezado") or {}
+    formato = (encabezado.get("formato") or "").upper()
+    que = (ENCABEZADOS_CON_ARCHIVO.get(formato)
+           or ("texto variable" if encabezado.get("variable") else None))
+    if not que:
+        return None
+    return (f"La plantilla «{plantilla.get('nombre')}» tiene un encabezado con {que}, "
+            f"que todavía no se puede completar desde el sistema: cada envío "
+            f"fallaría en Meta. Usá una plantilla sin encabezado o con un "
+            f"encabezado de texto fijo.")
+
+
+def url_distinta(tipo_boton, boton, url_alchemer):
+    """R-CF.4 / R-CTL.1 — por qué el botón de la plantilla no lleva a la URL de
+    Alchemer de la encuesta, o None. La comparación es **exacta**: una
+    diferencia de `http`/`https` o de una barra final ya es otra dirección."""
+    if tipo_boton != BOTON_URL or not boton:
+        return None
+    if not boton["dinamico"]:
+        return ("El botón de la plantilla tiene una URL fija: no puede llevar el "
+                "id_persona, y las respuestas volverían sin saber de quién son.")
+    if not url_alchemer:
+        return ("La encuesta todavía no tiene su URL de Alchemer: no se puede "
+                "comprobar que el botón lleve a esta encuesta.")
+    if boton["base"] != url_alchemer:
+        return ("El botón de la plantilla no lleva a la URL de Alchemer de la "
+                "encuesta: la gente iría a otro lado.")
+    return None
+
+
+def _normalizar_parametros(crudos):
+    """Cada parámetro del cuerpo: una fuente (`nombre_panelista`,
+    `nombre_encuesta`) o un texto fijo (`{"fuente": "texto_fijo", "valor":
+    …}`). Lo que no está en `FUENTES_DE_PARAMETRO` no se manda."""
+    salida = []
+    for n, crudo in enumerate(crudos or [], 1):
+        fuente = crudo.get("fuente") if isinstance(crudo, dict) else crudo
+        if fuente not in FUENTES_DE_PARAMETRO:
+            raise DatosInvalidos(f"Parámetro desconocido: {fuente!r}.",
+                                 {"fuentes": list(FUENTES_DE_PARAMETRO)})
+        if fuente != TEXTO_FIJO:
+            salida.append(fuente)
+            continue
+        valor = str((crudo.get("valor") if isinstance(crudo, dict) else "") or "").strip()
+        if not valor:
+            raise DatosInvalidos(f"El parámetro {{{{{n}}}}} es un texto fijo y está vacío: "
+                                 f"escribí qué va ahí.", {"campo": "parametros", "indice": n})
+        if any(c in valor for c in "\n\t\r") or "     " in valor:
+            raise DatosInvalidos(
+                f"El texto fijo del parámetro {{{{{n}}}}} no puede tener saltos de línea, "
+                f"tabulaciones ni más de cuatro espacios seguidos: Meta lo rechaza.",
+                {"campo": "parametros", "indice": n})
+        if len(valor) > LARGO_MAXIMO_TEXTO_FIJO:
+            raise DatosInvalidos(
+                f"El texto fijo del parámetro {{{{{n}}}}} pasa de "
+                f"{LARGO_MAXIMO_TEXTO_FIJO} caracteres.", {"campo": "parametros", "indice": n})
+        salida.append({"fuente": TEXTO_FIJO, "valor": valor})
     return salida
 
 
@@ -261,16 +343,18 @@ def guardar(conn, encuesta_id, datos, actor=None, mensaje_id=None,
         plantilla = _plantilla_aprobada((datos.get("plantilla") or "").strip(),
                                         (datos.get("plantilla_idioma") or "").strip() or None,
                                         entorno=entorno, pedir=pedir)
-        parametros = list(datos.get("parametros") or [])
+        # R-CTL.2 — un encabezado que el sistema no sabe completar no se guarda.
+        motivo_encabezado = encabezado_no_soportado(plantilla)
+        if motivo_encabezado:
+            raise DatosInvalidos(motivo_encabezado, {
+                "motivo": "encabezado_no_soportado",
+                "encabezado": plantilla.get("encabezado")})
+        parametros = _normalizar_parametros(datos.get("parametros"))
         if len(parametros) != plantilla["parametros_cuerpo"]:
             raise DatosInvalidos(
                 f"La plantilla tiene {plantilla['parametros_cuerpo']} parámetro(s) "
                 f"en el texto y se indicaron {len(parametros)}: cada uno tiene que "
                 f"tener de dónde sale.", {"campo": "parametros"})
-        ajenos = [p for p in parametros if p not in FUENTES_DE_PARAMETRO]
-        if ajenos:
-            raise DatosInvalidos(f"Parámetro desconocido: {ajenos}.",
-                                 {"fuentes": list(FUENTES_DE_PARAMETRO)})
         tipo_boton = boton_de(plantilla)
         boton = plantilla.get("boton_url") if tipo_boton == BOTON_URL else None
         valores.update(plantilla=plantilla["nombre"], plantilla_idioma=plantilla["idioma"],
@@ -282,18 +366,7 @@ def guardar(conn, encuesta_id, datos, actor=None, mensaje_id=None,
             # sección vieja, ahora al guardar el mensaje.
             _exigir_flow_publicado(plantilla, entorno=entorno, pedir=pedir)
         if boton:
-            distinta = None
-            if not boton["dinamico"]:
-                distinta = ("El botón de la plantilla tiene una URL fija: no puede "
-                            "llevar el id_persona, y las respuestas volverían sin "
-                            "saber de quién son.")
-            elif not encuesta.get("url_alchemer"):
-                distinta = ("La encuesta todavía no tiene su URL de Alchemer: no se "
-                            "puede comprobar que el botón lleve a esta encuesta.")
-            elif boton["base"] != encuesta["url_alchemer"]:
-                distinta = (f"El botón de la plantilla lleva a {boton['base']} y la "
-                            f"encuesta está en {encuesta['url_alchemer']}: la gente "
-                            f"iría a otra encuesta.")
+            distinta = url_distinta(tipo_boton, boton, encuesta.get("url_alchemer"))
             if distinta:
                 if not datos.get("confirmar_url_distinta"):
                     raise Conflicto(distinta, {
@@ -419,6 +492,7 @@ def _motivos_para_no_enviar(conn, encuesta, mensaje, entorno=None, pedir=None):
                                             entorno=entorno, pedir=pedir)
             if mensaje.get("boton") == BOTON_FLOW:
                 _exigir_flow_publicado(plantilla, entorno=entorno, pedir=pedir)
+            motivos.extend(motivos_de_la_plantilla(mensaje, encuesta, plantilla))
         except DatosInvalidos as error:
             motivos.append(error.mensaje)
     else:
@@ -429,6 +503,41 @@ def _motivos_para_no_enviar(conn, encuesta, mensaje, entorno=None, pedir=None):
         except Exception as error:  # noqa: BLE001
             motivos.append(getattr(error, "mensaje", None) or str(error))
     return motivos
+
+
+def motivos_de_la_plantilla(mensaje, encuesta, plantilla):
+    """R-CTL.1 / R-CTL.2 — lo que se vuelve a comprobar en cada envío contra
+    la plantilla **vigente** en Meta y la URL de Alchemer **vigente** de la
+    encuesta. Lo que se comprobó al guardar puede haber dejado de ser cierto:
+    alguien cambió la URL de la encuesta o la plantilla en Meta, y WhatsApp
+    mandaría a donde diga la plantilla mientras el correo arma el enlace con
+    la URL de la encuesta. La casilla que deja **guardar** con una URL
+    distinta no alcanza para **enviar**: si difieren ahora, algo cambió
+    después."""
+    motivos = []
+    encabezado = encabezado_no_soportado(plantilla)
+    if encabezado:
+        motivos.append(encabezado)
+    tipo_vigente = boton_de(plantilla)
+    if mensaje.get("boton") == BOTON_URL and tipo_vigente != BOTON_URL:
+        motivos.append("La plantilla cambió en Meta: ya no tiene el botón de URL con "
+                       "que se guardó el mensaje. Revisá el mensaje antes de enviar.")
+    distinta = url_distinta(tipo_vigente, plantilla.get("boton_url"),
+                            encuesta.get("url_alchemer"))
+    if distinta:
+        motivos.append(distinta)
+    return motivos
+
+
+def comparacion_de_url(mensaje, encuesta, plantilla):
+    """Las dos URL, completas, para mostrarlas una debajo de la otra."""
+    boton = plantilla.get("boton_url") if plantilla else None
+    if mensaje.get("canal") != WHATSAPP or not boton:
+        return None
+    return {"url_boton": boton.get("base") or boton.get("url"),
+            "url_alchemer": encuesta.get("url_alchemer"),
+            "coinciden": bool(boton.get("dinamico"))
+            and boton.get("base") == encuesta.get("url_alchemer")}
 
 
 def previa(conn, encuesta_id, mensaje_id, cual, entorno=None, pedir=None):
@@ -459,7 +568,17 @@ def previa(conn, encuesta_id, mensaje_id, cual, entorno=None, pedir=None):
     motivos = _motivos_para_no_enviar(conn, encuesta, mensaje, entorno, pedir)
     if not contactables:
         motivos.append("Nadie del público elegido puede recibir este mensaje.")
+    urls = None
+    if mensaje["canal"] == WHATSAPP and mensaje.get("boton") != BOTON_FLOW:
+        try:
+            urls = comparacion_de_url(mensaje, encuesta, _plantilla_aprobada(
+                mensaje["plantilla"], mensaje["plantilla_idioma"], entorno=entorno,
+                pedir=pedir))
+        except DatosInvalidos:
+            urls = None
     return {
+        # R-CTL.1 — las dos URL completas, una debajo de la otra.
+        "urls": urls,
         "encuesta_id": encuesta_id, "mensaje": mensaje, "publico": cual,
         "publico_etiqueta": PUBLICOS[cual],
         "en_el_publico": len(ids),
@@ -518,7 +637,9 @@ def _textos(mensaje, encuesta, persona):
     valores = {NOMBRE_PANELISTA: (persona.get("nombre") or "").split(" ")[0]
                or NOMBRE_POR_DEFECTO,
                NOMBRE_ENCUESTA: encuesta["nombre"]}
-    return [valores[p] for p in mensaje["parametros"]]
+    # R-CTL.3 — un texto fijo va tal cual, igual para todos.
+    return [p["valor"] if isinstance(p, dict) else valores[p]
+            for p in mensaje["parametros"]]
 
 
 def correo_de(mensaje, encuesta, persona):
@@ -599,14 +720,21 @@ def procesar_lote(conn, plan, filas, trabajo_id=None, entorno=None, pedir=None,
     """
     mensaje = obtener(conn, plan["encuesta_id"], plan["mensaje_id"])
     encuesta = encuestas.obtener(conn, plan["encuesta_id"])
-    if mensaje["canal"] == WHATSAPP and mensaje.get("boton") == BOTON_FLOW:
+    if mensaje["canal"] == WHATSAPP:
         plantilla = _plantilla_aprobada(mensaje["plantilla"], mensaje["plantilla_idioma"],
                                         entorno=entorno, pedir=pedir)
-        mensaje["_indice_boton"] = _indice_del_boton_de_flow(plantilla)
-    elif mensaje["canal"] == WHATSAPP and mensaje["url_boton"]:
-        plantilla = _plantilla_aprobada(mensaje["plantilla"], mensaje["plantilla_idioma"],
-                                        entorno=entorno, pedir=pedir)
-        mensaje["_indice_boton"] = (plantilla.get("boton_url") or {}).get("indice", 0)
+        # R-CTL.1 / R-CTL.2 — lo mismo que la vista previa, otra vez en cada
+        # lote: entre la previa y este lote la URL o la plantilla pudieron
+        # cambiar. Si no cierra, el lote no manda nada y queda fallido.
+        motivos = motivos_de_la_plantilla(mensaje, encuesta, plantilla)
+        if motivos:
+            raise DatosInvalidos("No se envía: " + " ".join(motivos),
+                                 {"motivos": motivos, "urls": comparacion_de_url(
+                                     mensaje, encuesta, plantilla)})
+        if mensaje.get("boton") == BOTON_FLOW:
+            mensaje["_indice_boton"] = _indice_del_boton_de_flow(plantilla)
+        elif mensaje["url_boton"]:
+            mensaje["_indice_boton"] = (plantilla.get("boton_url") or {}).get("indice", 0)
 
     ids = [str(f["id_persona"]) for f in filas]
     contactables, excluidos = _contactables(conn, ids, mensaje["canal"])

@@ -681,6 +681,19 @@ Desde el PEDIDO del 06/11/26 (D87 a D90, `boveda/0036`):
   para la carga, «Nueva encuesta», «Datos del estudio» y la encuesta desde
   una consulta. Un dato nuevo del estudio se agrega ahí, una vez; hay una
   prueba que compara los campos de la carga y de la encuesta.
+- **Lo que se valida al guardar un mensaje se vuelve a validar al enviar**
+  (D91). La vista previa y **cada lote** comparan el botón de la plantilla
+  **vigente** en Meta con la `url_alchemer` **vigente**
+  (`mensajes.motivos_de_la_plantilla`), con comparación exacta, y bloquean si
+  difieren: la casilla de «guardar igual» no alcanza para enviar. Lo mismo un
+  encabezado que el sistema no completa (texto variable o archivo,
+  `mensajes.encabezado_no_soportado`): no se guarda ni se envía. Los
+  parámetros del cuerpo salen de `FUENTES_DE_PARAMETRO`; el nombre del
+  **cliente** no es una fuente, a propósito (R-CLI.4).
+- **El tipo de identificador se propone por la forma de los valores**
+  (`ingesta.tipo_sugerido`) y los avisos dicen con qué tipo se intentó
+  (`ingesta.ETIQUETAS_DE_IDENTIFICADOR`). Cambiar el tipo en la revisión la
+  deja desactualizada: no se confirma con un resumen calculado con otro tipo.
 - **Las listas de una encuesta paginan en el servidor**
   (`encuestas.pagina_de_participacion`) y **los cruces se calculan en el
   servidor** (`composicion.tabla_de_cruce`): la pantalla elige la vista. No

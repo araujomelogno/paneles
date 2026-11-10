@@ -498,9 +498,13 @@ function abrirDatosDeEncuesta(encuesta) {
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
       { texto: 'Guardar', clase: 'btn-orange', onClick: async (c) => {
           try {
-            await api.encuestas.editar(encuesta.id, datos.valor());
+            const salida = await api.encuestas.editar(encuesta.id, datos.valor());
+            const avisos = (salida.avisos || []).map((a) => a.mensaje);
             cerrarModal();
-            toast('Datos del estudio actualizados.', 'ok');
+            // R-CTL.1 — cambiar la URL con mensajes de WhatsApp ya armados:
+            // esos mensajes quedan bloqueados al enviar hasta revisarlos.
+            toast(['Datos del estudio actualizados.', ...avisos].join(' '),
+                  avisos.length ? 'warn' : 'ok');
             contexto.irA('encuestas', { encuestaId: encuesta.id });
           } catch (error) {
             $('#estudio-alerta', c).innerHTML = alerta(error.message);
@@ -1215,6 +1219,9 @@ function abrirIngesta(destino, alTerminar) {
   // `tematicasElegidas` para volver si se desmarca, pero no se guardan.
   let tematicasAGuardar = null;
   let corriendo = false;
+  // R-CTL.4 — el tipo de identificador que propone el servidor para cada
+  // variable de un `.sav` (sus valores tienen forma de id_persona).
+  let sugeridosDelSav = {};
   // R-CAN.1 (D88) — los canales aceptados que se declaran al cargar. Solo
   // los ofrece a quien gestiona canales: la ruta lo exige igual.
   const conCanales = canales.puedeDeclarar(destino.actor || contexto.actor);
@@ -1937,13 +1944,40 @@ function abrirIngesta(destino, alTerminar) {
   };
   // Cambiar la columna que identifica cambia qué se embebe: el panel de
   // calidad se vuelve a filtrar con la elección vigente.
-  $('#columna-id', caja).addEventListener('change', () => pintarCalidad());
+  $('#columna-id', caja).addEventListener('change', () => {
+    pintarCalidad();
+    proponerTipo();
+  });
   const tipoId$ = $('#tipo-identificador', caja);
-  const refrescarAyudaIdentificador = () => {
-    $('#hint-identificador', caja).textContent = AYUDA_IDENTIFICADOR[tipoId$.value];
+  const refrescarAyudaIdentificador = (propuesto = false) => {
+    $('#hint-identificador', caja).innerHTML = (propuesto
+      ? '<strong data-tipo-propuesto>Propuesto: los valores de la columna tienen forma de '
+        + 'id_persona (la muestra precargada que volvió del campo).</strong> ' : '')
+      + esc(AYUDA_IDENTIFICADOR[tipoId$.value]);
   };
-  tipoId$.onchange = refrescarAyudaIdentificador;
+  tipoId$.onchange = () => refrescarAyudaIdentificador();
   refrescarAyudaIdentificador();
+
+  /* R-CTL.4 — si los valores de la columna elegida tienen forma de
+     id_persona (UUID), se propone «Trae el id_persona del sistema». Con el
+     tipo por defecto, el sistema los buscaba como id de la plataforma, no los
+     encontraba y avisaba que no podía identificar a personas que existen.
+     Proponer no es imponer: el selector queda a la vista para cambiarlo. */
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  function proponerTipo() {
+    const columna = $('#columna-id', caja).value;
+    if (!columna) return;
+    const sugerido = datosArchivo.savBase64
+      ? sugeridosDelSav[columna]
+      : (() => {
+        const valores = calidad.muestraDeFilas(datosArchivo.filas, columna).map((m) => m.valor);
+        return valores.length && valores.every((v) => UUID.test(v)) ? 'id_persona' : null;
+      })();
+    if (sugerido && tipoId$.value !== sugerido) {
+      tipoId$.value = sugerido;
+      refrescarAyudaIdentificador(true);
+    }
+  }
 
   $('#modo-sav', caja).onchange = (e) => {
     $('#alta-sav', caja).classList.toggle('hidden', e.target.value !== 'crear_individuos');
@@ -1981,6 +2015,7 @@ function abrirIngesta(destino, alTerminar) {
         (h) => /^(id|id_en_origen|respondent|resp_id|codigo_resp)/i.test(h));
       select.innerHTML = datosArchivo.encabezados
         .map((h) => `<option value="${esc(h)}" ${h === probable ? 'selected' : ''}>${esc(h)}</option>`).join('');
+      proponerTipo();
 
       // Precarga las preguntas con las columnas que no son la de identidad.
       // Fase 8 — con una muestra de sus valores para la vista previa: el
@@ -2047,6 +2082,8 @@ function abrirIngesta(destino, alTerminar) {
     } finally {
       avance.cerrar();
     }
+    sugeridosDelSav = Object.fromEntries(analisis.variables
+      .map((v) => [v.codigo, v.tipo_identificador_sugerido || null]));
     datosArchivo = { encabezados: analisis.variables.map((v) => v.codigo),
                      filas: [], savBase64: base64 };
 
@@ -2057,6 +2094,7 @@ function abrirIngesta(destino, alTerminar) {
       .map((v) => `<option value="${esc(v.codigo)}" ${v.codigo === probable ? 'selected' : ''}>
         ${esc(v.codigo)}${analisis.candidatas_a_id.includes(v.codigo) ? ' (valores únicos)' : ''}
       </option>`).join('');
+    proponerTipo();
 
     preguntas$.innerHTML = '';
     analisis.variables
@@ -2336,7 +2374,8 @@ function abrirIngesta(destino, alTerminar) {
     // nombre. «Confirmar e importar» a secas, debajo de un cartel rojo, se
     // lee como «no se puede», y es justo lo que el analista puede decidir.
     const sinClave = Boolean(resumen.sin_clave_de_dedup);
-    revision$.innerHTML = avisosDeLaCarga(resumen) + resumenHtml(resumen) + (esCarga ? `
+    revision$.innerHTML = identidadDeLaRevision(resumen, cuerpo)
+      + avisosDeLaCarga(resumen) + resumenHtml(resumen) + (esCarga ? `
       <h4>Temáticas del estudio</h4>
       <p class="small">De qué trata este estudio, y qué preguntas sustentan cada
         temática: un panelista la tiene si respondió al menos una. ${proponer
@@ -2361,6 +2400,19 @@ function abrirIngesta(destino, alTerminar) {
       </div>`;
     revision$.classList.remove('hidden');
     formulario$.classList.add('hidden');
+    // Se engancha en el momento, antes de esperar nada más: un cambio de
+    // tipo hecho mientras cargan las temáticas tampoco puede perderse.
+    // R-CTL.4 — cambiar el tipo deja el resumen desactualizado: no se
+    // confirma con un resumen calculado con otro tipo. «Revisar de nuevo»
+    // vuelve a pedirlo con el tipo nuevo.
+    const tipoEnRevision$ = $('#tipo-en-revision', revision$);
+    tipoEnRevision$.onchange = () => {
+      tipoId$.value = tipoEnRevision$.value;
+      refrescarAyudaIdentificador();
+      const vigente = tipoEnRevision$.value === cuerpo.tipo_identificador;
+      $('#resumen-desactualizado', revision$).hidden = vigente;
+      $('#confirmar-importar', revision$).disabled = !vigente;
+    };
     // El pie del modal se esconde mientras se revisa. Si quedaba a la vista,
     // apretar su «Ingestar» volvía a pedir la revisión, la pintaba igual
     // encima y dejaba la anterior colgada: para quien mira, el botón no
@@ -2412,7 +2464,17 @@ function abrirIngesta(destino, alTerminar) {
         resolver(confirmado);
       };
       $('#volver-a-corregir', revision$).onclick = () => cerrar(false);
+      $('#revisar-de-nuevo', revision$).onclick = () => {
+        cerrar(false);
+        setTimeout(() => correr(), 0);
+      };
       $('#confirmar-importar', revision$).onclick = () => {
+        if (tipoId$.value !== cuerpo.tipo_identificador
+            || $('#columna-id', caja).value !== cuerpo.columna_id) {
+          $('#resumen-desactualizado', revision$).hidden = false;
+          toast('El resumen se calculó con otro identificador: revisalo de nuevo.', 'err');
+          return;
+        }
         // R-EU.3 — el mismo archivo otra vez: se confirma a propósito, en el
         // mismo modal (uno nuevo cerraría este y se perdería el mapeo).
         if (resumen.archivo_repetido && !$('#confirmar-repetido', revision$)?.checked) {
@@ -2438,6 +2500,29 @@ function abrirIngesta(destino, alTerminar) {
         <td>${esc(v.texto || '—')}</td>
         <td>${extra}</td></tr>`;
 
+  /* R-CTL.4 — con qué tipo se va a identificar a cada fila, a la vista y
+     editable en la misma revisión. Si los valores tienen forma de id_persona
+     y se eligió otro tipo, lo dice. */
+  function identidadDeLaRevision(r, cuerpo) {
+    const i = r.identidad || {};
+    // El tipo con que se pidió este resumen (el de la pantalla al revisar).
+    const tipo = cuerpo.tipo_identificador || i.tipo_identificador;
+    return `<div class="aviso" id="identidad-revision">
+      <h4>Cómo se identifica a cada fila</h4>
+      <div class="form-row"><div class="form-group" style="margin:0">
+        <label>Columna «${esc(i.columna_id || '')}», identificada como</label>
+        <select class="fselect" id="tipo-en-revision">${[...tipoId$.options].map((o) =>
+          `<option value="${esc(o.value)}" ${o.value === tipo ? 'selected' : ''}>${
+            esc(o.textContent)}</option>`).join('')}</select></div></div>
+      ${i.aviso_tipo ? alerta(i.aviso_tipo, 'warn') : ''}
+      <div class="alert alert-warn" id="resumen-desactualizado" hidden>
+        <strong>El resumen está desactualizado:</strong> se calculó con otro tipo de
+        identificador. No se puede confirmar hasta revisarlo de nuevo.
+        <div style="margin-top:.4rem"><button class="btn btn-orange btn-sm"
+          id="revisar-de-nuevo">Revisar de nuevo</button></div></div>
+    </div>`;
+  }
+
   /* D81 — lo que la revisión de una carga dice antes que todo lo demás:
      el archivo repetido (R-EU.3), los no convocados (R-EU.4) y quiénes
      quedan sin cada consentimiento y qué implica (R-EU.6). */
@@ -2457,7 +2542,8 @@ function abrirIngesta(destino, alTerminar) {
         <h4>${nc.cuantos} persona(s) no estaban convocadas</h4>
         <p>${esc(nc.mensaje)}</p>
         <p class="small muted">${nc.existentes} ya existen en el sistema y
-          ${nc.sin_identificar} no se pudieron identificar. Ids en el archivo:
+          ${nc.sin_identificar} no se pudieron identificar${nc.tipo_etiqueta
+            ? ` como ${esc(nc.tipo_etiqueta)}` : ''}. Ids en el archivo:
           ${esc(nc.ids_en_origen.slice(0, 12).join(', '))}${nc.ids_en_origen.length > 12 || nc.mas ? '…' : ''}</p>
         <label class="check"><input type="checkbox" id="excluir-no-convocados" />
           Excluirlas de esta carga</label>
@@ -3199,6 +3285,18 @@ function pintarAgregados(salida) {
       </tbody></table></div>`;
 }
 
+/* R-CTL.1 — las dos URL completas, una debajo de la otra. La comparación
+   es exacta: una diferencia de `http`/`https` o de una barra final tiene que
+   verse a simple vista, y en una oración no se ve. */
+function dosUrls(urlBoton, urlAlchemer) {
+  return `<div class="dos-urls" data-dos-urls>
+    <div><span class="small muted">Botón de la plantilla</span>
+      <code data-url-boton>${esc(urlBoton || '(sin URL)')}</code></div>
+    <div><span class="small muted">URL de Alchemer de la encuesta</span>
+      <code data-url-encuesta>${esc(urlAlchemer || '(sin cargar)')}</code></div>
+  </div>`;
+}
+
 /* R-CF.4 — los mensajes de la encuesta. */
 const ETIQUETA_DE_CANAL = { whatsapp: 'WhatsApp', correo: 'Correo' };
 /* Un envío queda aceptado (Meta o Workspace lo tomaron) o fallido. Entregado
@@ -3335,7 +3433,8 @@ async function abrirMensaje(encuesta, mensaje = null) {
               const valor = JSON.stringify([p.nombre, p.idioma]);
               return `<option value="${esc(valor)}" data-boton="${esc(p.boton || '')}"
                 ${valor === actual ? 'selected' : ''}>${esc(p.nombre)} · ${esc(p.idioma)} · ${esc(
-                p.boton_etiqueta || 'Solo texto')}</option>`;
+                p.boton_etiqueta || 'Solo texto')}${p.no_soportada
+                ? ' · encabezado no soportado' : ''}</option>`;
             }).join('')}
           </select>
           <div class="field-hint">Solo se listan las aprobadas por Meta. El botón de URL
@@ -3367,7 +3466,11 @@ async function abrirMensaje(encuesta, mensaje = null) {
             nombre: datos.nombre, canal: datos.canal,
             ...(datos.canal === 'whatsapp' ? {
               plantilla, plantilla_idioma: idioma,
-              parametros: $$('[data-parametro]', c).map((s) => s.value),
+              // R-CTL.3 — un texto fijo viaja con su valor.
+              parametros: $$('[data-parametro]', c).map((s) => (s.value === 'texto_fijo'
+                ? { fuente: 'texto_fijo',
+                    valor: $(`[data-texto-fijo="${s.dataset.parametro}"]`, c).value.trim() }
+                : s.value)),
             } : { asunto: datos.asunto, cuerpo: datos.cuerpo }),
             confirmar_url_distinta: !!$('[name="confirmar_url_distinta"]', c).checked,
           };
@@ -3384,7 +3487,9 @@ async function abrirMensaje(encuesta, mensaje = null) {
           } catch (error) {
             enCurso.soltar();
             $('#mensaje-alerta', c).innerHTML = alerta(error.message,
-              error.detalle?.motivo === 'url_distinta' ? 'warn' : 'error');
+              error.detalle?.motivo === 'url_distinta' ? 'warn' : 'error')
+              + (error.detalle?.motivo === 'url_distinta'
+                ? dosUrls(error.detalle.url_boton, error.detalle.url_alchemer) : '');
             if (error.detalle?.motivo === 'url_distinta') {
               $('#confirmar-url', c).style.display = '';
             }
@@ -3406,6 +3511,7 @@ async function abrirMensaje(encuesta, mensaje = null) {
     $('#confirmar-url', caja).style.display = 'none';
     if (!p) { $('#mensaje-plantilla-detalle', caja).innerHTML = ''; return; }
     const previos = mensaje && valor === actual ? mensaje.parametros : [];
+    const fuenteDe = (p) => (p && typeof p === 'object' ? p.fuente : p);
     const esFlow = p.boton === 'flow';
     const boton = esFlow ? null : p.boton_url;
     const otraUrl = boton && encuesta.url_alchemer && boton.base !== encuesta.url_alchemer;
@@ -3422,16 +3528,30 @@ async function abrirMensaje(encuesta, mensaje = null) {
             boton.dinamico ? '<span class="td-muted small"> + id_persona</span>' : ''}`
           : '<span class="muted">sin botón</span>'}</dd>
       </dl>
-      ${otraUrl ? alerta(`El botón lleva a ${boton.base} y la encuesta está en `
-        + `${encuesta.url_alchemer}.`, 'warn') : ''}
+      ${p.no_soportada ? `<div data-encabezado-no-soportado>${alerta(p.no_soportada)}</div>` : ''}
+      ${otraUrl ? alerta('El botón de la plantilla no lleva a la URL de Alchemer de la '
+        + 'encuesta. Al enviar se vuelve a comparar, y si siguen distintas el envío se '
+        + 'bloquea.', 'warn') + dosUrls(boton.base, encuesta.url_alchemer) : ''}
       ${!encuesta.url_alchemer && boton ? alerta('La encuesta todavía no tiene su URL de '
         + 'Alchemer: cargala en «Datos del estudio» para comprobar el botón.', 'warn') : ''}
       ${Array.from({ length: p.parametros_cuerpo || 0 }, (_, i) => `
         <div class="form-group"><label>Parámetro {{${i + 1}}} del texto</label>
           <select class="fselect" data-parametro="${i}">
             ${Object.entries(fuentes).map(([clave, texto]) =>
-              `<option value="${esc(clave)}" ${previos[i] === clave ? 'selected' : ''}>${esc(texto)}</option>`).join('')}
-          </select></div>`).join('')}`;
+              `<option value="${esc(clave)}" ${fuenteDe(previos[i]) === clave ? 'selected' : ''}>${esc(texto)}</option>`).join('')}
+          </select>
+          <input type="text" class="finput" data-texto-fijo="${i}" maxlength="200"
+            placeholder="hasta el viernes 14 · ganás 200 puntos"
+            value="${esc(typeof previos[i] === 'object' && previos[i] ? previos[i].valor : '')}"
+            style="margin-top:.35rem;${fuenteDe(previos[i]) === 'texto_fijo' ? '' : 'display:none'}" />
+          </div>`).join('')}`;
+    // R-CTL.3 — el texto fijo se escribe al lado de su parámetro.
+    $$('[data-parametro]', caja).forEach((s) => {
+      s.onchange = () => {
+        $(`[data-texto-fijo="${s.dataset.parametro}"]`, caja).style.display =
+          s.value === 'texto_fijo' ? '' : 'none';
+      };
+    });
   };
   $('#mensaje-canal', caja).onchange = pintarCanal;
   $('#mensaje-plantilla', caja).onchange = pintarPlantilla;
@@ -3528,7 +3648,9 @@ function pintarPrevia(previa) {
     ${previa.envio_en_curso ? alerta('Ya hay un envío de este mensaje en curso. '
       + 'Esperá a que termine para lanzar otro.', 'warn') : ''}
     ${(previa.motivos || []).length ? `<div class="alert alert-warn" data-motivos>No se puede
-      enviar:<ul>${previa.motivos.map((m) => `<li>${esc(m)}</li>`).join('')}</ul></div>` : ''}`;
+      enviar:<ul>${previa.motivos.map((m) => `<li>${esc(m)}</li>`).join('')}</ul></div>` : ''}
+    ${previa.urls && !previa.urls.coinciden
+      ? dosUrls(previa.urls.url_boton, previa.urls.url_alchemer) : ''}`;
 }
 
 /* El avance de un envío: el mismo trabajo diferido que una carga, con su

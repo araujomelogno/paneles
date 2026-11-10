@@ -262,6 +262,12 @@ def _personas_estimadas(filas, por_campo):
     return {"personas": len(claves), "sin_clave_de_dedup": sueltas}
 
 
+def _etiqueta_de_tipo(tipo):
+    from . import ingesta
+
+    return ingesta.ETIQUETAS_DE_IDENTIFICADOR.get(tipo or ingesta.POR_ALIAS, tipo)
+
+
 def resumir(plan, filas, *, panel=None, evidencia=None, destino_tipo="encuesta",
             nombre_destino=None):
     """Las siete secciones del resumen, del mismo plan que se va a ejecutar.
@@ -374,6 +380,9 @@ def resumir(plan, filas, *, panel=None, evidencia=None, destino_tipo="encuesta",
             "columna_id": columna_id,
             "columna_id_texto": texto_de.get(columna_id),
             "tipo_identificador": plan.get("tipo_identificador") or "alias",
+            # R-CTL.4 — con qué tipo se va a intentar identificar, dicho como
+            # lo dicen los avisos.
+            "tipo_etiqueta": _etiqueta_de_tipo(plan.get("tipo_identificador")),
             "origen": plan.get("origen"),
         },
         "consentimiento": _seccion_consentimiento(evidencia, texto_de),
