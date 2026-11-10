@@ -646,6 +646,46 @@ mensajes por WhatsApp o correo. Lo que no hay que deshacer:
   está en uso.
 - **Enviar es `enviar_mensajes`** (admin y operaciones), no `fieldear`.
 
+## Mensajes, canales, selección y audiencias
+
+Desde el PEDIDO del 06/11/26 (D87 a D90, `boveda/0036`):
+
+- **El Flow es un botón de la plantilla, no una sección** (D87). Un mensaje
+  de WhatsApp lleva `boton = url | flow`; el de Flow sale por
+  `whatsapp.enviar_flow` con el `id_persona` como `flow_token`, con los
+  mismos públicos, la misma regla y el mismo registro en `envio`. «Flow
+  publicado y plantilla aprobada» se exige al guardar y al enviar. No
+  vuelvan a escribir `participacion.enviado_en`, `envio_estado` ni
+  `envio_error`: están deprecadas y se quitan en una versión posterior. Lo
+  enviado por la sección vieja lo migra la `0036`
+  (`scripts/migrar_flow_a_mensajes.py`).
+- **Los canales de una carga se declaran con su texto, y un revocado no se
+  reactiva en bloque** (D88, `canales_carga.py`). Se escribe por
+  `preferencias.otorgar` (`origen = 'carga'`); quien revocó el canal se
+  saltea, quien ya lo tenía no se toca, y cada declaración queda en
+  `carga_canal_registro`. No le agreguen a `otorgar` un modo «en bloque»
+  que reactive: la reactivación es de a una persona, desde su ficha.
+- **La selección es un sorteo con semilla** (D89). El orden es
+  `md5(id_persona::text || semilla)` (`demografia.ORDEN_DE_SORTEO`; en
+  Python, `consultas.sortear`, que tiene que coincidir y hay una prueba),
+  nunca `random()` ni `order by nombre`. Una consulta sin criterios
+  semánticos es siempre aleatoria; una semántica elige `ranking` o
+  `aleatorio`. En el aleatorio semántico, una evidencia sin verificar **no
+  aprueba**: se reemplaza y se cuenta aparte. La semilla va a
+  `consulta_ejecucion` y a la audiencia.
+- **Toda audiencia que sale de una consulta es la selección vigente, y queda
+  registrada** (`encuesta_audiencia_agregado`: modo, semilla, definición,
+  cuántas). Se suma por `encuestas.convocar`, que deja afuera a la lista
+  negra y a quien no tiene contacto: no escriban otro alta de audiencia.
+- **Los datos del estudio son un solo formulario** (`web/public/js/estudio.js`)
+  para la carga, «Nueva encuesta», «Datos del estudio» y la encuesta desde
+  una consulta. Un dato nuevo del estudio se agrega ahí, una vez; hay una
+  prueba que compara los campos de la carga y de la encuesta.
+- **Las listas de una encuesta paginan en el servidor**
+  (`encuestas.pagina_de_participacion`) y **los cruces se calculan en el
+  servidor** (`composicion.tabla_de_cruce`): la pantalla elige la vista. No
+  repitan esas cuentas en JavaScript fuera de `demo.js`.
+
 ## Reglas de negocio que el código debe respetar
 
 - No se puede convocar ni incluir en muestreo a una persona sin `consentimiento` **vigente** para la finalidad correspondiente.

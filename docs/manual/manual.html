@@ -36,20 +36,22 @@
       de altas · La ficha y sus respuestas procesadas · Las cargas de cada
       persona · Otorgar una finalidad · Cargar panelistas sin panel · Los
       datos del estudio y sus clientes · Las temáticas en la revisión ·
-      Filtrar por carga · Canales de contacto · La lista negra</li></ul></li>
+      Filtrar por carga · Canales de contacto (también en bloque para una
+      carga) · La lista negra</li></ul></li>
     <li><a href="#s4"><span><span class="num">4</span> Paneles</span></a>
       <ul><li>Crear · Agregar miembros · Dar de baja una membresía · Archivar</li></ul></li>
     <li><a href="#s5"><span><span class="num">5</span> Encuestas</span></a>
-      <ul><li>Crear una ola · Convocar · Exportar la muestra · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Enviar por WhatsApp · Verificar el cruce · Calidad del dato y vista previa · Corregir y reprocesar un estudio · Varias cargas en un estudio · Encuesta desde una consulta · Borrar una encuesta o una carga</li></ul></li>
+      <ul><li>Crear una encuesta de panel o independiente · Filtrar el listado · Convocar · Exportar la muestra · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Enviar por WhatsApp Flow · Verificar el cruce · Calidad del dato y vista previa · Corregir y reprocesar un estudio · Varias cargas en un estudio · Encuesta desde una consulta · Borrar una encuesta o una carga · Mensajes y la lista de la encuesta · Agregar audiencia desde una consulta</li></ul></li>
     <li><a href="#s6"><span><span class="num">6</span> Consultas</span></a>
       <ul><li>Buscar por significado · El ranking y la evidencia · Columnas ·
       La ficha desde un resultado · Exclusiones · Verificación incompleta ·
       Reidentificación · Modos · Consultas guardadas · Diagnóstico e
-      intercambio con el verificador · Consultas solo demográficas · Filtrar
-      por cliente</li></ul></li>
+      intercambio con el verificador · Consultas solo demográficas, sorteadas ·
+      Filtrar por cliente · Selección por ranking o aleatoria · Filtrar por
+      participación en una encuesta</li></ul></li>
     <li><a href="#s7"><span><span class="num">7</span> Composición</span></a>
       <ul><li>El ámbito: todos, un panel, una encuesta o una carga · Universo de referencia ·
-      Brecha · Cruce de dos dimensiones</li></ul></li>
+      Brecha · Cruce de dos dimensiones, en cantidad o en porcentaje</li></ul></li>
     <li><a href="#s8"><span><span class="num">8</span> Participación</span></a>
       <ul><li>Tasa de respuesta · Último contacto · Fatiga del panel</li></ul></li>
     <li><a href="#s9"><span><span class="num">9</span> Análisis longitudinal</span></a>
@@ -74,7 +76,7 @@
       que no se duplica · Las temáticas de cada panelista · Temáticas
       especiales · La taxonomía: áreas · Temáticas sin personas · Borrar una
       carga · Los clientes de una carga · De dónde vienen los
-      reutilizados</li></ul></li>
+      reutilizados · Registrar los canales aceptados</li></ul></li>
     <li><a href="#s13"><span><span class="num">16</span> Preguntas frecuentes</span></a></li>
     <li><a href="#s14"><span><span class="num">17</span> Glosario</span></a></li>
   </ol>
@@ -825,6 +827,15 @@
     demostrable.</figcaption>
   </figure>
 
+  <div class="aviso info">
+    <div class="t">Para toda la gente de una carga, en bloque</div>
+    <p>Una carga puede declarar los canales que aceptó su gente —WhatsApp,
+    correo— con <strong>el texto con que lo aceptaron</strong>: al cargarla, en
+    el paso de los canales del formulario, o después, desde el detalle de la
+    carga (sección 15.13). Quien había <strong>revocado</strong> un canal no se
+    reactiva en bloque: se reactiva solo desde su ficha, de a una persona.</p>
+  </div>
+
   <p>Los canales se registran en los tres caminos por los que entra una
   persona: al enrolarla a mano, al crearla desde un archivo de campo —declarando
   qué variable evidencia la autorización, igual que con el consentimiento— y en
@@ -1130,8 +1141,9 @@
     panel. Es la ola de siempre, con convocatoria, muestreo y
     optimizador.</li>
     <li><strong>Independiente</strong>: no tiene panel. Puede tener una
-    audiencia propia, creada desde una consulta (sección 5.11), o ninguna,
-    como la que se crea al cargar panelistas (sección 3.6).</li>
+    audiencia propia —armada en pasos, a mano o desde consultas (secciones
+    5.1, 5.11 y 5.14)— o ninguna, como la que se crea al cargar panelistas
+    (sección 3.6).</li>
   </ul>
 
   <p>Las respuestas entran siempre en <strong>cargas</strong>: cada archivo
@@ -1150,11 +1162,28 @@
 
   <ol class="pasos">
     <li>Utilizar <strong>+ Nueva encuesta</strong>.</li>
-    <li>Elegir el panel al que se le va a fieldear, indicar el nombre de la ola y
-    la fecha de campo. Opcionalmente, el público objetivo, una descripción y
-    los clientes del estudio.</li>
+    <li>Elegir el <strong>tipo</strong>: <em>de panel</em> (su audiencia es un
+    panel; se elige cuál) o <em>independiente</em> (su audiencia se arma a mano o
+    desde consultas).</li>
+    <li>Completar los <strong>datos del estudio</strong>: nombre, fecha de
+    campo, público objetivo, clientes, URL de la encuesta en Alchemer y
+    descripción. Es <strong>el mismo formulario</strong> que pide una carga
+    (sección 3.6): si mañana se suma un dato al estudio, aparece en los dos
+    lados.</li>
+    <li>Opcionalmente, las <strong>temáticas</strong> del estudio, a mano. Las
+    que propone la inteligencia artificial llegan con la primera carga, a
+    partir de las preguntas.</li>
     <li>Confirmar con <strong>Crear</strong>.</li>
   </ol>
+
+  <p>Una encuesta <strong>independiente nace sin audiencia</strong>. Se
+  completa con <strong>Agregar panelistas</strong> (a mano, sección 5.13),
+  con <strong>Agregar audiencia desde una consulta</strong> (sección 5.14) o
+  con sus cargas. Ya no hace falta crear un panel para eso.</p>
+
+  <p><strong>El listado</strong> se filtra por tipo, por <strong>estado</strong>
+  (borrador, en campo, cerrada) y por <strong>cliente</strong>, y los filtros
+  se combinan: «las que están en campo para ANTEL» es una sola vista.</p>
 
   <figure>
     <img class="recorte" src="capturas/15-encuesta-nueva.jpg" alt="Creación de una encuesta" />
@@ -1787,12 +1816,26 @@
     los consentimientos ya registrados no se duplican.</p>
   </div>
 
-  <h3><span class="n">5.6</span> Enviar la encuesta por WhatsApp</h3>
+  <h3><span class="n">5.6</span> Enviar la encuesta por WhatsApp Flow</h3>
 
-  <p>Una encuesta puede configurarse para enviarse como un <strong>Flow de
-  WhatsApp</strong>. El sistema <strong>solamente envía</strong>: las
-  respuestas se descargan de Meta y se ingestan por el procedimiento habitual
-  (sección 5.4). No recibe respuestas ni permite crear los Flows.</p>
+  <p>Un <strong>Flow de WhatsApp</strong> es la encuesta adentro de WhatsApp:
+  la persona la responde sin salir de la conversación. El sistema
+  <strong>solamente envía</strong>: las respuestas se descargan de Meta y se
+  ingestan por el procedimiento habitual (sección 5.4). No recibe respuestas ni
+  permite crear los Flows.</p>
+
+  <div class="aviso">
+    <div class="t">Desde esta versión, un Flow es un mensaje</div>
+    <p>Ya no hay una sección «WhatsApp Flow» en el detalle de la encuesta. El
+    Flow es un <strong>tipo de botón de la plantilla</strong>: se arma un
+    mensaje en <strong>Mensajes</strong> (sección 5.13) y se elige una plantilla
+    con <em>botón de Flow</em>. Tiene los mismos cuatro públicos —todos, no
+    enviado aún, no contestaron, respondieron—, la misma regla de quién puede
+    recibirlo y el mismo registro de a quién se le envió. Lo que se había
+    enviado con la sección anterior quedó como un mensaje llamado
+    <i>WhatsApp Flow</i>, con sus envíos: «No enviado aún» no se lo repite a
+    nadie.</p>
+  </div>
 
   <div class="aviso">
     <div class="t">El Flow y la plantilla se crean en Meta</div>
@@ -1804,18 +1847,14 @@
 
   <h4>Elegir la plantilla</h4>
 
-  <p>Lo único que se configura en esta pantalla es <strong>cuál de las
-  plantillas aprobadas</strong> de la cuenta usar. Se elige de una lista, y
-  nada más: cada plantilla lleva adentro su idioma y el Flow que abre su
-  botón, así que no hay que copiar ningún identificador desde Meta.</p>
-
-  <figure>
-    <img src="capturas/53-plantilla-whatsapp.jpg" alt="Elegir la plantilla de WhatsApp" />
-    <figcaption><b>La lista muestra solo lo que sirve.</b> Únicamente las
-    plantillas aprobadas que llevan un botón de Flow. Al elegir una se ven su
-    idioma, el Flow que abre y el texto del mensaje, para confirmar que es la
-    correcta antes de guardar.</figcaption>
-  </figure>
+  <p>En <strong>+ Nuevo mensaje</strong>, canal WhatsApp, la lista de
+  plantillas dice de cada una qué botón lleva: <em>Botón de URL</em> (la
+  encuesta en Alchemer), <em>Botón de Flow</em> o <em>Solo texto</em>. Cada
+  plantilla lleva adentro su idioma y el Flow que abre su botón, así que no hay
+  que copiar ningún identificador desde Meta. Con una de Flow elegida, el
+  detalle muestra el Flow y aclara que el identificador del sistema viaja como
+  <code>flow_token</code>: las respuestas que se bajen de Meta mapean
+  directo.</p>
 
   <div class="aviso info">
     <div class="t">El mismo nombre en dos idiomas son dos plantillas</div>
@@ -1827,38 +1866,28 @@
     a la gente.</p>
   </div>
 
-  <p>El sistema comprueba contra Meta que la plantilla esté aprobada y que el
-  Flow que lleva adentro esté publicado, <strong>antes</strong> de permitir el
-  envío. Si algo falta, lo indica con su motivo en lugar de dejar enviar y
-  fallar mensaje por mensaje.</p>
+  <p>El sistema comprueba contra Meta que la plantilla esté
+  <strong>aprobada</strong> y que el Flow esté <strong>publicado</strong>, al
+  guardar el mensaje y otra vez al enviarlo. Si algo falta, lo dice con su
+  motivo en lugar de dejar enviar y fallar mensaje por mensaje.</p>
 
   <h4>A quiénes se envía</h4>
 
   <p>Solo a quienes cumplen <strong>los dos ejes</strong> —consentimiento de
   contacto vigente y autorización de WhatsApp activa (sección 3.7)— y además
-  tienen un celular válido. Quienes no cumplen quedan fuera, y la pantalla
-  informa <strong>por qué motivo cada uno</strong>.</p>
-
-  <figure>
-    <img src="capturas/60-estado-flow.jpg" alt="Estado del Flow y destinatarios" />
-    <figcaption><b>Antes de enviar.</b> Arriba, qué plantilla quedó
-    configurada —con su idioma, porque es lo que distingue dos versiones del
-    mismo nombre— y si el Flow está publicado. Abajo, a cuántos se les puede
-    enviar y cuántos quedan fuera. Los motivos se detallan por separado porque
-    se resuelven de manera distinta: a unos hay que pedirles el
-    consentimiento, a otros ofrecerles el canal y a otros cargarles el
-    celular.</figcaption>
-  </figure>
+  tienen un celular válido. La vista previa del envío dice cuántos lo van a
+  recibir y quiénes quedan afuera, <strong>por motivo</strong>:</p>
 
   <table class="tabla-roles">
     <tr><th style="width:34%">Motivo</th><th>Cómo se resuelve</th></tr>
     <tr><td class="destacado">Sin consentimiento de contacto</td>
       <td>Corresponde solicitarlo: sin él no se puede contactar a esa persona
       por ningún medio.</td></tr>
-    <tr><td class="destacado">No aceptó recibir WhatsApp</td>
+    <tr><td class="destacado">No aceptó WhatsApp como canal</td>
       <td>Tiene consentimiento de contacto, pero no autorizó ese canal. Hay
-      que ofrecérselo y registrarlo en su ficha.</td></tr>
-    <tr><td class="destacado">Sin celular cargado</td>
+      que ofrecérselo y registrarlo en su ficha, o —si vino en una carga cuyo
+      texto lo cubre— registrarlo para toda la carga (sección 15.13).</td></tr>
+    <tr><td class="destacado">Sin celular</td>
       <td>Autorizó el canal pero su ficha no tiene número. Se completa desde
       Panelistas.</td></tr>
     <tr><td class="destacado">Celular inválido</td>
@@ -1868,17 +1897,10 @@
 
   <div class="aviso info">
     <div class="t">Reintentar no duplica mensajes</div>
-    <p>Si algún envío falla, se puede reintentar: el sistema envía únicamente a
-    quienes no recibieron el mensaje. Un mensaje duplicado deteriora la
-    reputación del número emisor, y esa reputación es la que determina si Meta
-    permite seguir enviando.</p>
-  </div>
-
-  <div class="aviso">
-    <div class="t">El envío no reemplaza a la convocatoria</div>
-    <p>La convocatoria se registra igual que siempre y el envío es una acción
-    <strong>sobre</strong> ella. Es posible convocar sin enviar, y enviar más
-    tarde.</p>
+    <p>«No enviado aún» le manda solo a quien no lo recibió; un envío que falló
+    cuenta como no enviado. Un mensaje duplicado deteriora la reputación del
+    número emisor, y esa reputación es la que determina si Meta permite seguir
+    enviando.</p>
   </div>
 
   <h3><span class="n">5.7</span> Verificar el cruce entre las dos bases</h3>
@@ -2126,12 +2148,22 @@
 
   <p>En la barra de acciones de un resultado de consulta, <strong>Crear
   encuesta</strong> abre una encuesta independiente cuya audiencia es
-  <strong>la foto</strong> de ese resultado: las personas de ese momento,
+  <strong>la foto</strong> de la selección: las personas de ese momento,
   aunque la consulta después devuelva otras.</p>
 
   <ul class="puntos">
-    <li>Se completa el nombre y, opcionalmente, la fecha de campo, el público
-    objetivo y los clientes.</li>
+    <li><strong>Con quiénes.</strong> La selección que se está viendo: la
+    <em>sorteada</em> (una consulta demográfica, o una semántica en modo
+    aleatorio) o <em>las mejores del ranking</em> (sección 6.12). Nunca las
+    primeras por nombre. En una consulta solo demográfica se ofrece además
+    <strong>todo el segmento</strong>, no solo las que entraban en
+    pantalla.</li>
+    <li><strong>Queda registrado cómo se armó</strong>: el modo (ranking,
+    aleatorio o segmento completo), la semilla del sorteo y cuántas personas.
+    Si alguien pregunta por qué estas personas y no otras, la respuesta está en
+    la encuesta, en <i>Cómo se armó la audiencia</i>.</li>
+    <li>Los datos del estudio son el mismo formulario que el de «Nueva
+    encuesta» (sección 5.1).</li>
     <li>Quedan afuera quienes están en la lista negra y quienes no tienen
     consentimiento de contacto, y el aviso dice cuántos de cada uno.</li>
     <li>Si la consulta era semántica, queda registrado como una
@@ -2240,6 +2272,58 @@
   aceptaron) o <i>Falló</i> (pasando el ratón, el motivo). Si el mensaje llegó a
   destino o se leyó todavía no se sabe desde el sistema. El primer mensaje que
   alguien recibe lo deja convocado con esa fecha.</p>
+
+  <p>Un mensaje de WhatsApp puede llevar un botón de URL (la encuesta en
+  Alchemer) o un <strong>botón de Flow</strong> (la encuesta adentro de
+  WhatsApp, sección 5.6). En la tabla de mensajes, el de Flow lleva la marca
+  <i>Flow</i>.</p>
+
+  <h4>La lista de la encuesta: buscar, filtrar, de a 50</h4>
+
+  <p>La lista de <strong>Convocatoria</strong> (o de <strong>Respondentes</strong>,
+  en una encuesta que llegó como archivo) se ve <strong>de a 50</strong>, con
+  «página N de M · T personas» y los botones para avanzar. Arriba:</p>
+
+  <ul class="puntos">
+    <li><strong>Buscar</strong> por nombre o identificador —el del sistema, el
+    correo o el id en el origen—. Encontrar a una persona en una encuesta de más
+    de mil lleva segundos.</li>
+    <li><strong>Filtrar</strong> por si respondió, por si fue convocada y por un
+    mensaje de la encuesta: quienes lo recibieron o quienes no. «No respondió» y
+    «Invitación · lo recibió» juntos dan exactamente a quién mandarle el
+    recordatorio.</li>
+  </ul>
+
+  <p>Los filtros y la búsqueda se mantienen al cambiar de página; cambiar un
+  filtro vuelve a la primera. Los totales de abajo (convocados, respondieron)
+  son de toda la encuesta, no de la página.</p>
+
+  <h3><span class="n">5.14</span> Agregar audiencia desde una consulta</h3>
+
+  <p>Una encuesta en <strong>borrador o en campo</strong> se puede ampliar sin
+  rehacerla: <strong>Agregar audiencia desde una consulta</strong>, en la
+  tarjeta Convocatoria. Una encuesta cerrada no lo ofrece.</p>
+
+  <ol class="pasos">
+    <li>El botón abre la sección <strong>Consultas</strong> con un aviso,
+    <i>Agregando audiencia a la encuesta X</i>, y con un criterio ya puesto:
+    <strong>excluir a quienes están en la audiencia</strong> de esa encuesta. Así
+    nadie entra dos veces.</li>
+    <li>Se arma la consulta como cualquier otra (demográfica, por temática, por
+    cliente, semántica o combinada) y se corre.</li>
+    <li>En el resultado, <strong>Agregar a la encuesta X</strong> pide cuántas:
+    <em>una cantidad</em>, en el orden de la selección —sorteada con su semilla,
+    o según el modo elegido en una semántica—, o <em>todo el segmento</em> (solo
+    sin criterios semánticos).</li>
+    <li>Al confirmar, entran por <strong>el mismo camino que convocar</strong>:
+    quien está en la lista negra o no tiene consentimiento de contacto queda
+    afuera. El resultado dice cuántas entraron y cuántas no, por motivo.</li>
+  </ol>
+
+  <p>Cada agregado queda registrado en la encuesta: quién, cuándo, la
+  definición de la consulta, el modo, la semilla y cuántas personas. La tabla
+  <i>Cómo se armó la audiencia</i>, debajo de la lista, la reconstruye paso a
+  paso.</p>
 </section>
 
 
@@ -2944,9 +3028,35 @@
 
   <p>Una consulta que solo tiene criterios demográficos —por ejemplo, todas
   las mujeres de Montevideo— se resuelve entera en la bóveda, sin tocar las
-  respuestas. Es el uso más frecuente de la pantalla, y su resultado tiene
-  <strong>la misma barra de acciones</strong> que el ranking de una consulta
-  semántica:</p>
+  respuestas. Es el uso más frecuente de la pantalla.</p>
+
+  <div class="aviso grave">
+    <div class="t">Las personas que se muestran son un sorteo</div>
+    <p>El total del segmento se cuenta entero, y las que se muestran son una
+    <strong>selección aleatoria</strong> del segmento, no las primeras por
+    orden alfabético. No es estética: el nombre está asociado al sexo y a la
+    generación, y las primeras cincuenta por nombre no representan al segmento.
+    Ese sesgo pasaba directo a la encuesta creada desde el resultado.</p>
+  </div>
+
+  <ul class="puntos">
+    <li><strong>La semilla.</strong> Cada ejecución sortea con una semilla
+    nueva, que se ve arriba del resultado y queda guardada con la ejecución. Con
+    la misma semilla y los mismos datos, la selección es idéntica: se puede
+    rehacer y auditar.</li>
+    <li><strong>Volver a sortear</strong> corre la misma consulta con una
+    semilla nueva.</li>
+    <li><strong>Las páginas</strong> son del mismo sorteo: dos páginas
+    seguidas no repiten ni pierden a nadie.</li>
+    <li><strong>Ordenar la tabla</strong> —tocando el encabezado de una
+    columna— es solo para leer cómodo: no cambia quiénes son. El sorteo decide
+    quiénes; el orden de la tabla, cómo se leen.</li>
+    <li><strong>Descargar CSV</strong> baja la misma selección, en el mismo
+    orden que la pantalla.</li>
+  </ul>
+
+  <p>El resultado tiene <strong>la misma barra de acciones</strong> que el
+  ranking de una consulta semántica:</p>
 
   <ul class="puntos">
     <li><strong>Ficha</strong> en cada fila (sección 6.3), sin perder el
@@ -3169,6 +3279,52 @@
     <figcaption><b>Las completas recientes</b>, con su estado y su gasto.
     <i>Abrir</i> vuelve al avance o al resultado.</figcaption>
   </figure>
+
+  <h3><span class="n">6.12</span> Selección por ranking o aleatoria</h3>
+
+  <p>En una consulta con criterios semánticos, el selector
+  <strong>Selección</strong> decide quiénes se muestran:</p>
+
+  <ul class="puntos">
+    <li><strong>Por ranking</strong>: los que mejor cumplen el criterio. Es lo
+    de siempre, y lo que conviene cuando se busca a quienes más saben o más
+    opinan de un tema.</li>
+    <li><strong>Aleatorio entre los que cumplen</strong>: un sorteo entre las
+    personas cuya evidencia supera el <strong>umbral de confianza</strong>. Es lo
+    que conviene cuando el resultado va a ser la audiencia de una encuesta y no
+    se quiere sesgarla hacia los más elocuentes.</li>
+  </ul>
+
+  <p>En el modo aleatorio, el sistema arma el <strong>pool</strong> —todas las
+  personas con evidencia por debajo del umbral—, las sortea con una semilla,
+  las verifica <strong>en el orden del sorteo</strong> y reemplaza a quien no
+  queda «cumple» por la siguiente, hasta llegar a la cantidad pedida o agotar el
+  pool. El resultado informa el tamaño del pool, cuántas se sortearon, cuántas
+  se verificaron, cuántas se reemplazaron y cuántas quedaron. Si el pool se
+  agota, lo dice: «solo hay N personas que cumplen».</p>
+
+  <div class="aviso">
+    <div class="t">El umbral importa más que antes</div>
+    <p>Con un umbral muy laxo, el pool se llena de gente que no va a cumplir y
+    hay muchos reemplazos: más llamadas a Claude. Con uno muy estricto, el pool
+    queda chico. Hay un tope de verificaciones (cuatro por cada persona pedida),
+    y si se alcanza, el resultado lo avisa. Una evidencia que no se pudo
+    verificar <strong>no aprueba</strong>: esa persona se reemplaza y se cuenta
+    aparte.</p>
+  </div>
+
+  <p>En una consulta <strong>completa</strong> (sección 6.11) el modo y la
+  semilla se guardan con la ejecución, y el sorteo es entre las confirmadas.</p>
+
+  <h3><span class="n">6.13</span> Filtrar por participación en una encuesta</h3>
+
+  <p><strong>+ Encuesta</strong> agrega un criterio sobre una encuesta:
+  quienes <strong>están en su audiencia</strong> o quienes <strong>la
+  respondieron</strong>, para <strong>incluirlos</strong> o
+  <strong>excluirlos</strong>. Sirve, por ejemplo, para no repetirle el estudio a
+  quien participó en la ola anterior, o para volver a hablar solo con quienes
+  respondieron. Se resuelve en la bóveda y se combina con todo lo demás:
+  demográficos, temáticas, clientes y criterios semánticos.</p>
 </section>
 
 <!-- ════════════════ 7 ════════════════ -->
@@ -3288,6 +3444,30 @@
   muestran; el cruce sí. El cruce es puramente descriptivo y no incluye brecha,
   porque el universo de referencia se carga por dimensión y no por celda
   cruzada.</p>
+
+  <h4>En cantidad o en porcentaje</h4>
+
+  <p>Las cantidades no sirven para comparar grupos de distinto tamaño. El
+  selector del cruce ofrece cuatro vistas, para cualquier ámbito —todos, un
+  panel, una carga o una encuesta, incluida la comparación de convocados y
+  respondentes—:</p>
+
+  <table class="tabla-roles">
+    <tr><th style="width:30%">Vista</th><th>Qué muestra cada celda</th></tr>
+    <tr><td class="destacado">Cantidad (N)</td><td>La cantidad de personas.</td></tr>
+    <tr><td class="destacado">% de columna</td><td>El porcentaje dentro de su
+      columna: cada columna suma 100 %.</td></tr>
+    <tr><td class="destacado">% de fila</td><td>El porcentaje dentro de su fila:
+      cada fila suma 100 %.</td></tr>
+    <tr><td class="destacado">% del total</td><td>El porcentaje sobre el total de
+      la tabla.</td></tr>
+  </table>
+
+  <p>Cada porcentaje muestra <strong>su base</strong> —el total de su columna,
+  de su fila o de la tabla—, y una base de menos de <strong>30</strong> casos se
+  marca ⚠ como <strong>base chica</strong>: con doce personas, un 25 % son tres.
+  El umbral se puede cambiar por configuración. La vista elegida se mantiene al
+  cambiar de cruce o de ámbito, mientras dure la sesión.</p>
 
   <h3><span class="n">7.5</span> El ámbito: todos los panelistas, un panel o una carga</h3>
 
@@ -4865,6 +5045,51 @@
     carga anterior a octubre de 2026, que no dejó constancia (sección
     3.5).</li>
   </ul>
+
+  <h3><span class="n">15.13</span> Registrar los canales aceptados</h3>
+
+  <p>Para recibir un mensaje hacen falta dos cosas: el consentimiento de
+  contacto y la autorización del canal (sección 3.7). Una carga registraba lo
+  primero y nunca lo segundo, así que <strong>nadie que hubiera entrado por una
+  carga podía recibir mensajes</strong>. La tarjeta <strong>Canales
+  aceptados</strong> del detalle de la carga lo resuelve, para administración y
+  operaciones:</p>
+
+  <ol class="pasos">
+    <li><strong>Registrar canales aceptados</strong>.</li>
+    <li>Marcar WhatsApp, correo o los dos, y para cada uno elegir <strong>la
+    versión del texto</strong> con que lo aceptaron, de los textos publicados
+    (se puede ver el texto completo antes de elegir). Sin texto no se registra:
+    «aceptó recibir WhatsApp» sin respaldo es una afirmación vacía.</li>
+    <li><strong>Ver vista previa</strong>: cuántas personas van a quedar con
+    cada canal y cuántas no, por motivo —sin celular válido, sin correo, revocó
+    el canal—, y cuántas ya lo tenían.</li>
+    <li><strong>Registrar</strong>. Se aplica a todas las personas de la carga,
+    creadas o reutilizadas.</li>
+  </ol>
+
+  <ul class="puntos">
+    <li><strong>Quien había revocado el canal no se reactiva.</strong> Alguien
+    que pidió no recibir más WhatsApp volvería a recibirlo porque una carga vieja
+    decía que sí. Se reactiva solo desde su ficha, de a una persona.</li>
+    <li><strong>Quien ya lo tenía no se toca</strong>: su autorización (de la
+    landing, del portal) se conserva tal cual.</li>
+    <li><strong>Queda registrado</strong> en la misma tarjeta: quién, cuándo, qué
+    canales, con qué texto y a cuántas personas.</li>
+    <li>Lo mismo se puede declarar <strong>al cargar</strong>: el formulario de la
+    carga tiene el paso <i>Canales aceptados</i>, y la revisión muestra la misma
+    vista previa antes de confirmar.</li>
+  </ul>
+
+  <div class="aviso grave">
+    <div class="t">Una lectura que no es técnica</div>
+    <p>Si el texto de una carga —por ejemplo, «el teléfono se usará para
+    contactarte si clasificás para este estudio o futuros»— alcanza como
+    aceptación de WhatsApp como canal es una decisión de quien asesora en
+    protección de datos. El sistema exige elegir el texto para que esa decisión
+    quede respaldada y auditada; usarlo sobre cargas reales queda sujeto a esa
+    validación.</p>
+  </div>
 </section>
 
 <section id="s13">
@@ -4874,6 +5099,27 @@
     <h2>Preguntas frecuentes</h2>
     <p>Situaciones habituales y su explicación.</p>
   </div>
+
+  <h4>La consulta demográfica no me muestra a los mismos de la vez anterior</h4>
+  <p>Es lo esperable: cada ejecución sortea con una semilla nueva. Para ver la
+  misma selección hay que usar la misma semilla (la de arriba del resultado);
+  para otra, <i>Volver a sortear</i>. Las personas son un sorteo del segmento,
+  nunca las primeras por nombre (6.10).</p>
+
+  <h4>Nadie de una carga puede recibir mensajes</h4>
+  <p>Falta registrar el canal: la carga registra el consentimiento de contacto
+  pero no si aceptaron WhatsApp o correo. Se declara para toda la carga, con su
+  texto, desde su detalle (15.13).</p>
+
+  <h4>¿Dónde quedó la sección «WhatsApp Flow»?</h4>
+  <p>Ahora es un mensaje: en Mensajes se elige una plantilla con botón de Flow.
+  Lo que se había enviado con la sección vieja está en un mensaje llamado
+  «WhatsApp Flow» (5.6).</p>
+
+  <h4>¿Por qué estas personas y no otras en la audiencia de la encuesta?</h4>
+  <p>Cada paso que la armó desde una consulta queda registrado con el modo y la
+  semilla, en <i>Cómo se armó la audiencia</i>, debajo de la lista (5.11,
+  5.14).</p>
 
   <h4>Agregué a alguien a la lista negra y sigue apareciendo en las consultas</h4>
   <p>Es lo esperable. La lista negra impide convocarlo, no usar lo que ya
@@ -5211,6 +5457,23 @@
       <td>Para quién se hizo el estudio de una carga. Una carga puede tener
       varios; cada panelista hereda los de las cargas en que estuvo.
       Confidencial: no llega al portal ni a las exportaciones.</td></tr>
+    <tr><td class="destacado">Semilla</td>
+      <td>El código con que se sorteó una selección aleatoria. Con la misma
+      semilla y los mismos datos, la misma selección: es lo que permite rehacerla
+      y auditarla. Queda guardada con la consulta y con la audiencia de una
+      encuesta.</td></tr>
+    <tr><td class="destacado">Selección aleatoria</td>
+      <td>Un sorteo con semilla del segmento (consulta demográfica) o de quienes
+      cumplen el criterio (consulta semántica en modo aleatorio). Lo contrario
+      del ranking, que muestra a los que mejor cumplen.</td></tr>
+    <tr><td class="destacado">Base chica</td>
+      <td>En un cruce en porcentaje, una columna, fila o tabla con menos casos
+      que el umbral (30 por defecto). Se marca ⚠: un porcentaje sobre pocos casos
+      no permite sacar conclusiones.</td></tr>
+    <tr><td class="destacado">Canal aceptado</td>
+      <td>Por dónde aceptó la persona que se la contacte (WhatsApp, correo…),
+      con el texto con que lo aceptó. Hace falta además del consentimiento de
+      contacto para recibir un mensaje.</td></tr>
     <tr><td class="destacado">Lista negra</td>
       <td>Quienes no se convocan, ni desde el sistema ni desde COLOQUIO. Cada
       entrada tiene motivo, quién y cuándo; sacar a alguien no la borra. No
