@@ -341,15 +341,10 @@ function sembrar() {
 
   // Y una sin convocar en el panel que sí tiene universo de referencia: es
   // la que deja ver el muestreo de la Fase 3 haciendo lo suyo, priorizando
-  // la brecha contra un objetivo cargado. Va configurada como Flow de
-  // WhatsApp (R4.5): sin una así, la pantalla de envío no tendría nada que
-  // mostrar y el estado del Flow no se podría ver nunca.
-  const movilidad = crearEncuesta(nacional.id, 'Ola 3 — Movilidad urbana',
-                                  '2026-10-10');
-  Object.assign(movilidad, {
-    flow_plantilla: 'invitacion_ola', flow_idioma: 'es',
-    flow_id: '7412880031', es_flow: true,
-  });
+  // la brecha contra un objetivo cargado. Su mensaje es un WhatsApp Flow
+  // (D87): el Flow es un botón de la plantilla, no una sección aparte (lo
+  // siembra `sembrarConvocatoriaDemo`).
+  crearEncuesta(nacional.id, 'Ola 3 — Movilidad urbana', '2026-10-10');
 
   // R3.13 — una carga externa ya hecha: gente incorporada con sus respuestas
   // que **no** es panelista. Sin esto el filtro «sin panel» de la pantalla de
@@ -1830,99 +1825,9 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     }
   }
 
-  /* R4.5 — las plantillas de la cuenta de WhatsApp.
-
-     La copia demo no llama a Meta: devuelve un catálogo fijo con la forma
-     que devuelve la API. Las tres están para mostrar los tres casos que la
-     pantalla tiene que distinguir: la que sirve, la que existe en dos
-     idiomas —y por eso son dos plantillas distintas— y ninguna sin botón de
-     Flow, porque el backend las filtra antes de que lleguen acá. */
-  if (clave === 'GET /whatsapp/plantillas') {
-    return { plantillas: PLANTILLAS_DEMO, configurado: true, faltan: [],
-             sin_flow: 1, avisos: [] };
-  }
-
-  /* R4.5 — el canal de WhatsApp de una encuesta. */
-  if (partes[0] === 'encuestas' && partes[2] === 'flow') {
-    const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
-    if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
-    if (metodo === 'PUT') {
-      const nombre = (cuerpo.plantilla || '').trim() || null;
-      const idioma = (cuerpo.idioma || '').trim() || null;
-      // El idioma y el `flow_id` salen de la plantilla, no del formulario.
-      const candidatas = PLANTILLAS_DEMO.filter((p) =>
-        p.nombre === nombre && (!idioma || p.idioma === idioma));
-      const elegida = candidatas.length === 1 ? candidatas[0] : null;
-      Object.assign(encuesta, {
-        flow_plantilla: nombre,
-        flow_idioma: elegida ? elegida.idioma : idioma,
-        flow_id: elegida ? elegida.flow_id : null,
-      });
-      encuesta.es_flow = !!encuesta.flow_plantilla;
-      return encuesta;
-    }
-    // La copia demo no llama a Meta: responde como si el Flow estuviera
-    // publicado y la plantilla aprobada, que es el caso que interesa recorrer.
-    const resuelta = !!(encuesta.es_flow && encuesta.flow_id);
-    const ambigua = encuesta.es_flow && !encuesta.flow_id
-      && PLANTILLAS_DEMO.filter((p) => p.nombre === encuesta.flow_plantilla);
-    return {
-      encuesta_id: encuesta.id, es_flow: !!encuesta.es_flow,
-      flow_id: encuesta.flow_id, plantilla: encuesta.flow_plantilla,
-      idioma: encuesta.flow_idioma,
-      puede_enviar: resuelta,
-      motivos: resuelta ? [] : (
-        !encuesta.es_flow
-          ? ['La encuesta no está configurada como Flow.']
-          : [`Hay ${(ambigua || []).length} plantillas «${encuesta.flow_plantilla}», `
-             + `una por idioma. Hay que elegir cuál: son plantillas distintas y `
-             + `se aprueban por separado.`]),
-      idiomas_disponibles: resuelta ? undefined
-        : (ambigua || []).map((p) => p.idioma).sort(),
-      flow: resuelta ? { nombre: 'Invitación a la ola', estado: 'PUBLISHED' } : undefined,
-      plantilla_estado: resuelta ? 'APPROVED' : undefined,
-      texto_boton: resuelta ? 'Responder la encuesta' : undefined,
-    };
-  }
-
-  if (partes[0] === 'encuestas' && partes[2] === 'whatsapp') {
-    const encuestaId = Number(partes[1]);
-    const convocados = bd.participaciones.filter((p) => p.encuesta_id === encuestaId);
-    const excluidos = {};
-    const destinatarios = [];
-    const yaEnviados = [];
-    convocados.forEach((p) => {
-      const persona = bd.personas.find((x) => x.id_persona === p.id_persona);
-      const excluir = (motivo) => {
-        (excluidos[motivo] = excluidos[motivo] || []).push(p.id_persona);
-      };
-      if (!vigente(p.id_persona, 'contacto_participacion')) return excluir('sin_consentimiento');
-      const preferencia = bd.canales.find(
-        (c) => c.id_persona === p.id_persona && c.canal === 'whatsapp' && c.activa);
-      if (!preferencia) return excluir('sin_preferencia_whatsapp');
-      if (!persona?.celular) return excluir('sin_celular');
-      if (!/^\+\d{8,15}$/.test(persona.celular)) return excluir('celular_invalido');
-      if (p.envio_estado === 'enviado') { yaEnviados.push(p.id_persona); return; }
-      destinatarios.push(p.id_persona);
-    });
-    const seleccion = {
-      encuesta_id: encuestaId, convocados: convocados.length,
-      destinatarios, ya_enviados: yaEnviados, excluidos,
-      excluidos_total: Object.values(excluidos).reduce((n, v) => n + v.length, 0),
-    };
-    if (metodo === 'GET') return seleccion;
-
-    // El envío. Reintentar no le vuelve a mandar a quien ya recibió.
-    destinatarios.forEach((idPersona) => {
-      const participacion = convocados.find((p) => p.id_persona === idPersona);
-      Object.assign(participacion,
-                    { enviado_en: ahora(), envio_estado: 'enviado' });
-    });
-    return {
-      ...seleccion, enviados: destinatarios.length, fallidos: 0,
-      detalle: destinatarios.map((i) => ({ id_persona: i, estado: 'enviado' })),
-    };
-  }
+  /* R4.5 — la sección «WhatsApp Flow» se unificó en los mensajes (D87): ya
+     no hay `/whatsapp/plantillas`, `/encuestas/<id>/flow` ni
+     `/encuestas/<id>/whatsapp`. */
 
   if (clave === 'GET /diagnostico/contacto') {
     return {
@@ -1935,9 +1840,9 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
                  avisos: ['Sin desafío configurado: la landing no distingue un '
                           + 'envío automatizado de una persona.'] },
       whatsapp: { configurado: false, faltan: ['token', 'phone_number_id'],
-                  avisos: ['Sin credenciales de WhatsApp: una encuesta se puede '
-                           + 'configurar como Flow, pero el envío queda '
-                           + 'deshabilitado.'] },
+                  avisos: ['Sin credenciales de WhatsApp: los mensajes por '
+                           + 'WhatsApp (botón de URL o de Flow) no se pueden '
+                           + 'armar ni enviar.'] },
     };
   }
 
@@ -4609,8 +4514,8 @@ export function espiarSemantica() {
 
 /* Las plantillas aprobadas para mensajes: las de botón de URL (cuya base
    fija Meta y a la que se le agrega el id_persona), una de solo texto y las
-   de Flow de R4.5. `recordatorio_otra` lleva a otra encuesta a propósito:
-   es el caso que el aviso de `url_distinta` existe para frenar. */
+   de botón de Flow (D87). `recordatorio_otra` lleva a otra encuesta a
+   propósito: es el caso que el aviso de `url_distinta` existe para frenar. */
 const URL_OLA_1 = 'https://survey.alchemer.com/s3/7001234/ola-1?pid=';
 const PLANTILLAS_MENSAJE_DEMO = [
   { nombre: 'invitacion_estudio', idioma: 'es', estado: 'APPROVED', categoria: 'MARKETING',
@@ -4632,8 +4537,13 @@ const PLANTILLAS_MENSAJE_DEMO = [
   { nombre: 'gracias', idioma: 'es', estado: 'APPROVED', categoria: 'UTILITY',
     cuerpo: '¡Gracias {{1}}! Ya registramos tu respuesta.', boton_url: null,
     parametros_cuerpo: 1, flow_id: null },
-  ...PLANTILLAS_DEMO.map((p) => ({ ...p, boton_url: null, parametros_cuerpo: 0 })),
-];
+  ...PLANTILLAS_DEMO.map((p) => ({ ...p, boton_url: null, parametros_cuerpo: 0,
+                                   indice_flow: 0 })),
+].map((p) => ({
+  ...p,
+  boton: p.flow_id ? 'flow' : p.boton_url ? 'url' : null,
+  boton_etiqueta: p.flow_id ? 'Botón de Flow' : p.boton_url ? 'Botón de URL' : 'Solo texto',
+}));
 const FUENTES_DE_PARAMETRO_DEMO = {
   nombre_panelista: 'Nombre del panelista', nombre_encuesta: 'Nombre de la encuesta',
 };
@@ -4687,7 +4597,7 @@ function guardarMensajeDemo(encuesta, cuerpo, existente = null) {
   }
   const canal = cuerpo.canal || 'whatsapp';
   const valores = { nombre, canal, plantilla: null, plantilla_idioma: null, parametros: [],
-                    url_boton: null, asunto: null, cuerpo: null };
+                    url_boton: null, boton: null, flow_id: null, asunto: null, cuerpo: null };
   const avisos = [];
   if (canal === 'whatsapp') {
     const plantilla = PLANTILLAS_MENSAJE_DEMO.find((p) => p.nombre === cuerpo.plantilla
@@ -4698,7 +4608,7 @@ function guardarMensajeDemo(encuesta, cuerpo, existente = null) {
       throw new ErrorDemo(`La plantilla tiene ${plantilla.parametros_cuerpo} parámetro(s) en el `
         + `texto y se indicaron ${parametros.length}.`, 400);
     }
-    const boton = plantilla.boton_url;
+    const boton = plantilla.boton === 'flow' ? null : plantilla.boton_url;
     let distinta = null;
     if (boton && !encuesta.url_alchemer) {
       distinta = 'La encuesta todavía no tiene su URL de Alchemer: no se puede comprobar que '
@@ -4714,7 +4624,8 @@ function guardarMensajeDemo(encuesta, cuerpo, existente = null) {
       avisos.push(distinta);
     }
     Object.assign(valores, { plantilla: plantilla.nombre, plantilla_idioma: plantilla.idioma,
-                             parametros, url_boton: boton?.base || null });
+                             parametros, url_boton: boton?.base || null,
+                             boton: plantilla.boton, flow_id: plantilla.flow_id || null });
   } else {
     if (!String(cuerpo.asunto || '').trim() || !String(cuerpo.cuerpo || '').trim()) {
       throw new ErrorDemo('Un mensaje por correo necesita asunto y cuerpo.', 400);
@@ -4879,7 +4790,8 @@ function enviosPorPersonaDemo(encuestaId) {
 function responderConvocatoriaDemo(metodo, partes, cuerpo, consulta) {
   if (metodo === 'GET' && partes[0] === 'mensajes' && partes[1] === 'plantillas') {
     return { plantillas: PLANTILLAS_MENSAJE_DEMO, configurado: true, faltan: [], avisos: [],
-             fuentes_de_parametro: FUENTES_DE_PARAMETRO_DEMO };
+             fuentes_de_parametro: FUENTES_DE_PARAMETRO_DEMO,
+             botones: { url: 'Botón de URL', flow: 'Botón de Flow' } };
   }
   if (partes[0] === 'ingestas') {
     if (metodo === 'GET' && partes.length === 1) {
@@ -4946,7 +4858,7 @@ function sembrarConvocatoriaDemo() {
   const invitacion = { id: bd.secuencias.mensaje++, encuesta_id: ola.id, nombre: 'Invitación',
     canal: 'whatsapp', plantilla: 'invitacion_estudio', plantilla_idioma: 'es',
     parametros: ['nombre_panelista', 'nombre_encuesta'], url_boton: URL_OLA_1,
-    asunto: null, cuerpo: null, creado_en: diasAtras(40) };
+    boton: 'url', flow_id: null, asunto: null, cuerpo: null, creado_en: diasAtras(40) };
   bd.mensajes.push(invitacion);
   const estados = ['aceptado', 'aceptado', 'aceptado', 'fallido', 'aceptado', 'aceptado'];
   bd.participaciones.filter((p) => p.encuesta_id === ola.id).slice(0, estados.length)
@@ -4954,4 +4866,13 @@ function sembrarConvocatoriaDemo() {
       encuesta_mensaje_id: invitacion.id, id_persona: p.id_persona, canal: 'whatsapp',
       trabajo_id: null, enviado_en: diasAtras(40), estado: estados[i],
       error: estados[i] === 'fallido' ? 'El número no tiene WhatsApp (131026).' : null }));
+  // D87 — la Ola 3 usó la sección «WhatsApp Flow»: lo enviado quedó migrado
+  // a un mensaje con botón de Flow, como lo deja la 0036.
+  const movilidad = bd.encuestas.find((e) => e.nombre === 'Ola 3 — Movilidad urbana');
+  if (movilidad) {
+    bd.mensajes.push({ id: bd.secuencias.mensaje++, encuesta_id: movilidad.id,
+      nombre: 'WhatsApp Flow', canal: 'whatsapp', plantilla: 'invitacion_ola',
+      plantilla_idioma: 'es', parametros: [], url_boton: null, boton: 'flow',
+      flow_id: '7412880031', asunto: null, cuerpo: null, creado_en: diasAtras(10) });
+  }
 }

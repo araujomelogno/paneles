@@ -215,6 +215,14 @@ MIGRACIONES_BOVEDA = (
         "encuesta.url_alchemer", "encuesta_estado_cambio", "encuesta_mensaje",
         "envio",
     )),
+    # ── Mensajes con Flow, canales en la carga, selección aleatoria y
+    # audiencias en pasos (D87 a D90). Cambia datos: migra lo enviado por la
+    # sección «WhatsApp Flow» a `envio`.
+    ("0036_mensajes_canales_seleccion_y_audiencias.sql", (
+        "encuesta_mensaje.boton", "encuesta_mensaje.flow_id",
+        "carga_canal_registro", "consulta_ejecucion.seleccion",
+        "consulta_ejecucion.semilla", "encuesta_audiencia_agregado",
+    )),
 )
 
 # Objetos que una migración creó y una posterior **retiró** (los tiró sin
@@ -316,8 +324,12 @@ PARA_QUE = {
     "verificacion_contacto": "los códigos de un solo uso que endurecen la landing",
     "inscripcion.celular_verificado": "saber que el celular es de quien se inscribió",
     "inscripcion.canales": "los canales que el titular aceptó de primera mano",
-    "encuesta.flow_id": "configurar una encuesta como WhatsApp Flow",
-    "participacion.envio_estado": "reintentar solo los envíos fallidos",
+    "encuesta.flow_id": "el Flow que configuró la sección «WhatsApp Flow» (deprecada desde D87; lo lee la migración 0036)",
+    "participacion.envio_estado": "lo enviado por la sección «WhatsApp Flow» (deprecada desde D87; lo lee la migración 0036)",
+    "encuesta_mensaje.boton": "los mensajes con botón de Flow (D87)",
+    "carga_canal_registro": "registrar en bloque los canales aceptados de una carga, auditado (R-CAN)",
+    "consulta_ejecucion.semilla": "rehacer y auditar una selección aleatoria (R-ALE)",
+    "encuesta_audiencia_agregado": "reconstruir cómo se armó la audiencia de una encuesta (R-AU.2)",
     "persona_atributo.desde": "el historial de atributos: desde cuándo vale cada valor",
     "f_atributo_persona()": "resolver el valor de cada atributo a una fecha; es de lo que cuelgan la composición, las cuotas, el muestreo y los filtros",
     "serie": "declarar que preguntas de distintas olas son la misma medición",

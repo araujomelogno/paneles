@@ -127,7 +127,7 @@ def test_un_boton_que_lleva_a_otra_encuesta_se_confirma_con_una_casilla(pagina):
     _abrir(pagina, OLA_1)
     pagina.click("#nuevo-mensaje")
     pagina.fill('.modal-box input[name="nombre"]', "Recordatorio")
-    pagina.select_option("#mensaje-plantilla", label="recordatorio_otra · es · botón de URL")
+    pagina.select_option("#mensaje-plantilla", label="recordatorio_otra · es · Botón de URL")
     sync_api.expect(pagina.locator("[data-boton-url]")).to_contain_text("7009999")
     pagina.click(".modal-foot .btn-orange")
     sync_api.expect(pagina.locator("#mensaje-alerta")).to_contain_text("otra encuesta")

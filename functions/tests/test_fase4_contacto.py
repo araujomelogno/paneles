@@ -22,8 +22,8 @@ import json
 import pytest
 
 from panel_api import (
-    consentimiento, db, encuestas, inscripciones as ins, paneles, personas,
-    preferencias, sav, verificacion_contacto as verificacion, whatsapp,
+    consentimiento, db, encuestas, inscripciones as ins, mensajes, paneles,
+    personas, preferencias, sav, verificacion_contacto as verificacion, whatsapp,
 )
 from panel_api.errores import Conflicto, DatosInvalidos
 
@@ -55,17 +55,51 @@ def _verificar(conn, canal, destino):
 
 
 def _ola_flow(conn, nombre="Ola WhatsApp", plantilla="invitacion_ola",
-              pedir=None):
-    """Una encuesta configurada como Flow.
+              pedir=None, convocar=True):
+    """Una encuesta en campo con un mensaje de WhatsApp Flow (D87).
 
     Se elige **solo la plantilla**: el idioma y el `flow_id` salen de ella.
-    Por eso configurar toca Meta, y por eso hay que inyectarle la respuesta.
+    Por eso guardar el mensaje toca Meta, y por eso hay que inyectarle la
+    respuesta. Sin `convocar`, la encuesta queda en borrador y la convoca
+    cada prueba.
     """
     panel = paneles.crear(conn, "Panel")
     encuesta = encuestas.crear(conn, panel["id"], nombre)
-    encuestas.configurar_flow(conn, encuesta["id"], plantilla=plantilla,
-                              entorno=ENTORNO_META, pedir=pedir or _meta_ok)
-    return panel, encuestas.obtener(conn, encuesta["id"])
+    mensaje = mensajes.guardar(conn, encuesta["id"],
+                               {"nombre": "WhatsApp Flow", "plantilla": plantilla},
+                               entorno=ENTORNO_META, pedir=pedir or _meta_ok)
+    if convocar:
+        encuestas.cambiar_estado(conn, encuesta["id"], "en_campo")
+    conn.commit()
+    return panel, encuestas.obtener(conn, encuesta["id"]), mensaje
+
+
+class _MetaQueAnota:
+    """Meta de mentira para enviar: anota cada mensaje, da un id distinto a
+    cada uno (el índice de `envio.id_mensaje_meta` es único) y rechaza los
+    números de `rechazar`."""
+
+    def __init__(self, rechazar=()):
+        self.enviados = []
+        self.rechazar = set(rechazar)
+
+    def __call__(self, url, datos=None, token=None, metodo=None):
+        if "/messages" in url:
+            if datos["to"] in self.rechazar:
+                raise Conflicto("Número inválido para WhatsApp.", {"status": 400})
+            self.enviados.append(datos)
+            return {"messages": [{"id": f"wamid.{id(self)}.{len(self.enviados)}"}]}
+        return _meta_ok(url, datos, token, metodo)
+
+
+def _enviar_flow(conn, encuesta, mensaje, meta, publico="no_enviado"):
+    """Lo que hace la tarea de Cloud Tasks con un lote: el mismo
+    `procesar_lote` que cualquier mensaje."""
+    ids = mensajes.publico(conn, encuesta["id"], mensaje["id"], publico)
+    return mensajes.procesar_lote(
+        conn, {"encuesta_id": encuesta["id"], "mensaje_id": mensaje["id"],
+               "publico": publico},
+        [{"id_persona": i} for i in ids], entorno=ENTORNO_META, pedir=meta)
 
 
 def _plantilla(nombre="invitacion_ola", idioma="es", estado="APPROVED",
@@ -554,23 +588,27 @@ def test_sin_credenciales_el_listado_lo_dice_en_vez_de_romperse(conn_boveda):
     assert "waba_id" in salida["faltan"]
 
 
-def test_configurar_la_encuesta_resuelve_el_idioma_y_el_flow(conn_boveda):
+def test_un_mensaje_de_flow_resuelve_el_idioma_y_el_flow(conn_boveda):
     """Lo único que se elige es la plantilla. Pedir los tres por separado era
-    pedir tres veces el mismo dato y dejar que se contradigan."""
+    pedir tres veces el mismo dato y dejar que se contradigan. Desde D87 es
+    un mensaje de la encuesta con botón de Flow, no una sección aparte."""
     panel = paneles.crear(conn_boveda, "Panel")
     encuesta = encuestas.crear(conn_boveda, panel["id"], "Ola")
 
     def meta(url, datos=None, token=None, metodo=None):
-        return {"data": [_plantilla("invitacion", "pt_BR", flow_id="FLOW-7")]}
+        if "message_templates" in url:
+            return {"data": [_plantilla("invitacion", "pt_BR", flow_id="FLOW-7")]}
+        return {"id": "FLOW-7", "name": "Invitación", "status": "PUBLISHED"}
 
-    salida = encuestas.configurar_flow(
-        conn_boveda, encuesta["id"], plantilla="invitacion",
-        entorno=ENTORNO_META, pedir=meta)
+    salida = mensajes.guardar(conn_boveda, encuesta["id"],
+                              {"nombre": "Invitación", "plantilla": "invitacion"},
+                              entorno=ENTORNO_META, pedir=meta)
 
-    assert salida["flow_plantilla"] == "invitacion"
-    assert salida["flow_idioma"] == "pt_BR"
+    assert salida["plantilla"] == "invitacion"
+    assert salida["plantilla_idioma"] == "pt_BR"
     assert salida["flow_id"] == "FLOW-7"
-    assert salida["es_flow"] is True
+    assert salida["boton"] == "flow"
+    assert salida["url_boton"] is None
 
 
 def test_una_plantilla_en_varios_idiomas_no_se_elige_sola(conn_boveda):
@@ -584,61 +622,49 @@ def test_una_plantilla_en_varios_idiomas_no_se_elige_sola(conn_boveda):
 
     panel = paneles.crear(conn_boveda, "Panel")
     encuesta = encuestas.crear(conn_boveda, panel["id"], "Ola")
-    encuestas.configurar_flow(conn_boveda, encuesta["id"],
-                              plantilla="invitacion",
-                              entorno=ENTORNO_META, pedir=meta)
-
-    estado = encuestas.estado_flow(conn_boveda, encuesta["id"],
-                                   entorno=ENTORNO_META, pedir=meta)
-    assert estado["puede_enviar"] is False
-    assert any("una por idioma" in m for m in estado["motivos"])
-    assert estado["idiomas_disponibles"] == ["es", "pt_BR"]
+    with pytest.raises(DatosInvalidos) as error:
+        mensajes.guardar(conn_boveda, encuesta["id"],
+                         {"nombre": "Invitación", "plantilla": "invitacion"},
+                         entorno=ENTORNO_META, pedir=meta)
+    assert "idioma" in error.value.mensaje
+    assert error.value.detalle["idiomas"] == ["es", "pt_BR"]
 
     # Con el idioma elegido, resuelve.
-    encuestas.configurar_flow(conn_boveda, encuesta["id"],
-                              plantilla="invitacion", idioma="pt_BR",
+    salida = mensajes.guardar(conn_boveda, encuesta["id"],
+                              {"nombre": "Invitación", "plantilla": "invitacion",
+                               "plantilla_idioma": "pt_BR"},
                               entorno=ENTORNO_META, pedir=meta)
-    assert encuestas.estado_flow(
-        conn_boveda, encuesta["id"], entorno=ENTORNO_META,
-        pedir=meta)["puede_enviar"] is True
+    assert salida["plantilla_idioma"] == "pt_BR"
 
 
-def test_una_plantilla_sin_boton_de_flow_no_sirve_para_convocar(conn_boveda):
-    def meta(url, datos=None, token=None, metodo=None):
+def test_un_mensaje_de_flow_exige_el_flow_publicado_al_guardar(conn_boveda):
+    """La validación de la sección vieja —Flow publicado y plantilla
+    aprobada— es parte de editar el mensaje (D87). Una plantilla aprobada con
+    un Flow en borrador se envía y no abre nada."""
+    def meta_borrador(url, datos=None, token=None, metodo=None):
         if "message_templates" in url:
-            return {"data": [_plantilla("aviso", "es", flow_id=None)]}
-        return {"id": "FLOW-1", "status": "PUBLISHED"}
+            return {"data": [_plantilla()]}
+        return {"id": "FLOW-1", "name": "Invitación", "status": "DRAFT"}
 
     panel = paneles.crear(conn_boveda, "Panel")
     encuesta = encuestas.crear(conn_boveda, panel["id"], "Ola")
-    encuestas.configurar_flow(conn_boveda, encuesta["id"], plantilla="aviso",
-                              entorno=ENTORNO_META, pedir=meta)
-    estado = encuestas.estado_flow(conn_boveda, encuesta["id"],
-                                   entorno=ENTORNO_META, pedir=meta)
-    assert estado["puede_enviar"] is False
-    assert any("botón de Flow" in m for m in estado["motivos"])
+    with pytest.raises(DatosInvalidos) as error:
+        mensajes.guardar(conn_boveda, encuesta["id"],
+                         {"nombre": "Invitación", "plantilla": "invitacion_ola"},
+                         entorno=ENTORNO_META, pedir=meta_borrador)
+    assert "publicado" in error.value.mensaje
+    assert error.value.detalle["motivo"] == "flow_no_publicado"
 
 
-def test_la_configuracion_se_guarda_aunque_meta_no_conteste(conn_boveda):
-    """Una plantilla recién mandada a aprobar puede tardar días: la
-    configuración tiene que poder guardarse igual y decir qué falta."""
-    def meta_caida(url, datos=None, token=None, metodo=None):
-        raise Conflicto("Meta no responde.", {"status": 503})
-
+def test_sin_credenciales_no_se_arma_un_mensaje_de_whatsapp(conn_boveda):
     panel = paneles.crear(conn_boveda, "Panel")
     encuesta = encuestas.crear(conn_boveda, panel["id"], "Ola")
-    salida = encuestas.configurar_flow(
-        conn_boveda, encuesta["id"], plantilla="invitacion_ola",
-        entorno=ENTORNO_META, pedir=meta_caida)
-
-    assert salida["flow_plantilla"] == "invitacion_ola"
-    assert salida["flow_id"] is None
-    # Sigue siendo una encuesta de Flow: no es que no lo sea, es que todavía
-    # no se puede enviar, y eso lo dice el estado.
-    assert salida["es_flow"] is True
-    estado = encuestas.estado_flow(conn_boveda, encuesta["id"],
-                                   entorno=ENTORNO_META, pedir=meta_caida)
-    assert estado["puede_enviar"] is False
+    with pytest.raises(DatosInvalidos) as error:
+        mensajes.guardar(conn_boveda, encuesta["id"],
+                         {"nombre": "Invitación", "plantilla": "invitacion_ola"},
+                         entorno={}, pedir=_meta_ok)
+    assert error.value.detalle["motivo"] == "whatsapp_sin_configurar"
+    assert whatsapp.diagnostico({})["configurado"] is False
 
 
 def test_el_envio_no_necesita_el_flow_id(conn_boveda):
@@ -664,41 +690,42 @@ def test_el_envio_no_necesita_el_flow_id(conn_boveda):
     assert "flow_id" not in json.dumps(cuerpos[0])
 
 
-# ── R4.5 · Envío por WhatsApp Flow ───────────────────────────────────
+# ── R4.5 · Envío por WhatsApp Flow, desde los mensajes (D87) ─────────
 
-def test_no_se_puede_convocar_por_whatsapp_con_la_plantilla_sin_aprobar(conn_boveda):
-    """Una plantilla rechazada no se arregla sola. Descubrirlo al enviar
-    significa haber convocado a gente a la que no se le puede mandar nada."""
-    _, encuesta = _ola_flow(conn_boveda)
+def test_no_se_envia_un_flow_con_la_plantilla_sin_aprobar(conn_boveda):
+    """Una plantilla rechazada no se arregla sola. Se comprueba de nuevo al
+    enviar: entre guardar el mensaje y mandarlo, Meta pudo pausarla."""
+    _, encuesta, mensaje = _ola_flow(conn_boveda)
 
     def meta_pendiente(url, datos=None, token=None, metodo=None):
         if "message_templates" in url:
             return {"data": [_plantilla(estado="PENDING")]}
         return {"id": "FLOW-1", "status": "PUBLISHED"}
 
-    estado = encuestas.estado_flow(conn_boveda, encuesta["id"],
-                                   entorno=ENTORNO_META, pedir=meta_pendiente)
-    assert estado["puede_enviar"] is False
-    assert any("PENDING" in m for m in estado["motivos"])
+    previa = mensajes.previa(conn_boveda, encuesta["id"], mensaje["id"],
+                             mensajes.TODOS, entorno=ENTORNO_META, pedir=meta_pendiente)
+    assert previa["puede_enviar"] is False
+    assert any("PENDING" in m for m in previa["motivos"])
 
 
-def test_un_flow_sin_publicar_tambien_bloquea(conn_boveda):
-    _, encuesta = _ola_flow(conn_boveda)
+def test_un_flow_despublicado_tambien_bloquea_el_envio(conn_boveda):
+    _, encuesta, mensaje = _ola_flow(conn_boveda)
 
     def meta_borrador(url, datos=None, token=None, metodo=None):
         if "message_templates" in url:
             return {"data": [_plantilla()]}
         return {"id": "FLOW-1", "name": "Invitación", "status": "DRAFT"}
 
-    estado = encuestas.estado_flow(conn_boveda, encuesta["id"],
-                                   entorno=ENTORNO_META, pedir=meta_borrador)
-    assert estado["puede_enviar"] is False
-    assert any("publicado" in m for m in estado["motivos"])
+    previa = mensajes.previa(conn_boveda, encuesta["id"], mensaje["id"],
+                             mensajes.TODOS, entorno=ENTORNO_META, pedir=meta_borrador)
+    assert previa["puede_enviar"] is False
+    assert any("publicado" in m for m in previa["motivos"])
 
 
 def test_el_envio_excluye_a_quien_no_cumple_informando_el_motivo(conn_boveda):
-    """El punto del DoD, con un caso de cada motivo."""
-    panel, encuesta = _ola_flow(conn_boveda)
+    """El punto del DoD, con un caso de cada motivo. Es la misma regla de
+    elegibilidad que un mensaje con botón de URL (`filtrar_contactables`)."""
+    panel, encuesta, mensaje = _ola_flow(conn_boveda, convocar=False)
     completa = _persona(conn_boveda, "13-1", celular="099171717",
                         canales=["whatsapp"])["id_persona"]
     sin_preferencia = _persona(conn_boveda, "13-2", celular="099181818")["id_persona"]
@@ -713,40 +740,38 @@ def test_el_envio_excluye_a_quien_no_cumple_informando_el_motivo(conn_boveda):
                 (sin_celular,))
     conn_boveda.commit()
 
-    seleccion = encuestas.destinatarios_whatsapp(conn_boveda, encuesta["id"])
-    assert seleccion["destinatarios"] == [completa]
-    assert seleccion["excluidos"]["sin_preferencia_whatsapp"] == [sin_preferencia]
-    assert seleccion["excluidos"]["sin_celular"] == [sin_celular]
+    previa = mensajes.previa(conn_boveda, encuesta["id"], mensaje["id"],
+                             mensajes.TODOS, entorno=ENTORNO_META, pedir=_meta_ok)
+    assert previa["_destinatarios"] == [completa]
+    assert previa["excluidos"]["sin_preferencia_whatsapp"] == 1
+    assert previa["excluidos"]["sin_celular"] == 1
 
 
 def test_cada_envio_lleva_el_id_persona_como_flow_token(conn_boveda):
     """Es lo que hace que la ingesta mapee directo cuando el analista baje las
     respuestas de Meta: sin PII y sin adivinar."""
-    panel, encuesta = _ola_flow(conn_boveda)
+    panel, encuesta, mensaje = _ola_flow(conn_boveda, convocar=False)
     id_persona = _persona(conn_boveda, "14-1", celular="099191919",
                           canales=["whatsapp"])["id_persona"]
     paneles.agregar_miembro(conn_boveda, panel["id"], id_persona)
     encuestas.convocar(conn_boveda, encuesta["id"], todo_el_panel=True)
     conn_boveda.commit()
 
-    enviados = []
-
-    def enviar(destino, plantilla, idioma, flow_token, **kwargs):
-        enviados.append({"destino": destino, "flow_token": flow_token})
-        return {"message_id": "wamid.1"}
-
-    salida = encuestas.enviar_por_whatsapp(
-        conn_boveda, encuesta["id"], entorno=ENTORNO_META, pedir=_meta_ok,
-        enviar=enviar)
+    meta = _MetaQueAnota()
+    salida = _enviar_flow(conn_boveda, encuesta, mensaje, meta)
 
     assert salida["enviados"] == 1
-    assert enviados[0]["flow_token"] == id_persona
-    assert enviados[0]["destino"] == "+59899191919"
+    plantilla = meta.enviados[0]["template"]
+    assert meta.enviados[0]["to"] == "+59899191919"
+    boton = next(c for c in plantilla["components"] if c["type"] == "button")
+    assert boton["sub_type"] == "flow"
+    assert boton["parameters"][0]["action"]["flow_token"] == id_persona
 
 
 def test_reintentar_no_reenvia_a_quien_ya_recibio(conn_boveda):
-    """Un mensaje duplicado quema el canal y la paciencia."""
-    panel, encuesta = _ola_flow(conn_boveda)
+    """Un mensaje duplicado quema el canal y la paciencia. «No enviado aún»
+    lo calcula sobre `envio`, igual que con cualquier mensaje."""
+    panel, encuesta, mensaje = _ola_flow(conn_boveda, convocar=False)
     uno = _persona(conn_boveda, "15-1", celular="099202020",
                    canales=["whatsapp"])["id_persona"]
     otro = _persona(conn_boveda, "15-2", celular="099212121",
@@ -756,30 +781,18 @@ def test_reintentar_no_reenvia_a_quien_ya_recibio(conn_boveda):
     encuestas.convocar(conn_boveda, encuesta["id"], todo_el_panel=True)
     conn_boveda.commit()
 
-    intentos = []
-
-    def enviar(destino, plantilla, idioma, flow_token, **kwargs):
-        intentos.append(flow_token)
-        if flow_token == otro:
-            raise Conflicto("Meta rechazó el mensaje.")
-        return {"message_id": "wamid.1"}
-
-    primera = encuestas.enviar_por_whatsapp(
-        conn_boveda, encuesta["id"], entorno=ENTORNO_META, pedir=_meta_ok,
-        enviar=enviar)
+    meta = _MetaQueAnota(rechazar={"+59899212121"})
+    primera = _enviar_flow(conn_boveda, encuesta, mensaje, meta)
     assert (primera["enviados"], primera["fallidos"]) == (1, 1)
 
-    intentos.clear()
-    segunda = encuestas.enviar_por_whatsapp(
-        conn_boveda, encuesta["id"], entorno=ENTORNO_META, pedir=_meta_ok,
-        enviar=lambda *a, **k: (intentos.append(k.get("flow_token")),
-                                {"message_id": "wamid.2"})[1])
-    assert intentos == [otro], "solo el fallido"
+    meta = _MetaQueAnota()
+    segunda = _enviar_flow(conn_boveda, encuesta, mensaje, meta)
+    assert [e["to"] for e in meta.enviados] == ["+59899212121"], "solo el fallido"
     assert segunda["enviados"] == 1
 
 
 def test_un_fallo_por_persona_no_voltea_el_envio_entero(conn_boveda):
-    panel, encuesta = _ola_flow(conn_boveda)
+    panel, encuesta, mensaje = _ola_flow(conn_boveda, convocar=False)
     for i in range(3):
         id_persona = _persona(conn_boveda, f"16-{i}", celular=f"09922{i}22{i}",
                               canales=["whatsapp"])["id_persona"]
@@ -787,63 +800,53 @@ def test_un_fallo_por_persona_no_voltea_el_envio_entero(conn_boveda):
     encuestas.convocar(conn_boveda, encuesta["id"], todo_el_panel=True)
     conn_boveda.commit()
 
-    llamadas = {"n": 0}
-
-    def enviar(destino, plantilla, idioma, flow_token, **kwargs):
-        llamadas["n"] += 1
-        if llamadas["n"] == 2:
-            raise Conflicto("Número inválido.")
-        return {"message_id": "wamid.1"}
-
-    salida = encuestas.enviar_por_whatsapp(
-        conn_boveda, encuesta["id"], entorno=ENTORNO_META, pedir=_meta_ok,
-        enviar=enviar)
+    salida = _enviar_flow(conn_boveda, encuesta, mensaje,
+                          _MetaQueAnota(rechazar={"+59899221221"}))
     assert (salida["enviados"], salida["fallidos"]) == (2, 1)
-    fallido = next(d for d in salida["detalle"] if d["estado"] == "fallido")
+    fallido = db.una(conn_boveda, "select error from envio where estado = 'fallido'")
     assert "Número inválido" in fallido["error"]
 
 
-def test_el_envio_no_reemplaza_a_la_convocatoria(conn_boveda):
-    """La convocatoria se registra igual que siempre; el envío es una acción
-    **sobre** ella. Por eso se puede convocar sin enviar."""
-    panel, encuesta = _ola_flow(conn_boveda)
+def test_el_envio_no_escribe_en_participacion(conn_boveda):
+    """D87 — el registro es `envio`, uno por persona y mensaje. Las columnas
+    viejas de `participacion` quedan sin escribir hasta que se quiten."""
+    panel, encuesta, mensaje = _ola_flow(conn_boveda, convocar=False)
     id_persona = _persona(conn_boveda, "17-1", celular="099232323",
                           canales=["whatsapp"])["id_persona"]
     paneles.agregar_miembro(conn_boveda, panel["id"], id_persona)
     encuestas.convocar(conn_boveda, encuesta["id"], todo_el_panel=True)
     conn_boveda.commit()
+    _enviar_flow(conn_boveda, encuesta, mensaje, _MetaQueAnota())
 
     fila = db.una(conn_boveda,
-                  "select envio_estado from participacion where id_persona = %s",
+                  "select envio_estado, enviado_en from participacion where id_persona = %s",
                   (id_persona,))
-    assert fila["envio_estado"] is None, "convocado y todavía sin enviar"
+    assert fila["envio_estado"] is None and fila["enviado_en"] is None
+    assert db.una(conn_boveda, "select estado from envio where id_persona = %s",
+                  (id_persona,))["estado"] == "aceptado"
 
 
-def test_sin_credenciales_el_envio_se_bloquea_con_su_motivo(conn_boveda):
-    _, encuesta = _ola_flow(conn_boveda)
-    estado = encuestas.estado_flow(conn_boveda, encuesta["id"], entorno={})
-    assert estado["puede_enviar"] is False
-    assert any("credenciales" in m for m in estado["motivos"])
-    assert whatsapp.diagnostico({})["configurado"] is False
+def test_ya_no_existen_las_rutas_de_la_seccion_vieja():
+    """D87 — la sección «WhatsApp Flow» se unificó en Mensajes."""
+    from panel_api import ruteo
 
-
-def test_una_encuesta_que_no_es_flow_no_ofrece_envio(conn_boveda):
-    """No regresión: las encuestas anteriores a Fase 4 siguen siendo lo que
-    eran."""
-    panel = paneles.crear(conn_boveda, "Panel")
-    encuesta = encuestas.crear(conn_boveda, panel["id"], "Ola de siempre")
-    assert encuesta["es_flow"] is False
-    estado = encuestas.estado_flow(conn_boveda, encuesta["id"])
-    assert estado["puede_enviar"] is False
+    rutas = {(metodo, patron) for metodo, _expresion, _permiso, _funcion, patron
+             in ruteo.RUTAS}
+    for metodo, patron in (("PUT", "/encuestas/<encuesta_id>/flow"),
+                           ("GET", "/encuestas/<encuesta_id>/flow"),
+                           ("POST", "/encuestas/<encuesta_id>/whatsapp"),
+                           ("GET", "/encuestas/<encuesta_id>/whatsapp")):
+        assert (metodo, patron) not in rutas
 
 
 # ── Permisos ─────────────────────────────────────────────────────────
 
-def test_enviar_por_whatsapp_no_lo_tiene_el_analista(actor):
+def test_enviar_mensajes_no_lo_tiene_el_analista(actor):
     """Cada conversación se cobra y un envío mal dirigido quema el canal para
     todos. El analista fieldea e ingesta, pero no manda."""
     from panel_api.auth import PERMISOS
 
-    assert PERMISOS["enviar_whatsapp"] == {"admin", "operaciones"}
-    assert not actor("analista").puede("enviar_whatsapp")
+    assert PERMISOS["enviar_mensajes"] == {"admin", "operaciones"}
+    assert "enviar_whatsapp" not in PERMISOS
+    assert not actor("analista").puede("enviar_mensajes")
     assert actor("analista").puede("ingestar"), "lo que sí podía, lo sigue pudiendo"

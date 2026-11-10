@@ -415,22 +415,8 @@ export const canales = {
     pedir('DELETE', `/panelistas/${idPersona}/canales/${canal}`),
 };
 
-/* R4.5 — el envío de una encuesta por WhatsApp Flow. El sistema solo envía:
-   las respuestas se bajan de Meta y se ingestan por el flujo de siempre. */
-export const flow = {
-  /* Las plantillas aprobadas de la cuenta que tienen botón de Flow. Es lo
-     único que se elige: el idioma y el `flow_id` vienen adentro de cada una,
-     así que pedirlos aparte era pedir tres veces el mismo dato. */
-  plantillas: () => GET('/whatsapp/plantillas'),
-  configurar: (encuestaId, cuerpo) => PUT(`/encuestas/${encuestaId}/flow`, cuerpo),
-  // Valida contra Meta que el Flow esté publicado y la plantilla aprobada.
-  // Se consulta antes de convocar, no al enviar.
-  estado: (encuestaId) => GET(`/encuestas/${encuestaId}/flow`),
-  destinatarios: (encuestaId) => GET(`/encuestas/${encuestaId}/whatsapp`),
-  enviar: (encuestaId, idsPersona) =>
-    POST(`/encuestas/${encuestaId}/whatsapp`,
-         idsPersona ? { ids_persona: idsPersona } : {}),
-};
+/* R4.5 — el envío por WhatsApp Flow ya no es una sección aparte (D87): un
+   mensaje de la encuesta con plantilla de botón de Flow (`mensajes`). */
 
 /* D85 · R-CF.4 a R-CF.8 — los mensajes de una encuesta (invitación,
    recordatorios, agradecimiento) y su envío. La vista previa sale de la

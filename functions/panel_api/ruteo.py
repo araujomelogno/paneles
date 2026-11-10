@@ -2579,53 +2579,11 @@ def revocar_canal(ctx, actor, params, cuerpo, consulta):
     return 200, salida
 
 
-@ruta("GET", "/whatsapp/plantillas", "leer", requisito="R4.5")
-def plantillas_de_whatsapp(ctx, actor, params, cuerpo, consulta):
-    """Las plantillas aprobadas de la cuenta que tienen un botón de Flow.
-
-    Es lo que alimenta el selector de la encuesta. Cada una trae su idioma y
-    su `flow_id` adentro: no hay nada más que elegir."""
-    return 200, whatsapp.listar_plantillas(
-        solo_con_flow=not _bandera(consulta.get("todas")))
-
-
-@ruta("PUT", "/encuestas/<encuesta_id>/flow", "fieldear", requisito="R4.5")
-def configurar_flow(ctx, actor, params, cuerpo, consulta):
-    """Elige la plantilla. El idioma y el Flow salen de ella."""
-    salida = encuestas.configurar_flow(
-        ctx.boveda, _entero(params["encuesta_id"]),
-        plantilla=(cuerpo or {}).get("plantilla"),
-        idioma=(cuerpo or {}).get("idioma"))
-    ctx.boveda.commit()
-    return 200, salida
-
-
-@ruta("GET", "/encuestas/<encuesta_id>/flow", "leer", requisito="R4.5")
-def estado_flow(ctx, actor, params, cuerpo, consulta):
-    """Valida contra Meta que el Flow esté publicado y la plantilla aprobada.
-
-    Se consulta **antes** de convocar: una plantilla rechazada no se arregla
-    sola y descubrirlo al enviar significa haber convocado a gente a la que no
-    se le puede mandar nada."""
-    return 200, encuestas.estado_flow(ctx.boveda, _entero(params["encuesta_id"]))
-
-
-@ruta("GET", "/encuestas/<encuesta_id>/whatsapp", "leer", requisito="R4.5")
-def destinatarios_whatsapp(ctx, actor, params, cuerpo, consulta):
-    """A quiénes se les puede enviar y a quiénes no, discriminado por motivo."""
-    return 200, encuestas.destinatarios_whatsapp(
-        ctx.boveda, _entero(params["encuesta_id"]))
-
-
-@ruta("POST", "/encuestas/<encuesta_id>/whatsapp", "enviar_whatsapp",
-      requisito="R4.5")
-def enviar_whatsapp(ctx, actor, params, cuerpo, consulta):
-    """Manda el Flow. No es automático al convocar: es una acción explícita.
-
-    Reintentar no reenvía a quien ya recibió."""
-    return 200, encuestas.enviar_por_whatsapp(
-        ctx.boveda, _entero(params["encuesta_id"]),
-        ids_persona=(cuerpo or {}).get("ids_persona"))
+# D87 — la sección «WhatsApp Flow» de la encuesta (R4.5) se unificó en los
+# mensajes: `PUT/GET /encuestas/<id>/flow`, `GET/POST /encuestas/<id>/whatsapp`
+# y `GET /whatsapp/plantillas` ya no existen. Un mensaje con plantilla de Flow
+# se arma y se envía por las rutas de mensajes (`/mensajes/plantillas`,
+# `/encuestas/<id>/mensajes…`), con los mismos públicos y el mismo registro.
 
 
 @ruta("GET", "/diagnostico/contacto", "leer", requisito="R4.3, R4.5")

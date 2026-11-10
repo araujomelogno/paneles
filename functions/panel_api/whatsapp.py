@@ -1,5 +1,5 @@
 """R4.5 — Envío de encuestas por WhatsApp Flow; D85 — mensajes de una
-encuesta.
+encuesta; D87 — el Flow es un tipo de botón de la plantilla de un mensaje.
 
 **El sistema solo envía.** No recibe respuestas ni estados de entrega, no
 crea ni edita Flows ni plantillas. (Los estados de entrega por webhook,
@@ -29,11 +29,12 @@ fingir que envió.
 
 **Se elige la plantilla, y nada más.** Una plantilla de Meta ya trae adentro
 su idioma y, en su botón de Flow, el `flow_id`. Pedir los tres por separado
-era pedir tres veces el mismo dato y dejar que se contradigan: nada impedía
-configurar la plantilla `X` en `es` con el Flow de la plantilla `Y`, y eso
-recién se descubría al validar, o peor, al enviar. `listar_plantillas()`
-devuelve las aprobadas que tienen un botón de Flow, con su idioma y su
-`flow_id` ya resueltos; el resto del sistema elige una de esa lista.
+era pedir tres veces el mismo dato y dejar que se contradigan.
+`listar_plantillas()` devuelve las plantillas con su idioma, su botón (de URL
+o de Flow) y su `flow_id` ya resueltos; el mensaje elige una de esa lista
+(`mensajes.guardar`). Desde D87 no hay una sección «WhatsApp Flow» aparte:
+un mensaje con plantilla de Flow tiene los mismos públicos, la misma regla de
+elegibilidad y el mismo registro (`envio`) que uno con botón de URL.
 """
 
 import json
@@ -219,6 +220,8 @@ def listar_plantillas(entorno=None, pedir=None, solo_con_flow=True,
             "estado": estado,
             "categoria": cruda.get("category"),
             "flow_id": boton["flow_id"] if boton else None,
+            # D87 — la posición del botón de Flow, que Meta pide al enviar.
+            "indice_flow": boton["indice"] if boton else None,
             "texto_boton": boton["texto"] if boton else None,
             "cuerpo": cuerpo,
             "calidad": (cruda.get("quality_score") or {}).get("score"),
@@ -260,101 +263,32 @@ def candidatas(nombre, idioma=None, entorno=None, pedir=None):
                                           or p["idioma"] == idioma)]
 
 
-def buscar_plantilla(nombre, idioma=None, entorno=None, pedir=None):
-    """La plantilla, si la coincidencia es **única**; `None` si no.
+def estado_del_flow(flow_id, entorno=None, pedir=None):
+    """`(publicado, motivo)` del Flow que una plantilla lleva en su botón.
 
-    Sin `idioma`, una sola candidata se toma tal cual —es el caso normal, una
-    plantilla en un solo idioma— y varias devuelven `None`: elegir por el
-    sistema sería elegir en qué idioma le habla a la gente.
-    """
-    encontradas = candidatas(nombre, idioma, entorno=entorno, pedir=pedir)
-    return encontradas[0] if len(encontradas) == 1 else None
-
-
-def validar_configuracion(plantilla, idioma=None, entorno=None, pedir=None):
-    """¿Se puede convocar por WhatsApp con esta plantilla?
-
-    Devuelve `{"puede_enviar": bool, "motivos": [...], ...}`. **No levanta**
-    cuando algo está mal: el motivo es información que la pantalla tiene que
-    mostrar, no un error de programa.
-
-    La clave de una plantilla en Meta es el par `(nombre, idioma)`: el mismo
-    nombre puede existir en varios idiomas y cada uno se aprueba por separado.
-    De la plantilla salen el idioma y el `flow_id`; no se piden aparte.
+    Una plantilla aprobada con un Flow en borrador se envía y no abre nada:
+    por eso, para un mensaje con botón de Flow, «Flow publicado» es parte de
+    guardarlo y de enviarlo (D87), igual que «plantilla aprobada».
     """
     datos = config(entorno)
-    pedir = pedir or _pedir
-    salida = {"plantilla": plantilla, "idioma": idioma, "flow_id": None,
-              "puede_enviar": False, "motivos": []}
-
-    if not plantilla:
-        salida["motivos"].append(
-            "Falta elegir la plantilla de mensaje en la encuesta.")
-        return salida
-    if not datos["token"] or not datos["phone_number_id"]:
-        salida["motivos"].append(
-            "No hay credenciales de WhatsApp configuradas en el sistema.")
-        return salida
-    if not datos["waba_id"]:
-        salida["motivos"].append(
-            "Sin `WHATSAPP_WABA_ID` no se puede comprobar que la plantilla "
-            "esté aprobada ni saber qué Flow lleva adentro.")
-        return salida
-
-    encontradas = candidatas(plantilla, idioma, entorno=entorno, pedir=pedir)
-    if len(encontradas) > 1:
-        salida["motivos"].append(
-            f"Hay {len(encontradas)} plantillas «{plantilla}», una por idioma "
-            f"({', '.join(sorted(p['idioma'] or '—' for p in encontradas))}). "
-            f"Hay que elegir cuál: son plantillas distintas y se aprueban por "
-            f"separado.")
-        salida["idiomas_disponibles"] = sorted(
-            p["idioma"] for p in encontradas if p["idioma"])
-        return salida
-    if not encontradas:
-        salida["motivos"].append(
-            f"No existe una plantilla «{plantilla}»"
-            + (f" en «{idioma}»" if idioma else "")
-            + " en la cuenta. Puede haberse borrado o renombrado en Meta.")
-        return salida
-    elegida = encontradas[0]
-    salida["idioma"] = elegida["idioma"]
-
-    salida["plantilla_estado"] = elegida["estado"]
-    salida["categoria"] = elegida["categoria"]
-    salida["flow_id"] = elegida["flow_id"]
-    salida["texto_boton"] = elegida["texto_boton"]
-
-    if elegida["estado"] != PLANTILLA_APROBADA:
-        salida["motivos"].append(
-            f"La plantilla está en «{elegida['estado']}». Meta tiene que "
-            f"aprobarla antes de que se pueda enviar.")
-    if not elegida["flow_id"]:
-        salida["motivos"].append(
-            "La plantilla no tiene un botón de Flow: sirve para mandar un "
-            "mensaje, no para convocar a un cuestionario.")
-        salida["puede_enviar"] = False
-        return salida
-
-    # El Flow que la plantilla lleva adentro tiene que estar publicado. Una
-    # plantilla aprobada con un Flow en borrador se envía y no abre nada.
+    if not flow_id:
+        return False, ("La plantilla no dice qué Flow lleva en su botón: no se "
+                       "puede comprobar que esté publicado.")
+    if not datos["token"]:
+        return False, "No hay credenciales de WhatsApp configuradas en el sistema."
     try:
-        flow = pedir(f"{API}/{elegida['flow_id']}?fields=id,name,status",
-                     token=datos["token"])
-        salida["flow"] = {"nombre": flow.get("name"),
-                          "estado": flow.get("status")}
-        if (flow.get("status") or "").upper() != FLOW_PUBLICADO:
-            salida["motivos"].append(
-                f"El Flow «{flow.get('name')}» está en «{flow.get('status')}» "
-                f"y tiene que estar publicado para poder enviarlo.")
+        flow = (pedir or _pedir)(f"{API}/{flow_id}?fields=id,name,status",
+                                 token=datos["token"])
     except Conflicto as error:
-        salida["motivos"].append(f"No se pudo leer el Flow: {error.mensaje}")
+        return False, f"No se pudo leer el Flow: {error.mensaje}"
+    if (flow.get("status") or "").upper() != FLOW_PUBLICADO:
+        return False, (f"El Flow «{flow.get('name') or flow_id}» está en "
+                       f"«{flow.get('status')}» y tiene que estar publicado para "
+                       f"poder enviarlo.")
+    return True, None
 
-    salida["puede_enviar"] = not salida["motivos"]
-    return salida
 
-
-def enviar_flow(destino, plantilla, idioma, flow_token,
+def enviar_flow(destino, plantilla, idioma, flow_token, textos=None, indice=0,
                 entorno=None, pedir=None):
     """Manda la plantilla con el Flow a un número. Devuelve el id del mensaje.
 
@@ -362,8 +296,8 @@ def enviar_flow(destino, plantilla, idioma, flow_token,
     que permite que la ingesta mapee directo.
 
     El `flow_id` no entra acá: el envío referencia la plantilla, y el Flow
-    viene adentro de su botón. Es la razón de fondo por la que configurarlo
-    aparte nunca tuvo sentido.
+    viene adentro de su botón. `textos` va a los `{{n}}` del cuerpo, como en
+    cualquier mensaje (D87), e `indice` es la posición del botón de Flow.
     """
     datos = config(entorno)
     if not datos["token"] or not datos["phone_number_id"]:
@@ -373,6 +307,20 @@ def enviar_flow(destino, plantilla, idioma, flow_token,
             "Falta el `flow_token`. Sin él, las respuestas vuelven sin forma "
             "de saber de quién son.")
 
+    componentes = []
+    if textos:
+        componentes.append({
+            "type": "body",
+            "parameters": [{"type": "text", "text": str(t)} for t in textos]})
+    componentes.append({
+        "type": "button",
+        "sub_type": "flow",
+        "index": str(indice or 0),
+        "parameters": [{
+            "type": "action",
+            "action": {"flow_token": str(flow_token)},
+        }],
+    })
     cuerpo = {
         "messaging_product": "whatsapp",
         "to": destino,
@@ -380,15 +328,7 @@ def enviar_flow(destino, plantilla, idioma, flow_token,
         "template": {
             "name": plantilla,
             "language": {"code": idioma or "es"},
-            "components": [{
-                "type": "button",
-                "sub_type": "flow",
-                "index": "0",
-                "parameters": [{
-                    "type": "action",
-                    "action": {"flow_token": str(flow_token)},
-                }],
-            }],
+            "components": componentes,
         },
     }
     respuesta = (pedir or _pedir)(

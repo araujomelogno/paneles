@@ -34,9 +34,7 @@ ORIGEN_CARGA = "carga"
 ORIGENES = (ORIGEN_PANEL, ORIGEN_CONSULTA, ORIGEN_CARGA)
 
 _COLUMNAS = ("id, panel_id, tipo, origen, nombre, fecha_campo, publico_objetivo, "
-             "url_alchemer, "
-             "descripcion, estado, ref_estudio, creado_en, flow_id, "
-             "flow_plantilla, flow_idioma")
+             "url_alchemer, descripcion, estado, ref_estudio, creado_en")
 
 
 def _fecha(crudo):
@@ -140,16 +138,6 @@ def _serializar(fila):
         "estado": fila["estado"],
         "ref_estudio": str(fila["ref_estudio"]),
         "creado_en": fila["creado_en"].isoformat(),
-        # R4.5 — la configuración de WhatsApp Flow. `None` en las encuestas
-        # que no son de Flow, que son todas las anteriores a Fase 4.
-        "flow_id": fila.get("flow_id"),
-        "flow_plantilla": fila.get("flow_plantilla"),
-        "flow_idioma": fila.get("flow_idioma"),
-        # Una encuesta es de Flow por tener plantilla elegida. El `flow_id`
-        # se resuelve de ella y puede faltar si Meta no contestó al
-        # configurar; eso no la vuelve «no Flow», la vuelve no enviable
-        # todavía, que es lo que informa `estado_flow`.
-        "es_flow": bool(fila.get("flow_plantilla")),
     }
 
 
@@ -1117,177 +1105,11 @@ def verificar_cruce(conn_boveda, conn_semantica, encuesta_id):
     }
 
 
-# ── R4.5 · Envío por WhatsApp Flow ──────────────────────────────────
+# ── R4.5 · El envío por WhatsApp Flow ────────────────────────────────
 #
-# El envío es una acción **sobre** una convocatoria que ya existe: la
-# convocatoria se registra igual que siempre (`participacion`) y esto no la
-# reemplaza. Por eso el estado del envío vive en `participacion` y no en una
-# tabla aparte, y por eso se puede convocar sin enviar y enviar después.
-
-def configurar_flow(conn, encuesta_id, plantilla=None, idioma=None,
-                    entorno=None, pedir=None):
-    """Marca la encuesta como de WhatsApp Flow eligiendo **una plantilla**.
-
-    Lo único que se elige es la plantilla; el idioma y el `flow_id` salen de
-    ella. Pedir los tres por separado era pedir tres veces el mismo dato y
-    dejar que se contradigan: nada impedía configurar una plantilla con el
-    Flow de otra, y eso recién se descubría al validar o al enviar.
-
-    El `flow_id` se guarda igual, resuelto de la plantilla, por dos motivos:
-    queda registrado qué Flow usó esa ola aunque después la plantilla cambie,
-    y el envío no depende de que Meta conteste para saber qué se configuró.
-
-    **No falla si Meta no contesta.** Una plantilla recién mandada a aprobar
-    puede tardar días, y la configuración tiene que poder guardarse igual: lo
-    que no se pudo resolver queda en `null` y `estado_flow` lo informa.
-    """
-    from . import whatsapp
-
-    obtener(conn, encuesta_id)
-    plantilla = (plantilla or "").strip() or None
-    idioma = (idioma or "").strip() or None
-    flow_id = None
-
-    if plantilla:
-        encontrada = whatsapp.buscar_plantilla(
-            plantilla, idioma, entorno=entorno, pedir=pedir)
-        if encontrada:
-            idioma = encontrada["idioma"]
-            flow_id = encontrada["flow_id"]
-
-    db.ejecutar(
-        conn,
-        "update encuesta set flow_id = %s, flow_plantilla = %s, flow_idioma = %s "
-        "where id = %s",
-        (flow_id, plantilla, idioma, encuesta_id),
-    )
-    return obtener(conn, encuesta_id)
-
-
-def estado_flow(conn, encuesta_id, entorno=None, pedir=None):
-    """¿Se puede convocar por WhatsApp? Valida contra Meta **antes** de enviar.
-
-    Las plantillas requieren aprobación y la revisión demora; un Flow válido
-    no hace enviable una plantilla rechazada. Descubrirlo recién al enviar
-    significa haber convocado a gente a la que no se le puede mandar nada.
-    """
-    from . import whatsapp
-
-    encuesta = obtener(conn, encuesta_id)
-    if not encuesta["es_flow"]:
-        return {"encuesta_id": encuesta_id, "es_flow": False,
-                "puede_enviar": False,
-                "motivos": ["La encuesta no está configurada como Flow."]}
-    salida = whatsapp.validar_configuracion(
-        encuesta["flow_plantilla"], encuesta["flow_idioma"],
-        entorno=entorno, pedir=pedir)
-    salida.update({"encuesta_id": encuesta_id, "es_flow": True})
-    return salida
-
-
-def destinatarios_whatsapp(conn, encuesta_id, solo_pendientes=True):
-    """Quiénes de los convocados pueden recibir el Flow, y quiénes no y por qué.
-
-    **La regla de los dos ejes** (R4.4): consentimiento de finalidad vigente
-    *y* preferencia de WhatsApp activa, más celular válido. Los excluidos van
-    discriminados por motivo porque cada uno se arregla distinto.
-    """
-    from . import preferencias
-
-    obtener(conn, encuesta_id)
-    filas = db.todas(
-        conn,
-        """
-        select id_persona, envio_estado from participacion
-         where encuesta_id = %s
-        """,
-        (encuesta_id,),
-    )
-    convocados = [str(f["id_persona"]) for f in filas]
-    ya_enviados = {str(f["id_persona"]) for f in filas
-                   if f["envio_estado"] == "enviado"}
-
-    contactables, excluidos = preferencias.filtrar_contactables(
-        conn, convocados, preferencias.WHATSAPP)
-
-    # Reintentar no puede volver a enviarle a quien ya recibió: sería un
-    # mensaje duplicado, y por ese camino se queman el canal y la paciencia.
-    pendientes = [i for i in contactables if i not in ya_enviados]
-    return {
-        "encuesta_id": encuesta_id,
-        "convocados": len(convocados),
-        "destinatarios": pendientes if solo_pendientes else contactables,
-        "ya_enviados": sorted(ya_enviados),
-        "excluidos": excluidos,
-        "excluidos_total": sum(len(v) for v in excluidos.values()),
-    }
-
-
-def enviar_por_whatsapp(conn, encuesta_id, ids_persona=None, entorno=None,
-                        pedir=None, enviar=None):
-    """Manda el Flow a los convocados que cumplen. Devuelve el parte por persona.
-
-    No se puede enviar si la configuración no está validada: es la baranda de
-    R4.5, y evita el caso feo de convocar y descubrir después que la plantilla
-    estaba rechazada.
-    """
-    from . import whatsapp
-
-    encuesta = obtener(conn, encuesta_id)
-    estado = estado_flow(conn, encuesta_id, entorno=entorno, pedir=pedir)
-    if not estado["puede_enviar"]:
-        raise Conflicto(
-            "No se puede enviar por WhatsApp todavía.",
-            {"motivos": estado["motivos"], "encuesta_id": encuesta_id})
-
-    seleccion = destinatarios_whatsapp(conn, encuesta_id)
-    destinatarios = seleccion["destinatarios"]
-    if ids_persona:
-        pedidos = {str(i) for i in ids_persona}
-        destinatarios = [i for i in destinatarios if i in pedidos]
-    if not destinatarios:
-        return {**seleccion, "enviados": 0, "fallidos": 0, "detalle": []}
-
-    celulares = {
-        str(f["id_persona"]): f["celular"]
-        for f in db.todas(
-            conn,
-            "select id_persona, celular from persona where id_persona = any(%s::uuid[])",
-            (destinatarios,))
-    }
-
-    enviados, fallidos, detalle = 0, 0, []
-    for id_persona in destinatarios:
-        try:
-            resultado = (enviar or whatsapp.enviar_flow)(
-                celulares.get(id_persona),
-                encuesta["flow_plantilla"], encuesta["flow_idioma"],
-                # R4.5 — el `flow_token` **es** el `id_persona`: es lo que
-                # vuelve con las respuestas y lo que hace que la ingesta
-                # mapee directo, sin PII y sin adivinar.
-                flow_token=id_persona,
-                entorno=entorno, pedir=pedir)
-            db.ejecutar(
-                conn,
-                "update participacion set enviado_en = now(), "
-                "envio_estado = 'enviado', envio_error = null "
-                "where encuesta_id = %s and id_persona = %s",
-                (encuesta_id, id_persona))
-            enviados += 1
-            detalle.append({"id_persona": id_persona, "estado": "enviado",
-                            "message_id": resultado.get("message_id")})
-        except Exception as error:      # noqa: BLE001 — se informa, no se propaga
-            # Un fallo por persona no puede voltear el envío entero: el resto
-            # de la ola tiene que salir igual, y el fallido se reintenta.
-            mensaje = getattr(error, "mensaje", None) or str(error)
-            db.ejecutar(
-                conn,
-                "update participacion set envio_estado = 'fallido', "
-                "envio_error = %s where encuesta_id = %s and id_persona = %s",
-                (mensaje[:500], encuesta_id, id_persona))
-            fallidos += 1
-            detalle.append({"id_persona": id_persona, "estado": "fallido",
-                            "error": mensaje})
-    conn.commit()
-    return {**seleccion, "enviados": enviados, "fallidos": fallidos,
-            "detalle": detalle}
+# D87 — la sección «WhatsApp Flow» se unificó en los mensajes de la encuesta
+# (`mensajes.py`): el Flow es un tipo de botón de la plantilla de un mensaje,
+# con los mismos cuatro públicos, la misma regla de elegibilidad y el mismo
+# registro en `envio`. Lo que la sección vieja envió se migró a `envio`
+# (boveda/0036). Las columnas `encuesta.flow_*` y `participacion.envio_*`
+# quedan sin uso hasta que una versión posterior las quite: nada las escribe.
