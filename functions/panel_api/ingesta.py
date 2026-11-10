@@ -162,6 +162,17 @@ POR_CELULAR = "celular"
 TIPOS_DE_IDENTIFICADOR = (POR_ID_PERSONA, POR_ALIAS, POR_DOCUMENTO, POR_EMAIL,
                           POR_CELULAR)
 
+# R-CTL.4 — cómo se nombra cada tipo en un aviso: «2 no se pudieron
+# identificar **como id de la plataforma de campo**». Sin el tipo, un aviso
+# de «no identificados» con el tipo equivocado parecía gente que no existe.
+ETIQUETAS_DE_IDENTIFICADOR = {
+    POR_ID_PERSONA: "id_persona del sistema",
+    POR_ALIAS: "id de la plataforma de campo",
+    POR_DOCUMENTO: "documento",
+    POR_EMAIL: "correo",
+    POR_CELULAR: "celular",
+}
+
 # Por qué una fila no resolvió. Se arreglan distinto, y una lista sin motivo
 # obliga a adivinar cuál pasó.
 FORMATO_INVALIDO = "formato_invalido"
@@ -198,6 +209,19 @@ _CELULAR_ESCRITO = re.compile(r"^\+?[\d\s().-]+$")
 _UUID = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
 )
+
+
+def tipo_sugerido(valores):
+    """R-CTL.4 — el tipo que conviene proponer para una columna, por la forma
+    de sus valores. Hoy, uno solo: si **todos** los valores no vacíos tienen
+    forma de `id_persona` (UUID), es la muestra precargada que volvió del
+    campo, y buscarla como id de la plataforma no encuentra a nadie. Sin
+    valores, o con uno solo que no lo sea, no se propone nada: proponer es
+    ayudar, no adivinar."""
+    vistos = [str(v).strip() for v in valores or [] if str(v or "").strip()]
+    if vistos and all(_UUID.match(v) for v in vistos):
+        return POR_ID_PERSONA
+    return None
 
 
 def resolver_identificadores(conn_boveda, tipo, valores, origen=None):

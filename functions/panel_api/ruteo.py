@@ -31,6 +31,7 @@ from . import (
     encuestas,
     encuestas_borrado,
     esquema,
+    ingesta as mod_ingesta,
     mensajes,
     estadisticas,
     inscripciones,
@@ -2168,6 +2169,17 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
             nombre_destino=encuesta.get("nombre"))
         resumen["encuesta"] = {"id": encuesta["id"], "nombre": encuesta["nombre"],
                                "tipo": encuesta["tipo"]}
+        # R-CTL.4 — si la columna trae id_persona y se eligió otro tipo, la
+        # revisión lo dice: buscar un UUID como id de la plataforma no
+        # encuentra a nadie, y el aviso de no convocados mentiría.
+        sugerido = mod_ingesta.tipo_sugerido([f.get(columna_id) for f in filas])
+        resumen["identidad"]["tipo_sugerido"] = sugerido
+        if sugerido and sugerido != (tipo_id or mod_ingesta.POR_ALIAS):
+            resumen["identidad"]["aviso_tipo"] = (
+                f"Los valores de «{columna_id}» tienen forma de id_persona, pero se "
+                f"eligió identificarlos como "
+                f"{mod_ingesta.ETIQUETAS_DE_IDENTIFICADOR.get(tipo_id or 'alias')}. "
+                f"Conviene «Trae el id_persona del sistema».")
         resumen["archivo_repetido"] = repetido
         resumen["no_convocados"] = cargas.no_convocados(
             ctx.boveda, encuesta["id"], filas, columna_id, tipo_id, origen)

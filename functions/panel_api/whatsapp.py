@@ -153,6 +153,20 @@ def parametros_del_cuerpo(texto):
     return len({m for m in re.findall(r"\{\{(\d+)\}\}", texto or "")})
 
 
+def _encabezado_de(componentes):
+    """R-CTL.2 — el encabezado de una plantilla, si lo tiene:
+    `{formato, variable, texto}`. `formato` es el de Meta (`TEXT`, `IMAGE`,
+    `VIDEO`, `DOCUMENT`, `LOCATION`); `variable`, si un encabezado de texto
+    lleva un `{{n}}`."""
+    for componente in componentes or []:
+        if (componente.get("type") or "").upper() == "HEADER":
+            formato = (componente.get("format") or "TEXT").upper()
+            texto = componente.get("text")
+            return {"formato": formato, "texto": texto,
+                    "variable": formato == "TEXT" and "{{" in (texto or "")}
+    return None
+
+
 def _cuerpo_de(componentes):
     """El texto del cuerpo, para que la lista se pueda leer sin ir a Meta."""
     for componente in componentes or []:
@@ -229,6 +243,9 @@ def listar_plantillas(entorno=None, pedir=None, solo_con_flow=True,
             # (cuya base fija Meta) y cuántos parámetros lleva el texto.
             "boton_url": boton_url,
             "parametros_cuerpo": parametros_del_cuerpo(cuerpo),
+            # R-CTL.2 — el sistema solo completa el cuerpo y el botón: un
+            # encabezado con variable o con archivo haría fallar cada envío.
+            "encabezado": _encabezado_de(cruda.get("components")),
         })
 
     # El mismo nombre puede existir en varios idiomas, y son plantillas

@@ -14,6 +14,15 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Controles de los mensajes y de la identificación · 2026-11-10.**
+> PEDIDO de controles (D91). La 5.4 suma **el sistema propone el tipo, y la
+> revisión lo dice**: la columna con id_persona propone ese tipo, los avisos
+> dicen con qué tipo se intentó identificar, y cambiarlo en la revisión la deja
+> desactualizada. La 5.13 suma el **texto fijo** como fuente de un parámetro,
+> las **plantillas con encabezado no soportado** y **en cada envío se vuelve a
+> comparar la URL**, con las dos direcciones una debajo de la otra. Dos
+> preguntas frecuentes nuevas. Sin capturas nuevas; PDF regenerado.
+
 > **Mensajes, canales, selección aleatoria y audiencias · 2026-11-10.**
 > PEDIDO del 06/11/26 (D87 a D90). Cambios por sección:
 >

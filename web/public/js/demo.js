@@ -1693,6 +1693,18 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     });
     if (!encuesta.nombre) throw new ErrorDemo('La encuesta necesita un nombre.', 400);
     if (Array.isArray(cuerpo.clientes)) encuesta.clientes = clientesDemo(cuerpo.clientes);
+    if ('url_alchemer' in cuerpo) {
+      // R-CTL.1 — los mensajes de WhatsApp que ya no coinciden quedan bloqueados.
+      const bloqueados = bd.mensajes.filter((m) => m.encuesta_id === encuesta.id
+        && m.canal === 'whatsapp' && m.boton === 'url' && m.url_boton !== encuesta.url_alchemer);
+      if (bloqueados.length) {
+        return { ...encuestaCompleta(encuesta), avisos: [{
+          motivo: 'mensajes_bloqueados_por_url',
+          mensaje: `${bloqueados.length} mensaje(s) de WhatsApp —${bloqueados.map(
+            (m) => `«${m.nombre}»`).join(', ')}— llevan a otra URL: van a quedar bloqueados `
+            + 'al enviar hasta revisar sus plantillas.' }] };
+      }
+    }
     return encuestaCompleta(encuesta);
   }
 
@@ -4777,6 +4789,14 @@ const PLANTILLAS_MENSAJE_DEMO = [
   { nombre: 'gracias', idioma: 'es', estado: 'APPROVED', categoria: 'UTILITY',
     cuerpo: '¡Gracias {{1}}! Ya registramos tu respuesta.', boton_url: null,
     parametros_cuerpo: 1, flow_id: null },
+  // R-CTL.2 — una plantilla con encabezado de imagen: se lista, con el motivo
+  // por el que no se puede usar.
+  { nombre: 'promo_con_imagen', idioma: 'es', estado: 'APPROVED', categoria: 'MARKETING',
+    cuerpo: 'Hola {{1}}, mirá esto.', boton_url: null, parametros_cuerpo: 1, flow_id: null,
+    encabezado: { formato: 'IMAGE', texto: null, variable: false },
+    no_soportada: 'La plantilla «promo_con_imagen» tiene un encabezado con imagen, que '
+      + 'todavía no se puede completar desde el sistema: cada envío fallaría en Meta. '
+      + 'Usá una plantilla sin encabezado o con un encabezado de texto fijo.' },
   ...PLANTILLAS_DEMO.map((p) => ({ ...p, boton_url: null, parametros_cuerpo: 0,
                                    indice_flow: 0 })),
 ].map((p) => ({
@@ -4786,6 +4806,8 @@ const PLANTILLAS_MENSAJE_DEMO = [
 }));
 const FUENTES_DE_PARAMETRO_DEMO = {
   nombre_panelista: 'Nombre del panelista', nombre_encuesta: 'Nombre de la encuesta',
+  // R-CTL.3 — un texto escrito al crear el mensaje, igual para todos.
+  texto_fijo: 'Texto fijo (igual para todos)',
 };
 const PUBLICOS_DEMO = {
   todos: 'Todos', no_enviado: 'No enviado aún',
@@ -4843,6 +4865,9 @@ function guardarMensajeDemo(encuesta, cuerpo, existente = null) {
     const plantilla = PLANTILLAS_MENSAJE_DEMO.find((p) => p.nombre === cuerpo.plantilla
       && (!cuerpo.plantilla_idioma || p.idioma === cuerpo.plantilla_idioma));
     if (!plantilla) throw new ErrorDemo('Elegí una plantilla aprobada.', 400);
+    if (plantilla.no_soportada) {
+      throw new ErrorDemo(plantilla.no_soportada, 400, { motivo: 'encabezado_no_soportado' });
+    }
     const parametros = cuerpo.parametros || [];
     if (parametros.length !== plantilla.parametros_cuerpo) {
       throw new ErrorDemo(`La plantilla tiene ${plantilla.parametros_cuerpo} parámetro(s) en el `
@@ -4859,7 +4884,8 @@ function guardarMensajeDemo(encuesta, cuerpo, existente = null) {
     }
     if (distinta) {
       if (!cuerpo.confirmar_url_distinta) {
-        throw new ErrorDemo(distinta, 409, { motivo: 'url_distinta' });
+        throw new ErrorDemo(distinta, 409, { motivo: 'url_distinta', url_boton: boton?.base,
+                                             url_alchemer: encuesta.url_alchemer || null });
       }
       avisos.push(distinta);
     }
@@ -4924,7 +4950,18 @@ function previaDemo(encuesta, mensaje, cual) {
       : 'La encuesta está en borrador: los mensajes se envían con la encuesta en campo.');
   }
   if (!contactables.length) motivos.push('Nadie del público elegido puede recibir este mensaje.');
+  // R-CTL.1 — en cada envío, el botón vigente contra la URL vigente.
+  const vigente = PLANTILLAS_MENSAJE_DEMO.find((p) => p.nombre === mensaje.plantilla
+    && p.idioma === mensaje.plantilla_idioma);
+  const boton = mensaje.canal === 'whatsapp' && mensaje.boton === 'url' ? vigente?.boton_url : null;
+  const urls = boton ? { url_boton: boton.base, url_alchemer: encuesta.url_alchemer || null,
+                         coinciden: boton.base === encuesta.url_alchemer } : null;
+  if (urls && !urls.coinciden) {
+    motivos.push('El botón de la plantilla no lleva a la URL de Alchemer de la encuesta: '
+      + 'la gente iría a otro lado.');
+  }
   return {
+    urls,
     encuesta_id: encuesta.id, mensaje: mensajeDemo(mensaje), publico: cual,
     publico_etiqueta: PUBLICOS_DEMO[cual], en_el_publico: ids.length,
     recibiran: contactables.length, ya_recibieron: ya.length, excluidos,
