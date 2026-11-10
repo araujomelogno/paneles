@@ -51,7 +51,10 @@ FASES_CON_PANTALLA = ("R7.", "R8.",
                       # PEDIDO 06/11/26 (D87 a D90) — canales en la carga,
                       # selección aleatoria, listas de la encuesta, cruces en
                       # porcentaje y audiencias desde consultas.
-                      "R-CAN.", "R-ALE.", "R-ENC.", "R-COMP.", "R-AU.")
+                      "R-CAN.", "R-ALE.", "R-ENC.", "R-COMP.", "R-AU.",
+                      # PEDIDO cancelar una carga (D92) — cancelar, la limpieza
+                      # desde Cumplimiento, detener y reanudar una ingesta.
+                      "R-CAN-C.")
 
 # Rutas de estas fases que **no** tienen pantalla, con el motivo. Vacío hoy;
 # si alguna vez hace falta, el motivo va escrito acá y no en la memoria de

@@ -14,6 +14,18 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Cancelar una carga, carga mixta y cargas incrementales · 2026-11-10.**
+> PEDIDOS de cancelar una carga, carga mixta y cargas incrementales (D92 a
+> D94). La 5.4 suma **cancelar antes de confirmar no deja nada**, **detener
+> una ingesta en curso** (cerrar la ventana no la frena) y **toda carga es
+> mixta: existentes y nuevas**, con las cuatro capas, la vista previa y el
+> consentimiento solo para las nuevas. La 5.5 ya no tiene la pregunta «¿los
+> panelistas ya están en el sistema?». La 5.10 suma **una encuesta que se
+> carga varias veces** (nuevo · reutilizado · ya estaba, la ficha agrupada).
+> La 7.5 aclara que la composición de una carga es lo que sumó, y la 11.3
+> suma **cargas provisorias abandonadas**. Tres preguntas frecuentes nuevas.
+> Sin capturas nuevas; PDF regenerado.
+
 > **Controles de los mensajes y de la identificación · 2026-11-10.**
 > PEDIDO de controles (D91). La 5.4 suma **el sistema propone el tipo, y la
 > revisión lo dice**: la columna con id_persona propone ese tipo, los avisos

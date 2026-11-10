@@ -92,6 +92,8 @@ def test_la_ruta_crea_la_carga_con_sus_clientes(ctx, actor):
                                 "modo_relevamiento": "web"},
                                {}, actor("operaciones"), ctx)
     assert [c["nombre"] for c in carga["clientes"]] == ["antel", "movistar"]
+    # D92 — la carga nace provisoria y no se lista hasta confirmar su ingesta.
+    cargas.confirmar_provisoria(ctx.boveda, carga["id"])
     _, lista = ruteo.despachar("GET", "/cargas", {}, {}, actor("analista"), ctx)
     assert [c["nombre"] for c in lista["items"][0]["clientes"]] == ["antel", "movistar"]
 

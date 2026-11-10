@@ -220,9 +220,13 @@ def listar(conn, panel_id=None, tipo=None, estado=None, cliente_id=None):
                (select count(*) from participacion pa
                  where pa.encuesta_id = e.id and pa.respondio
                    and not pa.convocado)::int as no_convocados,
-               (select count(*) from carga c where c.encuesta_id = e.id)::int as cargas
+               (select count(*) from carga c
+                 where c.encuesta_id = e.id and not c.provisoria)::int as cargas
           from encuesta e left join panel p on p.id = e.panel_id
-         where (%s::bigint is null or e.panel_id = %s::bigint)
+         -- D92 · R-CAN-C.1 — la encuesta automática de una carga que todavía
+         -- no se confirmó no aparece en ningún listado.
+         where not e.provisoria
+           and (%s::bigint is null or e.panel_id = %s::bigint)
            and (%s::text is null or e.tipo = %s::text)
            and (%s::text is null or e.estado = %s::text)
            and (%s::bigint is null or exists (

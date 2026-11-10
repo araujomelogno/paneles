@@ -170,6 +170,10 @@ export const ingestas = {
   reintentar: (trabajoId, indice) =>
     POST(`/ingestas/${trabajoId}/reintentar`,
          indice === undefined || indice === null ? {} : { indice }),
+  /* D92 · R-CAN-C.4 — detener una ingesta en curso (los lotes pendientes
+     quedan cancelados) y reanudarla (vuelve a encolar los cancelados). */
+  detener: (trabajoId) => POST(`/ingestas/${trabajoId}/detener`, {}),
+  reanudar: (trabajoId) => POST(`/ingestas/${trabajoId}/reanudar`, {}),
 };
 
 export const revisiones = {
@@ -205,6 +209,10 @@ export const cumplimiento = {
      ejecutado. Es distinto de `pendientes`: eso mira el store semántico de
      `paneles`, esto mira a todos los sistemas registrados. */
   borrados: () => GET('/cumplimiento/borrados'),
+  /* D92 · R-CAN-C.3 — las limpiezas de cargas provisorias abandonadas
+     (cuántas y cuándo) y dispararla a mano. */
+  provisorias: () => GET('/cumplimiento/provisorias'),
+  limpiarProvisorias: () => POST('/cumplimiento/provisorias/limpieza', {}),
   auditoriaPii: () => GET('/auditoria/pii'),
   /* Qué migraciones están aplicadas en cada base. Devuelve 500 cuando falta
      alguna, con el detalle en el cuerpo: la página lo lee de ahí. */
@@ -516,6 +524,9 @@ export const cargas = {
      filtra por temática (`tematica_id`) y busca por nombre (`q`). */
   listar: (consulta) => GET('/cargas', consulta),
   ver: (cargaId) => GET(`/cargas/${cargaId}`),
+  /* D92 · R-CAN-C.2 — cancelar antes de confirmar borra la carga provisoria
+     (y su encuesta automática). Seguro de repetir. */
+  cancelar: (cargaId) => POST(`/cargas/${cargaId}/cancelar`, {}),
   /* R-CAR.3 — de qué otras cargas vienen sus reutilizados (conteos). */
   reutilizados: (cargaId) => GET(`/cargas/${cargaId}/reutilizados`),
   /* R-TEM.4 — deja a la carga con esa lista: `[{ nombre, origen }]`. Es el

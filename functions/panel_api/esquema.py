@@ -223,6 +223,12 @@ MIGRACIONES_BOVEDA = (
         "carga_canal_registro", "consulta_ejecucion.seleccion",
         "consulta_ejecucion.semilla", "encuesta_audiencia_agregado",
     )),
+    # ── Cargas provisorias, detener una ingesta y cargas incrementales (D92
+    # a D94). Cambia datos: los vínculos posteriores a la primera carga de
+    # cada encuesta pasan a `repetida`.
+    ("0037_cancelar_carga_mixta_e_incrementales.sql", (
+        "carga.provisoria", "encuesta.provisoria", "limpieza_provisoria",
+    )),
 )
 
 # Objetos que una migración creó y una posterior **retiró** (los tiró sin

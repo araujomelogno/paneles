@@ -647,9 +647,10 @@
 
   <p>Estos datos se guardan <strong>en la carga, no en cada persona</strong>.
   Cada persona queda vinculada a la carga, y su ficha los muestra a través de
-  ese vínculo (sección 3.5). Por eso una persona que aparece en tres cargas
-  muestra los tres estudios, y corregir un dato del estudio se hace una sola
-  vez.</p>
+  ese vínculo (sección 3.5). Por eso una persona que aparece en tres estudios
+  muestra los tres, y corregir un dato del estudio se hace una sola vez. Tres
+  cargas de una misma encuesta son un estudio: la ficha lo muestra una vez
+  (sección 5.10).</p>
 
   <div class="aviso info">
     <div class="t">El público objetivo describe al estudio, no a las personas</div>
@@ -661,9 +662,11 @@
 
   <p>Tras confirmar el nombre se abre <strong>la misma pantalla de ingesta</strong>
   que se describe en las secciones 5.4 y 5.5: archivo, columna que identifica al
-  respondente, mapeo de variables a preguntas, marcado de variables demográficas
-  y modo de resolución de individuos. El procedimiento es idéntico, de modo que
-  no hay un flujo nuevo que aprender.</p>
+  respondente, mapeo de variables a preguntas y marcado de variables
+  demográficas. Quién ya existe y quién es nuevo lo decide el sistema fila por
+  fila (sección 5.4, <i>Toda carga es mixta</i>). El procedimiento es idéntico,
+  de modo que no hay un flujo nuevo que aprender. Si se cancela antes de
+  confirmar, la carga y su encuesta no quedan en ningún listado.</p>
 
   <h4>Las temáticas, en la revisión</h4>
 
@@ -1292,6 +1295,22 @@
     <li>Confirmar con <strong>Ingestar</strong>.</li>
   </ol>
 
+  <div class="aviso info">
+    <div class="t">Cancelar antes de confirmar no deja nada</div>
+    <p>La carga se crea en el primer paso —al poner el nombre y apretar
+    <i>Continuar</i>—, pero queda <strong>provisoria</strong> hasta que se
+    confirma la ingesta: no aparece en Encuestas, en Cargas, en Composición ni
+    en los filtros de las consultas. Si se aprieta <strong>Cancelar</strong> o
+    se cierra la ventana del archivo en cualquier paso antes de confirmar, la
+    carga se borra, y también la encuesta automática que crea una carga desde
+    Panelistas. Una encuesta que ya existía no se toca: solo se va la carga
+    nueva.</p>
+    <p>Si se cierra la pestaña o se corta la conexión, el sistema no se
+    entera en el momento: lo que quedó provisorio más de 24 horas se limpia
+    solo la próxima vez que alguien inicia una carga (y se puede limpiar a
+    mano desde Cumplimiento, sección 11.3).</p>
+  </div>
+
   <h4>Mientras el sistema prepara la carga</h4>
 
   <p>Al presionar <strong>Ingestar</strong> el sistema lee el archivo entero
@@ -1418,6 +1437,9 @@
 
   <p>Mientras tanto se puede seguir trabajando. Y, sobre todo, se puede
   <strong>cerrar la pestaña</strong>: la carga sigue corriendo en el servidor.
+  La pantalla lo dice debajo de la barra —y la revisión, al apretar
+  <i>Ingestar</i>—: <em>«El procesamiento sigue en el servidor aunque cierres
+  esta ventana. Para frenarlo, usá "Detener ingesta".»</em>
   Al volver a la encuesta —o a Panelistas, si era una carga de individuos sin
   panel— la barra de avance reaparece sola y retoma el seguimiento donde
   estaba, o muestra directamente el resultado si la carga ya había
@@ -1435,6 +1457,26 @@
     <p>En una carga chica el cambio casi no se nota: la barra aparece y
     desaparece en un par de segundos, y el resultado es el de siempre.</p>
   </div>
+
+  <h4>Detener una ingesta en curso</h4>
+
+  <p>Mientras la carga está <i>encolada</i> o <i>procesando</i>, debajo de la
+  barra aparece <strong>Detener ingesta</strong>. Pide confirmación y:</p>
+
+  <ul class="puntos">
+    <li>los lotes que todavía no empezaron <strong>no se procesan</strong>
+    (quedan <i>cancelados</i>);</li>
+    <li>el lote que se estaba procesando <strong>termina</strong>: no se corta
+    a mitad de un lote;</li>
+    <li>la carga queda <strong>detenida</strong>. Lo que entró, entró.</li>
+  </ul>
+
+  <p>Detenida, la pantalla dice cuántos lotes se procesaron y cuántos no, y
+  ofrece dos salidas: <strong>Reanudar</strong>, que vuelve a encolar los
+  lotes cancelados, o <strong>Borrar lo cargado</strong>, que lleva al borrado
+  de la carga (sección 5.12). Una carga detenida no impide empezar otra en la
+  misma encuesta; lo que no se puede es reanudarla mientras esa otra está en
+  curso.</p>
 
   <h4>Si algún lote no entra</h4>
 
@@ -1495,6 +1537,68 @@
     queda marcado como <strong>desactualizado</strong> y no se puede confirmar
     hasta <i>Revisar de nuevo</i>: no se confirma una carga con un resumen
     calculado con otro tipo.</p>
+  </div>
+
+  <h4>Toda carga es mixta: existentes y nuevas</h4>
+
+  <p>Un archivo de Alchemer trae a quienes llegaron por el enlace de la
+  convocatoria —con su id_persona en la columna identificadora— y a quienes
+  llegaron sin él, con la columna <strong>vacía</strong>: personas nuevas. Ya
+  no se pregunta si los panelistas están en el sistema: el sistema lo decide
+  <strong>fila por fila</strong>, en este orden, y la primera capa que
+  encuentra a alguien decide.</p>
+
+  <table class="parte">
+    <thead><tr><th>Capa</th><th>Qué hace</th></tr></thead>
+    <tr><td class="destacado">1 · La columna identificadora</td>
+      <td>Si la fila trae valor, se busca según su tipo. Un
+      <strong>id_persona que no existe</strong> no es una persona nueva: es un
+      enlace roto —un id mal copiado, o el de alguien que se dio de baja—. La
+      fila no entra, no se crea a nadie y la revisión la cuenta como <i>id
+      desconocido</i>. Un id de la plataforma, un documento, un correo o un
+      celular que no se encuentra pasa a la capa siguiente.</td></tr>
+    <tr><td class="destacado">2 · El ID de respuesta (opcional)</td>
+      <td>Si en el paso 2 se declaró la columna <strong>ID de respuesta de la
+      plataforma</strong> —en Alchemer, el «Response ID»—, se busca por él. A
+      una persona nueva se le guarda: en la carga siguiente de la misma
+      encuesta se la reconoce aunque no tenga correo ni celular. Vale solo
+      dentro de esa encuesta: la respuesta 12 de otro estudio es otra
+      persona.</td></tr>
+    <tr><td class="destacado">3 · Correo, celular o documento</td>
+      <td>El reconocimiento de siempre (sección 3.2), con sus cautelas: un
+      celular compartido va a revisión. Quien aparece acá ya existía —de otro
+      estudio o de un alta— y se vincula, sin crear a nadie.</td></tr>
+    <tr><td class="destacado">4 · Persona nueva</td>
+      <td>Si ninguna capa la encontró y la fila trae documento, correo o
+      nombre, se crea. Si no trae ninguno, no se puede crear y no entra.</td></tr>
+  </table>
+
+  <p>La revisión lo resume en una línea: <strong>«487 filas · 450 existentes ·
+  35 nuevas · 2 con id desconocido»</strong>, y debajo, de las nuevas, cuántas
+  ya existían de otro estudio y cuántas se van a crear. Avisa además:</p>
+
+  <ul class="puntos">
+    <li>cuántas personas nuevas <strong>no tienen correo ni celular</strong>:
+    si aparecen en una carga posterior se van a crear de nuevo (declarar el ID
+    de respuesta lo evita);</li>
+    <li>en un recuadro destacado, una <strong>proporción de nuevas
+    inesperada</strong> —más de la mitad del archivo en una carga que esperaba
+    encontrar a su gente—: casi siempre es la columna identificadora o su tipo
+    mal elegidos. Es la protección que antes daba la pregunta «¿ya están en el
+    sistema?».</li>
+  </ul>
+
+  <div class="aviso">
+    <div class="t">El consentimiento se pide solo si hay a quién crear</div>
+    <p>Si todas las filas son de personas que ya existen, no se pide nada. Si
+    hay personas nuevas para crear, la revisión lo dice y aparece en el
+    formulario el paso <strong>4 · Personas nuevas: base legal del alta</strong>
+    (sección 5.5): hay que volver a corregir, declararlo y revisar de nuevo. La
+    evidencia —y los canales aceptados— se aplican <strong>solo a las que se
+    crean</strong>: a quien ya existía no se le registra nada.</p>
+    <p>En una encuesta con convocatoria, quien no vino con el id_persona del
+    enlace queda <i>no convocado</i>, aunque el sistema lo reconozca por su
+    correo.</p>
   </div>
 
   <p>Cuando alguna fila no se puede vincular, el resultado dice <strong>por
@@ -1695,17 +1799,17 @@
     de confirmar: todo lo que el análisis propone es editable.</p>
   </div>
 
-  <p>Con un <code>.sav</code> aparece además una pregunta que no existe en el
-  resto de las ingestas: <strong>¿los panelistas ya están en el sistema?</strong>
-  Si el relevamiento se hizo sobre gente enrolada, la respuesta es que sí y solo
-  hay que vincular las respuestas. Si el archivo trae gente que todavía no está
-  —el caso típico de una encuesta de calle con la que se quiere armar panel—,
-  se elige <strong>darlos de alta en esta carga</strong>.</p>
+  <p>Ya no hay que decir si los panelistas están en el sistema: el sistema
+  lo decide fila por fila (sección 5.4, <i>Toda carga es mixta</i>). Si el
+  archivo trae gente que todavía no está —el caso típico de una encuesta de
+  calle con la que se quiere armar panel—, la revisión lo cuenta y pide el
+  paso <strong>4 · Personas nuevas: base legal del alta</strong>. Vale igual
+  para un <code>.csv</code> o un <code>.xlsx</code>.</p>
 
   <h4>La base legal del alta</h4>
 
   <p>Dar de alta a alguien desde un archivo es enrolarlo, y no se enrola a nadie
-  sin consentimiento. Por eso este modo exige declarar de dónde sale la prueba:
+  sin consentimiento. Por eso crear personas exige declarar de dónde sale la prueba:
   <strong>qué variable del archivo evidencia el consentimiento y qué valor de
   esa variable cuenta como afirmativo</strong>, para cada una de las dos
   finalidades —integrar el panel y ser contactado, por un lado; uso semántico de
@@ -2135,6 +2239,37 @@
   <p>Al terminar, la tarjeta <i>Participación</i> de la encuesta muestra
   cuántos fueron convocados, cuántos respondieron y cuántos respondieron sin
   estar convocados.</p>
+
+  <h4>Una encuesta que se carga varias veces mientras el campo está abierto</h4>
+
+  <p>Cada export de Alchemer trae el <strong>acumulado</strong>: quien
+  respondió en la primera carga vuelve a aparecer en la segunda, la tercera y
+  las siguientes. El sistema registra cada aparición —el borrado de una carga
+  la necesita— y distingue la repetición:</p>
+
+  <table class="parte">
+    <thead><tr><th>En esta carga</th><th>Quiere decir</th></tr></thead>
+    <tr><td class="destacado">nuevo</td><td>La persona se creó con esta carga.</td></tr>
+    <tr><td class="destacado">reutilizado</td><td>Ya existía, de
+      <strong>otro</strong> estudio o de un alta.</td></tr>
+    <tr><td class="destacado">ya estaba</td><td>Ya estaba en una carga
+      <strong>anterior de esta misma encuesta</strong>.</td></tr>
+  </table>
+
+  <ul class="puntos">
+    <li>El detalle y el listado de cada carga lo dicen así: <em>«487 en el
+    archivo · 120 nuevos · 15 reutilizados de otros estudios · 352 ya estaban
+    en cargas anteriores de esta encuesta»</em>. El desglose de
+    <i>reutilizados</i> cuenta solo a los que vienen de otro estudio.</li>
+    <li>La <strong>ficha del panelista</strong> muestra cada encuesta una sola
+    vez, con la primera carga en que apareció, y debajo <em>«también en 2
+    cargas posteriores de esta encuesta»</em>, desplegable.</li>
+    <li>La composición de <strong>una carga</strong> muestra a quienes esa
+    carga sumó (sección 7.5).</li>
+    <li>Si se borra la primera carga, la siguiente pasa a ser la primera de
+    quien seguía en ella, y nadie que siga en otra carga se ofrece para dar de
+    baja.</li>
+  </ul>
 
   <p>Una encuesta que llegó como archivo de respuestas —las que se crean al
   cargar panelistas, y las cargas que existían antes de unificar encuestas y
@@ -3560,7 +3695,11 @@
   </div>
 
   <p><strong>Una carga</strong> muestra la composición de las personas que
-  provienen de una carga, creadas o reutilizadas. El desplegable lista las
+  esa carga <strong>sumó</strong> a su encuesta, creadas o reutilizadas: no
+  cuenta a quienes ya estaban en una carga anterior de la misma encuesta (el
+  acumulado de una encuesta que se carga varias veces, sección 5.10). La
+  pantalla lo dice: <em>«Muestra quiénes sumó esta carga. Para la encuesta
+  completa, elegí el ámbito "una encuesta".»</em> El desplegable lista las
   cargas por nombre y fecha del estudio, y el resultado se muestra con el
   público objetivo al lado.</p>
 
@@ -4008,6 +4147,16 @@
   modos —los datos personales se eliminan— y el caso queda listado en esta
   sección. La opción <strong>Reintentar</strong> vuelve a ejecutar el borrado
   pendiente. Una lista vacía indica que no quedó nada a medio hacer.</p>
+
+  <h4>Cargas provisorias abandonadas</h4>
+
+  <p>Una carga queda provisoria desde que se le pone el nombre hasta que se
+  confirma su ingesta (sección 5.4). Si alguien cierra la pestaña a mitad de
+  camino, el sistema no se entera: lo provisorio con más de 24 horas, y sin
+  ninguna ingesta lanzada, se borra solo cada vez que alguien inicia una carga
+  nueva. Este recuadro dice cuántas provisorias hay hoy, muestra cada
+  limpieza —cuándo, si fue al iniciar una carga o a mano, y cuántas cargas y
+  encuestas borró— y tiene el botón <strong>Limpiar ahora</strong>.</p>
 
   <h4>Reidentificaciones</h4>
 
@@ -5142,6 +5291,22 @@
     <h2>Preguntas frecuentes</h2>
     <p>Situaciones habituales y su explicación.</p>
   </div>
+
+  <h4>Cancelé una carga y ya no aparece: ¿se perdió algo?</h4>
+  <p>No: hasta confirmar la ingesta no se escribió nada. La carga (y, desde
+  Panelistas, su encuesta) era provisoria y se borró al cancelar. Para
+  frenar una carga <strong>ya confirmada</strong> está <i>Detener ingesta</i>
+  en el seguimiento; cerrar la ventana no la frena (5.4).</p>
+
+  <h4>La revisión dice «id desconocido»</h4>
+  <p>Esas filas traen un id_persona que no existe: un enlace mal copiado o de
+  alguien que se dio de baja. No se crea a nadie con ellas y no entran. Si son
+  muchas, revisá que la columna identificadora sea la correcta (5.4).</p>
+
+  <h4>Una persona figura «ya estaba» en una carga</h4>
+  <p>Estaba en una carga anterior de la misma encuesta: el export trae el
+  acumulado. No es un reutilizado de otro estudio y no suma en la composición
+  de esa carga (5.10).</p>
 
   <h4>El envío dice que el botón no lleva a la URL de la encuesta</h4>
   <p>Alguien cambió la URL de Alchemer de la encuesta o la plantilla en Meta

@@ -699,6 +699,53 @@ Desde el PEDIDO del 06/11/26 (D87 a D90, `boveda/0036`):
   servidor** (`composicion.tabla_de_cruce`): la pantalla elige la vista. No
   repitan esas cuentas en JavaScript fuera de `demo.js`.
 
+## Cargas provisorias, mixtas e incrementales
+
+Desde los PEDIDOS de cancelar una carga, carga mixta y cargas incrementales
+(D92 a D94, `boveda/0037`):
+
+- **La carga nace provisoria y la confirma la transacción que crea el
+  trabajo** (`diferida.encolar(..., confirmar_carga=…)`, dentro del
+  savepoint). Ningún listado muestra lo provisorio: `cargas.listar`,
+  `encuestas.listar` y las estadísticas filtran `not provisoria`, y los
+  selectores salen de esas listas. Una encuesta **existente** nunca se vuelve
+  provisoria. Cancelar (`cargas.cancelar_provisoria`) es seguro de repetir y
+  no toca una carga confirmada: eso es el borrado (R-EU.10). Lo abandonado se
+  limpia **al iniciar cada carga** (`cargas.limpiar_provisorias`, más de 24 h
+  y sin trabajo), sin proceso programado, y cada corrida queda en
+  `limpieza_provisoria`. En la pantalla, cerrar el modal sin confirmar
+  cancela (`modal({ alCerrar })`).
+- **Detener no corta un lote**: `diferida.detener` pasa el trabajo a
+  `detenida` y los pendientes a `cancelado`; el procesador **mira el estado al
+  empezar** y descarta la tarea. `detenida` no es activa (el índice de la
+  `0029` mira `encolada` y `procesando`), `_tomar_lote` no la reabre y
+  `reanudar` vuelve a encolar los cancelados pasando por el mismo índice. No
+  agreguen un borrado de las tareas de la cola: la verificación al empezar es
+  la garantía. Solo se detiene una ingesta.
+- **Toda carga es mixta** (D93): no hay modo «ya existen / crear».
+  `reconocimiento.reconocer` resuelve cada fila por capas —columna
+  identificadora, ID de respuesta, dedup, persona nueva— y **no escribe**; la
+  revisión y la confirmación (`reconocimiento.aplicar`) usan esa misma
+  función. Un `id_persona` que no existe es un enlace roto: no crea a nadie.
+  El plan congelado identifica por el `id_persona` resuelto
+  (`COLUMNA_PERSONA`, tipo `id_persona`): los lotes no vuelven a reconocer.
+  La evidencia de consentimiento —y los canales del archivo— se piden y se
+  aplican **solo a las que se crean**; a quien ya existe no se le registra
+  nada.
+- **El ID de respuesta es de la encuesta**: se guarda en `alias_origen` con
+  origen `respuesta:<ref_estudio>`. No lo guarden con un origen común: el ID
+  de respuesta de Alchemer se repite entre encuestas. Y la clave de una fila
+  nueva no es un alias (`sav.crear_individuos(alias_de=…)`).
+- **`repetida` la decide `cargas.registrar_vinculos`** (D94), no quien llama:
+  quien ya tiene un vínculo con una carga anterior de la misma encuesta.
+  Dentro de una encuesta, a lo sumo un vínculo no `repetida` por persona
+  (`scripts/migrar_cargas_incrementales.py`, `CONSULTA_DUPLICADOS`). El
+  vínculo se sigue registrando siempre —el borrado decide con **todos**— y
+  al borrar una carga la primera aparición pasa a la siguiente
+  (`cargas.reasignar_primera_aparicion`). La ficha agrupa por encuesta y la
+  composición de una carga es lo que esa carga **sumó** (sin `repetida`);
+  `canales_carga` sigue aplicando a todos.
+
 ## Reglas de negocio que el código debe respetar
 
 - No se puede convocar ni incluir en muestreo a una persona sin `consentimiento` **vigente** para la finalidad correspondiente.

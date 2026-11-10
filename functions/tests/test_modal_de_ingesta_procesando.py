@@ -125,6 +125,11 @@ def resumen(ctx, actor, carga):
          "evidencia_consentimiento": EVIDENCIA, "solo_revisar": True,
          "proponer_tematicas": False},
         {}, actor("analista"), ctx)
+    # D93 — con la bóveda vacía las filas son nuevas y la revisión pediría
+    # la evidencia en el paso 4 (eso lo prueba
+    # `test_pantallas_cancelar_mixta_incrementales`). Acá se prueba el
+    # bloqueo del modal, así que la revisión no pide nada.
+    salida["reconocimiento"]["requiere_consentimiento"] = False
     return json.loads(json.dumps(salida, default=str))
 
 

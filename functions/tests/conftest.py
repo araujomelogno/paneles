@@ -67,6 +67,8 @@ TABLAS_BOVEDA = [
     # D88 / D90 — la auditoría de los canales de una carga y los pasos de la
     # audiencia de una encuesta cascadean, pero se nombran por lo mismo.
     "carga_canal_registro", "encuesta_audiencia_agregado",
+    # D92 — el registro de las limpiezas de cargas provisorias no tiene FK.
+    "limpieza_provisoria",
 ]
 
 # R3.14 — el catálogo de atributos **no** se trunca: `sexo`, `localidad`,

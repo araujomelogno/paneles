@@ -70,6 +70,8 @@ const bd = {
   encuestas: [],
   participaciones: [],
   revisiones: [],
+  // D92 — las corridas de la limpieza de cargas provisorias.
+  limpiezas: [],
   borradas: [],
   // Store semántico: SOLO id_persona, ref_estudio y contenido despersonalizado.
   semantica: { cuestionarios: [], individuos: [], preguntas: [], respuestas: [] },
@@ -747,10 +749,40 @@ function ingestarCarga(cargaId, cuerpo) {
   return resultado;
 }
 
-/* R-ORG.1 — el vínculo persona ↔ carga. Se fija la primera vez y no se pisa. */
+/* R-ORG.1 — el vínculo persona ↔ carga. Se fija la primera vez y no se pisa.
+   D94 · R-INC.1 — quien ya estaba en una carga anterior de la misma
+   encuesta queda `repetida` (lo mismo que `cargas.registrar_vinculos`). */
 function vincular(idPersona, cargaId, origen) {
   if (bd.vinculos.some((v) => v.id_persona === idPersona && v.carga_id === cargaId)) return;
-  bd.vinculos.push({ id_persona: idPersona, carga_id: cargaId, origen, creado_en: ahora() });
+  const carga = bd.cargas.find((c) => c.id === cargaId);
+  const anterior = carga && bd.vinculos.some((v) => v.id_persona === idPersona && bd.cargas.some(
+    (c) => c.id === v.carga_id && c.encuesta_id === carga.encuesta_id && c.id < carga.id));
+  bd.vinculos.push({ id_persona: idPersona, carga_id: cargaId,
+                     origen: anterior ? 'repetida' : origen, creado_en: ahora() });
+}
+
+/* D94 · R-INC.5 — lo mismo que `cargas.resumen_de_personas`. */
+function resumenDePersonasDemo(suyos) {
+  const n = (origen) => suyos.filter((v) => v.origen === origen).length;
+  const partes = [`${suyos.length} en el archivo`, `${n('creada')} nuevos`,
+                  `${n('reutilizada')} reutilizados de otros estudios`];
+  if (n('repetida')) partes.push(`${n('repetida')} ya estaban en cargas anteriores de esta encuesta`);
+  return partes.join(' · ');
+}
+
+/* D92 · R-CAN-C.3 — lo mismo que `cargas.limpiar_provisorias`. */
+function limpiarProvisoriasDemo(disparadaPor) {
+  const viejas = bd.cargas.filter((c) => c.provisoria
+    && Date.now() - new Date(c.creado_en).getTime() > 864e5);
+  bd.cargas = bd.cargas.filter((c) => !viejas.includes(c));
+  const encuestas = bd.encuestas.filter((e) => e.provisoria
+    && !bd.cargas.some((c) => c.encuesta_id === e.id));
+  bd.encuestas = bd.encuestas.filter((e) => !encuestas.includes(e));
+  const fila = { id: bd.limpiezas.length + 1, ejecutada_en: ahora(), disparada_por: disparadaPor,
+                 actor: disparadaPor === 'manual' ? 'demo' : null,
+                 cargas_eliminadas: viejas.length, encuestas_eliminadas: encuestas.length };
+  bd.limpiezas.push(fila);
+  return { ...fila, horas: 24 };
 }
 
 /* boveda/0026 — el mismo vocabulario que `cargas.TIPOS_DATOS_ORIGEN` y
@@ -870,6 +902,10 @@ function resumenCarga(carga) {
     personas_creadas: suyos.filter((v) => v.origen === 'creada').length,
     personas_reutilizadas: suyos.filter((v) => v.origen === 'reutilizada').length,
     personas: suyos.length,
+    // D94 · R-INC.5 — los que ya estaban en cargas anteriores de la encuesta.
+    personas_repetidas: suyos.filter((v) => v.origen === 'repetida').length,
+    provisoria: Boolean(carga.provisoria),
+    resumen_personas: resumenDePersonasDemo(suyos),
     tematicas: tematicasDe(carga.id),
     clientes: clientesDeIds(encuesta ? encuesta.clientes : carga.clientes),
   };
@@ -916,16 +952,34 @@ function origenDe(idPersona) {
    la carga. Sin carga que la haya creado, se la cuenta como alta manual. */
 function cargasDeDemo(idPersona) {
   const fecha = (c) => c.fecha_estudio || (c.creado_en || '').slice(0, 10);
-  const cargas = bd.vinculos.filter((v) => v.id_persona === idPersona).map((v) => {
-    const carga = bd.cargas.find((c) => c.id === v.carga_id) || {};
-    const resumen = resumenCarga(carga);
-    return {
-      carga_id: v.carga_id, nombre: carga.nombre, fecha_estudio: carga.fecha_estudio || null,
-      origen: v.origen, vinculado_en: v.creado_en, _fecha: fecha(carga),
-      clientes: resumen.clientes, tematicas: [],
-    };
-  }).sort((a, b) => String(b._fecha).localeCompare(String(a._fecha)))
-    .map(({ _fecha, ...c }) => c);
+  // D94 · R-INC.4 — cada encuesta una vez, con su primera carga; las
+  // posteriores van en la nota.
+  const porEncuesta = new Map();
+  bd.vinculos.filter((v) => v.id_persona === idPersona)
+    .map((v) => ({ v, carga: bd.cargas.find((c) => c.id === v.carga_id) || {} }))
+    .sort((a, b) => a.carga.id - b.carga.id)
+    .forEach(({ v, carga }) => {
+      const ya = porEncuesta.get(carga.encuesta_id);
+      if (ya) {
+        ya.posteriores.push({ carga_id: carga.id, nombre: carga.nombre, vinculado_en: v.creado_en });
+        return;
+      }
+      const resumen = resumenCarga(carga);
+      porEncuesta.set(carga.encuesta_id, {
+        carga_id: v.carga_id, nombre: carga.nombre, encuesta_id: carga.encuesta_id,
+        encuesta: resumen.encuesta, fecha_estudio: carga.fecha_estudio || null,
+        origen: v.origen, vinculado_en: v.creado_en, _fecha: fecha(carga),
+        clientes: resumen.clientes, tematicas: [], posteriores: [],
+      });
+    });
+  const cargas = [...porEncuesta.values()]
+    .sort((a, b) => String(b._fecha).localeCompare(String(a._fecha)))
+    .map(({ _fecha, ...c }) => ({
+      ...c,
+      nota_posteriores: c.posteriores.length
+        ? `también en ${c.posteriores.length} carga${c.posteriores.length === 1 ? '' : 's'} `
+          + `posterior${c.posteriores.length === 1 ? '' : 'es'} de esta encuesta` : null,
+    }));
   const persona = bd.personas.find((p) => p.id_persona === idPersona) || {};
   return {
     cargas,
@@ -1588,6 +1642,8 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     const panelId = consulta.panel_id ? Number(consulta.panel_id) : null;
     return {
       items: bd.encuestas
+        // D92 — la encuesta automática de una carga sin confirmar no se lista.
+        .filter((e) => !e.provisoria)
         .filter((e) => !panelId || e.panel_id === panelId)
         .filter((e) => !consulta.tipo || e.tipo === consulta.tipo)
         // R-ENC.2 — por estado y por cliente, combinados.
@@ -1725,6 +1781,9 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
       tipo_datos_origen: tipo, tipo_datos_origen_otro: tipoOtro,
       modo_relevamiento: modo, modo_relevamiento_otro: modoOtro,
       creado_en: ahora(), creado_por: 'demo',
+      // D92 — provisoria hasta que se confirma la ingesta; la encuesta ya
+      // existía y no se vuelve provisoria.
+      provisoria: true,
     };
     bd.cargas.push(carga);
     return resumenCarga(carga);
@@ -2025,6 +2084,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
       descripcion: (cuerpo.descripcion || '').trim() || null,
       clientes: clientesDemo(cuerpo.clientes),
     });
+    encuesta.provisoria = true;
     const carga = {
       id: siguiente('carga'), nombre,
       descripcion: (cuerpo.descripcion || '').trim() || null,
@@ -2032,6 +2092,8 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
       tipo_datos_origen: tipo, tipo_datos_origen_otro: tipoOtro,
       modo_relevamiento: modo, modo_relevamiento_otro: modoOtro,
       creado_en: ahora(), creado_por: 'demo',
+      // D92 — la carga y su encuesta automática nacen provisorias.
+      provisoria: true,
     };
     bd.cargas.push(carga);
     return resumenCarga(carga);
@@ -2041,8 +2103,8 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     // R-CAR.1 — por fecha del estudio, la más reciente primero; filtro por
     // temática y búsqueda por nombre, sin tildes ni mayúsculas.
     const fecha = (c) => c.fecha_estudio || c.creado_en.slice(0, 10);
-    let items = [...bd.cargas].sort((a, b) => fecha(b).localeCompare(fecha(a)))
-      .map(resumenCarga);
+    let items = [...bd.cargas].filter((c) => !c.provisoria)
+      .sort((a, b) => fecha(b).localeCompare(fecha(a))).map(resumenCarga);
     const q = sinTildes(normalizarTematica(consulta.q || ''));
     if (q) items = items.filter((c) => sinTildes(normalizarTematica(c.nombre)).includes(q));
     if (consulta.tematica_id) {
@@ -2226,7 +2288,31 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   }
 
   if (metodo === 'POST' && partes[0] === 'cargas' && partes[2] === 'ingesta') {
-    return ingestarCarga(Number(partes[1]), cuerpo);
+    const salida = ingestarCarga(Number(partes[1]), cuerpo);
+    // D92 — confirmar la ingesta deja de hacer provisorias a la carga y a su
+    // encuesta automática.
+    const carga = bd.cargas.find((c) => c.id === Number(partes[1]));
+    if (carga) {
+      carga.provisoria = false;
+      const encuesta = bd.encuestas.find((e) => e.id === carga.encuesta_id);
+      if (encuesta) encuesta.provisoria = false;
+    }
+    return salida;
+  }
+
+  /* D92 · R-CAN-C.2 — cancelar antes de confirmar borra la carga provisoria
+     y su encuesta automática. Seguro de repetir. */
+  if (metodo === 'POST' && partes[0] === 'cargas' && partes[2] === 'cancelar') {
+    const cargaId = Number(partes[1]);
+    const carga = bd.cargas.find((c) => c.id === cargaId);
+    if (!carga) return { carga_id: cargaId, borrada: false, motivo: 'no_existe', encuesta_borrada: false };
+    if (!carga.provisoria) return { carga_id: cargaId, borrada: false, motivo: 'confirmada', encuesta_borrada: false };
+    bd.cargas = bd.cargas.filter((c) => c !== carga);
+    const encuesta = bd.encuestas.find((e) => e.id === carga.encuesta_id);
+    const encuestaBorrada = Boolean(encuesta?.provisoria
+      && !bd.cargas.some((c) => c.encuesta_id === encuesta.id));
+    if (encuestaBorrada) bd.encuestas = bd.encuestas.filter((e) => e !== encuesta);
+    return { carga_id: cargaId, borrada: true, motivo: null, encuesta_borrada: encuestaBorrada };
   }
 
   /* R-CAN.2 (D88) — los canales aceptados de la gente de una carga. */
@@ -2321,6 +2407,14 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   if (clave === 'GET /cumplimiento/borrados') {
     return { items: [], mas_vieja_dias: 0 };
   }
+  /* D92 · R-CAN-C.3 — la limpieza de cargas provisorias abandonadas. */
+  if (clave === 'GET /cumplimiento/provisorias') {
+    const provisorias = bd.cargas.filter((c) => c.provisoria);
+    const viejas = provisorias.filter((c) => Date.now() - new Date(c.creado_en).getTime() > 864e5);
+    return { items: [...bd.limpiezas].reverse(), provisorias: provisorias.length,
+             abandonadas: viejas.length, horas: 24 };
+  }
+  if (clave === 'POST /cumplimiento/provisorias/limpieza') return limpiarProvisoriasDemo('manual');
   if (clave === 'GET /auditoria/pii') return { limpio: true, hallazgos: [] };
 
   /* El demo no tiene esquema que verificar: se responde «al día» para que la
@@ -4361,7 +4455,9 @@ function composicionDeAmbitoDemo(consulta) {
   if (ambito === 'encuesta') return composicionDeEncuestaDemo(consulta);
   const carga = bd.cargas.find((c) => c.id === Number(consulta.carga_id));
   if (!carga) throw new ErrorDemo('No existe la carga.', 404);
-  const ids = new Set(bd.vinculos.filter((v) => v.carga_id === carga.id).map((v) => v.id_persona));
+  // D94 · R-INC.6 — quiénes sumó la carga: sin los que ya estaban.
+  const ids = new Set(bd.vinculos.filter((v) => v.carga_id === carga.id
+    && v.origen !== 'repetida').map((v) => v.id_persona));
   const salida = composicionDemo(null, consulta, {
     personas: bd.personas.filter((p) => ids.has(p.id_persona)), objetivos: {},
     motivo: 'Una carga no tiene universo de referencia: es un hecho del pasado —lo que '
@@ -4376,7 +4472,9 @@ function composicionDeAmbitoDemo(consulta) {
               modo_relevamiento_etiqueta: datosDeOrigen(carga).modo_relevamiento_etiqueta,
               creado_en: carga.creado_en },
     objetivo_admitido: false,
-    avisos: ['La composición de una carga muestra cómo está hoy ese grupo, no un registro '
+    avisos: ['Muestra quiénes sumó esta carga. Para la encuesta completa, elegí el ámbito '
+      + '"una encuesta".',
+      'La composición de una carga muestra cómo está hoy ese grupo, no un registro '
       + 'fiel de lo que se cargó: quien se dio de baja ya no aparece. Y cuenta solo a las '
       + 'personas vinculadas desde que el sistema registra de qué carga viene cada una.'],
   };
