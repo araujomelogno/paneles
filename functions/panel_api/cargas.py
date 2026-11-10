@@ -744,7 +744,8 @@ def origen_de_varias(conn, ids_persona):
 
 def ingestar(conn_boveda, conn_semantica, carga_id, preguntas, filas,
              columna_id="id_en_origen", origen=None, proveedor=None,
-             demograficas=None, tipo_identificador=None, normalizacion=None):
+             demograficas=None, tipo_identificador=None, normalizacion=None,
+             canales_aceptados=None, canales_declarados_por=None, trabajo_id=None):
     """Incorpora el archivo de una carga a su encuesta. **La** ingesta (D81).
 
     Es lo que hacían, por separado, la ingesta desde una encuesta y la carga
@@ -763,6 +764,9 @@ def ingestar(conn_boveda, conn_semantica, carga_id, preguntas, filas,
     - Los demográficos van a la bóveda (R3.9.d) y, si la encuesta es de
       panel, sus respondentes se incorporan al panel (R3.9.a). Una
       independiente no tiene panel al que incorporar.
+    - R-CAN.1 (D88) — con `canales_aceptados` (`{canal: versión del texto}`,
+      del plan congelado), las personas del lote quedan con esos canales,
+      salvo quien lo revocó (`canales_carga.aplicar`), y queda auditado.
     """
     from . import encuestas, tematicas
 
@@ -866,6 +870,13 @@ def ingestar(conn_boveda, conn_semantica, carga_id, preguntas, filas,
                   and id_persona = any(%s::uuid[])""",
             (encuesta["id"], personas_del_lote))["n"]
     resultado["sin_panel"] = encuesta["tipo"] != encuestas.DE_PANEL
+    if canales_aceptados:
+        from . import canales_carga
+
+        resultado["canales"] = canales_carga.aplicar(
+            conn_boveda, carga_id, personas_del_lote, canales_aceptados,
+            canales_carga.VIA_INGESTA, actor=canales_declarados_por,
+            trabajo_id=trabajo_id)
     return resultado
 
 

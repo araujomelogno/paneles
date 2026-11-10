@@ -25,6 +25,7 @@ import {
 } from '../ui.js';
 import { editorDeTematicas, chipsDeTematicas } from '../tematicas.js';
 import { editorDeClientes, chipsDeClientes } from '../clientes.js';
+import * as canales from '../canales.js';
 
 let contexto = {};
 let filtro = { q: '', tematica_id: '' };
@@ -290,6 +291,16 @@ async function renderDetalle(main, cargaId) {
       </div>
     </div>
 
+    <!-- R-CAN.2 (D88) — los canales aceptados de la gente de la carga. Sin
+         ellos, nadie que entró por una carga puede recibir mensajes. -->
+    <div class="card" id="tarjeta-canales">
+      <div class="card-header"><span class="card-header-title">Canales aceptados</span>
+        ${canales.puedeDeclarar(contexto.actor)
+          ? '<button class="btn btn-orange btn-sm" id="registrar-canales">Registrar canales aceptados</button>'
+          : ''}</div>
+      <div class="card-body tight"><div id="canales-de-la-carga">${cargando('8vh')}</div></div>
+    </div>
+
     <div class="card">
       <div class="card-header"><span class="card-header-title">Panelistas cargados</span></div>
       <div class="card-body tight"><div id="panelistas">${cargando('15vh')}</div></div>
@@ -297,6 +308,8 @@ async function renderDetalle(main, cargaId) {
 
   $('#volver').onclick = () => contexto.irA('cargas');
   activarReutilizados(main);
+  cargarCanales(carga);
+  $('#registrar-canales')?.addEventListener('click', () => abrirRegistroDeCanales(carga));
   if (puedeBorrar()) $('#borrar-carga').onclick = () => abrirBorrado(carga);
   // El ámbito «una carga» de la composición (R-ORG) ya existe: se abre ahí.
   $('#composicion').onclick = () => contexto.irA('composicion', { cargaId: carga.id });
@@ -553,4 +566,82 @@ async function abrirBorrado(carga) {
       boton$.disabled = nombre$.value.trim() !== carga.nombre.trim();
     }
   };
+}
+
+
+/* ── R-CAN.2 · Registrar los canales aceptados, en bloque ─────────── */
+
+async function cargarCanales(carga) {
+  const caja = $('#canales-de-la-carga');
+  if (!caja) return;
+  try {
+    const { historial } = await api.cargas.canales(carga.id);
+    caja.innerHTML = canales.historialHtml(historial, fechaHora);
+  } catch (error) {
+    caja.innerHTML = alerta(error.message);
+  }
+}
+
+/* Se eligen los canales y el texto, se ve la vista previa —de la misma ruta
+   que registra— y se confirma. Se aplica a todas las personas de la carga,
+   creadas o reutilizadas; quien revocó el canal no se toca (R-CAN.3). */
+function abrirRegistroDeCanales(carga) {
+  let declaracion = null;
+  let previaVista = null;
+  const caja = modal({
+    titulo: `Registrar canales aceptados · ${carga.nombre}`,
+    ancho: '680px',
+    cuerpo: `
+      <div id="canales-alerta"></div>
+      <div class="aviso"><p>Se aplica a <strong>todas las personas de esta carga</strong>
+        (${carga.personas ?? 0}). Usá un texto que de verdad diga que aceptaron ese canal:
+        si alcanza o no es una lectura de protección de datos, y queda registrado quién lo
+        declaró y con qué texto.</p></div>
+      ${canales.bloque()}
+      <div id="canales-previa"></div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Ver vista previa', clase: 'btn-outline', onClick: async (c) => {
+          const elegidos = declaracion?.valor() || {};
+          if (!Object.keys(elegidos).length) {
+            $('#canales-alerta', c).innerHTML = alerta('Elegí al menos un canal.');
+            return;
+          }
+          try {
+            previaVista = await api.cargas.registrarCanales(carga.id, elegidos, true);
+            $('#canales-alerta', c).innerHTML = '';
+            $('#canales-previa', c).innerHTML = canales.previaHtml(previaVista);
+            $('#confirmar-canales', c).disabled = false;
+          } catch (error) {
+            $('#canales-alerta', c).innerHTML = alerta(error.message);
+          }
+        } },
+      { texto: 'Registrar', clase: 'btn-orange', onClick: async (c) => {
+          if (!previaVista) return;
+          try {
+            const salida = await api.cargas.registrarCanales(carga.id, declaracion.valor());
+            cerrarModal();
+            toast(`Canales registrados: ${Object.values(salida.canales).map(
+              (x) => `${x.etiqueta} ${x.registrados}`).join(' · ')}.`, 'ok');
+            cargarCanales(carga);
+          } catch (error) {
+            $('#canales-alerta', c).innerHTML = alerta(error.message);
+          }
+        } },
+    ],
+  });
+  const confirmar$ = $$('.modal-foot .btn-orange', caja).pop();
+  confirmar$.id = 'confirmar-canales';
+  confirmar$.disabled = true;
+  canales.activar(caja).then((d) => {
+    declaracion = d;
+    // Cambiar lo elegido invalida la vista previa: hay que volver a verla.
+    $$('[data-canales-aceptados] select, [data-canales-aceptados] input', caja).forEach((el) => {
+      el.addEventListener('change', () => {
+        previaVista = null;
+        confirmar$.disabled = true;
+        $('#canales-previa', caja).innerHTML = '';
+      });
+    });
+  });
 }

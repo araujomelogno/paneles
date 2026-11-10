@@ -606,8 +606,13 @@ def _ingestar_el_lote(conn_boveda, conn_semantica, trabajo, filas, proveedor):
         return encuestas.ingestar(conn_boveda, conn_semantica,
                                   trabajo["destino_id"], preguntas, filas,
                                   **comunes)
+    # R-CAN.1 (D88) — los canales que se declararon al confirmar, congelados
+    # en el plan como todo lo demás.
     return cargas.ingestar(conn_boveda, conn_semantica, trabajo["destino_id"],
-                           preguntas, filas, **comunes)
+                           preguntas, filas, **comunes,
+                           canales_aceptados=plan.get("canales_aceptados"),
+                           canales_declarados_por=plan.get("canales_declarados_por"),
+                           trabajo_id=trabajo["id"])
 
 
 def procesar_lote(conn_boveda, conn_semantica, trabajo_id, indice,

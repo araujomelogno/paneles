@@ -487,7 +487,7 @@ async function seguirConLaCarga(caja) {
     // destinos; se importa acá para no arrastrar ese módulo en cada carga de
     // la pantalla de panelistas.
     const { abrirCargaDePanelistas } = await import('./encuestas.js');
-    abrirCargaDePanelistas(carga, cargarTabla);
+    abrirCargaDePanelistas(carga, cargarTabla, contexto.actor);
   } catch (error) {
     alerta$.innerHTML = alerta(error.message);
   }

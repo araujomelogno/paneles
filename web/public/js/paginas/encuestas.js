@@ -12,6 +12,7 @@ import * as catalogo from '../catalogo.js';
 import * as calidad from '../calidad.js';
 import { editorDeTematicas, chipsDeTematicas } from '../tematicas.js';
 import { editorDeClientes, chipsDeClientes } from '../clientes.js';
+import * as canales from '../canales.js';
 import {
   $, $$, esc, encabezado, token, vacio, cargando, toast, modal, cerrarModal,
   leerFormulario, activarTokens, fechaCorta, fechaHora, estado, alerta, confirmar,
@@ -1046,11 +1047,11 @@ function parsearOpciones(texto) {
    el de la sección Panelistas y el de Encuestas. Lo que cambia según el
    estudio es el texto (una encuesta de panel suma a sus respondentes al
    panel; una independiente, no) y lo decide el servidor. */
-export function abrirCargaDePanelistas(carga, alTerminar) {
+export function abrirCargaDePanelistas(carga, alTerminar, actor = null) {
   return abrirIngesta(
     { tipo: 'carga', id: carga.id, nombre: carga.encuesta || carga.nombre,
       carga: carga.nombre, encuesta_id: carga.encuesta_id,
-      encuesta_tipo: carga.encuesta_tipo || 'independiente' }, alTerminar);
+      encuesta_tipo: carga.encuesta_tipo || 'independiente', actor }, alTerminar);
 }
 
 function abrirIngesta(destino, alTerminar) {
@@ -1074,6 +1075,10 @@ function abrirIngesta(destino, alTerminar) {
   // `tematicasElegidas` para volver si se desmarca, pero no se guardan.
   let tematicasAGuardar = null;
   let corriendo = false;
+  // R-CAN.1 (D88) — los canales aceptados que se declaran al cargar. Solo
+  // los ofrece a quien gestiona canales: la ruta lo exige igual.
+  const conCanales = canales.puedeDeclarar(destino.actor || contexto.actor);
+  let declaracionDeCanales = null;
 
   const caja = modal({
     titulo: `${dePanel ? 'Ingestar respuestas' : 'Cargar panelistas'} — ${encuesta.nombre}`,
@@ -1239,6 +1244,8 @@ function abrirIngesta(destino, alTerminar) {
           </div>
         </div>
       </div>
+      ${conCanales ? `<div id="bloque-canales">${canales.bloque({
+        titulo: '5 · Canales aceptados (opcional)' })}</div>` : ''}
       </div>`,
     acciones: [
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
@@ -1264,6 +1271,9 @@ function abrirIngesta(destino, alTerminar) {
      «Ingestar» está mirando el pie: un motivo escrito solo arriba se ve
      como un botón que no hace nada (BUG_validacion_dedup_bloquea §4). */
   const pie$ = $('.modal-foot', caja);
+  if (conCanales) {
+    canales.activar($('#bloque-canales', caja)).then((d) => { declaracionDeCanales = d; });
+  }
   const alertaPie$ = document.createElement('div');
   alertaPie$.id = 'ing-alerta-pie';
   alertaPie$.className = 'alerta-pie';
@@ -2313,6 +2323,15 @@ function abrirIngesta(destino, alTerminar) {
           Excluirlas de esta carga</label>
       </div>`);
     }
+    // R-CAN.1 — con canales declarados, cuántas personas quedan con cada uno
+    // y cuántas no, por motivo.
+    if (r.canales) {
+      partes.push(`<div class="aviso" id="aviso-canales">
+        <h4>Canales aceptados</h4>
+        ${canales.previaHtml(r.canales)}
+        <p class="small muted">Quien revocó el canal no se reactiva: se reactiva de a una
+          persona, desde su ficha.</p></div>`);
+    }
     const sin = (r.consentimiento_por_finalidad || []).filter((c) => c.sin_consentimiento);
     if (sin.length) {
       partes.push(`<div class="aviso">
@@ -2538,11 +2557,14 @@ function abrirIngesta(destino, alTerminar) {
      bandera `solo_revisar`. Armarlo dos veces empieza igual y diverge con
      el primer cambio que alguien haga de un solo lado. */
   function cuerpoDeIngesta(preguntas, columnaId, extraSav) {
+    const canalesElegidos = declaracionDeCanales?.valor() || {};
     const comun = {
       preguntas,
       columna_id: columnaId,
       demograficas: marcadoDemografico(),
       tipo_identificador: tipoId$.value,
+      // R-CAN.1 — los canales que aceptó la gente de la carga, con su texto.
+      ...(Object.keys(canalesElegidos).length ? { canales_aceptados: canalesElegidos } : {}),
       // Fase 8 — la lista de no respuesta con la que se detectó, para que
       // quede guardada con el estudio y un reproceso sepa qué se decidió.
       ...(diagnostico ? { valores_no_respuesta: listaNoRespuesta() } : {}),

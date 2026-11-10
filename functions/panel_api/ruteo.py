@@ -10,6 +10,7 @@ import os
 import re
 
 from . import (
+    canales_carga,
     atributos,
     auditoria,
     bajas,
@@ -1944,6 +1945,33 @@ def proponer_tematicas_de_carga(ctx, actor, params, cuerpo, consulta):
     return 200, salida
 
 
+@ruta("GET", "/cargas/<carga_id>/canales", "leer", requisito="R-CAN.2")
+def canales_de_carga(ctx, actor, params, cuerpo, consulta):
+    """Los canales que se declararon para la gente de la carga (al cargarla o
+    después), quién, cuándo y con qué texto; y los textos que se ofrecen."""
+    carga_id = _entero(params["carga_id"])
+    cargas.obtener(ctx.boveda, carga_id)
+    return 200, {"historial": canales_carga.historial(ctx.boveda, carga_id),
+                 "textos": canales_carga.textos_disponibles(ctx.boveda),
+                 "canales": canales_carga.ETIQUETAS,
+                 "motivos": canales_carga.MOTIVOS}
+
+
+@ruta("POST", "/cargas/<carga_id>/canales", "gestionar_canales", requisito="R-CAN.2, R-CAN.3")
+def registrar_canales_de_carga(ctx, actor, params, cuerpo, consulta):
+    """R-CAN.2 — «Registrar canales aceptados» para todas las personas de una
+    carga ya hecha: `canales` (`{canal: versión del texto}`). Con
+    `solo_revisar`, la vista previa de la misma ruta. Quien revocó el canal no
+    se toca (R-CAN.3). Queda auditado."""
+    cuerpo = cuerpo or {}
+    salida = canales_carga.registrar_en_bloque(
+        ctx.boveda, _entero(params["carga_id"]), cuerpo.get("canales"), actor=actor,
+        solo_revisar=_revision_pedida(cuerpo))
+    if not salida["solo_revisar"]:
+        ctx.boveda.commit()
+    return 200, salida
+
+
 @ruta("PATCH", "/cargas/<carga_id>", "ingestar", requisito="R-ORG.4")
 def editar_carga(ctx, actor, params, cuerpo, consulta):
     """Corrige los datos del estudio. Se refleja en todas las fichas que
@@ -2019,7 +2047,7 @@ def _propuesta_de_tematicas(ctx, carga, disponibles):
 
 @ruta("POST", "/cargas/<carga_id>/ingesta", "ingestar",
       requisito="R3.13, R-TEM.2, R-TEM.13, R-ING.2, R-ING.3, R-EU.1, R-EU.3, "
-                "R-EU.4, R-EU.6")
+                "R-EU.4, R-EU.6, R-CAN.1")
 def ingestar_carga(ctx, actor, params, cuerpo, consulta):
     """Ingesta el archivo de una carga en su encuesta. **El** flujo de
     ingesta (D81): el de la sección Panelistas y el de Encuestas son este.
@@ -2034,8 +2062,11 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
       qué implica (R-EU.6).
     * `tematicas` — la propuesta: la primera carga del estudio la pide para
       todas sus preguntas; las siguientes, solo para las nuevas (R-EU.2).
+    * `canales` — con `canales_aceptados` (`{canal: versión del texto}`),
+      cuántas personas quedarían con cada canal y cuántas no, por motivo
+      (R-CAN.1). Declararlos exige `gestionar_canales`.
     """
-    from . import encuestas_borrado
+    from . import canales_carga, encuestas_borrado
 
     carga_id = _entero(params["carga_id"])
     carga = cargas.obtener(ctx.boveda, carga_id)
@@ -2068,6 +2099,11 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
     origen = cuerpo.get("origen") or "carga"
     tipo_id = cuerpo.get("tipo_identificador")
     de_panel = encuesta["tipo"] == encuestas.DE_PANEL
+    # R-CAN.1 — los canales aceptados, con su texto. Se validan antes de nada
+    # (sin texto no se registra) y declararlos es de quien gestiona canales.
+    canales_aceptados = canales_carga.normalizar(ctx.boveda, cuerpo.get("canales_aceptados"))
+    if canales_aceptados:
+        actor.exigir("gestionar_canales")
     repetido = cargas.archivo_repetido(ctx.boveda, encuesta["id"], huella,
                                        excepto=carga_id)
 
@@ -2116,6 +2152,10 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
             }
         else:
             resumen["tematicas"] = None
+        resumen["canales"] = canales_carga.previa_de_archivo(
+            ctx.boveda, encuesta["id"], filas, columna_id, tipo_id, origen,
+            canales_aceptados, demograficas=demograficas,
+            crea_personas=cuerpo.get("modo") == "crear_individuos")
         return 200, resumen
 
     # R-EU.3 — el mismo archivo dos veces: se avisó en la revisión, y
@@ -2153,6 +2193,11 @@ def ingestar_carga(ctx, actor, params, cuerpo, consulta):
         plan = _con_constancia_de_dedup(
             _plan_de(cuerpo, columna_id=columna_id, origen=origen,
                      preguntas=preguntas, demograficas=demograficas), filas)
+        if canales_aceptados:
+            # R-CAN.1 — congelados con el plan: cada lote registra los canales
+            # de sus personas, y la auditoría dice quién los declaró.
+            plan["canales_aceptados"] = canales_aceptados
+            plan["canales_declarados_por"] = actor.email or actor.uid
     salida = diferida.encolar(
         ctx.boveda, "carga", carga_id, plan,
         filas, actor=actor, encolador=ctx.encolador, cronometro=cronometro)

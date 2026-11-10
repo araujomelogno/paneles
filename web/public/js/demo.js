@@ -106,6 +106,7 @@ const bd = {
   ],
   cargas: [],              // R3.13 — lotes incorporados sin panel
   vinculos: [],            // R-ORG.1 — de qué carga proviene cada persona
+  registrosDeCanales: [],  // R-CAN — los canales declarados para una carga
   tematicas: [],           // R-TEM.1 — el vocabulario compartido de temáticas
   cargaTematicas: [],      // R-TEM.1 — qué temáticas cubre cada carga
   clientes: [],            // R-CLI.1 — para quién se hizo cada estudio
@@ -2166,6 +2167,21 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
 
   if (metodo === 'POST' && partes[0] === 'cargas' && partes[2] === 'ingesta') {
     return ingestarCarga(Number(partes[1]), cuerpo);
+  }
+
+  /* R-CAN.2 (D88) — los canales aceptados de la gente de una carga. */
+  if (partes[0] === 'cargas' && partes[2] === 'canales') {
+    const carga = bd.cargas.find((c) => c.id === Number(partes[1]));
+    if (!carga) throw new ErrorDemo('No existe la carga.', 404);
+    if (metodo === 'GET') {
+      return {
+        historial: bd.registrosDeCanales.filter((r) => r.carga_id === carga.id).reverse(),
+        textos: bd.textosConsentimiento.filter((t) => t.activo
+          && t.finalidad === 'contacto_participacion'),
+        canales: CANALES_DE_CARGA_DEMO, motivos: MOTIVOS_DE_CANALES_DEMO,
+      };
+    }
+    return registrarCanalesDemo(carga, cuerpo.canales || {}, Boolean(cuerpo.solo_revisar));
   }
 
   if (metodo === 'GET' && partes[0] === 'encuestas' && partes[2] === 'cruce') {
@@ -4508,6 +4524,59 @@ export function espiarSemantica() {
       embedding: r.embedding,
     })),
   };
+}
+
+/* ── D88 · Los canales aceptados de una carga (R-CAN) ──────────── */
+
+const CANALES_DE_CARGA_DEMO = { whatsapp: 'WhatsApp', email: 'Correo' };
+const MOTIVOS_DE_CANALES_DEMO = {
+  sin_celular_valido: 'Sin celular válido', sin_correo: 'Sin correo',
+  revoco_el_canal: 'Revocó el canal',
+};
+
+/* Lo mismo que `canales_carga.registrar_en_bloque`: quien ya lo tenía no se
+   toca, quien lo revocó tampoco (R-CAN.3), y sin dato no se registra. */
+function registrarCanalesDemo(carga, declaracion, soloRevisar) {
+  const elegidos = Object.entries(declaracion).filter(([, v]) => v);
+  if (!elegidos.length) {
+    throw new ErrorDemo('Elegí al menos un canal, con la versión del texto con que lo '
+      + 'aceptaron.', 400);
+  }
+  const ids = [...new Set(bd.vinculos.filter((v) => v.carga_id === carga.id)
+    .map((v) => v.id_persona))];
+  const canales = {};
+  elegidos.forEach(([canal, version]) => {
+    const resultado = { etiqueta: CANALES_DE_CARGA_DEMO[canal], version_texto: version,
+                        registrados: 0, ya_lo_tenian: 0, no: {} };
+    ids.forEach((id) => {
+      const persona = bd.personas.find((p) => p.id_persona === id);
+      const existente = bd.canales.find((c) => c.id_persona === id && c.canal === canal);
+      const no = (motivo) => { resultado.no[motivo] = (resultado.no[motivo] || 0) + 1; };
+      if (existente?.activa) { resultado.ya_lo_tenian += 1; return; }
+      if (existente) { no('revoco_el_canal'); return; }
+      if (canal === 'whatsapp' && !/^\+\d{8,15}$/.test(persona?.celular || '')) {
+        no('sin_celular_valido'); return;
+      }
+      if (canal === 'email' && !(persona?.email || '').includes('@')) { no('sin_correo'); return; }
+      resultado.registrados += 1;
+      if (!soloRevisar) {
+        bd.canales.push({ id_persona: id, canal, estado: 'activa', activa: true,
+                          version_texto: version, origen: 'carga', otorgado_en: ahora(),
+                          revocado_en: null });
+      }
+    });
+    resultado.quedaran = resultado.registrados + resultado.ya_lo_tenian;
+    resultado.no_total = Object.values(resultado.no).reduce((n, v) => n + v, 0);
+    canales[canal] = resultado;
+  });
+  if (!soloRevisar) {
+    bd.registrosDeCanales.push({
+      id: bd.registrosDeCanales.length + 1, carga_id: carga.id, via: 'bloque',
+      canales: Object.fromEntries(elegidos), personas: ids.length, resultado: canales,
+      actor: 'demo@equipos.com.uy', creado_en: ahora() });
+  }
+  return { carga_id: carga.id, personas: ids.length, motivos: MOTIVOS_DE_CANALES_DEMO,
+           solo_revisar: soloRevisar, canales };
 }
 
 /* ── D85 · Convocatoria desde la encuesta (R-CF.1 a R-CF.8) ───────── */

@@ -520,6 +520,12 @@ export const cargas = {
      la carga que se les pueden asociar. */
   tematicas: (cargaId) => GET(`/cargas/${cargaId}/tematicas`),
   editar: (cargaId, cambios) => PATCH(`/cargas/${cargaId}`, cambios),
+  /* R-CAN.2 (D88) — los canales declarados para la gente de la carga, su
+     historial y los textos que se ofrecen. Registrar en bloque tiene vista
+     previa por la misma ruta (`solo_revisar`). */
+  canales: (cargaId) => GET(`/cargas/${cargaId}/canales`),
+  registrarCanales: (cargaId, canales, soloRevisar = false) =>
+    POST(`/cargas/${cargaId}/canales`, { canales, ...(soloRevisar ? { solo_revisar: true } : {}) }),
   // PEDIDO del celular, parte 3 — borrar una carga. La vista previa sale de
   // la misma ruta que borra (`solo_revisar`), como la revisión de una carga.
   // R-EU.10 — dar de baja a las personas que la carga creó es una opción.
