@@ -7,6 +7,7 @@ import * as catalogo from '../catalogo.js';
 import * as respuestas from '../respuestas.js';
 import { pintarCargas } from '../origen.js';
 import { editorDeClientes } from '../clientes.js';
+import * as estudio from '../estudio.js';
 import * as listaNegra from '../lista_negra.js';
 import {
   $, $$, esc, encabezado, consentimientos, token, vacio, cargando, toast,
@@ -424,48 +425,26 @@ function abrirCarga() {
         consulta, sin volver a cargar los datos.</p>
       </div>
 
-      <div class="form-group" style="margin-top:1.25rem">
-        <label>Nombre de la carga</label>
-        <input type="text" name="nombre" id="carga-nombre"
-               placeholder="Ómnibus agosto 2026" />
-        <div class="field-hint">Identifica el origen de estos datos. Es lo que
-          después permite saber de qué base salió cada respuesta.</div>
-      </div>
-      <!-- R-ORG.4 — los datos del estudio. Se guardan en la carga y no en
-           cada persona: la ficha de cada panelista los muestra por el
-           vínculo, y corregirlos acá se ve en todas a la vez. -->
-      <div class="form-row">
-        <div class="form-group">
-          <label>Fecha del estudio</label>
-          <input type="date" name="fecha_estudio" />
-          <div class="field-hint">Cuándo se hizo el campo, no cuándo se carga.</div>
-        </div>
-        <div class="form-group">
-          <label>Público objetivo</label>
-          <input type="text" name="publico_objetivo"
-                 placeholder="Población adulta de Montevideo" />
-          <div class="field-hint">Texto libre: describe al estudio, no a las personas.</div>
-        </div>
-      </div>
-      ${camposDeOrigen()}
-      ${campoDeClientes()}
-      <div class="form-group">
-        <label>Descripción (opcional)</label>
-        <textarea class="finput" name="descripcion"
-                  placeholder="Ola de agosto del ómnibus, muestra nacional 1.000 casos."></textarea>
-      </div>`,
+      <!-- R-ORG.4 / R-AU.3 — los datos del estudio, con el mismo formulario
+           que «Nueva encuesta» (estudio.js): si se suma un dato al estudio,
+           aparece en los dos lados. Se guardan en la encuesta de la carga y
+           no en cada persona: corregirlos se ve en todas las fichas. El
+           nombre de la carga es también el de su estudio. -->
+      <div style="margin-top:1.25rem">${estudio.campos({}, {
+        etiquetaNombre: 'Nombre de la carga', ejemploNombre: 'Ómnibus agosto 2026' })}</div>
+      ${camposDeOrigen()}`,
     acciones: [
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
       { texto: 'Continuar', clase: 'btn-orange', onClick: seguirConLaCarga },
     ],
   });
   activarCamposDeOrigen(caja);
-  caja.clientes = editorDeClientes($('[data-clientes]', caja));
+  caja.estudio = estudio.activar(caja);
   return caja;
 }
 
 async function seguirConLaCarga(caja) {
-  const datos = leerFormulario(caja);
+  const datos = { ...leerFormulario(caja), ...caja.estudio.valor() };
   const alerta$ = $('#carga-alerta', caja);
   alerta$.innerHTML = '';
   if (!(datos.nombre || '').trim()) {
@@ -475,12 +454,12 @@ async function seguirConLaCarga(caja) {
   }
   try {
     const carga = await api.cargas.crear(datos.nombre.trim(), datos.descripcion, {
-      fechaEstudio: datos.fecha_estudio, publicoObjetivo: datos.publico_objetivo,
+      fechaEstudio: datos.fecha_campo, publicoObjetivo: datos.publico_objetivo,
       tipoDatosOrigen: datos.tipo_datos_origen,
       tipoDatosOrigenOtro: datos.tipo_datos_origen_otro,
       modoRelevamiento: datos.modo_relevamiento,
       modoRelevamientoOtro: datos.modo_relevamiento_otro,
-      clientes: caja.clientes?.valor(),
+      clientes: datos.clientes, urlAlchemer: datos.url_alchemer,
     });
     cerrarModal();
     // La pantalla de ingesta vive en Encuestas y es la misma para los dos

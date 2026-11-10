@@ -665,3 +665,8 @@ tr.fila-problema td { background: var(--red-light); }
   border-radius: 8px; margin: .75rem 0; }
 .bloque-lista-negra.activa { border-color: var(--red); }
 tr.en-lista-negra td { background: var(--red-light); }
+
+/* R-COMP.1 (D90) — la base de cada porcentaje de un cruce, y la base chica
+   marcada: no se sacan conclusiones de cuatro casos. */
+.base { display: inline-block; font-size: .78rem; color: var(--muted, #6b7280); }
+.base-chica { color: var(--warn, #b45309); font-weight: 600; }

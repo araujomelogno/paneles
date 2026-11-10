@@ -94,6 +94,9 @@ def test_un_no_convocado_aparece_como_no_convocado_y_sin_fecha(pagina):
           const salida = await original(id);
           salida.items[0] = { ...salida.items[0], convocado: false, convocado_en: null,
                               respondio: true };
+          // R-ENC.1 — los conteos de arriba son del servidor, de toda la
+          // encuesta: se ajustan igual que la fila.
+          salida.conteos = { ...salida.conteos, no_convocados: 1 };
           return salida;
         };
     }""")

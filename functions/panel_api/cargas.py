@@ -215,7 +215,7 @@ def crear(conn, nombre, descripcion=None, actor=None, fecha_estudio=None,
           publico_objetivo=None, tipo_datos_origen=None,
           tipo_datos_origen_otro=None, modo_relevamiento=None,
           modo_relevamiento_otro=None, exigir_origen=False, clientes=None,
-          encuesta_id=None, archivo_huella=None):
+          encuesta_id=None, archivo_huella=None, url_alchemer=None):
     """Abre una carga: una ingesta de una encuesta (R-EU.1).
 
     Con `encuesta_id` la carga se suma a ese estudio y **no vuelve a pedir**
@@ -224,7 +224,8 @@ def crear(conn, nombre, descripcion=None, actor=None, fecha_estudio=None,
 
     Sin `encuesta_id` —una carga desde la sección Panelistas— **crea su
     encuesta**: independiente, cerrada, sin convocatoria, con los datos del
-    estudio (nombre, fecha, público objetivo, descripción y clientes).
+    estudio (nombre, fecha, público objetivo, descripción, clientes y, desde
+    D90, la URL de Alchemer: los mismos que pide «Nueva encuesta», R-AU.3).
 
     Lo propio de la carga es lo del archivo: el tipo de datos de origen y el
     modo de relevamiento (`exigir_origen` lo pasa la ruta: una carga nueva
@@ -249,7 +250,7 @@ def crear(conn, nombre, descripcion=None, actor=None, fecha_estudio=None,
             tipo=encuestas.INDEPENDIENTE, origen=encuestas.ORIGEN_CARGA,
             publico_objetivo=publico_objetivo,
             descripcion=descripcion, clientes=clientes or [],
-            estado="cerrada")["id"]
+            estado="cerrada", url_alchemer=url_alchemer)["id"]
     else:
         encuestas.obtener(conn, encuesta_id)
     fila = db.una(

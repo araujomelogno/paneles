@@ -1807,7 +1807,9 @@ def crear_carga(ctx, actor, params, cuerpo, consulta):
         modo_relevamiento_otro=cuerpo.get("modo_relevamiento_otro"),
         exigir_origen=True,
         # R-CLI.1 — para quién se hizo el estudio, al abrir la carga.
-        clientes=cuerpo.get("clientes"))
+        clientes=cuerpo.get("clientes"),
+        # R-AU.3 — los mismos datos del estudio que «Nueva encuesta».
+        url_alchemer=cuerpo.get("url_alchemer"))
     ctx.boveda.commit()
     return 201, carga
 

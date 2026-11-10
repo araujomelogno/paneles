@@ -107,6 +107,7 @@ const bd = {
   cargas: [],              // R3.13 — lotes incorporados sin panel
   vinculos: [],            // R-ORG.1 — de qué carga proviene cada persona
   registrosDeCanales: [],  // R-CAN — los canales declarados para una carga
+  pasosDeAudiencia: [],    // R-AU.2 — cómo se armó la audiencia de cada encuesta
   tematicas: [],           // R-TEM.1 — el vocabulario compartido de temáticas
   cargaTematicas: [],      // R-TEM.1 — qué temáticas cubre cada carga
   clientes: [],            // R-CLI.1 — para quién se hizo cada estudio
@@ -1589,6 +1590,10 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
       items: bd.encuestas
         .filter((e) => !panelId || e.panel_id === panelId)
         .filter((e) => !consulta.tipo || e.tipo === consulta.tipo)
+        // R-ENC.2 — por estado y por cliente, combinados.
+        .filter((e) => !consulta.estado || e.estado === consulta.estado)
+        .filter((e) => !consulta.cliente_id
+          || (e.clientes || []).map(Number).includes(Number(consulta.cliente_id)))
         .map((e) => ({
           ...e,
           panel: bd.paneles.find((p) => p.id === e.panel_id)?.nombre ?? null,
@@ -1602,16 +1607,43 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   }
 
   if (clave === 'POST /encuestas') {
-    const panel = bd.paneles.find((p) => p.id === Number(cuerpo.panel_id));
+    // R-AU.3 — de panel o independiente (vacía, origen «manual»).
+    const independiente = cuerpo.tipo === 'independiente';
+    const panel = independiente ? null : bd.paneles.find((p) => p.id === Number(cuerpo.panel_id));
     if (panel?.estado === 'archivado') {
       throw new ErrorDemo('El panel está archivado: no recibe encuestas ni convocatorias.', 409);
     }
-    return encuestaCompleta(crearEncuesta(Number(cuerpo.panel_id), cuerpo.nombre,
+    if (!String(cuerpo.nombre || '').trim()) throw new ErrorDemo('La encuesta necesita un nombre.', 400);
+    const encuesta = crearEncuesta(independiente ? null : Number(cuerpo.panel_id), cuerpo.nombre,
       cuerpo.fecha_campo, {
+        ...(independiente ? { origen: 'manual' } : {}),
         publico_objetivo: (cuerpo.publico_objetivo || '').trim() || null,
         descripcion: (cuerpo.descripcion || '').trim() || null,
+        url_alchemer: (cuerpo.url_alchemer || '').trim() || null,
         clientes: clientesDemo(cuerpo.clientes),
-      }));
+      });
+    return encuestaCompleta(encuesta);
+  }
+
+  /* R-AU.2 — agregar audiencia desde una consulta, y cómo se armó. */
+  if (partes[0] === 'encuestas' && partes[2] === 'audiencia') {
+    const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
+    if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
+    if (metodo === 'GET') {
+      return { items: bd.pasosDeAudiencia.filter((p) => p.encuesta_id === encuesta.id) };
+    }
+    if (encuesta.estado === 'cerrada') {
+      throw new ErrorDemo('La encuesta está cerrada: no admite agregar audiencia.', 409,
+                          { motivo: 'encuesta_cerrada' });
+    }
+    return {
+      encuesta_id: encuesta.id,
+      ...sumarAudienciaDemo(encuesta, cuerpo, 'agregar_desde_consulta'),
+      etiquetas: { ya_estaban: 'Ya estaban en la audiencia', en_lista_negra: 'En lista negra',
+                   sin_consentimiento: 'Sin consentimiento de contacto',
+                   no_encontrados: 'Ya no existen (se dieron de baja)' },
+      ...conteosDeEncuesta(encuesta.id),
+    };
   }
 
   /* R-EU.5 — una encuesta independiente desde un resultado: la foto de ese
@@ -1619,23 +1651,21 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   if (clave === 'POST /encuestas/desde-consulta') {
     const nombre = (cuerpo.nombre || '').trim();
     if (!nombre) throw new ErrorDemo('La encuesta necesita un nombre.', 400);
-    const ids = [...new Set(((cuerpo.resultado || {}).items || cuerpo.resultado || [])
-      .map((i) => i.id_persona).filter(Boolean))];
-    const existentes = ids.filter((id) => bd.personas.some((p) => p.id_persona === id));
     const encuesta = crearEncuesta(null, nombre, cuerpo.fecha_campo, {
       origen: 'consulta',
       publico_objetivo: (cuerpo.publico_objetivo || '').trim() || null,
       descripcion: (cuerpo.descripcion || '').trim() || null,
+      url_alchemer: (cuerpo.url_alchemer || '').trim() || null,
       clientes: clientesDemo(cuerpo.clientes),
     });
-    const convocatoria = convocar(encuesta.id, { ids_persona: existentes });
+    const paso = sumarAudienciaDemo(encuesta, cuerpo, 'crear_desde_consulta');
     return {
       ...encuestaCompleta(encuesta),
       audiencia: {
-        en_el_resultado: ids.length, convocados: convocatoria.convocados_total,
-        sin_consentimiento: convocatoria.sin_consentimiento.length,
-        en_lista_negra: convocatoria.en_lista_negra,
-        no_encontrados: ids.length - existentes.length,
+        en_el_resultado: paso.en_la_seleccion, convocados: paso.agregadas,
+        sin_consentimiento: paso.excluidas.sin_consentimiento,
+        en_lista_negra: paso.excluidas.en_lista_negra,
+        no_encontrados: paso.excluidas.no_encontrados, modo: paso.modo, semilla: paso.semilla,
       },
     };
   }
@@ -1726,8 +1756,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
 
   if (metodo === 'GET' && partes[0] === 'encuestas' && partes[2] === 'participacion') {
     const envios = enviosPorPersonaDemo(Number(partes[1]));
-    return {
-      items: bd.participaciones
+    const todos = bd.participaciones
         .filter((p) => p.encuesta_id === Number(partes[1]))
         .map((p) => {
           const persona = bd.personas.find((x) => x.id_persona === p.id_persona);
@@ -1746,7 +1775,26 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
             consiente_semantico: vigente(p.id_persona, 'uso_semantico'),
             mensajes: envios[p.id_persona] || [],
           };
-        }),
+        });
+    // R-ENC.1 — de a 50, con búsqueda y filtros, en el «servidor».
+    const si = (v) => (v === undefined || v === '' ? null : ['si', 'sí', '1', 'true'].includes(v));
+    const texto = String(consulta.buscar || '').toLowerCase();
+    const mensajeId = Number(consulta.mensaje_id || 0);
+    const recibio = consulta.recibio === undefined ? true : si(consulta.recibio);
+    const filtrados = todos.filter((p) => (!texto || [p.nombre, p.email, p.id_persona,
+      p.id_en_origen].some((v) => String(v || '').toLowerCase().includes(texto)))
+      && (si(consulta.respondio) === null || p.respondio === si(consulta.respondio))
+      && (si(consulta.convocado) === null || p.convocado === si(consulta.convocado))
+      && (!mensajeId || bd.envios.some((e) => e.encuesta_mensaje_id === mensajeId
+        && e.id_persona === p.id_persona && e.estado !== 'fallido') === recibio))
+      .sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || '')));
+    const porPagina = Number(consulta.por_pagina) || 50;
+    const pagina = Number(consulta.pagina) || 1;
+    return {
+      items: filtrados.slice((pagina - 1) * porPagina, pagina * porPagina),
+      total: filtrados.length, pagina, por_pagina: porPagina,
+      paginas: Math.max(1, Math.ceil(filtrados.length / porPagina)),
+      conteos: conteosDeEncuesta(Number(partes[1])),
     };
   }
 
@@ -3901,8 +3949,28 @@ function accesoDemo(email, motivo) {
   };
 }
 
+/* R-ALE (D89) — el sorteo de la demo: un hash determinístico de
+   `id_persona + semilla` (el servidor usa md5; acá alcanza con que la misma
+   semilla dé el mismo orden). */
+function claveDeSorteoDemo(idPersona, semilla) {
+  let h = 2166136261;
+  for (const c of `${idPersona}${semilla}`) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); }
+  return (h >>> 0).toString(16).padStart(8, '0') + idPersona;
+}
+const sortearDemo = (ids, semilla) => [...ids].sort(
+  (a, b) => claveDeSorteoDemo(a, semilla).localeCompare(claveDeSorteoDemo(b, semilla)));
+const semillaNuevaDemo = () => Math.random().toString(16).slice(2, 14);
+
 /* Los criterios demográficos se resuelven sobre la bóveda del demo. */
 function cumpleDemografico(persona, criterio) {
+  if (criterio.dimension === 'encuesta') {
+    // R-AU.1 — en la audiencia (convocado) o respondió, para incluir o excluir.
+    const fila = bd.participaciones.find((p) => p.encuesta_id === Number(criterio.valor)
+      && p.id_persona === persona.id_persona);
+    const tiene = !!fila && (criterio.relacion === 'respondio' ? fila.respondio
+      : fila.convocado !== false);
+    return criterio.operador === 'not_in' ? !tiene : tiene;
+  }
   const valores = {
     sexo: persona.sexo, localidad: persona.localidad,
     tramo_etario: tramoEtario(persona.fecha_nacimiento),
@@ -3968,10 +4036,20 @@ function correrConsulta(cuerpo) {
         tramo_etario: tramoEtario(p.fecha_nacimiento),
       }));
     marca('consulta_demografica', desde, { personas: items.length });
+    // R-ALE.1 — un sorteo con semilla, paginado: nunca las primeras por nombre.
+    const semilla = cuerpo.semilla || semillaNuevaDemo();
+    const limite = Number(cuerpo.limite) || 50;
+    const pagina = Number(cuerpo.pagina) || 1;
+    const porId = Object.fromEntries(items.map((i) => [i.id_persona, i]));
+    const sorteados = sortearDemo(Object.keys(porId), semilla).map((id) => porId[id]);
     return {
       tipo: 'demografica', store: 'boveda', abrio_semantica: false, modo, seudonimo: true,
       criterios, panel_id: panelId, finalidad_exigida: cuerpo.finalidad || null,
-      total: items.length, items, excluidos: [], degradaciones: [],
+      total: items.length, items: sorteados.slice((pagina - 1) * limite, pagina * limite),
+      seleccion: { modo: 'aleatorio', semilla },
+      paginacion: { pagina, por_pagina: limite, total: items.length,
+                    paginas: Math.max(1, Math.ceil(items.length / limite)) },
+      excluidos: [], degradaciones: [],
       puente: {
         estrategia: null,
         motivo: 'La consulta no tiene criterios semánticos: se resuelve entera en '
@@ -4164,6 +4242,31 @@ function correrConsulta(cuerpo) {
   marca('combinacion', desdeCombinar, {
     modo, candidatos: items.length + excluidos.length, excluidos: excluidos.length,
   });
+  // R-ALE.2 — aleatorio entre los que cumplen: un sorteo del pool, verificado
+  // en ese orden, reemplazando a quien no cumple.
+  let seleccion = { modo: 'ranking', semilla: null };
+  let mostrados = items.slice(0, Number(cuerpo.limite) || 50);
+  if (cuerpo.seleccion === 'aleatorio') {
+    const semilla = cuerpo.semilla || semillaNuevaDemo();
+    const limite = Number(cuerpo.limite) || 50;
+    const cumplen = new Set(items.filter((i) => i.criterios.every(
+      (d) => d.tipo !== 'semantico' || d.veredicto === 'cumple')).map((i) => i.id_persona));
+    const pool = sortearDemo([...cumplen, ...excluidos.map((e) => e.id_persona)], semilla);
+    const elegidos = [];
+    let verificadas = 0;
+    for (const id of pool) {
+      if (elegidos.length >= limite) break;
+      verificadas += 1;
+      if (cumplen.has(id)) elegidos.push(id);
+    }
+    mostrados = elegidos.map((id, n) => ({ ...items.find((i) => i.id_persona === id), sorteo: n + 1 }));
+    seleccion = { modo: 'aleatorio', semilla, pool: pool.length, sorteadas: verificadas,
+                  verificadas, reemplazadas: verificadas - elegidos.length, sin_verificar: 0,
+                  quedaron: elegidos.length, pedidas: limite,
+                  avisos: elegidos.length < limite
+                    ? [`Solo hay ${elegidos.length} persona(s) que cumplen: se pidieron ${limite} `
+                       + 'y el pool se agotó.'] : [] };
+  }
 
   return {
     tipo: demograficos.length ? 'mixta' : 'semantica',
@@ -4175,8 +4278,9 @@ function correrConsulta(cuerpo) {
     puente: {
       estrategia, motivo, personas_en_segmento: habilitadas.size, gate: 'uso_semantico',
     },
-    total: items.length,
-    items: items.slice(0, Number(cuerpo.limite) || 50),
+    total: seleccion.modo === 'aleatorio' ? mostrados.length : items.length,
+    items: mostrados,
+    seleccion,
     excluidos,
     degradaciones: [{
       etapa: 'modo_demo',
@@ -4410,8 +4514,75 @@ function composicionDemo(panelId, consulta, otro = null) {
         };
       }),
     };
+    salida.cruce.tabla = tablaDeCruceDemo(salida.cruce.celdas, a, b,
+                                          Number(consulta.base_chica) || 30);
   }
+  salida.vistas_de_cruce = { n: 'Cantidad (N)', columna: '% de columna', fila: '% de fila',
+                             total: '% del total' };
   return salida;
+}
+
+/* R-COMP.1 — las cuatro vistas de un cruce, como `composicion.tabla_de_cruce`. */
+function tablaDeCruceDemo(celdas, a, b, umbral = 30) {
+  const filas = [...new Set(celdas.map((c) => c[a]))].sort();
+  const columnas = [...new Set(celdas.map((c) => c[b]))].sort();
+  const n = filas.map((f) => columnas.map((c) => celdas.find(
+    (x) => x[a] === f && x[b] === c)?.observados || 0));
+  const porFila = n.map((fila) => fila.reduce((s, v) => s + v, 0));
+  const porColumna = columnas.map((_, j) => n.reduce((s, fila) => s + fila[j], 0));
+  const total = porFila.reduce((s, v) => s + v, 0);
+  const p = (v, base) => (base ? Number((v / base).toFixed(4)) : null);
+  return {
+    filas, columnas, umbral_base_chica: umbral,
+    totales: { filas: porFila, columnas: porColumna, total },
+    vistas: {
+      n: { etiqueta: 'Cantidad (N)', valores: n },
+      columna: { etiqueta: '% de columna', valores: n.map((fila) => fila.map((v, j) => p(v, porColumna[j]))),
+                 bases: { columnas: porColumna }, bases_chicas: { columnas: porColumna.map((x) => x < umbral) } },
+      fila: { etiqueta: '% de fila', valores: n.map((fila, i) => fila.map((v) => p(v, porFila[i]))),
+              bases: { filas: porFila }, bases_chicas: { filas: porFila.map((x) => x < umbral) } },
+      total: { etiqueta: '% del total', valores: n.map((fila) => fila.map((v) => p(v, total))),
+               bases: { total }, bases_chicas: { total: total < umbral } },
+    },
+  };
+}
+
+/* R-ALE.3 / R-AU.2 — sumar a la audiencia desde una consulta: la selección
+   vigente (o una cantidad de ella) o todo el segmento, por el camino de
+   convocar, y el paso registrado. */
+function sumarAudienciaDemo(encuesta, cuerpo, via) {
+  const resultado = cuerpo.resultado || {};
+  const semilla = resultado.seleccion?.semilla || null;
+  let ids = (resultado.items || []).map((i) => i.id_persona).filter(Boolean);
+  let modo = resultado.seleccion?.modo || 'ranking';
+  const demografica = resultado.tipo === 'demografica';
+  if ((cuerpo.segmento_completo || (cuerpo.cantidad && demografica)) && demografica) {
+    const todo = correrConsulta({ ...(cuerpo.definicion || {}), semilla, limite: 100000 });
+    ids = todo.items.map((i) => i.id_persona);
+    if (!cuerpo.segmento_completo) ids = ids.slice(0, Number(cuerpo.cantidad));
+    modo = cuerpo.segmento_completo ? 'segmento_completo' : 'aleatorio';
+  } else if (cuerpo.cantidad) {
+    ids = ids.slice(0, Number(cuerpo.cantidad));
+  }
+  ids = [...new Set(ids)];
+  if (!ids.length) throw new ErrorDemo('La selección no tiene ninguna persona para agregar.', 400);
+  const ya = ids.filter((id) => bd.participaciones.some((p) => p.encuesta_id === encuesta.id
+    && p.id_persona === id && p.convocado !== false));
+  const existentes = ids.filter((id) => bd.personas.some((p) => p.id_persona === id));
+  const nuevos = existentes.filter((id) => !ya.includes(id));
+  const convocatoria = nuevos.length ? convocar(encuesta.id, { ids_persona: nuevos })
+    : { convocados_total: 0, sin_consentimiento: [], en_lista_negra: 0 };
+  const paso = {
+    encuesta_id: encuesta.id, via, modo, semilla, definicion: cuerpo.definicion || null,
+    pedidas: cuerpo.cantidad || null, en_la_seleccion: ids.length,
+    agregadas: convocatoria.convocados_total,
+    excluidas: { ya_estaban: ya.length, en_lista_negra: convocatoria.en_lista_negra,
+                 sin_consentimiento: convocatoria.sin_consentimiento.length,
+                 no_encontrados: ids.length - existentes.length },
+    actor: 'demo@equipos.com.uy', creado_en: ahora(),
+  };
+  bd.pasosDeAudiencia.push(paso);
+  return paso;
 }
 
 function olasDemo(panelId) {

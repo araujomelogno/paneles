@@ -44,7 +44,21 @@ let definicion = {
   estrategia_puente: null,
   /* A5 — null = lo que diga el entorno (por defecto `query`). */
   tipo_embedding_criterio: null,
+  /* R-ALE (D89) — cómo se eligen las personas de una consulta semántica:
+     las que mejor cumplen (`ranking`) o un sorteo entre las que cumplen
+     (`aleatorio`). Una consulta sin criterios semánticos es siempre un
+     sorteo. La semilla no vive acá: es de cada resultado. */
+  seleccion: 'ranking',
 };
+
+/* R-AU.2 (D90) — si se llegó desde una encuesta para agregarle audiencia:
+   `{ id, nombre }`. El aviso queda visible y el botón del resultado es
+   «Agregar a la encuesta X». */
+let agregandoA = null;
+
+/* R-ALE.1 — el orden de la tabla es solo de lectura: ordenar por nombre o por
+   otra columna no cambia quiénes son. `null` = el orden de la selección. */
+let ordenDeLectura = null;
 
 /* R-CS · cambio 5 — la ejecución completa que se está mirando, si hay. */
 let ejecucionAbierta = null;
@@ -134,6 +148,18 @@ const ETAPAS = {
 
 export async function render(main, ctx) {
   contexto = ctx;
+  if (ctx.contexto?.agregarA) {
+    // R-AU.2 — viene de «Agregar audiencia desde una consulta»: el criterio
+    // que deja afuera a quien ya está en la audiencia va puesto de antemano.
+    agregandoA = ctx.contexto.agregarA;
+    ultimoResultado = null;
+    definicion.criterios = definicion.criterios.filter(
+      (c) => !(c.dimension === 'encuesta' && c.valor === agregandoA.id));
+    definicion.criterios.unshift({
+      tipo: 'demografico', dimension: 'encuesta', valor: agregandoA.id, operador: 'not_in',
+      relacion: 'audiencia',
+      etiqueta: `No está en la audiencia de «${agregandoA.nombre}»` });
+  }
   const [{ items: paneles }, guardadas, atributosDelCatalogo] = await Promise.all([
     api.paneles.listar(),
     api.consultas.guardadas().catch(() => ({ items: [] })),
@@ -147,6 +173,12 @@ export async function render(main, ctx) {
 
   main.innerHTML = encabezado('Consulta', 'semántica',
     'Quiénes se aproximan a un criterio, con la respuesta que lo justifica.') + `
+    ${agregandoA ? `<div class="alert alert-info" id="aviso-agregando">
+      <strong>Agregando audiencia a la encuesta «${esc(agregandoA.nombre)}».</strong>
+      La consulta deja afuera a quienes ya están en su audiencia. Con el resultado, el
+      botón es «Agregar a la encuesta».
+      <button class="btn btn-outline btn-sm" id="dejar-de-agregar" style="margin-left:.5rem">
+        Dejar de agregar</button></div>` : ''}
     <div class="card">
       <div class="card-header">
         <span class="card-header-title">Criterios</span>
@@ -161,6 +193,8 @@ export async function render(main, ctx) {
                   title="Panelistas con información sobre un tema">+ Temática</button>
           <button class="btn btn-outline btn-sm" id="agregar-cliente"
                   title="Quienes participaron (o no) en estudios para un cliente">+ Cliente</button>
+          <button class="btn btn-outline btn-sm" id="agregar-encuesta"
+                  title="Quienes están (o no) en la audiencia de una encuesta, o la respondieron">+ Encuesta</button>
           <span class="toolbar-spacer"></span>
           <button class="btn btn-outline btn-sm" id="parametros">Parámetros</button>
         </div>
@@ -186,6 +220,14 @@ export async function render(main, ctx) {
             <div class="field-hint">
               En los dos modos, quien dice lo contrario del criterio queda afuera.
             </div>
+          </div>
+          <div class="form-group">
+            <label>Selección</label>
+            <select class="fselect" id="seleccion">
+              <option value="ranking">Por ranking — los que mejor cumplen</option>
+              <option value="aleatorio">Aleatorio entre los que cumplen</option>
+            </select>
+            <div class="field-hint" id="ayuda-seleccion"></div>
           </div>
           <div class="form-group">
             <label>Alcance</label>
@@ -215,6 +257,14 @@ export async function render(main, ctx) {
   $('#alcance').value = definicion.alcance;
   $('#panel').onchange = (e) => { definicion.panel_id = e.target.value ? Number(e.target.value) : null; };
   $('#modo').onchange = (e) => { definicion.modo = e.target.value; };
+  $('#seleccion').value = definicion.seleccion || 'ranking';
+  $('#seleccion').onchange = (e) => { definicion.seleccion = e.target.value; ayudaSeleccion(); };
+  ayudaSeleccion();
+  $('#agregar-encuesta').onclick = () => abrirCriterioEncuesta();
+  $('#dejar-de-agregar')?.addEventListener('click', () => {
+    agregandoA = null;
+    contexto.irA('consultas');
+  });
   $('#alcance').onchange = (e) => { definicion.alcance = e.target.value; ayudaAlcance(); };
   ayudaAlcance();
   $('#agregar-semantico').onclick = () => abrirCriterioSemantico();
@@ -222,7 +272,7 @@ export async function render(main, ctx) {
   $('#agregar-tematica').onclick = () => abrirCriterioTematica();
   $('#agregar-cliente').onclick = () => abrirCriterioCliente();
   $('#parametros').onclick = abrirParametros;
-  $('#correr').onclick = correr;
+  $('#correr').onclick = () => correr();
   $('#guardar').onclick = abrirGuardar;
   if ($('#cargar-guardada')) $('#cargar-guardada').onchange = cargarGuardada;
 
@@ -230,6 +280,22 @@ export async function render(main, ctx) {
   pintarEjecuciones();
   if (ultimoResultado) pintarResultado(ultimoResultado);
   else if (ejecucionAbierta) seguirEjecucion(ejecucionAbierta);
+}
+
+/* R-ALE — qué implica cada modo de selección. Sin criterios semánticos no
+   hay elección: es un sorteo del segmento. */
+function ayudaSeleccion() {
+  const caja = $('#ayuda-seleccion');
+  if (!caja) return;
+  const semantica = definicion.criterios.some((c) => c.tipo === 'semantico');
+  caja.innerHTML = !semantica
+    ? 'Sin criterios semánticos las personas son siempre un <strong>sorteo</strong> del '
+      + 'segmento, con semilla: nunca las primeras por nombre.'
+    : definicion.seleccion === 'aleatorio'
+      ? 'Se sortea entre quienes superan el umbral de confianza, se verifican en ese orden '
+        + 'y quien no cumple se reemplaza por el siguiente. Con un umbral muy laxo hay más '
+        + 'reemplazos (más llamadas a Claude).'
+      : 'Los que mejor cumplen el criterio, en orden de relevancia.';
 }
 
 /* R-CS · cambio 2 — qué implica cada alcance, en la pantalla. */
@@ -267,6 +333,10 @@ function pintarCriterios() {
         ? `<span class="badge badge-user">cliente</span>
            <strong>${esc(c.etiqueta || `${c.operador === 'not_in' ? 'No participó' : 'Participó'}
              en estudios para ${(Array.isArray(c.valor) ? c.valor : [c.valor]).join(' o ')}`)}</strong>`
+      : c.dimension === 'encuesta'
+        ? `<span class="badge badge-user">encuesta</span> <strong>${esc(c.etiqueta
+          || `${c.operador === 'not_in' ? 'No ' : ''}${c.relacion === 'respondio'
+            ? 'respondió' : 'está en la audiencia de'} la encuesta ${c.valor}`)}</strong>`
       : c.dimension === 'tematica'
         ? `<span class="badge badge-user">temática</span>
            ${c.etiqueta ? `<strong>${esc(c.etiqueta)}</strong>` : `Con información sobre
@@ -283,6 +353,7 @@ function pintarCriterios() {
   $$('[data-quitar]', caja).forEach((b) => {
     b.onclick = () => { definicion.criterios.splice(Number(b.dataset.quitar), 1); pintarCriterios(); };
   });
+  ayudaSeleccion();
 }
 
 /* ── Alta de criterios ──────────────────────────────────────────── */
@@ -485,6 +556,53 @@ async function abrirCriterioCliente() {
   });
 }
 
+/* R-AU.1 (D90) — «está en la audiencia de la encuesta X» o «respondió la
+   encuesta X», para incluir o excluir. Se resuelve en la bóveda, sobre la
+   participación, y se combina con todo lo demás. */
+async function abrirCriterioEncuesta() {
+  const { items } = await api.encuestas.listar();
+  if (!items.length) { toast('Todavía no hay encuestas.', 'err'); return; }
+  modal({
+    titulo: 'Filtrar por una encuesta',
+    ancho: '560px',
+    cuerpo: `
+      <div class="form-group"><label>Encuesta</label>
+        <select class="fselect" name="encuesta">${items.map((e) =>
+          `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div>
+      <div class="form-row">
+        <div class="form-group"><label>Quiénes</label>
+          <select class="fselect" name="operador">
+            <option value="not_in">Excluir a quienes…</option>
+            <option value="in">Solo quienes…</option>
+          </select></div>
+        <div class="form-group"><label>&nbsp;</label>
+          <select class="fselect" name="relacion">
+            <option value="audiencia">están en su audiencia</option>
+            <option value="respondio">la respondieron</option>
+          </select></div>
+      </div>
+      <div class="field-hint">Para no repetirle un estudio a quien estuvo en la ola anterior,
+        o para volver a hablar solo con quienes respondieron.</div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Agregar', clase: 'btn-orange', onClick: (c) => {
+          const id = Number($('[name="encuesta"]', c).value);
+          const nombre = items.find((e) => e.id === id)?.nombre || `#${id}`;
+          const operador = $('[name="operador"]', c).value;
+          const relacion = $('[name="relacion"]', c).value;
+          const que = relacion === 'respondio' ? 'respondió' : 'está en la audiencia de';
+          definicion.criterios.push({
+            tipo: 'demografico', dimension: 'encuesta', valor: id, operador, relacion,
+            etiqueta: `${operador === 'not_in' ? 'No ' : ''}${operador === 'not_in' ? que
+              : que.charAt(0).toUpperCase() + que.slice(1)} «${nombre}»`,
+          });
+          cerrarModal();
+          pintarCriterios();
+        } },
+    ],
+  });
+}
+
 function abrirCriterioDemografico() {
   const caja = modal({
     titulo: 'Criterio demográfico',
@@ -662,7 +780,21 @@ function abrirParametros() {
 
 /* ── Correr ─────────────────────────────────────────────────────── */
 
-async function correr() {
+/* R-ALE — la definición con la que se pidió el resultado que se ve: la
+   misma semilla y la misma página. Es lo que se manda para exportar o para
+   ir a otra página, así lo que se baja o se agrega es lo que se ve. */
+function definicionDelResultado(extra = {}) {
+  const seleccion = ultimoResultado?.seleccion || {};
+  return {
+    ...definicion,
+    ...(seleccion.semilla ? { semilla: seleccion.semilla } : {}),
+    ...(ultimoResultado?.paginacion && ultimoResultado.tipo === 'demografica'
+      ? { pagina: ultimoResultado.paginacion.pagina } : {}),
+    ...extra,
+  };
+}
+
+async function correr({ semilla = null, pagina = 1 } = {}) {
   if (!definicion.criterios.length) {
     toast('Agregá al menos un criterio.', 'err');
     return;
@@ -678,8 +810,12 @@ async function correr() {
   nombresResueltos = {};
   detenerSondeo();
   ejecucionAbierta = null;
+  ordenDeLectura = null;
   try {
-    ultimoResultado = await api.consultas.correr(definicion);
+    // Sin semilla, el servidor sortea con una nueva: «Volver a sortear» es
+    // correr sin la anterior. Con semilla, la misma selección (otra página).
+    ultimoResultado = await api.consultas.correr({
+      ...definicion, ...(semilla ? { semilla } : {}), ...(pagina > 1 ? { pagina } : {}) });
     // R7.4 — los atributos de las columnas elegidas se resuelven sobre el
     // conjunto recién obtenido, en una sola llamada y antes de pintar.
     await resolverColumnas(ultimoResultado);
@@ -916,6 +1052,7 @@ function pintarResultado(resultado) {
   const esCompleta = resultado.alcance === 'completo';
 
   caja.innerHTML = `
+    ${pintarSeleccion(resultado)}
     ${esDemografica ? avisoDemografica(resultado) : `
       ${pintarVerificacionIncompleta(resultado)}
       ${pintarDegradaciones(resultado)}
@@ -930,7 +1067,7 @@ function pintarResultado(resultado) {
       </div>
       <div class="card-body tight">
         ${esDemografica ? tablaDemografica(resultado) : tablaRanking(resultado)}
-        ${esCompleta ? paginacionHtml(resultado) : ''}
+        ${esCompleta || esDemografica ? paginacionHtml(resultado) : ''}
       </div>
     </div>
     ${esDemografica ? '' : `${pintarExcluidos(resultado)}${esCompleta ? '' : pintarDiagnostico(resultado)}`}`;
@@ -938,8 +1075,64 @@ function pintarResultado(resultado) {
   activarTokens(caja);
   engancharAcciones(caja, resultado);
   $$('[data-pagina-resultado]', caja).forEach((b) => {
-    b.onclick = () => abrirResultadoCompleto(resultado.ejecucion.ejecucion_id,
-      Number(b.dataset.paginaResultado), resultado.ejecucion);
+    b.onclick = () => (esCompleta
+      ? abrirResultadoCompleto(resultado.ejecucion.ejecucion_id,
+        Number(b.dataset.paginaResultado), resultado.ejecucion)
+      // R-ALE.1 — otra página del mismo sorteo: la misma semilla, así dos
+      // páginas no repiten ni pierden a nadie.
+      : correr({ semilla: resultado.seleccion?.semilla,
+                 pagina: Number(b.dataset.paginaResultado) }));
+  });
+  $('#volver-a-sortear', caja)?.addEventListener('click', () => correr());
+  $$('[data-ordenar]', caja).forEach((th) => {
+    th.onclick = () => {
+      const clave = th.dataset.ordenar;
+      ordenDeLectura = ordenDeLectura?.clave === clave && !ordenDeLectura.desc
+        ? { clave, desc: true } : clave === '#' ? null : { clave, desc: false };
+      pintarResultado(resultado);
+    };
+  });
+}
+
+/* R-ALE — cómo se eligieron las personas, a la vista: el modo, la semilla
+   (para rehacer y auditar) y, en el aleatorio semántico, el pool, cuántas se
+   verificaron y cuántas se reemplazaron. */
+function pintarSeleccion(resultado) {
+  const s = resultado.seleccion;
+  if (!s || s.modo !== 'aleatorio') return '';
+  const semantica = s.pool != null;
+  return `<div class="card" id="seleccion-aplicada"><div class="card-body">
+    <div class="toolbar">
+      <span><span class="badge badge-user">Selección aleatoria</span>
+        <span class="small muted">semilla</span> <code data-semilla>${esc(s.semilla || '')}</code></span>
+      <span class="toolbar-spacer"></span>
+      ${resultado.alcance === 'completo' ? ''
+        : '<button class="btn btn-outline btn-sm" id="volver-a-sortear">Volver a sortear</button>'}
+    </div>
+    ${semantica ? `<div class="resultado" style="margin-top:.75rem" data-informe-sorteo>
+      <div class="r"><div class="r-num" data-pool>${s.pool}</div><div class="r-label">En el pool</div></div>
+      <div class="r"><div class="r-num">${s.sorteadas ?? '—'}</div><div class="r-label">Sorteadas</div></div>
+      <div class="r"><div class="r-num" data-verificadas>${s.verificadas ?? '—'}</div><div class="r-label">Verificadas</div></div>
+      <div class="r"><div class="r-num" data-reemplazadas>${s.reemplazadas ?? '—'}</div><div class="r-label">Reemplazadas</div></div>
+      <div class="r"><div class="r-num" data-quedaron>${s.quedaron ?? resultado.total}</div><div class="r-label">Quedaron</div></div>
+    </div>${(s.avisos || []).map((a) => alerta(a, 'warn')).join('')}`
+    : `<p class="small muted" style="margin:.5rem 0 0">Las personas son un sorteo del segmento:
+        con la misma semilla, la misma selección. Ordenar la tabla no cambia quiénes son.</p>`}
+  </div></div>`;
+}
+
+/* R-ALE.1 — los ítems en el orden de lectura elegido (o el de la selección).
+   Es una copia: la selección no cambia. */
+function enOrdenDeLectura(items) {
+  if (!ordenDeLectura) return items.map((item, i) => [item, i]);
+  const { clave, desc } = ordenDeLectura;
+  const valor = (item) => (clave === 'nombre'
+    ? (nombresResueltos[item.id_persona]?.nombre || '')
+    : (item[clave] ?? valoresDeColumnas[item.id_persona]?.[clave]?.etiqueta_valor
+      ?? valoresDeColumnas[item.id_persona]?.[clave]?.valor ?? ''));
+  return items.map((item, i) => [item, i]).sort(([a], [b]) => {
+    const comparado = String(valor(a)).localeCompare(String(valor(b)), 'es', { numeric: true });
+    return desc ? -comparado : comparado;
   });
 }
 
@@ -1014,6 +1207,8 @@ function barraDeAcciones(resultado) {
       <button class="btn btn-outline btn-sm" id="crear-panel">Crear panel</button>
       <button class="btn btn-outline btn-sm" id="crear-encuesta"
         title="Una encuesta independiente con estas personas como audiencia">Crear encuesta</button>
+      ${agregandoA ? `<button class="btn btn-orange btn-sm" id="agregar-a-encuesta">Agregar a la
+        encuesta «${esc(agregandoA.nombre)}»</button>` : ''}
     </div>`;
 }
 
@@ -1023,6 +1218,7 @@ function engancharAcciones(caja, resultado) {
   $('#bajar-csv-pii', caja).onclick = bajarCsvIdentificado;
   $('#crear-panel', caja).onclick = crearPanelDesdeConsulta;
   $('#crear-encuesta', caja).onclick = crearEncuestaDesdeConsulta;
+  $('#agregar-a-encuesta', caja)?.addEventListener('click', agregarALaEncuesta);
   $('#elegir-columnas', caja).onclick = abrirElegirColumnas;
   $$('[data-detalle]', caja).forEach((b) => {
     b.onclick = () => abrirDetalle(resultado.items[Number(b.dataset.detalle)]);
@@ -1064,12 +1260,20 @@ function columnasDeLaDemografica() {
 function tablaDemografica(resultado) {
   if (!resultado.items.length) return vacio('El segmento está vacío.', '🕳️');
   const columnas = columnasDeLaDemografica();
-  return `<div class="table-wrap"><table>
+  const marca = (clave) => (ordenDeLectura?.clave === clave
+    ? (ordenDeLectura.desc ? ' ▾' : ' ▴') : '');
+  const desplazamiento = ((resultado.paginacion?.pagina || 1) - 1)
+    * (resultado.paginacion?.por_pagina || 0);
+  return `<div class="table-wrap"><table id="tabla-demografica">
       <thead><tr>
-        <th>#</th><th>Persona</th>
-        ${columnas.map((c) => `<th>${esc(etiquetaDeColumna(c))}</th>`).join('')}
+        <th data-ordenar="#" title="El orden del sorteo" style="cursor:pointer">#</th>
+        <th data-ordenar="nombre" style="cursor:pointer"
+          title="Ordenar por nombre (después de «Ver quiénes son»)">Persona${marca('nombre')}</th>
+        ${columnas.map((c) => `<th data-ordenar="${esc(c)}" style="cursor:pointer">${esc(
+          etiquetaDeColumna(c))}${marca(c)}</th>`).join('')}
       </tr></thead>
-      <tbody>${resultado.items.map((item, i) => filaDemografica(item, i, columnas)).join('')}</tbody>
+      <tbody>${enOrdenDeLectura(resultado.items).map(([item, i]) =>
+        filaDemografica(item, i + desplazamiento, columnas)).join('')}</tbody>
     </table></div>
     ${columnasElegidas.length ? '' : `<p class="field-hint" style="padding:.5rem 1.5rem">
       Con «Columnas» elegís qué atributos ver; la elección se recuerda y no
@@ -1078,7 +1282,7 @@ function tablaDemografica(resultado) {
 
 function filaDemografica(item, indice, columnas) {
   const nombre = nombresResueltos[item.id_persona]?.nombre;
-  return `<tr class="${item.lista_negra ? 'en-lista-negra' : ''}">
+  return `<tr class="${item.lista_negra ? 'en-lista-negra' : ''}" data-fila-persona="${esc(item.id_persona)}">
     <td class="mono">${indice + 1}</td>
     <td>${nombre ? `<div class="td-strong">${esc(nombre)}</div>` : ''}
         ${token(item.id_persona)} ${listaNegra.marca(item.lista_negra)}
@@ -1100,9 +1304,9 @@ function celdaDemografica(item, clave) {
 function avisoDemografica(resultado) {
   return `<div class="alert alert-info">
       Consulta puramente demográfica: se resolvió entera en la bóveda y no se
-      abrió conexión al store semántico. No hay puntaje ni evidencia: el orden
-      es el del listado. ${resultado.items.length ? 'Ver quiénes son, exportar'
-        + ' y crear un panel funcionan igual que con un resultado semántico.' : ''}
+      abrió conexión al store semántico. No hay puntaje ni evidencia: las personas
+      son un sorteo del segmento. ${resultado.items.length ? 'Ver quiénes son, exportar'
+        + ' y crear un panel o una encuesta funcionan igual que con un resultado semántico.' : ''}
     </div>`;
 }
 
@@ -1694,7 +1898,8 @@ async function bajarCsv() {
     // ejecución, con el ranking entero y no solo la página en pantalla.
     const salida = ultimoResultado?.alcance === 'completo'
       ? await api.consultas.ejecucion(ultimoResultado.ejecucion.ejecucion_id, { formato: 'csv' })
-      : await api.consultas.csv(definicion);
+      // R-ALE.4 — la misma selección y el mismo orden que la pantalla.
+      : await api.consultas.csv(definicionDelResultado());
     const blob = new Blob([salida.csv], { type: 'text/csv;charset=utf-8' });
     const enlace = document.createElement('a');
     enlace.href = URL.createObjectURL(blob);
@@ -1795,7 +2000,7 @@ async function crearPanelDesdeConsulta() {
           if (!datos.nombre?.trim()) { toast('El panel necesita un nombre.', 'err'); return; }
           try {
             const panel = await api.panelDesdeConsulta(
-              datos.nombre.trim(), ultimoResultado, definicion, datos.descripcion,
+              datos.nombre.trim(), ultimoResultado, definicionDelResultado(), datos.descripcion,
               { incluirListaNegra: Boolean($('[name="incluir_lista_negra"]', contenedor)?.checked) });
             cerrarModal();
             toast(`Panel «${panel.nombre}» creado con ${panel.miembros} miembros.`
@@ -1809,47 +2014,70 @@ async function crearPanelDesdeConsulta() {
   });
 }
 
+/* R-ALE.3 — de quiénes se toma la audiencia: la selección que se ve o, en una
+   demográfica, todo el segmento. Es la misma elección para crear una encuesta
+   y para agregarle gente a una que ya existe (R-AU.2). */
+function opcionesDeAudiencia(resultado, { conCantidad = false } = {}) {
+  const demografica = resultado.tipo === 'demografica';
+  const sorteo = resultado.seleccion?.modo === 'aleatorio';
+  const mostradas = resultado.items.length;
+  return `<div class="form-group" data-opciones-audiencia><label>Con quiénes</label>
+      <label class="check"><input type="radio" name="audiencia" value="seleccion" checked />
+        ${conCantidad ? `Una cantidad, en el orden de la selección:
+          <input type="number" name="cantidad" min="1" value="${mostradas}"
+                 style="width:6rem;display:inline-block" />`
+          : `Las ${mostradas} de la selección`}
+        <span class="small muted">(${sorteo ? 'sorteadas con la semilla '
+          + `<code>${esc(resultado.seleccion.semilla)}</code>` : 'las mejores del ranking'})</span></label>
+      ${demografica ? `<label class="check"><input type="radio" name="audiencia"
+          value="segmento_completo" /> Todo el segmento (${resultado.total} personas)</label>` : ''}
+      <div class="field-hint">${demografica
+        ? 'Nunca las primeras por nombre: el nombre está asociado al sexo y a la generación.'
+        : 'Por ranking son las que mejor cumplen; aleatorio, un sorteo entre las que cumplen.'}
+        Quien está en la lista negra o no tiene consentimiento de contacto queda afuera.</div>
+    </div>`;
+}
+
+function audienciaElegida(caja) {
+  const opcion = $('[name="audiencia"]:checked', caja)?.value || 'seleccion';
+  if (opcion === 'segmento_completo') return { segmento_completo: true };
+  const cantidad = Number($('[name="cantidad"]', caja)?.value || 0);
+  return cantidad ? { cantidad } : {};
+}
+
 /* R-EU.5 — «crear encuesta con estos panelistas»: un estudio a medida sin
-   armar un panel. La audiencia es la foto de este resultado; la lista negra
-   y quien no tiene consentimiento de contacto quedan afuera, y el servidor
-   dice cuántos. */
+   armar un panel. La audiencia es la foto de la selección vigente (R-ALE.3)
+   o de todo el segmento; la lista negra y quien no tiene consentimiento de
+   contacto quedan afuera, y el servidor dice cuántos. Los datos del estudio
+   son el formulario común (R-AU.3). */
 async function crearEncuestaDesdeConsulta() {
   if (!ultimoResultado?.items?.length) {
     toast('El resultado está vacío: no hay audiencia para una encuesta.', 'err');
     return;
   }
-  const { editorDeClientes } = await import('../clientes.js');
-  let clientes = null;
+  const estudio = await import('../estudio.js');
+  let datos = null;
   const caja = modal({
-    titulo: `Crear una encuesta con estas ${ultimoResultado.items.length} personas`,
-    ancho: '600px',
+    titulo: 'Crear una encuesta desde este resultado',
+    ancho: '640px',
     cuerpo: `
       <div id="enc-alerta"></div>
       <p class="small muted">Es una encuesta <strong>independiente</strong>: no se asocia a
-      ningún panel. Su audiencia es la <strong>foto</strong> de este resultado —la
-      consulta no se vuelve a ejecutar—. Quien está en la lista negra o no tiene
-      consentimiento de contacto queda afuera.</p>
-      <div class="form-group"><label>Nombre de la encuesta</label>
-        <input class="finput" name="nombre" placeholder="Estudio a medida — fernet" /></div>
-      <div class="form-row">
-        <div class="form-group"><label>Fecha de campo</label>
-          <input type="date" name="fecha_campo" /></div>
-        <div class="form-group"><label>Público objetivo</label>
-          <input class="finput" name="publico_objetivo" /></div>
-      </div>
-      <div class="form-group"><label>Clientes</label><div data-clientes></div></div>`,
+      ningún panel. Su audiencia es la <strong>foto</strong> de la selección —la consulta no
+      se vuelve a ejecutar— y queda registrado cómo se armó (modo y semilla).</p>
+      ${opcionesDeAudiencia(ultimoResultado)}
+      ${estudio.campos({}, { etiquetaNombre: 'Nombre de la encuesta',
+                             ejemploNombre: 'Estudio a medida — fernet' })}`,
     acciones: [
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
       { texto: 'Crear la encuesta', clase: 'btn-orange', onClick: async (contenedor) => {
-          const datos = leerFormulario(contenedor);
-          if (!datos.nombre?.trim()) { toast('La encuesta necesita un nombre.', 'err'); return; }
+          const elegido = datos.valor();
+          if (!elegido.nombre) { toast('La encuesta necesita un nombre.', 'err'); return; }
           try {
+            const { nombre, ...resto } = elegido;
             const encuesta = await api.encuestas.desdeConsulta(
-              datos.nombre.trim(), ultimoResultado, definicion, {
-                fecha_campo: datos.fecha_campo || null,
-                publico_objetivo: datos.publico_objetivo || null,
-                clientes: clientes.valor(),
-              });
+              nombre, ultimoResultado, definicionDelResultado(), {
+                ...resto, ...audienciaElegida(contenedor) });
             cerrarModal();
             const a = encuesta.audiencia;
             toast(`Encuesta «${encuesta.nombre}» creada con ${a.convocados} convocado(s).`
@@ -1863,7 +2091,61 @@ async function crearEncuestaDesdeConsulta() {
         } },
     ],
   });
-  clientes = editorDeClientes($('[data-clientes]', caja));
+  datos = estudio.activar(caja);
+}
+
+/* R-AU.2 (D90) — «Agregar a la encuesta X»: una cantidad (sorteada con
+   semilla, o según el modo de una semántica) o todo el segmento. Entra por
+   el mismo camino que convocar, sin repetir a quien ya estaba, y queda
+   registrado en la encuesta. */
+function agregarALaEncuesta() {
+  if (!agregandoA || !ultimoResultado?.items?.length) {
+    toast('El resultado está vacío: no hay a quién agregar.', 'err');
+    return;
+  }
+  modal({
+    titulo: `Agregar a la encuesta «${agregandoA.nombre}»`,
+    ancho: '600px',
+    cuerpo: `<div id="agregar-alerta"></div>
+      ${opcionesDeAudiencia(ultimoResultado, { conCantidad: true })}
+      <div id="agregar-resultado"></div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Agregar', clase: 'btn-orange', onClick: async (c) => {
+          const boton = $('.modal-foot .btn-orange', c);
+          boton.disabled = true;
+          try {
+            const salida = await api.encuestas.agregarAudiencia(agregandoA.id, {
+              resultado: ultimoResultado, definicion: definicionDelResultado(),
+              ...audienciaElegida(c) });
+            $('#agregar-alerta', c).innerHTML = '';
+            $('#agregar-resultado', c).innerHTML = `<div class="resultado" data-agregado>
+                <div class="r"><div class="r-num" data-agregadas>${salida.agregadas}</div>
+                  <div class="r-label">Entraron</div></div>
+                <div class="r"><div class="r-num">${salida.en_la_seleccion}</div>
+                  <div class="r-label">En la selección</div></div>
+                <div class="r"><div class="r-num">${salida.convocados}</div>
+                  <div class="r-label">Audiencia total</div></div></div>
+              <ul class="small" data-afuera>${Object.entries(salida.excluidas || {})
+                .filter(([, n]) => n).map(([m, n]) => `<li data-motivo="${esc(m)}">${n} — ${esc(
+                  (salida.etiquetas || {})[m] || m)}</li>`).join('')}</ul>
+              ${salida.semilla ? `<p class="small muted">Semilla <code>${esc(salida.semilla)}</code>:
+                queda registrada en la encuesta.</p>` : ''}`;
+            boton.textContent = 'Ir a la encuesta';
+            boton.disabled = false;
+            boton.onclick = () => {
+              const id = agregandoA.id;
+              agregandoA = null;
+              cerrarModal();
+              contexto.irA('encuestas', { encuestaId: id });
+            };
+          } catch (error) {
+            boton.disabled = false;
+            $('#agregar-alerta', c).innerHTML = alerta(error.message);
+          }
+        } },
+    ],
+  });
 }
 
 /* ── Consultas guardadas ────────────────────────────────────────── */

@@ -145,7 +145,9 @@ async function cargar() {
   try {
     const salida = await api.composicion.verAmbito(
       ambitoActual, referenciaActual(), { cruce: cruceActual });
+    if (salida.vistas_de_cruce) vistasDeCruce = salida.vistas_de_cruce;
     caja.innerHTML = pintar(salida);
+    engancharVistasDeCruce(caja, salida);
     const boton = $('#cargar-objetivo');
     if (boton) boton.onclick = () => abrirObjetivo(salida);
     $$('[data-borrar-objetivo]', caja).forEach((b) => {
@@ -225,7 +227,10 @@ function pintar(salida) {
     ${salida.dimensiones.map((d) => (esEncuesta
     ? pintarDimensionDeEncuesta(d, salida.con_audiencia)
     : pintarDimension(d, salida.miembros, puedeGestionar && admite))).join('')}
-    ${salida.cruce ? pintarCruce(salida.cruce) : ''}
+    ${salida.cruce ? pintarCruce(salida.cruce, {
+      titulo: salida.cruce_convocados ? 'Respondentes' : null }) : ''}
+    ${salida.cruce_convocados ? pintarCruce(salida.cruce_convocados,
+      { titulo: 'Convocados', id: 'cruce-convocados' }) : ''}
     ${salida.tematicas ? pintarTematicas(salida.tematicas) : ''}`;
 }
 
@@ -342,39 +347,108 @@ function pintarDimension(dimension, miembros, puedeGestionar) {
   </div>`;
 }
 
-function pintarCruce(cruce) {
-  const [a, b] = cruce.dimensiones;
-  const filas = [...new Set(cruce.celdas.map((c) => c[a]))].sort();
-  const columnas = [...new Set(cruce.celdas.map((c) => c[b]))].sort();
-  const valor = {};
-  cruce.celdas.forEach((c) => { valor[`${c[a]}|${c[b]}`] = c.observados; });
+/* R-COMP.1 (D90) — un cruce se lee en cantidad o en porcentaje de columna, de
+   fila o del total. Las cuentas vienen hechas del servidor (`cruce.tabla`):
+   acá solo se elige la vista. Cada porcentaje muestra su base y las bases
+   chicas se marcan. La elección se mantiene al cambiar de cruce o de ámbito,
+   dentro de la sesión. */
+const VISTA_POR_DEFECTO = 'n';
+const CLAVE_VISTA = 'composicion.vistaDeCruce';
+let vistasDeCruce = {
+  n: 'Cantidad (N)', columna: '% de columna', fila: '% de fila', total: '% del total',
+};
 
-  return `<div class="card">
+function vistaElegida() {
+  try {
+    const guardada = sessionStorage.getItem(CLAVE_VISTA);
+    return vistasDeCruce[guardada] ? guardada : VISTA_POR_DEFECTO;
+  } catch {
+    return VISTA_POR_DEFECTO;
+  }
+}
+
+function elegirVista(vista) {
+  try { sessionStorage.setItem(CLAVE_VISTA, vista); } catch { /* sin almacenamiento */ }
+}
+
+const enPorcentaje = (v) => (v == null ? '—' : `${(v * 100).toFixed(1)} %`);
+const baseHtml = (n, chica) => `<span class="base ${chica ? 'base-chica' : ''}"
+  ${chica ? 'data-base-chica title="Base chica: no saques conclusiones de tan pocos casos"' : ''}
+  >base ${n}${chica ? ' ⚠' : ''}</span>`;
+
+function pintarCruce(cruce, { titulo = null, id = 'cruce' } = {}) {
+  const [a, b] = cruce.dimensiones;
+  const tabla = cruce.tabla;
+  if (!tabla) return '';
+  const vista = vistaElegida();
+  const datos = tabla.vistas[vista] || tabla.vistas.n;
+  const esN = vista === 'n';
+  const chicasCol = datos.bases_chicas?.columnas || [];
+  const chicasFila = datos.bases_chicas?.filas || [];
+  const celda = (i, j) => {
+    const n = tabla.vistas.n.valores[i][j];
+    return `<td class="mono ${n ? '' : 'td-muted'}">${esN ? (n || '·')
+      : enPorcentaje(datos.valores[i][j])}</td>`;
+  };
+  return `<div class="card" data-cruce="${esc(id)}">
     <div class="card-header">
-      <span class="card-header-title">
+      <span class="card-header-title">${titulo ? `${esc(titulo)} · ` : ''}
         ${esc(etiqueta(a))} × ${esc(etiqueta(b))}</span>
-      <span class="badge badge-off">descriptivo</span>
+      <div class="toolbar">
+        <select class="fselect" data-vista-cruce style="width:auto">
+          ${Object.entries(vistasDeCruce).map(([clave, texto]) =>
+            `<option value="${clave}" ${clave === vista ? 'selected' : ''}>${esc(texto)}</option>`).join('')}
+        </select>
+        <span class="badge badge-off">descriptivo</span>
+      </div>
     </div>
     <div class="card-body tight">
       <div class="small muted" style="padding:.5rem 1.5rem 0">
         ${esc(cruce.motivo_sin_brecha)} Las celdas vacías son los huecos que
-        las marginales esconden.
+        las marginales esconden. ${esN ? '' : `Cada porcentaje se calcula sobre su
+        <strong>base</strong>; las de menos de ${tabla.umbral_base_chica} casos se marcan ⚠.`}
       </div>
-      <div class="table-wrap"><table>
+      <div class="table-wrap"><table data-tabla-cruce data-vista="${esc(vista)}">
         <thead><tr><th>${esc(etiqueta(a))}</th>
-          ${columnas.map((c) => `<th>${esc(c)}</th>`).join('')}<th>Total</th></tr></thead>
-        <tbody>${filas.map((f) => {
-          const total = columnas.reduce((s, c) => s + (valor[`${f}|${c}`] || 0), 0);
-          return `<tr><td class="td-strong">${esc(f)}</td>
-            ${columnas.map((c) => {
-              const n = valor[`${f}|${c}`] || 0;
-              return `<td class="mono ${n ? '' : 'td-muted'}">${n || '·'}</td>`;
-            }).join('')}
-            <td class="mono td-strong">${total}</td></tr>`;
-        }).join('')}</tbody>
+          ${tabla.columnas.map((c) => `<th>${esc(c)}</th>`).join('')}
+          <th>${vista === 'fila' ? 'Base' : 'Total'}</th></tr></thead>
+        <tbody>${tabla.filas.map((f, i) => `<tr><td class="td-strong">${esc(f)}</td>
+            ${tabla.columnas.map((_, j) => celda(i, j)).join('')}
+            <td class="mono td-strong">${vista === 'fila'
+              ? baseHtml(tabla.totales.filas[i], chicasFila[i])
+              : vista === 'total' ? enPorcentaje(tabla.totales.filas[i] / (tabla.totales.total || 1))
+              : vista === 'columna' ? '' : tabla.totales.filas[i]}</td></tr>`).join('')}
+        </tbody>
+        <tfoot><tr><td class="td-strong">${vista === 'columna' ? 'Base' : 'Total'}</td>
+          ${tabla.columnas.map((_, j) => `<td class="mono">${vista === 'columna'
+            ? baseHtml(tabla.totales.columnas[j], chicasCol[j])
+            : vista === 'total' ? enPorcentaje(tabla.totales.columnas[j] / (tabla.totales.total || 1))
+            : vista === 'fila' ? '' : tabla.totales.columnas[j]}</td>`).join('')}
+          <td class="mono td-strong">${vista === 'total'
+            ? baseHtml(tabla.totales.total, datos.bases_chicas?.total)
+            : tabla.totales.total}</td></tr></tfoot>
       </table></div>
     </div>
   </div>`;
+}
+
+/* Engancha el selector de vista de los cruces de la pantalla. */
+function engancharVistasDeCruce(caja, salida) {
+  $$('[data-vista-cruce]', caja).forEach((selector) => {
+    selector.onchange = () => {
+      elegirVista(selector.value);
+      $$('[data-cruce]', caja).forEach((tarjeta) => {
+        const cual = tarjeta.dataset.cruce;
+        const cruce = cual === 'cruce-convocados' ? salida.cruce_convocados : salida.cruce;
+        const nueva = document.createElement('div');
+        nueva.innerHTML = pintarCruce(cruce, cual === 'cruce-convocados'
+          ? { titulo: 'Convocados', id: cual }
+          : { titulo: salida.cruce_convocados ? 'Respondentes' : null, id: cual });
+        tarjeta.replaceWith(nueva.firstElementChild);
+      });
+      engancharVistasDeCruce(caja, salida);
+    };
+  });
 }
 
 /* ── Carga del universo de referencia ───────────────────────────── */

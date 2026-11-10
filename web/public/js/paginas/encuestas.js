@@ -13,6 +13,7 @@ import * as calidad from '../calidad.js';
 import { editorDeTematicas, chipsDeTematicas } from '../tematicas.js';
 import { editorDeClientes, chipsDeClientes } from '../clientes.js';
 import * as canales from '../canales.js';
+import * as estudio from '../estudio.js';
 import {
   $, $$, esc, encabezado, token, vacio, cargando, toast, modal, cerrarModal,
   leerFormulario, activarTokens, fechaCorta, fechaHora, estado, alerta, confirmar,
@@ -28,9 +29,18 @@ export async function render(main, ctx) {
 
   const panelId = ctx.contexto?.panelId || null;
   const tipo = ctx.contexto?.tipo || '';
-  const [{ items }, { items: paneles }] = await Promise.all([
-    api.encuestas.listar(panelId, tipo || undefined), api.paneles.listar(),
+  // R-ENC.2 — además del tipo, por estado y por cliente; se combinan.
+  const estadoFiltro = ctx.contexto?.estado || '';
+  const clienteFiltro = ctx.contexto?.clienteId || '';
+  const [{ items }, { items: paneles }, { items: clientes }] = await Promise.all([
+    api.encuestas.listar(panelId, tipo || undefined,
+                         { estado: estadoFiltro, clienteId: clienteFiltro }),
+    api.paneles.listar(),
+    api.clientes.listar().catch(() => ({ items: [] })),
   ]);
+  const filtros = { ...(panelId ? { panelId } : {}), ...(tipo ? { tipo } : {}),
+                    ...(estadoFiltro ? { estado: estadoFiltro } : {}),
+                    ...(clienteFiltro ? { clienteId: clienteFiltro } : {}) };
 
   main.innerHTML = encabezado('Encuestas', 'y estudios',
     'Cada encuesta es un estudio: sus datos, su audiencia y sus cargas. Todas sus '
@@ -39,11 +49,22 @@ export async function render(main, ctx) {
       <div class="card-header"><span class="card-header-title">
         ${panelId ? esc(paneles.find((p) => p.id === panelId)?.nombre || 'Panel') : 'Todas las encuestas'}
       </span>
+        <div class="toolbar">
         <select class="fselect" id="f-tipo" style="width:auto">
           <option value="">De panel e independientes</option>
           <option value="panel" ${tipo === 'panel' ? 'selected' : ''}>De panel</option>
           <option value="independiente" ${tipo === 'independiente' ? 'selected' : ''}>Independientes</option>
-        </select></div>
+        </select>
+        <select class="fselect" id="f-estado" style="width:auto">
+          <option value="">Todos los estados</option>
+          ${Object.entries(ESTADO_ETIQUETA).map(([clave, texto]) =>
+            `<option value="${clave}" ${estadoFiltro === clave ? 'selected' : ''}>${texto}</option>`).join('')}
+        </select>
+        <select class="fselect" id="f-cliente" style="width:auto">
+          <option value="">Todos los clientes</option>
+          ${(clientes || []).map((c) => `<option value="${c.id}"
+            ${String(clienteFiltro) === String(c.id) ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}
+        </select></div></div>
       <div class="card-body tight">
         ${items.length ? `<div class="table-wrap"><table>
           <thead><tr><th>Encuesta</th><th>Audiencia</th><th>Clientes</th><th>Campo</th><th>Estado</th>
@@ -71,20 +92,27 @@ export async function render(main, ctx) {
               <td class="right"><button class="btn btn-outline btn-sm" data-encuesta="${e.id}">Abrir</button></td>
             </tr>`;
           }).join('')}</tbody></table></div>`
-          : vacio('Todavía no hay encuestas.', '📨')}
+          : vacio(Object.keys(filtros).length ? 'Ninguna encuesta cumple los filtros.'
+            : 'Todavía no hay encuestas.', '📨')}
       </div>
     </div>
-    <p class="small muted">Una encuesta <strong>independiente</strong> se crea desde el
-      resultado de una consulta («Crear encuesta con estos panelistas»), o sola al
-      cargar panelistas desde la sección Panelistas.</p>`;
+    <p class="small muted">Una encuesta <strong>independiente</strong> se crea acá, vacía, y
+      su audiencia se arma a mano o desde consultas; también desde el resultado de una
+      consulta («Crear encuesta») o sola al cargar panelistas desde la sección Panelistas.</p>`;
 
   $('#ph-acciones').innerHTML = `
     ${panelId ? `<button class="btn btn-outline" id="todas">Ver todas</button>` : ''}
-    <button class="btn btn-orange" id="nueva">+ Nueva encuesta de panel</button>`;
+    <button class="btn btn-orange" id="nueva">+ Nueva encuesta</button>`;
   if (panelId) $('#todas').onclick = () => contexto.irA('encuestas');
   $('#nueva').onclick = () => abrirNueva(paneles, panelId);
-  $('#f-tipo').onchange = (e) => contexto.irA('encuestas',
-    { ...(panelId ? { panelId } : {}), tipo: e.target.value });
+  const filtrar = (cambio) => {
+    const nuevos = { ...filtros, ...cambio };
+    Object.keys(nuevos).forEach((k) => { if (!nuevos[k]) delete nuevos[k]; });
+    contexto.irA('encuestas', nuevos);
+  };
+  $('#f-tipo').onchange = (e) => filtrar({ tipo: e.target.value });
+  $('#f-estado').onchange = (e) => filtrar({ estado: e.target.value });
+  $('#f-cliente').onchange = (e) => filtrar({ clienteId: e.target.value });
   activarTokens(main);
   $$('[data-encuesta]', main).forEach((boton) => {
     boton.onclick = () => contexto.irA('encuestas', { encuestaId: Number(boton.dataset.encuesta) });
@@ -93,63 +121,83 @@ export async function render(main, ctx) {
   $$('[data-estado-encuesta]', main).forEach((selector) => {
     selector.onchange = () => cambiarEstadoDeEncuesta(
       Number(selector.dataset.estadoEncuesta), selector.value,
-      () => contexto.irA('encuestas', { ...(panelId ? { panelId } : {}), ...(tipo ? { tipo } : {}) }));
+      () => contexto.irA('encuestas', filtros));
   });
 }
 
-/* R-EU.2 — una encuesta de panel nace con los datos del estudio: sus cargas
-   no los vuelven a pedir. Los paneles archivados no se ofrecen (R-EU.8). */
-function abrirNueva(paneles, panelPreseleccionado) {
+/* R-AU.3 (D90) — «Nueva encuesta», con un selector de tipo: de panel o
+   independiente. Pide **los mismos datos del estudio que la carga**, con el
+   mismo componente (`estudio.js`): si se suma un dato al estudio, aparece en
+   los dos lados. Las temáticas se ponen a mano; las de IA llegan con la
+   primera carga. Una independiente nace **sin audiencia**: se completa a mano
+   (Agregar panelistas), desde una consulta o con sus cargas. Los paneles
+   archivados no se ofrecen (R-EU.8). */
+async function abrirNueva(paneles, panelPreseleccionado) {
   const activos = paneles.filter((p) => p.estado === 'activo');
-  let clientes = null;
+  const [{ items: vocabulario }, { areas }] = await Promise.all([
+    api.tematicas.listar().catch(() => ({ items: [] })),
+    api.tematicas.taxonomia().catch(() => ({ areas: [] })),
+  ]);
+  let datos = null;
+  let tematicas = null;
   const caja = modal({
-    titulo: 'Nueva encuesta de panel',
-    ancho: '600px',
+    titulo: 'Nueva encuesta',
+    ancho: '640px',
     cuerpo: `
       <div id="enc-alerta"></div>
-      <div class="form-group"><label>Panel</label>
+      <div class="form-group"><label>Tipo</label>
+        <select class="fselect" name="tipo" id="tipo-nueva">
+          <option value="panel">De panel — su audiencia es un panel</option>
+          <option value="independiente">Independiente — la audiencia se arma a mano o desde consultas</option>
+        </select></div>
+      <div class="form-group" id="grupo-panel"><label>Panel</label>
         <select class="fselect" name="panel_id">
           ${activos.map((p) => `<option value="${p.id}" ${p.id === panelPreseleccionado ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')}
         </select></div>
-      <div class="form-group"><label>Nombre de la encuesta</label>
-        <input type="text" name="nombre" placeholder="Ola 3 — Consumo de bebidas" /></div>
-      <div class="form-row">
-        <div class="form-group"><label>Fecha de campo</label>
-          <input type="date" name="fecha_campo" /></div>
-        <div class="form-group"><label>Público objetivo</label>
-          <input type="text" name="publico_objetivo" placeholder="Panel nacional, adultos" /></div>
-      </div>
-      <div class="form-group"><label>Clientes</label><div data-clientes></div>
-        <div class="field-hint">Para quién es el estudio. Confidencial: el panelista no lo ve.</div></div>
-      <div class="form-group"><label>Descripción (opcional)</label>
-        <textarea class="finput" name="descripcion"></textarea></div>
-      <div class="field-hint">Al crearla se genera su <code>ref_estudio</code>, que es lo que
-      después ata sus respuestas del lado semántico. Para un estudio a medida, sin panel,
-      armá la audiencia en Consultas y usá «Crear encuesta con estos panelistas».</div>`,
+      ${estudio.campos({}, { etiquetaNombre: 'Nombre de la encuesta' })}
+      <div class="form-group"><label>Temáticas (opcional)</label><div data-tematicas-nueva></div>
+        <div class="field-hint">Las propuestas por IA llegan con la primera carga, a partir
+          de las preguntas.</div></div>
+      <div class="field-hint" id="ayuda-tipo"></div>`,
     acciones: [
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
-      { texto: 'Crear', clase: 'btn-orange', onClick: async (caja) => {
-          const datos = leerFormulario(caja);
-          if (!datos.nombre) {
-            $('#enc-alerta', caja).innerHTML = alerta('La encuesta necesita un nombre.');
+      { texto: 'Crear', clase: 'btn-orange', onClick: async (c) => {
+          const tipo = $('#tipo-nueva', c).value;
+          const estudioElegido = datos.valor();
+          if (!estudioElegido.nombre) {
+            $('#enc-alerta', c).innerHTML = alerta('La encuesta necesita un nombre.');
             return;
           }
           try {
-            const encuesta = await api.encuestas.crear(
-              Number(datos.panel_id), datos.nombre, datos.fecha_campo, {
-                publicoObjetivo: datos.publico_objetivo, descripcion: datos.descripcion,
-                clientes: clientes.valor(),
-              });
+            const encuesta = await api.encuestas.crear({
+              tipo, ...estudioElegido,
+              ...(tipo === 'panel' ? { panel_id: Number($('[name="panel_id"]', c).value) } : {}),
+              tematicas: tematicas.valor(),
+            });
             cerrarModal();
             toast('Encuesta creada.', 'ok');
             contexto.irA('encuestas', { encuestaId: encuesta.id });
           } catch (error) {
-            $('#enc-alerta', caja).innerHTML = alerta(error.message);
+            $('#enc-alerta', c).innerHTML = alerta(error.message);
           }
         } },
     ],
   });
-  clientes = editorDeClientes($('[data-clientes]', caja));
+  datos = estudio.activar(caja);
+  tematicas = editorDeTematicas($('[data-tematicas-nueva]', caja), {
+    vocabulario, areas, iniciales: [], puedeDesmarcar: false });
+  const pintarTipo = () => {
+    const independiente = $('#tipo-nueva', caja).value === 'independiente';
+    $('#grupo-panel', caja).style.display = independiente ? 'none' : '';
+    $('#ayuda-tipo', caja).innerHTML = independiente
+      ? 'Nace <strong>sin audiencia</strong>: sumala a mano con «Agregar panelistas», '
+        + 'desde una consulta con «Agregar audiencia desde una consulta», o con sus cargas.'
+      : 'Al crearla se genera su <code>ref_estudio</code>, que es lo que después ata sus '
+        + 'respuestas del lado semántico.';
+  };
+  $('#tipo-nueva', caja).onchange = pintarTipo;
+  if (!activos.length) $('#tipo-nueva', caja).value = 'independiente';
+  pintarTipo();
 }
 
 /* ── Detalle ────────────────────────────────────────────────────── */
@@ -254,6 +302,10 @@ async function renderDetalle(main, encuestaId) {
             ? '<button class="btn btn-outline btn-sm" id="convocar">Convocar al panel</button>' : ''}
           ${puedeEditarEstudio() && !cerrada && !panelArchivado
             ? '<button class="btn btn-outline btn-sm" id="agregar-panelistas">Agregar panelistas</button>' : ''}
+          ${puedeEditarEstudio() && !cerrada && !panelArchivado && !esDeCarga(encuesta)
+            ? `<button class="btn btn-outline btn-sm" id="agregar-desde-consulta"
+                title="Abre Consultas con el criterio que deja afuera a quien ya está en la audiencia">
+                Agregar audiencia desde una consulta</button>` : ''}
           ${esDeCarga(encuesta) ? ''
             : '<button class="btn btn-outline btn-sm" id="muestra">Exportar muestra</button>'}
         </div>
@@ -262,9 +314,14 @@ async function renderDetalle(main, encuestaId) {
         style="padding:.6rem 1.5rem 0">Esta encuesta llegó como archivo de respuestas: nadie
         fue convocado desde el sistema. Se listan quienes respondieron.</p>`
         : independiente ? `<p class="small muted" id="texto-participacion"
-        style="padding:.6rem 1.5rem 0">La audiencia de esta encuesta es la foto de la
-        consulta con que se creó: no se convoca a ningún panel.</p>` : ''}
+        style="padding:.6rem 1.5rem 0">${encuesta.origen === 'consulta'
+          ? 'La audiencia de esta encuesta es la foto de la consulta con que se creó, y se '
+            + 'puede ampliar a mano o desde otra consulta.'
+          : 'La audiencia de esta encuesta se arma a mano o desde consultas, en pasos.'}
+        No se convoca a ningún panel.</p>` : ''}
+      <div id="filtros-participacion"></div>
       <div class="card-body tight"><div id="participacion">${cargando('20vh')}</div></div>
+      <div id="pasos-audiencia"></div>
     </div>
     <!-- D85 · R-CF.4 a R-CF.8 — los mensajes de la encuesta y su envío. -->
     <div class="card" id="tarjeta-mensajes">
@@ -326,6 +383,11 @@ async function renderDetalle(main, encuestaId) {
   $('#convocar')?.addEventListener('click', () => convocar(encuestaId));
   $('#agregar-panelistas')?.addEventListener('click', () => abrirAgregarPanelistas(
     encuesta, () => contexto.irA('encuestas', { encuestaId })));
+  // R-AU.2 — la consulta se arma en la sección Consultas, con el criterio que
+  // deja afuera a quien ya está en la audiencia puesto de antemano.
+  $('#agregar-desde-consulta')?.addEventListener('click', () => contexto.irA('consultas', {
+    agregarA: { id: encuesta.id, nombre: encuesta.nombre } }));
+  cargarPasosDeAudiencia(encuesta);
   $('#nuevo-mensaje')?.addEventListener('click', () => abrirMensaje(encuesta));
   cargarMensajes(encuesta);
   $('#muestra')?.addEventListener('click', () => exportarMuestra(encuestaId));
@@ -426,48 +488,27 @@ async function activarCamposDeArchivo(caja) {
 /* R-EU.2 — corregir los datos del estudio: se ven en todas sus cargas y en
    las fichas de sus panelistas sin tocar a nadie. */
 function abrirDatosDeEncuesta(encuesta) {
-  let clientes = null;
+  let datos = null;
   const caja = modal({
     titulo: 'Datos del estudio',
     ancho: '600px',
-    cuerpo: `
-      <div id="estudio-alerta"></div>
-      <div class="form-group"><label>Nombre</label>
-        <input type="text" name="nombre" value="${esc(encuesta.nombre)}" /></div>
-      <div class="form-row">
-        <div class="form-group"><label>Fecha de campo</label>
-          <input type="date" name="fecha_campo" value="${esc(encuesta.fecha_campo || '')}" /></div>
-        <div class="form-group"><label>Público objetivo</label>
-          <input type="text" name="publico_objetivo" value="${esc(encuesta.publico_objetivo || '')}" /></div>
-      </div>
-      <div class="form-group"><label>Clientes</label><div data-clientes></div></div>
-      <div class="form-group"><label>URL de la encuesta en Alchemer</label>
-        <input type="url" name="url_alchemer" value="${esc(encuesta.url_alchemer || '')}"
-               placeholder="https://survey.alchemer.com/s3/…?pid=" />
-        <div class="field-hint">Terminada en el parámetro que recibe al panelista
-          (<code>…?pid=</code>): a cada uno se le agrega su id_persona.</div></div>
-      <div class="form-group"><label>Descripción</label>
-        <textarea class="finput" name="descripcion">${esc(encuesta.descripcion || '')}</textarea></div>`,
+    // R-AU.3 — el mismo formulario que la carga y que «Nueva encuesta».
+    cuerpo: `<div id="estudio-alerta"></div>${estudio.campos(encuesta, { etiquetaNombre: 'Nombre' })}`,
     acciones: [
       { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
-      { texto: 'Guardar', clase: 'btn-orange', onClick: async (caja) => {
-          const datos = leerFormulario(caja);
+      { texto: 'Guardar', clase: 'btn-orange', onClick: async (c) => {
           try {
-            await api.encuestas.editar(encuesta.id, {
-              nombre: datos.nombre, fecha_campo: datos.fecha_campo || null,
-              publico_objetivo: datos.publico_objetivo, descripcion: datos.descripcion,
-              clientes: clientes.valor(), url_alchemer: datos.url_alchemer || null,
-            });
+            await api.encuestas.editar(encuesta.id, datos.valor());
             cerrarModal();
             toast('Datos del estudio actualizados.', 'ok');
             contexto.irA('encuestas', { encuestaId: encuesta.id });
           } catch (error) {
-            $('#estudio-alerta', caja).innerHTML = alerta(error.message);
+            $('#estudio-alerta', c).innerHTML = alerta(error.message);
           }
         } },
     ],
   });
-  clientes = editorDeClientes($('[data-clientes]', caja), { iniciales: encuesta.clientes || [] });
+  datos = estudio.activar(caja, encuesta);
 }
 
 /* R-EU.9 — borrar un estudio: «estos datos no tienen que estar más». La vista
@@ -550,18 +591,32 @@ const ORIGEN_ETIQUETA = {
 };
 const esDeCarga = (encuesta) => encuesta.origen === 'carga';
 
-async function cargarParticipacion(encuestaId, { respondentes = false } = {}) {
+/* R-ENC.1 (D90) — la lista de respondentes o de convocatoria, de a 50 y
+   paginada **en el servidor**: con más de mil personas, traerlas todas dejaba
+   la pantalla sin forma de encontrar a nadie. Se busca por nombre o
+   identificador y se filtra por respondió, convocado y mensaje recibido. Los
+   filtros y la búsqueda se mantienen al cambiar de página; cambiar un filtro
+   vuelve a la primera. */
+const filtrosDeParticipacion = {};
+
+async function cargarParticipacion(encuestaId, { respondentes = false, pagina = 1 } = {}) {
   const contenedor = $('#participacion');
   if (!contenedor) return;
-  const { items } = await api.encuestas.participacion(encuestaId);
+  const filtros = filtrosDeParticipacion[encuestaId]
+    || (filtrosDeParticipacion[encuestaId] = { buscar: '', respondio: '', convocado: '',
+                                               mensaje_id: '', recibio: 'si' });
+  pintarFiltrosDeParticipacion(encuestaId, filtros, respondentes);
+  const consulta = Object.fromEntries(Object.entries({ ...filtros, pagina })
+    .filter(([clave, v]) => v !== '' && v != null && (clave !== 'recibio' || filtros.mensaje_id)));
+  const salida = await api.encuestas.participacion(encuestaId, consulta);
+  const { items } = salida;
+  const hayFiltros = ['buscar', 'respondio', 'convocado', 'mensaje_id'].some((k) => filtros[k]);
   if (!items.length) {
-    contenedor.innerHTML = vacio(respondentes ? 'Todavía no respondió nadie.'
-      : 'Todavía no se convocó a nadie.', '📭');
+    contenedor.innerHTML = vacio(hayFiltros ? 'Nadie cumple la búsqueda o los filtros.'
+      : respondentes ? 'Todavía no respondió nadie.' : 'Todavía no se convocó a nadie.', '📭');
     return;
   }
-  const respondieron = items.filter((p) => p.respondio).length;
-  const convocados = items.filter((p) => p.convocado).length;
-  const noConvocados = items.filter((p) => !p.convocado).length;
+  const { conteos } = salida;
   const persona = (p) => `<td><div class="td-strong">${esc(p.nombre || 'Sin nombre')}</div>
             <div class="td-muted small">${esc(p.email || '—')}</div></td>
           <td class="mono small">${esc(p.id_en_origen || '—')}</td>`;
@@ -577,6 +632,23 @@ async function cargarParticipacion(encuestaId, { respondentes = false } = {}) {
   // reidentificación, igual que desde Panelistas.
   const ficha = (p) => `<td class="right"><button class="btn btn-outline btn-sm"
             data-ficha="${esc(p.id_persona)}">Ver ficha</button></td>`;
+  // Los conteos son de toda la encuesta; panelistas e independientes, de la
+  // página que se ve.
+  const panelistas = items.filter((p) => p.es_panelista).length;
+  const pie = `<div class="paginacion" data-paginacion-participacion>
+      <span class="p-info">${respondentes
+        ? `${conteos.respondieron} respondentes · ${panelistas} panelistas ·
+           ${items.length - panelistas} independientes${salida.paginas > 1 ? ' en esta página' : ''}`
+        : `${conteos.convocados} convocados · ${conteos.respondieron} respondieron${
+          conteos.no_convocados ? ` · ${conteos.no_convocados} sin estar convocados` : ''}`}</span>
+      <span class="p-info small muted" data-pagina-de>Página ${salida.pagina} de ${salida.paginas} ·
+        ${salida.total} personas${hayFiltros ? ' con estos filtros' : ''}</span>
+      <div class="toolbar">
+        <button class="btn btn-outline btn-sm" data-pagina-participacion="${salida.pagina - 1}"
+          ${salida.pagina <= 1 ? 'disabled' : ''}>‹ Anterior</button>
+        <button class="btn btn-outline btn-sm" data-pagina-participacion="${salida.pagina + 1}"
+          ${salida.pagina >= salida.paginas ? 'disabled' : ''}>Siguiente ›</button>
+      </div></div>`;
   // Una encuesta que llegó como archivo no tiene convocatoria: no hay
   // columna «Convocado», sino cuándo respondió (o se cargó).
   contenedor.innerHTML = respondentes ? `
@@ -584,7 +656,7 @@ async function cargarParticipacion(encuestaId, { respondentes = false } = {}) {
       <thead><tr><th>Panelista</th><th>Id en el origen</th><th>Panel</th><th>Convocatoria</th>
         <th>Respondió / cargado</th><th>Mensajes</th><th>Uso semántico</th><th></th></tr></thead>
       <tbody>${items.map((p) => `
-        <tr>${persona(p)}
+        <tr data-fila-participacion>${persona(p)}
           ${panel(p)}
           <td data-convocado>${p.convocado ? '<span class="badge badge-on">convocado</span>'
             : '<span class="badge" title="Respondió sin haber sido convocado desde el sistema">no convocado</span>'}</td>
@@ -592,16 +664,13 @@ async function cargarParticipacion(encuestaId, { respondentes = false } = {}) {
           ${celdaDeMensajes(p)}
           ${semantico(p)}
           ${ficha(p)}
-        </tr>`).join('')}</tbody></table></div>
-    <div class="paginacion"><span class="p-info">${items.length} respondentes ·
-      ${items.filter((p) => p.es_panelista).length} panelistas ·
-      ${items.filter((p) => !p.es_panelista).length} independientes</span></div>`
+        </tr>`).join('')}</tbody></table></div>${pie}`
     : `
     <div class="table-wrap"><table>
       <thead><tr><th>Panelista</th><th>Id en el origen</th><th>Panel</th><th>Convocado</th>
         <th>Respondió</th><th>Mensajes</th><th>Uso semántico</th><th></th></tr></thead>
       <tbody>${items.map((p) => `
-        <tr>${persona(p)}
+        <tr data-fila-participacion>${persona(p)}
           ${panel(p)}
           <td class="small" data-convocado>${p.convocado ? fechaCorta(p.convocado_en)
             : '<span class="badge" title="Respondió sin haber sido convocado">no convocado</span>'}</td>
@@ -609,13 +678,84 @@ async function cargarParticipacion(encuestaId, { respondentes = false } = {}) {
           ${celdaDeMensajes(p)}
           ${semantico(p)}
           ${ficha(p)}
-        </tr>`).join('')}</tbody></table></div>
-    <div class="paginacion"><span class="p-info">
-      ${convocados} convocados · ${respondieron} respondieron${noConvocados
-        ? ` · ${noConvocados} sin estar convocados` : ''}</span></div>`;
+        </tr>`).join('')}</tbody></table></div>${pie}`;
   contenedor.querySelectorAll('[data-ficha]').forEach((boton) => {
     boton.onclick = () => contexto.irA('panelistas', { idPersona: boton.dataset.ficha });
   });
+  contenedor.querySelectorAll('[data-pagina-participacion]').forEach((boton) => {
+    boton.onclick = () => cargarParticipacion(encuestaId, {
+      respondentes, pagina: Number(boton.dataset.paginaParticipacion) });
+  });
+}
+
+/* Los filtros de la lista: se pintan una vez y se conservan entre páginas. */
+async function pintarFiltrosDeParticipacion(encuestaId, filtros, respondentes) {
+  const caja = $('#filtros-participacion');
+  if (!caja || caja.dataset.encuesta === String(encuestaId)) return;
+  caja.dataset.encuesta = String(encuestaId);
+  const { items: mensajesDeLaEncuesta } = await api.mensajes.listar(encuestaId)
+    .catch(() => ({ items: [] }));
+  const opcion = (valor, texto, actual) =>
+    `<option value="${valor}" ${String(actual) === String(valor) ? 'selected' : ''}>${texto}</option>`;
+  caja.innerHTML = `<div class="toolbar filtros-participacion" style="padding:.6rem 1.5rem 0">
+      <input type="search" class="finput" id="buscar-participacion" style="max-width:240px"
+        placeholder="Buscar por nombre o identificador" value="${esc(filtros.buscar)}" />
+      <select class="fselect" id="f-respondio" style="width:auto">
+        ${opcion('', 'Respondió: todos', filtros.respondio)}${opcion('si', 'Respondió', filtros.respondio)}
+        ${opcion('no', 'No respondió', filtros.respondio)}</select>
+      ${respondentes ? '' : `<select class="fselect" id="f-convocado" style="width:auto">
+        ${opcion('', 'Convocado: todos', filtros.convocado)}${opcion('si', 'Convocado', filtros.convocado)}
+        ${opcion('no', 'Sin convocar', filtros.convocado)}</select>`}
+      ${mensajesDeLaEncuesta.length ? `<select class="fselect" id="f-mensaje" style="width:auto">
+        ${opcion('', 'Mensaje: todos', filtros.mensaje_id)}
+        ${mensajesDeLaEncuesta.map((m) => opcion(m.id, esc(m.nombre), filtros.mensaje_id)).join('')}
+        </select>
+        <select class="fselect" id="f-recibio" style="width:auto">
+          ${opcion('si', 'lo recibió', filtros.recibio)}${opcion('no', 'no lo recibió', filtros.recibio)}
+        </select>` : ''}
+    </div>`;
+  const cambiar = (clave, valor) => {
+    filtrosDeParticipacion[encuestaId][clave] = valor;
+    cargarParticipacion(encuestaId, { respondentes, pagina: 1 });
+  };
+  let espera = null;
+  $('#buscar-participacion', caja).oninput = (e) => {
+    clearTimeout(espera);
+    espera = setTimeout(() => cambiar('buscar', e.target.value.trim()), 300);
+  };
+  $('#f-respondio', caja).onchange = (e) => cambiar('respondio', e.target.value);
+  $('#f-convocado', caja)?.addEventListener('change', (e) => cambiar('convocado', e.target.value));
+  $('#f-mensaje', caja)?.addEventListener('change', (e) => cambiar('mensaje_id', e.target.value));
+  $('#f-recibio', caja)?.addEventListener('change', (e) => cambiar('recibio', e.target.value));
+}
+
+/* R-AU.2 — cómo se armó la audiencia desde consultas, paso a paso: quién,
+   cuándo, con qué modo y semilla, y cuántas personas entraron. */
+const MODO_DE_SELECCION = {
+  ranking: 'Por ranking', aleatorio: 'Aleatorio (sorteo)', segmento_completo: 'Segmento completo',
+};
+
+async function cargarPasosDeAudiencia(encuesta) {
+  const caja = $('#pasos-audiencia');
+  if (!caja) return;
+  const { items } = await api.encuestas.pasosDeAudiencia(encuesta.id).catch(() => ({ items: [] }));
+  if (!items.length) { caja.innerHTML = ''; return; }
+  caja.innerHTML = `<div class="card-body" style="padding-top:0">
+      <h4 class="small" style="margin:.5rem 0">Cómo se armó la audiencia</h4>
+      <div class="table-wrap"><table id="tabla-pasos-audiencia">
+        <thead><tr><th>Cuándo</th><th>Quién</th><th>Cómo</th><th>Semilla</th>
+          <th class="num">En la selección</th><th class="num">Entraron</th><th>Afuera</th></tr></thead>
+        <tbody>${items.map((p) => `<tr>
+          <td class="small">${esc(fechaHora(p.creado_en))}</td>
+          <td class="small">${esc(p.actor)}</td>
+          <td class="small">${esc(MODO_DE_SELECCION[p.modo] || p.modo)}${p.via === 'crear_desde_consulta'
+            ? ' · al crearla' : ''}</td>
+          <td class="mono small">${esc(p.semilla || '—')}</td>
+          <td class="num">${p.en_la_seleccion}</td>
+          <td class="num">${p.agregadas}</td>
+          <td class="small">${Object.entries(p.excluidas || {}).filter(([, n]) => n)
+            .map(([m, n]) => `${n} ${esc(m.replaceAll('_', ' '))}`).join(' · ') || '—'}</td>
+        </tr>`).join('')}</tbody></table></div></div>`;
 }
 
 async function convocar(encuestaId) {
