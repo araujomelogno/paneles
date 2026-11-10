@@ -558,24 +558,39 @@ def reintentar_cumplimiento(ctx, actor, params, cuerpo, consulta):
 #  Encuestas, fielding e ingesta
 # ════════════════════════════════════════════════════════════════════
 
-@ruta("POST", "/encuestas", "fieldear", requisito="R1.5, R-EU.2")
+@ruta("POST", "/encuestas", "fieldear", requisito="R1.5, R-EU.2, R-AU.3")
 def crear_encuesta(ctx, actor, params, cuerpo, consulta):
-    """Abre un estudio de panel con sus datos (R-EU.2). Una independiente se
-    crea desde el resultado de una consulta (`/encuestas/desde-consulta`)."""
+    """Abre un estudio con sus datos (R-EU.2): de panel (`panel_id`) o
+    independiente (`tipo: independiente`, R-AU.3), que nace **sin audiencia**
+    y se completa a mano, desde consultas o con sus cargas. Los datos son los
+    mismos que pide la carga; las temáticas se pueden poner a mano (las de IA
+    llegan con la primera carga)."""
+    cuerpo = cuerpo or {}
+    tipo = (cuerpo.get("tipo") or encuestas.DE_PANEL).strip().lower()
     resultado = encuestas.crear(
-        ctx.boveda, _entero(cuerpo.get("panel_id")), cuerpo.get("nombre"),
-        cuerpo.get("fecha_campo"), tipo=encuestas.DE_PANEL,
+        ctx.boveda, _entero(cuerpo.get("panel_id")) if tipo == encuestas.DE_PANEL else None,
+        cuerpo.get("nombre"), cuerpo.get("fecha_campo"), tipo=tipo,
+        origen=encuestas.ORIGEN_MANUAL if tipo == encuestas.INDEPENDIENTE else None,
         publico_objetivo=cuerpo.get("publico_objetivo"),
         descripcion=cuerpo.get("descripcion"), clientes=cuerpo.get("clientes"),
+        url_alchemer=cuerpo.get("url_alchemer"),
     )
+    if cuerpo.get("tematicas"):
+        resultado["tematicas"] = tematicas.guardar_de_encuesta(
+            ctx.boveda, resultado["id"], cuerpo.get("tematicas"),
+            puede_desmarcar=actor.puede("gestionar_atributos"))
     ctx.boveda.commit()
     return 201, resultado
 
 
-@ruta("GET", "/encuestas", "leer")
+@ruta("GET", "/encuestas", "leer", requisito="R-ENC.2")
 def listar_encuestas(ctx, actor, params, cuerpo, consulta):
+    """El listado, por panel, tipo, estado y cliente (R-ENC.2): los filtros
+    se combinan."""
     return 200, {"items": encuestas.listar(
-        ctx.boveda, _entero(consulta.get("panel_id")), tipo=consulta.get("tipo"))}
+        ctx.boveda, _entero(consulta.get("panel_id")), tipo=consulta.get("tipo") or None,
+        estado=consulta.get("estado") or None,
+        cliente_id=_entero(consulta.get("cliente_id")))}
 
 
 @ruta("GET", "/encuestas/<encuesta_id>", "leer", requisito="R-EU.2")
@@ -629,20 +644,46 @@ def agregar_panelistas(ctx, actor, params, cuerpo, consulta):
     return 200, salida
 
 
-@ruta("POST", "/encuestas/desde-consulta", "fieldear", requisito="R-EU.5")
+@ruta("POST", "/encuestas/desde-consulta", "fieldear", requisito="R-EU.5, R-ALE.3")
 def encuesta_desde_consulta(ctx, actor, params, cuerpo, consulta):
     """«Crear encuesta con estos panelistas»: una encuesta independiente con
-    la foto del resultado como audiencia. Quedan afuera la lista negra y
-    quien no tiene `contacto_participacion`, y se informa cuántos."""
+    la selección vigente como audiencia —la sorteada, o la del ranking—, o
+    con todo el segmento de una demográfica (`segmento_completo`). Quedan
+    afuera la lista negra y quien no tiene `contacto_participacion`, y se
+    informa cuántos. Guarda cómo se armó: modo y semilla."""
     cuerpo = cuerpo or {}
     salida = encuestas.crear_desde_consulta(
         ctx.boveda, cuerpo.get("nombre"), cuerpo.get("resultado") or {},
         actor=actor, fecha_campo=cuerpo.get("fecha_campo"),
         publico_objetivo=cuerpo.get("publico_objetivo"),
         descripcion=cuerpo.get("descripcion"), clientes=cuerpo.get("clientes"),
-        definicion=cuerpo.get("definicion"))
+        definicion=cuerpo.get("definicion"),
+        segmento_completo=_bandera(cuerpo.get("segmento_completo")),
+        cantidad=cuerpo.get("cantidad"), url_alchemer=cuerpo.get("url_alchemer"))
     ctx.boveda.commit()
     return 201, salida
+
+
+@ruta("POST", "/encuestas/<encuesta_id>/audiencia", "fieldear", requisito="R-AU.2")
+def agregar_audiencia(ctx, actor, params, cuerpo, consulta):
+    """«Agregar a la encuesta X» desde el resultado de una consulta: una
+    `cantidad` (sorteada con semilla, o según el modo de una semántica) o
+    `segmento_completo`. Por el camino de convocar; queda registrado."""
+    cuerpo = cuerpo or {}
+    salida = encuestas.agregar_audiencia_desde_consulta(
+        ctx.boveda, _entero(params["encuesta_id"]), cuerpo.get("resultado") or {},
+        definicion=cuerpo.get("definicion"), actor=actor,
+        cantidad=cuerpo.get("cantidad"),
+        segmento_completo=_bandera(cuerpo.get("segmento_completo")))
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("GET", "/encuestas/<encuesta_id>/audiencia", "leer", requisito="R-AU.2")
+def pasos_de_audiencia(ctx, actor, params, cuerpo, consulta):
+    """Cómo se armó la audiencia desde consultas, paso a paso."""
+    return 200, {"items": encuestas.pasos_de_audiencia(
+        ctx.boveda, _entero(params["encuesta_id"]))}
 
 
 @ruta("POST", "/encuestas/<encuesta_id>/cargas", "ingestar", requisito="R-EU.1")
@@ -702,16 +743,19 @@ def convocar(ctx, actor, params, cuerpo, consulta):
     return 200, resultado
 
 
-@ruta("GET", "/encuestas/<encuesta_id>/participacion", "leer")
+@ruta("GET", "/encuestas/<encuesta_id>/participacion", "leer", requisito="R-ENC.1")
 def ver_participacion(ctx, actor, params, cuerpo, consulta):
-    encuesta_id = _entero(params["encuesta_id"])
-    items = encuestas.listar_participacion(ctx.boveda, encuesta_id)
-    # R-CF.6 / R-CF.7 — los mensajes que se le enviaron a cada panelista, con
-    # su estado de entrega.
-    envios = mensajes.envios_por_persona(ctx.boveda, encuesta_id)
-    for item in items:
-        item["mensajes"] = envios.get(item["id_persona"], [])
-    return 200, {"items": items}
+    """R-ENC.1 — la lista de respondentes o de convocatoria, de a 50,
+    paginada en el servidor: `pagina`, `buscar` (nombre o identificador),
+    `respondio`, `convocado` (sí/no) y `mensaje_id` con `recibio` (sí/no).
+    Cada panelista trae los mensajes que se le enviaron (R-CF.6)."""
+    return 200, encuestas.pagina_de_participacion(
+        ctx.boveda, _entero(params["encuesta_id"]),
+        pagina=_entero(consulta.get("pagina"), 1),
+        por_pagina=_entero(consulta.get("por_pagina")),
+        buscar=consulta.get("buscar"), respondio=consulta.get("respondio"),
+        convocado=consulta.get("convocado"), mensaje_id=_entero(consulta.get("mensaje_id")),
+        recibio=consulta.get("recibio"))
 
 
 # ── D85 · Los mensajes de la encuesta (R-CF.4 a R-CF.8) ──────────────
@@ -1100,7 +1144,7 @@ def _dimensiones_y_cruce(consulta):
     return dimensiones, cruce_de
 
 
-@ruta("GET", "/composicion", "leer", requisito="R-ORG.2, R-ORG.3, R-EU.11")
+@ruta("GET", "/composicion", "leer", requisito="R-ORG.2, R-ORG.3, R-EU.11, R-COMP.1")
 def ver_composicion_de_ambito(ctx, actor, params, cuerpo, consulta):
     """La composición de un ámbito: `ambito=todos`, `ambito=panel&panel_id=…`,
     `ambito=carga&carga_id=…` o `ambito=encuesta&encuesta_id=…` (R-EU.11:
@@ -1128,6 +1172,11 @@ def ver_composicion_de_ambito(ctx, actor, params, cuerpo, consulta):
             ctx.boveda, composicion.universo_de_ambito(ambito, referencia, estado),
             salida["miembros"],
             incluir_especiales=actor.puede("tematicas_especiales"))
+    # R-COMP.1 — el umbral de base chica es configurable; se puede pedir otro
+    # para esta vista (`base_chica`).
+    if _entero(consulta.get("base_chica")):
+        composicion.con_base_chica(salida, max(1, _entero(consulta.get("base_chica"))))
+    salida["vistas_de_cruce"] = composicion.VISTAS_DE_CRUCE
     return 200, salida
 
 

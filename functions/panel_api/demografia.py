@@ -61,6 +61,16 @@ OPERADORES_TEMATICA = {"eq", "in"}
 DIMENSION_CLIENTE = "cliente"
 OPERADORES_CLIENTE = {"in", "not_in"}
 
+# R-AU.1 (D90) — «está en la audiencia de la encuesta X» o «respondió la
+# encuesta X», para incluir o excluir. Se resuelve en la bóveda, sobre
+# `participacion`, como los demás criterios: «audiencia» es `convocado` (la
+# audiencia de una encuesta, D81) y «respondió» es `respondio`. Es lo que deja
+# agregar audiencia desde una consulta sin volver a traer a quien ya estaba,
+# o excluir a quien participó en la ola anterior.
+DIMENSION_ENCUESTA = "encuesta"
+AUDIENCIA, RESPONDIO = "audiencia", "respondio"
+RELACIONES_ENCUESTA = {AUDIENCIA: "está en la audiencia de", RESPONDIO: "respondió"}
+
 # Qué dimensiones se comparan como número y no como texto. `edad` siempre lo
 # es; cualquier atributo `numerico` del catálogo también.
 NUMERICAS = {"edad"}
@@ -113,6 +123,8 @@ def normalizar_criterio(crudo, dimensiones=None, catalogo_por_clave=None):
         return _criterio_tematica(crudo)
     if dimension == DIMENSION_CLIENTE:
         return _criterio_cliente(crudo)
+    if dimension == DIMENSION_ENCUESTA:
+        return _criterio_encuesta(crudo)
     validas = (set(dimensiones) if dimensiones else set(DIMENSIONES_BASE)) \
         | {DIMENSION_TEMATICA, DIMENSION_AREA_TEMATICA, DIMENSION_CLIENTE}
     if dimension not in validas:
@@ -236,6 +248,43 @@ def _criterio_cliente(crudo):
     }
 
 
+def _criterio_encuesta(crudo):
+    """R-AU.1 — `{dimension: encuesta, valor: <encuesta_id>, relacion:
+    audiencia | respondio, operador: in | not_in}`. `in` incluye a quienes
+    tienen esa relación con la encuesta; `not_in` los excluye (y ahí sí se
+    niega el `exists` entero: no estar en la audiencia es no tener esa fila)."""
+    operador = (crudo.get("operador") or "in").strip().lower()
+    operador = {"eq": "in", "incluir": "in", "ne": "not_in", "excluir": "not_in"}.get(
+        operador, operador)
+    if operador not in ("in", "not_in"):
+        raise DatosInvalidos(
+            f"Sobre una encuesta se filtra incluyendo (`in`) o excluyendo "
+            f"(`not_in`), no con {operador!r}.")
+    relacion = (crudo.get("relacion") or AUDIENCIA).strip().lower()
+    if relacion not in RELACIONES_ENCUESTA:
+        raise DatosInvalidos(f"Relación con la encuesta desconocida: {relacion!r}.",
+                             {"relaciones": list(RELACIONES_ENCUESTA)})
+    valor = crudo.get("valor")
+    if isinstance(valor, list):
+        valor = valor[0] if len(valor) == 1 else None
+    try:
+        encuesta_id = int(valor)
+    except (TypeError, ValueError):
+        raise DatosInvalidos("Falta la encuesta del criterio (su id).") from None
+    que = RELACIONES_ENCUESTA[relacion]
+    return {
+        "tipo": "demografico",
+        "dimension": DIMENSION_ENCUESTA,
+        "operador": operador,
+        "relacion": relacion,
+        "valor": encuesta_id,
+        "duro": True,
+        "etiqueta": crudo.get("etiqueta") or (
+            f"{que.capitalize()} la encuesta {encuesta_id}" if operador == "in"
+            else f"No {que} la encuesta {encuesta_id}"),
+    }
+
+
 def condiciones(criterios, alias="p", catalogo_por_clave=None, momento=None):
     """`[criterio]` → `(fragmentos_sql, parametros)`. Sin interpolar valores.
 
@@ -274,6 +323,16 @@ def condiciones(criterios, alias="p", catalogo_por_clave=None, momento=None):
                 f"and (%s or not t.es_especial))")
             parametros.extend([ids, nombres, list(criterio.get("areas") or []),
                                bool(criterio.get("incluir_especiales"))])
+            continue
+        if dimension == DIMENSION_ENCUESTA:
+            negado = "not " if criterio["operador"] == "not_in" else ""
+            columna = "pa.respondio" if criterio.get("relacion") == RESPONDIO \
+                else "pa.convocado"
+            fragmentos.append(
+                f"{negado}exists (select 1 from participacion pa "
+                f"where pa.id_persona = {alias}.id_persona "
+                f"and pa.encuesta_id = %s and {columna})")
+            parametros.append(int(criterio["valor"]))
             continue
         if dimension == DIMENSION_CLIENTE:
             from . import clientes
@@ -362,13 +421,25 @@ def _sql_segmento(criterios, panel_id=None, finalidad=None, solo_ids=True,
     return sql, parametros
 
 
+# R-ALE.1 (D89) — el orden del sorteo. `md5(id_persona || semilla)` y no
+# `random()`: con la misma semilla y los mismos datos la selección es
+# idéntica (se puede rehacer y auditar) y la paginación es estable (con
+# `random()` cada página saldría de un sorteo distinto). El desempate por
+# `id_persona` es solo para que el orden sea total. `consultas.orden_de_sorteo`
+# es la misma cuenta en Python, para el modo aleatorio semántico.
+ORDEN_DE_SORTEO = "md5(p.id_persona::text || %s), p.id_persona"
+
+
 def ids_del_segmento(conn, criterios, panel_id=None, finalidad=None, limite=None,
-                     ids_persona=None):
+                     ids_persona=None, semilla=None):
     """Los `id_persona` que cumplen el segmento. Es el lado «bóveda» del
     puente entre stores: lo único que se le pasa al store semántico.
 
     `ids_persona` acota la pregunta a un conjunto ya conocido, que es lo que
     hace falta cuando el recall corrió primero.
+
+    Con `semilla`, en el orden del sorteo (R-ALE): `limite` toma las primeras
+    del sorteo, no las primeras de la tabla.
     """
     if ids_persona is not None and not ids_persona:
         return []
@@ -376,6 +447,9 @@ def ids_del_segmento(conn, criterios, panel_id=None, finalidad=None, limite=None
         criterios, panel_id, finalidad, solo_ids=True, ids_persona=ids_persona,
         catalogo_por_clave=catalogo(conn),
     )
+    if semilla:
+        sql += f" order by {ORDEN_DE_SORTEO}"
+        parametros.append(semilla)
     if limite:
         sql += " limit %s"
         parametros.append(limite)
@@ -396,13 +470,19 @@ def contar_segmento(conn, criterios, panel_id=None, finalidad=None):
 
 
 def consultar(conn, criterios, panel_id=None, finalidad=None,
-              limite=200, desplazamiento=0):
+              limite=200, desplazamiento=0, semilla=None):
     """Consulta puramente demográfica. **No toca el store semántico.**
 
     Devuelve las personas del segmento con sus datos de contacto: es una
     consulta de bóveda, y el operador que la corre está viendo PII. Quien
     llama es responsable de registrar la reidentificación (ver
     `auditoria.registrar_reidentificacion`).
+
+    R-ALE.1 (D89) — con `semilla`, las personas que se muestran son un
+    **sorteo** del segmento (`ORDEN_DE_SORTEO`), no las primeras por nombre:
+    el nombre está asociado al sexo y a la generación, y ese sesgo pasaba
+    directo a la audiencia de una encuesta creada desde el resultado. Sin
+    semilla, el orden de siempre (por nombre), para quien lo pida.
     """
     por_clave = catalogo(conn)
     criterios = [
@@ -413,8 +493,12 @@ def consultar(conn, criterios, panel_id=None, finalidad=None,
     sql, parametros = _sql_segmento(criterios, panel_id, finalidad, solo_ids=False,
                                     catalogo_por_clave=por_clave)
     total = contar_segmento(conn, criterios, panel_id, finalidad)
-    sql += " order by p.nombre nulls last limit %s offset %s"
-    filas = db.todas(conn, sql, tuple(parametros) + (limite, desplazamiento))
+    if semilla:
+        sql += f" order by {ORDEN_DE_SORTEO} limit %s offset %s"
+        filas = db.todas(conn, sql, tuple(parametros) + (semilla, limite, desplazamiento))
+    else:
+        sql += " order by p.nombre nulls last limit %s offset %s"
+        filas = db.todas(conn, sql, tuple(parametros) + (limite, desplazamiento))
     return {
         "tipo": "demografica",
         "store": "boveda",

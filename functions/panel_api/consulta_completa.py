@@ -231,15 +231,20 @@ def lanzar(ctx, definicion_cruda, actor=None, encolador=None, verificador=None):
         for inicio in range(0, len(unidades), UNIDADES_POR_LOTE):
             lotes.append((parte["criterio"]["orden"], unidades[inicio:inicio + UNIDADES_POR_LOTE]))
 
+    # R-ALE.2 — el modo de selección y la semilla se guardan con la
+    # ejecución: el resultado se arma al leer y tiene que sortear igual cada
+    # vez que se abre.
+    if definicion["seleccion"] == consultas.ALEATORIO and not definicion["semilla"]:
+        definicion["semilla"] = consultas.nueva_semilla()
     definicion_guardada = {**definicion, "tipo_embedding_criterio_efectivo": tipo}
     db.ejecutar(
         ctx.boveda,
         """insert into consulta_ejecucion
                   (id, alcance, modo, tipo, definicion, estado, presupuesto_usd,
                    costo_estimado, lotes_total, unidades_total, creado_por,
-                   diagnostico)
+                   diagnostico, seleccion, semilla)
            values (%s, 'completo', %s, %s, %s::jsonb, %s, %s, %s::jsonb, %s, %s, %s,
-                   %s::jsonb)""",
+                   %s::jsonb, %s, %s)""",
         (ejecucion_id, definicion["modo"],
          "mixta" if any(c["tipo"] == "demografico" for c in definicion["criterios"])
          else "semantica",
@@ -248,7 +253,8 @@ def lanzar(ctx, definicion_cruda, actor=None, encolador=None, verificador=None):
          json.dumps(estimacion, default=str), len(lotes),
          sum(len(u) for _, u in lotes), actor,
          json.dumps({"personas_habilitadas_al_lanzar": personas,
-                     "tipo_embedding_criterio": tipo}, default=str)))
+                     "tipo_embedding_criterio": tipo}, default=str),
+         definicion["seleccion"], definicion["semilla"]))
     for indice, (orden, unidades) in enumerate(lotes):
         db.ejecutar(
             ctx.boveda,
@@ -627,6 +633,18 @@ def resultado(ctx, ejecucion_id, pagina=1, por_pagina=None, todas=False):
 
     items, excluidos = consultas._combinar(definicion, por_criterio,
                                            definicion["umbral_distancia"])
+    seleccion = {"modo": definicion.get("seleccion") or consultas.RANKING,
+                 "semilla": definicion.get("semilla")}
+    if seleccion["modo"] == consultas.ALEATORIO and seleccion["semilla"]:
+        # R-ALE.2 — en la completa todo se verificó: el sorteo es entre las
+        # confirmadas, con la semilla guardada. Las demás no se eligen.
+        confirmadas = {i["id_persona"]: i for i in items
+                       if i["estado"] == consultas.CONFIRMADA}
+        orden = consultas.sortear(confirmadas, seleccion["semilla"])
+        items = [confirmadas[i] for i in orden]
+        for puesto, item in enumerate(items, 1):
+            item["sorteo"] = puesto
+        seleccion["pool"] = seleccion["quedaron"] = len(items)
     total = len(items)
     if todas:
         pagina, por_pagina = 1, max(1, total)
@@ -644,6 +662,7 @@ def resultado(ctx, ejecucion_id, pagina=1, por_pagina=None, todas=False):
         "items": items[inicio:inicio + por_pagina],
         "paginacion": {"pagina": pagina, "por_pagina": por_pagina, "total": total,
                        "paginas": max(1, math.ceil(total / por_pagina))},
+        "seleccion": seleccion,
         "excluidos": excluidos,
         "degradaciones": [],
         "verificacion": {

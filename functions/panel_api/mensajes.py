@@ -681,18 +681,24 @@ def _convocar_con_el_primero(conn, encuesta_id, id_persona, mensaje_id=None):
 # ════════════════════════════════════════════════════════════════════
 
 
-def envios_por_persona(conn, encuesta_id):
+def envios_por_persona(conn, encuesta_id, ids_persona=None):
     """`{id_persona: [{mensaje, canal, enviado_en, estado, error}]}` de una
-    encuesta: lo que la sección de convocatoria muestra por panelista."""
+    encuesta: lo que la sección de convocatoria muestra por panelista. Con
+    `ids_persona`, solo los de esas personas (la página que se muestra)."""
     salida = {}
+    if ids_persona is not None and not ids_persona:
+        return salida
     for f in db.todas(
             conn,
-            """select e.id_persona, m.nombre as mensaje, e.canal, e.enviado_en,
-                      e.estado, e.error
+            """select e.id_persona, e.encuesta_mensaje_id, m.nombre as mensaje, e.canal,
+                      e.enviado_en, e.estado, e.error
                  from envio e join encuesta_mensaje m on m.id = e.encuesta_mensaje_id
                 where m.encuesta_id = %s
-                order by e.enviado_en, e.id""", (encuesta_id,)):
+                  and (%s::uuid[] is null or e.id_persona = any(%s::uuid[]))
+                order by e.enviado_en, e.id""",
+            (encuesta_id, ids_persona, ids_persona)):
         salida.setdefault(str(f["id_persona"]), []).append({
+            "mensaje_id": f["encuesta_mensaje_id"],
             "mensaje": f["mensaje"], "canal": f["canal"],
             "enviado_en": f["enviado_en"].isoformat(), "estado": f["estado"],
             "error": f["error"]})
