@@ -158,7 +158,8 @@ def _revisar(ctx, actor, carga_id, **extra):
 
 def _nueva_carga(ctx, actor, nombre="Ómnibus nuevo"):
     _, nueva = ruteo.despachar("POST", "/cargas", {
-        "nombre": nombre, "tipo_datos_origen": "encuesta", "modo_relevamiento": "web"},
+        "nombre": nombre, "tipo_datos_origen": "encuesta", "modo_relevamiento": "web",
+        "fecha_estudio": "2026-08-15"},
         {}, actor("analista"), ctx)
     return nueva
 

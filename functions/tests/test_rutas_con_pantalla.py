@@ -54,7 +54,11 @@ FASES_CON_PANTALLA = ("R7.", "R8.",
                       "R-CAN.", "R-ALE.", "R-ENC.", "R-COMP.", "R-AU.",
                       # PEDIDO cancelar una carga (D92) — cancelar, la limpieza
                       # desde Cumplimiento, detener y reanudar una ingesta.
-                      "R-CAN-C.")
+                      "R-CAN-C.",
+                      # SPEC_alchemer_participacion_y_bandeja_whatsapp (D97,
+                      # D98) — Alchemer al crear la encuesta y la bandeja de
+                      # WhatsApp.
+                      "R-ALC.", "R-WA.")
 
 # Rutas de estas fases que **no** tienen pantalla, con el motivo. Vacío hoy;
 # si alguna vez hace falta, el motivo va escrito acá y no en la memoria de

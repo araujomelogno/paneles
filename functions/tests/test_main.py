@@ -92,6 +92,13 @@ NO_SON_SECRETOS = frozenset({
     # D90 · R-COMP.1 — debajo de cuántos casos una base del cruce es chica.
     # Es una decisión de investigación (30, 50, 100), no una credencial.
     "COMPOSICION_BASE_CHICA",
+    # R-ALC (D97) — la región de la cuenta de Alchemer (o su URL completa) y
+    # el nombre del parámetro del panelista. Las credenciales sí van
+    # declaradas: `ALCHEMER_API_TOKEN` y `ALCHEMER_API_SECRET`.
+    "ALCHEMER_REGION", "ALCHEMER_API_URL", "ALCHEMER_PARAMETRO",
+    # R-WA.5 (D98) — cuánto se conserva lo de afuera y el aviso crudo. Son
+    # plazos de conservación, no credenciales.
+    "WHATSAPP_CONSERVAR_AFUERA_DIAS", "WHATSAPP_CONSERVAR_AVISO_DIAS",
 })
 
 

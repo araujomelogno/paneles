@@ -141,7 +141,7 @@ def test_la_encuesta_toma_la_seleccion_vigente_y_guarda_modo_y_semilla(
     resultado = _consultar(ctx_solo_boveda)
     _, encuesta = ruteo.despachar(
         "POST", "/encuestas/desde-consulta",
-        {"nombre": "Estudio a medida", "resultado": resultado,
+        {"nombre": "Estudio a medida", "resultado": resultado, "fecha_campo": "2026-12-01",
          "definicion": {"criterios": ADULTOS}}, {}, actor("operaciones"), ctx_solo_boveda)
     convocados = {str(f["id_persona"]) for f in db.todas(
         ctx_solo_boveda.boveda, "select id_persona from participacion where encuesta_id = %s",
@@ -158,6 +158,7 @@ def test_desde_una_demografica_se_crea_con_el_segmento_completo(ctx_solo_boveda,
     _, encuesta = ruteo.despachar(
         "POST", "/encuestas/desde-consulta",
         {"nombre": "Todo el segmento", "resultado": resultado, "segmento_completo": True,
+         "fecha_campo": "2026-12-01",
          "definicion": {"criterios": ADULTOS}}, {}, actor("operaciones"), ctx_solo_boveda)
     assert encuesta["audiencia"]["convocados"] == 1000
     assert encuesta["audiencia"]["modo"] == "segmento_completo"

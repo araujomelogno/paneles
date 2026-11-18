@@ -23,6 +23,7 @@ import * as pagLongitudinal from './paginas/longitudinal.js';
 import * as pagEstadisticas from './paginas/estadisticas.js';
 import * as pagCargas from './paginas/cargas.js';
 import * as pagListaNegra from './paginas/lista_negra.js';
+import * as pagWhatsapp from './paginas/whatsapp.js';
 
 const CDN = 'https://www.gstatic.com/firebasejs/10.7.0';
 const cfg = window.firebaseConfig || {};
@@ -49,6 +50,8 @@ const PERMISOS = {
   // R-LN — ver la lista negra (y el motivo) y gestionarla.
   ver_lista_negra: ['admin', 'operaciones', 'dpo'],
   gestionar_lista_negra: ['admin', 'operaciones'],
+  // R-WA.4 (D98) — la bandeja de WhatsApp: tiene teléfonos.
+  bandeja_whatsapp: ['admin', 'operaciones'],
 };
 
 const puede = (rol, permiso) => (PERMISOS[permiso] || []).includes(rol);
@@ -68,6 +71,8 @@ const PAGINAS = [
   { id: 'inscripciones', icono: '📥', etiqueta: 'Inscripciones', modulo: pagInscripciones, permiso: 'aprobar_inscripciones' },
   { id: 'revisiones',    icono: '🔀', etiqueta: 'Revisión de altas', modulo: pagRevisiones, permiso: 'leer' },
   { id: 'lista-negra',   icono: '⛔', etiqueta: 'Lista negra',  modulo: pagListaNegra,   permiso: 'ver_lista_negra' },
+  // R-WA.4 (D98) — lo que llega por WhatsApp: respuestas de Flow y comentarios.
+  { id: 'whatsapp',      icono: '💬', etiqueta: 'WhatsApp',     modulo: pagWhatsapp,     permiso: 'bandeja_whatsapp' },
   { id: 'estadisticas',  icono: '🧮', etiqueta: 'Estadísticas', modulo: pagEstadisticas, permiso: 'leer' },
   { id: 'cumplimiento',  icono: '🛡️', etiqueta: 'Cumplimiento', modulo: pagCumplimiento, permiso: 'leer' },
   { id: 'configuracion', icono: '⚙️', etiqueta: 'Configuración', modulo: pagConfiguracion, permiso: 'gestionar_usuarios' },

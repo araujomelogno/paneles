@@ -91,6 +91,18 @@ SECRETOS = [
     # falla el deploy sino la primera consulta completa —con un aviso de
     # lotes sin encolar—. La cuenta que firma es la misma `TAREAS_CUENTA`.
     "TAREAS_CONSULTA_URL",
+    # ── R-ALC (D97) ──
+    # Las credenciales de la API de Alchemer, para elegir la encuesta en
+    # lugar de pegar la URL y traer su cuestionario. Sin ellas la URL se
+    # escribe a mano, como antes. La región y el parámetro van en `.env`.
+    "ALCHEMER_API_TOKEN",
+    "ALCHEMER_API_SECRET",
+    # ── R-WA (D98) ──
+    # El webhook de WhatsApp: el token con que Meta verifica la URL al darla
+    # de alta y la clave secreta de la app, con que firma cada aviso. Sin la
+    # segunda, el webhook rechaza todo (falla cerrado).
+    "WHATSAPP_VERIFY_TOKEN",
+    "WHATSAPP_APP_SECRET",
 ]
 
 PREFIJO = "/api"
@@ -350,3 +362,49 @@ def procesarconsulta(req: https_fn.CallableRequest) -> dict:
              "costo_usd": (salida.get("resultado") or {}).get("costo_usd")},
             default=str))
         return {"estado": salida.get("estado")}
+
+
+# ════════════════════════════════════════════════════════════════════
+#  R-WA (D98) · El webhook de WhatsApp
+# ════════════════════════════════════════════════════════════════════
+#
+# La URL que Meta llama con cada respuesta de Flow, comentario y estado de
+# entrega. Es **pública** (Meta no manda un token de Firebase): lo que la
+# protege es la firma `X-Hub-Signature-256`, verificada con
+# `WHATSAPP_APP_SECRET` sobre los bytes crudos del cuerpo. Por eso no pasa
+# por `api` ni por el ruteo: necesita el cuerpo sin parsear, y ninguna ruta
+# del ruteo puede ser pública sin estar en la lista de `ruteo.es_publica`.
+#
+# Lo que hace está en `bandeja_whatsapp.atender`: guarda el aviso crudo,
+# commitea y recién entonces lo procesa; a Meta le contesta 200 aunque el
+# procesamiento falle (queda `fallido` y se reprocesa desde la bandeja).
+#
+# Meta admite **una** URL de callback por app y hoy la usa la planilla: dar
+# de alta esta es el corte de R-WA.7, con su procedimiento en el documento
+# de despliegue. Desplegar la función no cambia nada hasta ese paso.
+@https_fn.on_request(
+    region=REGION,
+    secrets=SECRETOS,
+    vpc_connector=VPC_CONNECTOR,
+    vpc_connector_egress_settings=(
+        options.VpcEgressSetting.PRIVATE_RANGES_ONLY if VPC_CONNECTOR else None
+    ),
+    memory=options.MemoryOption.MB_512,
+    timeout_sec=60,
+)
+def whatsappwebhook(req: https_fn.Request) -> https_fn.Response:
+    from panel_api import bandeja_whatsapp
+
+    try:
+        cfg = config.cargar()
+        with contexto.abrir(cfg) as ctx:
+            status, texto = bandeja_whatsapp.atender(
+                ctx.boveda, req.method, dict(req.args or {}),
+                req.get_data(cache=True) or b"", req.headers)
+    except Exception as error:  # noqa: BLE001
+        # Sin el cuerpo en el log: tiene teléfonos. Un 500 hace que Meta
+        # reintente, que es lo correcto si no se pudo ni guardar el aviso.
+        print(f"[whatsapp] error no manejado: {type(error).__name__}\n{traceback.format_exc()}")
+        return https_fn.Response("error", status=500)
+    return https_fn.Response(texto, status=status,
+                             headers={"Content-Type": "text/plain; charset=utf-8"})

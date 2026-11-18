@@ -10,6 +10,8 @@ import os
 import re
 
 from . import (
+    alchemer,
+    bandeja_whatsapp,
     canales_carga,
     atributos,
     auditoria,
@@ -567,6 +569,8 @@ def crear_encuesta(ctx, actor, params, cuerpo, consulta):
     llegan con la primera carga)."""
     cuerpo = cuerpo or {}
     tipo = (cuerpo.get("tipo") or encuestas.DE_PANEL).strip().lower()
+    # R-PAR.2 (D96) — la fecha de campo es obligatoria.
+    encuestas.exigir_fecha_de_campo(cuerpo.get("fecha_campo"))
     resultado = encuestas.crear(
         ctx.boveda, _entero(cuerpo.get("panel_id")) if tipo == encuestas.DE_PANEL else None,
         cuerpo.get("nombre"), cuerpo.get("fecha_campo"), tipo=tipo,
@@ -579,6 +583,12 @@ def crear_encuesta(ctx, actor, params, cuerpo, consulta):
         resultado["tematicas"] = tematicas.guardar_de_encuesta(
             ctx.boveda, resultado["id"], cuerpo.get("tematicas"),
             puede_desmarcar=actor.puede("gestionar_atributos"))
+    if cuerpo.get("alchemer_id"):
+        # R-ALC.2/3 (D97) — la encuesta elegida de Alchemer: se guarda su id y
+        # su cuestionario. Si no captura el parámetro, se avisa y la encuesta
+        # se guarda igual.
+        resultado["alchemer"] = alchemer.vincular(ctx.boveda, resultado["id"],
+                                                  cuerpo["alchemer_id"])
     ctx.boveda.commit()
     return 201, resultado
 
@@ -596,8 +606,10 @@ def listar_encuestas(ctx, actor, params, cuerpo, consulta):
 @ruta("GET", "/encuestas/<encuesta_id>", "leer", requisito="R-EU.2")
 def ver_encuesta(ctx, actor, params, cuerpo, consulta):
     """El estudio con sus datos, clientes, temáticas, cargas y conteos."""
-    return 200, encuestas.obtener(ctx.boveda, _entero(params["encuesta_id"]),
-                                  completa=True)
+    encuesta_id = _entero(params["encuesta_id"])
+    return 200, {**encuestas.obtener(ctx.boveda, encuesta_id, completa=True),
+                 # R-ALC.4 (D97) — el cuestionario de Alchemer, si está vinculada.
+                 "alchemer": alchemer.de_encuesta(ctx.boveda, encuesta_id)}
 
 
 @ruta("PATCH", "/encuestas/<encuesta_id>", "fieldear",
@@ -608,11 +620,19 @@ def cambiar_encuesta(ctx, actor, params, cuerpo, consulta):
     encuesta_id = _entero(params["encuesta_id"])
     cuerpo = cuerpo or {}
     resultado = None
+    aviso_alchemer = vinculo = None
     if cuerpo.get("estado"):
         # R-CF.1 — cualquier transición, registrada con quién la hizo.
         resultado = encuestas.cambiar_estado(ctx.boveda, encuesta_id, cuerpo["estado"],
                                              actor=actor)
-    datos = {k: v for k, v in cuerpo.items() if k != "estado"}
+        if cuerpo["estado"] == "en_campo":
+            # R-ALC.3 (D97) — la verificación del parámetro se repite al salir
+            # a campo: la encuesta de Alchemer pudo cambiar.
+            aviso_alchemer = alchemer.verificar_para_campo(ctx.boveda, encuesta_id)
+    if cuerpo.get("alchemer_id"):
+        vinculo = alchemer.vincular(ctx.boveda, encuesta_id, cuerpo["alchemer_id"])
+        resultado = resultado or encuestas.obtener(ctx.boveda, encuesta_id)
+    datos = {k: v for k, v in cuerpo.items() if k not in ("estado", "alchemer_id")}
     if datos:
         resultado = encuestas.editar(
             ctx.boveda, encuesta_id, datos,
@@ -622,7 +642,144 @@ def cambiar_encuesta(ctx, actor, params, cuerpo, consulta):
         raise DatosInvalidos("No hay nada que cambiar.")
     ctx.boveda.commit()
     ctx.semantica.commit()
+    if aviso_alchemer:
+        resultado = {**resultado, "aviso_alchemer": aviso_alchemer}
+    if vinculo:
+        resultado = {**resultado, "alchemer": vinculo}
     return 200, resultado
+
+
+# ════════════════════════════════════════════════════════════════════
+#  R-ALC (D97) · Alchemer al crear una encuesta
+# ════════════════════════════════════════════════════════════════════
+
+@ruta("GET", "/alchemer/encuestas", "fieldear", requisito="R-ALC.2")
+def buscar_en_alchemer(ctx, actor, params, cuerpo, consulta):
+    """Las encuestas de la cuenta de Alchemer cuyo título contiene `q`.
+    Sin credenciales, la lista vacía y el aviso: la URL se escribe a mano."""
+    return 200, alchemer.buscar_encuestas(consulta.get("q"))
+
+
+@ruta("GET", "/alchemer/encuestas/<alchemer_id>", "fieldear", requisito="R-ALC.2, R-ALC.3")
+def ver_en_alchemer(ctx, actor, params, cuerpo, consulta):
+    """Los enlaces de una encuesta de Alchemer (con la URL ya armada con el
+    parámetro) y si guarda el parámetro del panelista. No guarda nada."""
+    try:
+        traido = alchemer.cuestionario(params["alchemer_id"])
+        links = alchemer.enlaces(params["alchemer_id"])
+    except alchemer.SinConfigurar as error:
+        raise Conflicto(str(error), {"motivo": "alchemer_sin_configurar"}) from None
+    return 200, {"id": params["alchemer_id"], "titulo": traido["titulo"],
+                 "enlaces": links, "preguntas": len(traido["preguntas"]),
+                 "parametro": traido["parametro"],
+                 "captura_parametro": traido["captura_parametro"],
+                 "aviso": alchemer.aviso_de_parametro(traido["captura_parametro"],
+                                                      traido["parametro"])}
+
+
+@ruta("POST", "/encuestas/<encuesta_id>/alchemer", "fieldear", requisito="R-ALC.2, R-ALC.4")
+def vincular_con_alchemer(ctx, actor, params, cuerpo, consulta):
+    """Vincula la encuesta con una de Alchemer, o **actualiza** su
+    cuestionario («Actualizar desde Alchemer»: sin `alchemer_id`, el que ya
+    tiene)."""
+    encuesta_id = _entero(params["encuesta_id"])
+    alchemer_id = (cuerpo or {}).get("alchemer_id") \
+        or encuestas.obtener(ctx.boveda, encuesta_id).get("alchemer_id")
+    if not alchemer_id:
+        raise DatosInvalidos("Esta encuesta no está vinculada a Alchemer: elegí una.",
+                             {"campo": "alchemer_id"})
+    salida = alchemer.vincular(ctx.boveda, encuesta_id, alchemer_id)
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("POST", "/encuestas/<encuesta_id>/alchemer/tematicas", "fieldear",
+      requisito="R-ALC.4, R-TEM.2")
+def proponer_tematicas_desde_alchemer(ctx, actor, params, cuerpo, consulta):
+    """La propuesta de temáticas con las preguntas traídas de Alchemer, antes
+    del campo. **No escribe**: lo que el analista acepta se guarda con
+    `PUT /encuestas/<id>/tematicas`, como siempre (R-TEM)."""
+    encuesta_id = _entero(params["encuesta_id"])
+    preguntas = alchemer.preguntas_para_tematicas(ctx.boveda, encuesta_id)
+    propuesta = tematicas.proponer(ctx.boveda, ctx.proponente_tematicas, preguntas)
+    propuesta["actuales"] = tematicas.de_encuesta(ctx.boveda, encuesta_id)
+    return 200, propuesta
+
+
+# ════════════════════════════════════════════════════════════════════
+#  R-WA (D98) · La bandeja de WhatsApp
+# ════════════════════════════════════════════════════════════════════
+#
+# El webhook no está acá: es su propia función (`main.whatsappwebhook`),
+# pública y con la firma de Meta. Estas rutas son la bandeja, para quien
+# tiene `bandeja_whatsapp`: tienen teléfonos, también de gente que no es
+# panelista.
+
+@ruta("GET", "/whatsapp/flows", "bandeja_whatsapp", requisito="R-WA.4, R-WA.1")
+def bandeja_grupos(ctx, actor, params, cuerpo, consulta):
+    """Las encuestas y plantillas con respuestas o comentarios, el estado de
+    los avisos (pendientes, fallidos) y los plazos de conservación. Abrir la
+    bandeja también purga lo vencido (R-WA.5)."""
+    purgado = bandeja_whatsapp.purgar(ctx.boveda)
+    ctx.boveda.commit()
+    datos = bandeja_whatsapp.config()
+    return 200, {
+        "items": bandeja_whatsapp.grupos(ctx.boveda),
+        "avisos": bandeja_whatsapp.estado_de_avisos(ctx.boveda),
+        "configurado": bool(datos["verify_token"] and datos["app_secret"]),
+        "conservacion": {"afuera_dias": datos["conservar_afuera_dias"],
+                         "aviso_dias": datos["conservar_aviso_dias"]},
+        "purgado": purgado,
+    }
+
+
+@ruta("GET", "/whatsapp/respuestas", "bandeja_whatsapp", requisito="R-WA.4")
+def bandeja_respuestas(ctx, actor, params, cuerpo, consulta):
+    """Las respuestas de Flow de una encuesta o plantilla: una columna por
+    campo, las de pantalla en el orden de la planilla."""
+    return 200, bandeja_whatsapp.respuestas(
+        ctx.boveda, encuesta_id=consulta.get("encuesta_id"), grupo=consulta.get("grupo"),
+        desde=consulta.get("desde"), hasta=consulta.get("hasta"))
+
+
+@ruta("GET", "/whatsapp/comentarios", "bandeja_whatsapp", requisito="R-WA.4")
+def bandeja_comentarios(ctx, actor, params, cuerpo, consulta):
+    return 200, bandeja_whatsapp.comentarios(
+        ctx.boveda, encuesta_id=consulta.get("encuesta_id"), grupo=consulta.get("grupo"),
+        desde=consulta.get("desde"), hasta=consulta.get("hasta"))
+
+
+@ruta("POST", "/whatsapp/exportacion", "bandeja_whatsapp", requisito="R-WA.4")
+def bandeja_exportar(ctx, actor, params, cuerpo, consulta):
+    """El CSV de lo que se ve con ese filtro. Queda registrado quién lo
+    exportó, con qué filtro y cuántas filas."""
+    salida = bandeja_whatsapp.exportar(ctx.boveda, cuerpo or {}, actor=actor)
+    ctx.boveda.commit()
+    return 200, salida
+
+
+@ruta("POST", "/whatsapp/avisos/reprocesar", "bandeja_whatsapp", requisito="R-WA.1")
+def bandeja_reprocesar(ctx, actor, params, cuerpo, consulta):
+    """Vuelve a procesar los avisos que fallaron. El crudo nunca se perdió;
+    todo lo que escribe es idempotente por id."""
+    return 200, bandeja_whatsapp.reprocesar(ctx.boveda, (cuerpo or {}).get("ids"))
+
+
+@ruta("GET", "/encuestas/<encuesta_id>/whatsapp", "ingestar", requisito="R-WA.6")
+def whatsapp_de_encuesta(ctx, actor, params, cuerpo, consulta):
+    """Cuántas respuestas de WhatsApp tiene la encuesta y cuántas personas
+    son nuevas desde la última carga. Sin teléfonos: es para el analista."""
+    return 200, bandeja_whatsapp.resumen_de_encuesta(ctx.boveda, _entero(params["encuesta_id"]))
+
+
+@ruta("POST", "/encuestas/<encuesta_id>/whatsapp/archivo", "ingestar", requisito="R-WA.6")
+def whatsapp_como_sav(ctx, actor, params, cuerpo, consulta):
+    """R-WA.6 — las respuestas de WhatsApp de la encuesta como un `.sav`,
+    con el diccionario del Flow: la pantalla lo abre en el modal de ingesta
+    y sigue el proceso de siempre. No escribe nada."""
+    encuesta_id = _entero(params["encuesta_id"])
+    encuestas.obtener(ctx.boveda, encuesta_id)
+    return 200, bandeja_whatsapp.conjunto_de_encuesta(ctx.boveda, encuesta_id)
 
 
 @ruta("GET", "/encuestas/<encuesta_id>/estados", "leer", requisito="R-CF.1")
@@ -652,6 +809,8 @@ def encuesta_desde_consulta(ctx, actor, params, cuerpo, consulta):
     afuera la lista negra y quien no tiene `contacto_participacion`, y se
     informa cuántos. Guarda cómo se armó: modo y semilla."""
     cuerpo = cuerpo or {}
+    # R-PAR.2 (D96) — la fecha de campo es obligatoria.
+    encuestas.exigir_fecha_de_campo(cuerpo.get("fecha_campo"))
     salida = encuestas.crear_desde_consulta(
         ctx.boveda, cuerpo.get("nombre"), cuerpo.get("resultado") or {},
         actor=actor, fecha_campo=cuerpo.get("fecha_campo"),
@@ -660,6 +819,9 @@ def encuesta_desde_consulta(ctx, actor, params, cuerpo, consulta):
         definicion=cuerpo.get("definicion"),
         segmento_completo=_bandera(cuerpo.get("segmento_completo")),
         cantidad=cuerpo.get("cantidad"), url_alchemer=cuerpo.get("url_alchemer"))
+    if cuerpo.get("alchemer_id"):
+        # R-ALC.2 (D97) — vinculada a la encuesta de Alchemer elegida.
+        salida["alchemer"] = alchemer.vincular(ctx.boveda, salida["id"], cuerpo["alchemer_id"])
     ctx.boveda.commit()
     return 201, salida
 
@@ -1815,6 +1977,9 @@ def _claves_del_catalogo(ctx):
 def crear_carga(ctx, actor, params, cuerpo, consulta):
     """Abre una carga y devuelve su `ref_estudio`, que es lo que la ata a su
     cuestionario del lado semántico."""
+    # R-PAR.2 (D96) — la carga desde Panelistas crea su encuesta: la fecha
+    # de campo es obligatoria, como en «Nueva encuesta».
+    encuestas.exigir_fecha_de_campo(cuerpo.get("fecha_estudio"), "fecha_estudio")
     # D92 · R-CAN-C.3 — cada carga nueva limpia las provisorias abandonadas.
     limpieza = cargas.limpiar_provisorias(ctx.boveda, actor=actor)
     carga = cargas.crear(
@@ -1836,8 +2001,13 @@ def crear_carga(ctx, actor, params, cuerpo, consulta):
         # D92 · R-CAN-C.1 — la carga y su encuesta automática nacen
         # provisorias: cancelar las borra, confirmar las confirma.
         provisoria=True)
+    salida = {**carga, "limpieza": limpieza}
+    if cuerpo.get("alchemer_id"):
+        # R-ALC.2 (D97) — la encuesta automática, vinculada a la de Alchemer.
+        salida["alchemer"] = alchemer.vincular(ctx.boveda, carga["encuesta_id"],
+                                               cuerpo["alchemer_id"])
     ctx.boveda.commit()
-    return 201, {**carga, "limpieza": limpieza}
+    return 201, salida
 
 
 @ruta("GET", "/cargas", "leer", requisito="R3.13, R-ORG.5, R-CAR.1")

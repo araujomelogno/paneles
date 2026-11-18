@@ -69,6 +69,10 @@ TABLAS_BOVEDA = [
     "carga_canal_registro", "encuesta_audiencia_agregado",
     # D92 — el registro de las limpiezas de cargas provisorias no tiene FK.
     "limpieza_provisoria",
+    # D96 a D98 — la lista de fechas completadas, el cuestionario de Alchemer
+    # y la bandeja de WhatsApp. Los avisos crudos y los estados no tienen FK.
+    "encuesta_fecha_completada", "alchemer_cuestionario", "whatsapp_aviso",
+    "whatsapp_entrante", "whatsapp_estado", "whatsapp_exportacion",
 ]
 
 # R3.14 — el catálogo de atributos **no** se trunca: `sexo`, `localidad`,

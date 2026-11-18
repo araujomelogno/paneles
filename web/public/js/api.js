@@ -242,6 +242,15 @@ export const encuestas = {
   /* R-EU.1 — ingestar en una encuesta es abrir una carga y seguir el flujo
      de la carga (`cargas.analizar`, `cargas.ingestar`). */
   nuevaCarga: (id, datos) => POST(`/encuestas/${id}/cargas`, datos),
+  /* R-ALC (D97) — vincular la encuesta con una de Alchemer (o
+     «Actualizar desde Alchemer», sin id) y proponer temáticas con él. */
+  vincularAlchemer: (id, alchemerId) =>
+    POST(`/encuestas/${id}/alchemer`, alchemerId ? { alchemer_id: alchemerId } : {}),
+  tematicasDesdeAlchemer: (id) => POST(`/encuestas/${id}/alchemer/tematicas`, {}),
+  /* R-WA.6 (D98) — cuántas respuestas de WhatsApp tiene (y cuántas nuevas
+     desde la última carga), y su `.sav` con el diccionario del Flow. */
+  whatsapp: (id) => GET(`/encuestas/${id}/whatsapp`),
+  whatsappArchivo: (id) => POST(`/encuestas/${id}/whatsapp/archivo`, {}),
   guardarTematicas: (id, tematicas) => PUT(`/encuestas/${id}/tematicas`, { tematicas }),
   /* R-EU.5 — «crear encuesta con estos panelistas»: la foto de la selección
      vigente. R-ALE.3 — o de todo el segmento (`segmento_completo`). */
@@ -503,7 +512,7 @@ export const cargas = {
      ella, no copiados en cada persona. */
   crear: (nombre, descripcion, {
     fechaEstudio, publicoObjetivo, tipoDatosOrigen, tipoDatosOrigenOtro,
-    modoRelevamiento, modoRelevamientoOtro, clientes, urlAlchemer,
+    modoRelevamiento, modoRelevamientoOtro, clientes, urlAlchemer, alchemerId,
   } = {}) =>
     POST('/cargas', {
       nombre, descripcion,
@@ -519,6 +528,8 @@ export const cargas = {
       clientes: clientes || [],
       // R-AU.3 — los mismos datos del estudio que «Nueva encuesta».
       url_alchemer: urlAlchemer || null,
+      // R-ALC.2 (D97) — la encuesta de Alchemer elegida, si se eligió.
+      ...(alchemerId ? { alchemer_id: alchemerId } : {}),
     }),
   /* R-CAR.1 — sin consulta, todas (los selectores); la sección Cargas
      filtra por temática (`tematica_id`) y busca por nombre (`q`). */
@@ -708,4 +719,21 @@ export const optimizador = {
   pesos: (panelId) => GET(`/paneles/${panelId}/pesos-optimizador`),
   guardarPesos: (panelId, pesos) =>
     PUT(`/paneles/${panelId}/pesos-optimizador`, pesos),
+};
+
+/* R-ALC (D97) — buscar en la cuenta de Alchemer y ver una encuesta (sus
+   enlaces y si guarda el parámetro del panelista). No guardan nada. */
+export const alchemer = {
+  buscar: (q) => GET('/alchemer/encuestas', q ? { q } : {}),
+  ver: (alchemerId) => GET(`/alchemer/encuestas/${encodeURIComponent(alchemerId)}`),
+};
+
+/* R-WA (D98) — la bandeja de WhatsApp: grupos, respuestas y comentarios,
+   la exportación (registrada) y reprocesar los avisos que fallaron. */
+export const bandejaWhatsapp = {
+  grupos: () => GET('/whatsapp/flows'),
+  respuestas: (consulta) => GET('/whatsapp/respuestas', consulta),
+  comentarios: (consulta) => GET('/whatsapp/comentarios', consulta),
+  exportar: (filtro) => POST('/whatsapp/exportacion', filtro),
+  reprocesar: () => POST('/whatsapp/avisos/reprocesar', {}),
 };

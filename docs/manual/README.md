@@ -14,6 +14,17 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Alchemer, historia de participación y bandeja de WhatsApp · 2026-11-18.**
+> `SPEC_alchemer_participacion_y_bandeja_whatsapp` (D96 a D98). La 5.1 dice
+> que la **fecha de campo es obligatoria**; la **5.15, Elegir la encuesta de
+> Alchemer**, nueva (buscarla, el enlace, el aviso del parámetro, el
+> cuestionario y las temáticas antes del campo); la **5.16, Obtener las
+> respuestas de WhatsApp**, nueva (el mismo modal de ingesta, las variables
+> «sin etiqueta»); la 5.13 suma los estados *Entregado* y *Leído*; la **6.14,
+> Historia de participación**, nueva; y la **sección 16, La bandeja de
+> WhatsApp**, nueva (preguntas frecuentes y glosario pasan a 17 y 18). La 1.2
+> dice quién ve la bandeja. Sin capturas nuevas; PDF regenerado.
+
 > **Historial de respuestas por carga · 2026-11-10.** PEDIDO del historial
 > (D95). La 5.12 explica que borrar una carga **vuelve** cada respuesta al
 > valor de la carga anterior que la tenía y elimina solo lo que no está en

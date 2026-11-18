@@ -63,6 +63,10 @@ const EXPLICACIONES_MUESTREO = {
 const bd = {
   // Store de bóveda: PII + paneles.
   personas: [],
+  // R-WA (D98) — la bandeja de WhatsApp y sus exportaciones.
+  whatsapp: [],
+  exportacionesWhatsapp: [],
+  avisosWhatsappFallidos: 1,
   alias: [],
   paneles: [],
   membresias: [],
@@ -636,9 +640,43 @@ function conteosDeEncuesta(encuestaId) {
   };
 }
 
+/* R-ALC (D97) — dos encuestas de Alchemer de mentira: una guarda el
+   parámetro del panelista y la otra no, para recorrer el aviso. */
+const ALCHEMER_DEMO = [
+  { id: '7001234', titulo: 'Ola 4 — Consumo de bebidas', estado: 'Launched', modificada: '2026-11-15',
+    captura: true, enlaces: [{ id: '1', nombre: 'Enlace principal',
+      url: 'https://survey.alchemer.com/s3/7001234/ola-4' }],
+    preguntas: [
+      { id: 2, codigo: 'P1', texto: '¿Qué bebida consume habitualmente?', tipo: 'cerrada',
+        opciones: { 1: 'Fernet', 2: 'Whisky', 3: 'Cerveza' } },
+      { id: 3, codigo: 'P2', texto: '¿Por qué elige esa marca?', tipo: 'abierta', opciones: {} },
+    ] },
+  { id: '7005678', titulo: 'Tracking telefonía móvil', estado: 'Launched', modificada: '2026-11-10',
+    captura: false, enlaces: [
+      { id: '1', nombre: 'Web', url: 'https://survey.alchemer.com/s3/7005678/telefonia' },
+      { id: '2', nombre: 'WhatsApp', url: 'https://survey.alchemer.com/s3/7005678/telefonia-wa' }],
+    preguntas: [{ id: 4, codigo: 'T1', texto: '¿Qué compañía de celular usa?', tipo: 'cerrada',
+      opciones: { 1: 'Antel', 2: 'Movistar', 3: 'Claro' } }] },
+];
+const avisoAlchemerDemo = (captura) => (captura ? null
+  : 'Esta encuesta no guarda el parámetro `pid`: las respuestas no van a traer el id_persona.');
+
+function vincularAlchemerDemo(encuesta, alchemerId) {
+  const a = ALCHEMER_DEMO.find((x) => x.id === String(alchemerId));
+  if (!a) throw new ErrorDemo('No existe esa encuesta en Alchemer.', 404);
+  encuesta.alchemer_id = a.id;
+  encuesta.alchemer = {
+    encuesta_id: encuesta.id, alchemer_id: a.id, titulo: a.titulo, preguntas: a.preguntas,
+    parametro: 'pid', captura_parametro: a.captura, verificado_en: ahora(),
+    actualizado_en: ahora(), aviso: avisoAlchemerDemo(a.captura),
+  };
+  return { vinculada: true, cuestionario: encuesta.alchemer, aviso: encuesta.alchemer.aviso };
+}
+
 function encuestaCompleta(encuesta) {
   const panel = bd.paneles.find((p) => p.id === encuesta.panel_id);
   return {
+    alchemer_id: null, alchemer: null,
     ...encuesta, tipo: encuesta.tipo || 'panel',
     panel: panel?.nombre ?? null, panel_estado: panel?.estado ?? null,
     clientes: clientesDeIds(encuesta.clientes),
@@ -1670,6 +1708,9 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
       throw new ErrorDemo('El panel está archivado: no recibe encuestas ni convocatorias.', 409);
     }
     if (!String(cuerpo.nombre || '').trim()) throw new ErrorDemo('La encuesta necesita un nombre.', 400);
+    // R-PAR.2 — la fecha de campo es obligatoria (`encuestas.exigir_fecha_de_campo`).
+    if (!cuerpo.fecha_campo) throw new ErrorDemo('La encuesta necesita su fecha de campo: ubica sus respuestas en el tiempo y es '
+      + 'lo que mira la consulta por historia de participación.', 400);
     const encuesta = crearEncuesta(independiente ? null : Number(cuerpo.panel_id), cuerpo.nombre,
       cuerpo.fecha_campo, {
         ...(independiente ? { origen: 'manual' } : {}),
@@ -1678,7 +1719,110 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
         url_alchemer: (cuerpo.url_alchemer || '').trim() || null,
         clientes: clientesDemo(cuerpo.clientes),
       });
-    return encuestaCompleta(encuesta);
+    const vinculo = cuerpo.alchemer_id ? vincularAlchemerDemo(encuesta, cuerpo.alchemer_id) : null;
+    return { ...encuestaCompleta(encuesta), ...(vinculo ? { alchemer: vinculo } : {}) };
+  }
+
+  /* R-WA (D98) — la bandeja de WhatsApp y las respuestas de una encuesta
+     como `.sav`. */
+  if (clave === 'GET /whatsapp/flows') {
+    const grupos = new Map();
+    bd.whatsapp.forEach((w) => {
+      const k = w.encuesta_id ? `encuesta:${w.encuesta_id}` : `grupo:${w.grupo}`;
+      const g = grupos.get(k) || { clave: k, tipo: w.encuesta_id ? 'encuesta' : 'grupo',
+        encuesta_id: w.encuesta_id, nombre: origenDemo(w), respuestas: 0, comentarios: 0,
+        inconsistencias: 0, ultima: w.recibido_en };
+      g[w.tipo === 'flow' ? 'respuestas' : 'comentarios'] += 1;
+      if (w.recibido_en > g.ultima) g.ultima = w.recibido_en;
+      grupos.set(k, g);
+    });
+    return { items: [...grupos.values()].sort((a, b) => b.ultima.localeCompare(a.ultima)),
+             avisos: { pendientes: 0, fallidos: bd.avisosWhatsappFallidos,
+                       ultimo: bd.whatsapp.map((w) => w.recibido_en).sort().pop() || null },
+             configurado: true, conservacion: { afuera_dias: 180, aviso_dias: 30 },
+             purgado: { entrantes: 0, avisos: 0 } };
+  }
+  if (clave === 'GET /whatsapp/respuestas') return respuestasBandejaDemo(consulta);
+  if (clave === 'GET /whatsapp/comentarios') {
+    return { filas: filtrarBandejaDemo(consulta, 'comentario').map((w) => ({
+      id: w.id, recibido_en: w.recibido_en, telefono: w.telefono, texto: w.texto,
+      id_persona: w.id_persona, origen: origenDemo(w),
+      mensaje: bd.mensajes.find((m) => m.id === w.encuesta_mensaje_id)?.nombre || null })) };
+  }
+  if (clave === 'POST /whatsapp/exportacion') {
+    const tipo = cuerpo.tipo || 'flow';
+    let csv;
+    let filas;
+    if (tipo === 'flow') {
+      const d = respuestasBandejaDemo(cuerpo);
+      filas = d.filas.length;
+      csv = [['fecha', 'telefono', 'encuesta_o_plantilla', 'token', 'inconsistencia', ...d.columnas],
+        ...d.filas.map((f) => [f.recibido_en, f.telefono, f.origen, f.token || '',
+          f.inconsistencia || '', ...d.columnas.map((c) => f.campos[c])])];
+    } else {
+      const d = filtrarBandejaDemo(cuerpo, 'comentario');
+      filas = d.length;
+      csv = [['fecha', 'telefono', 'encuesta_o_plantilla', 'texto'],
+        ...d.map((w) => [w.recibido_en, w.telefono, origenDemo(w), w.texto])];
+    }
+    bd.exportacionesWhatsapp.push({ creado_en: ahora(), filtro: { ...cuerpo }, filas });
+    return { filas, nombre: `whatsapp_${tipo}.csv`,
+             csv: csv.map((l) => l.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','))
+               .join('\n') };
+  }
+  if (clave === 'POST /whatsapp/avisos/reprocesar') {
+    const n = bd.avisosWhatsappFallidos;
+    bd.avisosWhatsappFallidos = 0;
+    return { reprocesados: n, procesados: n, fallidos: 0 };
+  }
+  if (metodo === 'GET' && partes[0] === 'encuestas' && partes[2] === 'whatsapp' && partes.length === 3) {
+    const r = resumenWhatsappDemo(Number(partes[1]));
+    delete r.filas_demo;
+    return r;
+  }
+  if (metodo === 'POST' && partes[0] === 'encuestas' && partes[2] === 'whatsapp' && partes[3] === 'archivo') {
+    return savDeWhatsappDemo(Number(partes[1]));
+  }
+  if (metodo === 'POST' && partes[0] === 'cargas' && partes[2] === 'analizar') {
+    const sav = savDemo(cuerpo.archivo_base64);
+    if (!sav) throw new ErrorDemo('La demo no lee archivos .sav: probá con un .csv o un .xlsx.', 400);
+    return sav.analisis;
+  }
+
+  /* R-ALC (D97) — buscar y ver encuestas de Alchemer, vincular, actualizar
+     y proponer temáticas con su cuestionario. */
+  if (clave === 'GET /alchemer/encuestas') {
+    const q = sinTildes(String(consulta.q || '').toLowerCase());
+    return { configurado: true, avisos: [],
+             items: ALCHEMER_DEMO.filter((a) => !q || sinTildes(a.titulo.toLowerCase()).includes(q))
+               .map(({ id, titulo, estado, modificada }) => ({ id, titulo, estado, modificada })) };
+  }
+  if (metodo === 'GET' && partes[0] === 'alchemer' && partes[1] === 'encuestas' && partes[2]) {
+    const a = ALCHEMER_DEMO.find((x) => x.id === partes[2]);
+    if (!a) throw new ErrorDemo('No existe esa encuesta en Alchemer.', 404);
+    return { id: a.id, titulo: a.titulo, preguntas: a.preguntas.length, parametro: 'pid',
+             captura_parametro: a.captura, aviso: avisoAlchemerDemo(a.captura),
+             enlaces: a.enlaces.map((e) => ({ ...e, url_con_parametro: `${e.url}?pid=` })) };
+  }
+  if (partes[0] === 'encuestas' && partes[2] === 'alchemer') {
+    const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
+    if (!encuesta) throw new ErrorDemo('No existe la encuesta.', 404);
+    if (metodo === 'POST' && partes.length === 3) {
+      const id = cuerpo.alchemer_id || encuesta.alchemer_id;
+      if (!id) throw new ErrorDemo('Esta encuesta no está vinculada a Alchemer: elegí una.', 400);
+      return vincularAlchemerDemo(encuesta, id);
+    }
+    if (metodo === 'POST' && partes[3] === 'tematicas') {
+      if (!encuesta.alchemer) {
+        throw new ErrorDemo('Esta encuesta no tiene un cuestionario de Alchemer: vinculala primero.', 409);
+      }
+      return { estado: 'ok', aviso: null, proveedor: 'demo',
+               preguntas_enviadas: encuesta.alchemer.preguntas.length,
+               actuales: tematicasDeEncuesta(encuesta.id),
+               propuesta: [{ nombre: 'consumo de bebidas', es_nueva: true,
+                 preguntas_relacionadas: encuesta.alchemer.preguntas.slice(0, 1)
+                   .map((p) => ({ codigo: p.codigo, texto: p.texto })) }] };
+    }
   }
 
   /* R-AU.2 — agregar audiencia desde una consulta, y cómo se armó. */
@@ -1707,6 +1851,8 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   if (clave === 'POST /encuestas/desde-consulta') {
     const nombre = (cuerpo.nombre || '').trim();
     if (!nombre) throw new ErrorDemo('La encuesta necesita un nombre.', 400);
+    if (!cuerpo.fecha_campo) throw new ErrorDemo('La encuesta necesita su fecha de campo: ubica sus respuestas en el tiempo y es '
+      + 'lo que mira la consulta por historia de participación.', 400);
     const encuesta = crearEncuesta(null, nombre, cuerpo.fecha_campo, {
       origen: 'consulta',
       publico_objetivo: (cuerpo.publico_objetivo || '').trim() || null,
@@ -1748,7 +1894,14 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
       if (campo in cuerpo) encuesta[campo] = (cuerpo[campo] ?? '').toString().trim() || null;
     });
     if (!encuesta.nombre) throw new ErrorDemo('La encuesta necesita un nombre.', 400);
+    if ('fecha_campo' in cuerpo && !encuesta.fecha_campo) {
+      throw new ErrorDemo('La encuesta necesita su fecha de campo.', 400);
+    }
     if (Array.isArray(cuerpo.clientes)) encuesta.clientes = clientesDemo(cuerpo.clientes);
+    if (cuerpo.alchemer_id) vincularAlchemerDemo(encuesta, cuerpo.alchemer_id);
+    if (cuerpo.estado === 'en_campo' && encuesta.alchemer && !encuesta.alchemer.captura_parametro) {
+      return { ...encuestaCompleta(encuesta), aviso_alchemer: encuesta.alchemer.aviso };
+    }
     if ('url_alchemer' in cuerpo) {
       // R-CTL.1 — los mensajes de WhatsApp que ya no coinciden quedan bloqueados.
       const bloqueados = bd.mensajes.filter((m) => m.encuesta_id === encuesta.id
@@ -2069,6 +2222,8 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   if (metodo === 'POST' && clave === 'POST /cargas') {
     const nombre = (cuerpo.nombre || '').trim();
     if (!nombre) throw new ErrorDemo('La carga necesita un nombre.', 400);
+    if (!cuerpo.fecha_estudio) throw new ErrorDemo('La encuesta necesita su fecha de campo: ubica sus respuestas en el tiempo y es '
+      + 'lo que mira la consulta por historia de participación.', 400);
     if (cuerpo.fecha_estudio && !/^\d{4}-\d{2}-\d{2}$/.test(cuerpo.fecha_estudio)) {
       throw new ErrorDemo('La fecha del estudio no es una fecha válida. Usá el formato AAAA-MM-DD.', 400);
     }
@@ -2292,7 +2447,9 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
   }
 
   if (metodo === 'POST' && partes[0] === 'cargas' && partes[2] === 'ingesta') {
-    const salida = ingestarCarga(Number(partes[1]), cuerpo);
+    // R-WA.6 — el «.sav» de WhatsApp de la demo trae sus filas adentro.
+    const sav = savDemo(cuerpo.archivo_base64);
+    const salida = ingestarCarga(Number(partes[1]), sav ? { ...cuerpo, filas: sav.filas } : cuerpo);
     // D92 — confirmar la ingesta deja de hacer provisorias a la carga y a su
     // encuesta automática.
     const carga = bd.cargas.find((c) => c.id === Number(partes[1]));
@@ -4073,6 +4230,27 @@ const semillaNuevaDemo = () => Math.random().toString(16).slice(2, 14);
 
 /* Los criterios demográficos se resuelven sobre la bóveda del demo. */
 function cumpleDemografico(persona, criterio) {
+  if (criterio.dimension === 'participacion') {
+    // R-PAR.1 — lo mismo que `demografia._condicion_participacion`.
+    const ventana = criterio.ventana || { tipo: 'siempre' };
+    const enVentana = (fecha) => {
+      if (!fecha) return false;
+      const dia = String(fecha).slice(0, 10);
+      if (ventana.tipo === 'meses') {
+        const limite = new Date();
+        limite.setMonth(limite.getMonth() - Number(ventana.meses));
+        return dia >= limite.toISOString().slice(0, 10);
+      }
+      if (ventana.tipo === 'entre') return dia >= ventana.desde && dia <= ventana.hasta;
+      return true;
+    };
+    const veces = bd.participaciones.filter((p) => p.id_persona === persona.id_persona
+      && (criterio.relacion === 'respondio'
+        ? p.respondio && enVentana(bd.encuestas.find((e) => e.id === p.encuesta_id)?.fecha_campo)
+        : enVentana(p.convocado_en || p.respondio_en))).length;
+    const minimo = Number(criterio.veces || 1);
+    return criterio.operador === 'not_in' ? veces < minimo : veces >= minimo;
+  }
   if (criterio.dimension === 'encuesta') {
     // R-AU.1 — en la audiencia (convocado) o respondió, para incluir o excluir.
     const fila = bd.participaciones.find((p) => p.encuesta_id === Number(criterio.valor)
@@ -5249,9 +5427,177 @@ function sembrarConvocatoriaDemo() {
   // a un mensaje con botón de Flow, como lo deja la 0036.
   const movilidad = bd.encuestas.find((e) => e.nombre === 'Ola 3 — Movilidad urbana');
   if (movilidad) {
-    bd.mensajes.push({ id: bd.secuencias.mensaje++, encuesta_id: movilidad.id,
+    const flow = { id: bd.secuencias.mensaje++, encuesta_id: movilidad.id,
       nombre: 'WhatsApp Flow', canal: 'whatsapp', plantilla: 'invitacion_ola',
       plantilla_idioma: 'es', parametros: [], url_boton: null, boton: 'flow',
-      flow_id: '7412880031', asunto: null, cuerpo: null, creado_en: diasAtras(10) });
+      flow_id: '7412880031', asunto: null, cuerpo: null, creado_en: diasAtras(10) };
+    bd.mensajes.push(flow);
+    sembrarBandejaDemo(movilidad, flow);
   }
+}
+
+/* R-WA (D98) — lo que llegó por el webhook: respuestas del Flow de la Ola 3
+   (con envío: persona y encuesta), una encuesta de afuera agrupada por el
+   token, y comentarios. Las preguntas son las de `FLOW_DEMO`. */
+const FLOW_DEMO = {
+  screen_0_Radio_1: { texto: '¿Cómo se traslada habitualmente?', tipo: 'cerrada',
+    opciones: { '0_Omnibus': 'Ómnibus', '1_Auto': 'Auto', '2_Bici': 'Bicicleta' } },
+  screen_1_Checkbox_2: { texto: '¿Qué problemas encuentra?', tipo: 'multiple',
+    opciones: { '0_Demoras': 'Demoras', '1_Costo': 'Costo' } },
+  screen_1_TextArea_3: { texto: '¿Qué mejoraría del transporte?', tipo: 'abierta', opciones: {} },
+  // Etiqueta dinámica en el Flow: no se puede traducir.
+  screen_1_Text_4: { texto: null, tipo: 'abierta', opciones: {} },
+};
+
+function sembrarBandejaDemo(movilidad, flow) {
+  const respuestas = [
+    { screen_0_Radio_1: '0_Omnibus', screen_1_Checkbox_2: ['0_Demoras'],
+      screen_1_TextArea_3: 'Más frecuencias de noche', screen_1_Text_4: 'Centro' },
+    { screen_0_Radio_1: '2_Bici', screen_1_Checkbox_2: ['0_Demoras', '1_Costo'],
+      screen_1_TextArea_3: 'Ciclovías conectadas', screen_1_Text_4: 'Pocitos' },
+    { screen_0_Radio_1: '1_Auto', screen_1_Checkbox_2: [],
+      screen_1_TextArea_3: 'Estacionamiento', screen_1_Text_4: 'Carrasco' },
+  ];
+  // Del panel de la encuesta. Sin tocar su convocatoria ni sus envíos: la
+  // demo de la Ola 3 sigue «sin convocar» para las otras pantallas.
+  const delPanel = bd.membresias.filter((m) => m.panel_id === movilidad.panel_id)
+    .map((m) => ({ id_persona: m.id_persona }));
+  const personas = (delPanel.length ? delPanel : bd.personas).slice(0, respuestas.length);
+  personas.forEach((p, i) => {
+    const persona = bd.personas.find((x) => x.id_persona === p.id_persona);
+    bd.whatsapp.push({ id: bd.whatsapp.length + 1, tipo: 'flow', recibido_en: diasAtras(8 - i),
+      telefono: persona?.celular || '+59899000000', encuesta_id: movilidad.id,
+      encuesta_mensaje_id: flow.id, id_persona: p.id_persona, grupo: null,
+      flow_token: p.id_persona, respuesta: respuestas[i], texto: null, inconsistencia: null });
+  });
+  if (personas[1]) {
+    const persona = bd.personas.find((x) => x.id_persona === personas[1].id_persona);
+    bd.whatsapp.push({ id: bd.whatsapp.length + 1, tipo: 'comentario', recibido_en: diasAtras(6),
+      telefono: persona?.celular || '+59899000000', encuesta_id: movilidad.id,
+      encuesta_mensaje_id: flow.id, id_persona: personas[1].id_persona, grupo: null,
+      flow_token: null, respuesta: null, texto: 'El formulario se cortó a la mitad, ¿lo repito?',
+      inconsistencia: null });
+  }
+  [['+59891234567', { pregunta_1: 'Sí', pregunta_2: 'Muy conforme' }],
+   ['+59892345678', { pregunta_1: 'No', pregunta_2: 'Poco conforme' }]].forEach(([tel, r], i) => {
+    bd.whatsapp.push({ id: bd.whatsapp.length + 1, tipo: 'flow', recibido_en: diasAtras(3 - i),
+      telefono: tel, encuesta_id: null, encuesta_mensaje_id: null, id_persona: null,
+      grupo: 'SONDEO_CLIENTE', flow_token: `tpl=SONDEO_CLIENTE|${tel.slice(1)}`, respuesta: r,
+      texto: null, inconsistencia: null });
+  });
+  bd.whatsapp.push({ id: bd.whatsapp.length + 1, tipo: 'comentario', recibido_en: diasAtras(1),
+    telefono: '+59893456789', encuesta_id: null, encuesta_mensaje_id: null, id_persona: null,
+    grupo: 'GENERAL', flow_token: null, respuesta: null, texto: 'Hola, ¿esto de qué es?',
+    inconsistencia: null });
+}
+
+function ordenDeCamposDemo(claves) {
+  const vistas = [...new Set(claves)];
+  const clave = (nombre, i) => {
+    const m = /^screen_(\d+)_(?:.*?_(\d+)$)?/.exec(nombre);
+    return m ? [0, Number(m[1]), m[2] ? Number(m[2]) : 1e6, i] : [1, 0, 0, i];
+  };
+  return vistas.map((n, i) => [clave(n, i), n])
+    .sort((a, b) => a[0].reduce((d, v, k) => d || v - b[0][k], 0)).map(([, n]) => n);
+}
+
+function filtrarBandejaDemo(consulta, tipo) {
+  return bd.whatsapp.filter((w) => w.tipo === tipo
+    && (!consulta.encuesta_id || w.encuesta_id === Number(consulta.encuesta_id))
+    && (!consulta.grupo || (w.encuesta_id === null && w.grupo === consulta.grupo))
+    && (!consulta.desde || w.recibido_en.slice(0, 10) >= consulta.desde)
+    && (!consulta.hasta || w.recibido_en.slice(0, 10) <= consulta.hasta))
+    .sort((a, b) => b.recibido_en.localeCompare(a.recibido_en));
+}
+
+function origenDemo(w) {
+  return w.encuesta_id ? bd.encuestas.find((e) => e.id === w.encuesta_id)?.nombre : w.grupo;
+}
+
+function respuestasBandejaDemo(consulta) {
+  const filas = filtrarBandejaDemo(consulta, 'flow');
+  const columnas = ordenDeCamposDemo(filas.flatMap((f) => Object.keys(f.respuesta || {})));
+  const celda = (v) => (Array.isArray(v) ? v.join(', ') : (v ?? ''));
+  return { columnas, recortado: false, filas: filas.map((f) => ({
+    id: f.id, recibido_en: f.recibido_en, telefono: f.telefono, token: f.flow_token,
+    origen: origenDemo(f), mensaje: bd.mensajes.find((m) => m.id === f.encuesta_mensaje_id)?.nombre || null,
+    id_persona: f.id_persona, inconsistencia: f.inconsistencia,
+    campos: Object.fromEntries(columnas.map((c) => [c, celda((f.respuesta || {})[c])])) })) };
+}
+
+function resumenWhatsappDemo(encuestaId) {
+  const ultimas = new Map();
+  bd.whatsapp.filter((w) => w.tipo === 'flow' && w.encuesta_id === encuestaId && w.id_persona)
+    .forEach((w) => ultimas.set(w.id_persona, w));
+  const cargas = bd.cargas.filter((c) => c.encuesta_id === encuestaId && !c.provisoria).map((c) => c.id);
+  const personas = [...ultimas.keys()];
+  const nuevas = personas.filter((id) => !bd.vinculos.some(
+    (v) => v.id_persona === id && cargas.includes(v.carga_id))).length;
+  return { respuestas: bd.whatsapp.filter((w) => w.tipo === 'flow' && w.encuesta_id === encuestaId).length,
+           personas: personas.length, nuevas, repetidas: personas.length - nuevas,
+           inconsistencias: [...ultimas.values()].filter((w) => w.inconsistencia).length,
+           sin_persona: 0, ultima: [...ultimas.values()].map((w) => w.recibido_en).sort().pop() || null,
+           filas_demo: [...ultimas.values()] };
+}
+
+/* R-WA.6 — la demo no escribe un `.sav` de verdad: el «archivo» lleva el
+   análisis ya hecho (lo que el servidor haría con `sav.analizar`) y las
+   filas, y `POST /cargas/:id/analizar` y la ingesta lo reconocen. */
+const MARCA_SAV_DEMO = 'demo-whatsapp-sav';
+const aBase64 = (texto) => btoa(unescape(encodeURIComponent(texto)));
+const deBase64 = (b64) => { try { return decodeURIComponent(escape(atob(b64))); } catch { return ''; } };
+
+function savDeWhatsappDemo(encuestaId) {
+  const resumen = resumenWhatsappDemo(encuestaId);
+  if (!resumen.personas) throw new ErrorDemo('Esta encuesta no tiene respuestas de WhatsApp.', 404);
+  const variables = [{ codigo: 'id_persona', texto: 'id_persona', texto_del_archivo: 'id_persona',
+    tipo: 'abierta', opciones: null, valores: [], muestra: [], demografica_sugerida: null,
+    tipo_identificador_sugerido: 'id_persona', orden: 0, avisos: [] }];
+  const sinEtiqueta = [];
+  const filas = resumen.filas_demo.map((w) => ({ id_persona: w.id_persona }));
+  ordenDeCamposDemo(resumen.filas_demo.flatMap((w) => Object.keys(w.respuesta || {}))).forEach((campo) => {
+    const d = FLOW_DEMO[campo] || { texto: null, tipo: 'abierta', opciones: {} };
+    const base = { valores: [], muestra: [], demografica_sugerida: null,
+                   tipo_identificador_sugerido: null, avisos: [] };
+    if (d.tipo === 'multiple') {
+      Object.entries(d.opciones).forEach(([id, titulo]) => {
+        const codigo = `${campo}_${id}`;
+        variables.push({ ...base, codigo, texto: `${d.texto}:${titulo}`,
+          texto_del_archivo: `${d.texto}:${titulo}`, tipo: 'cerrada', opciones: { 1: titulo },
+          orden: variables.length });
+        resumen.filas_demo.forEach((w, i) => {
+          filas[i][codigo] = (w.respuesta[campo] || []).includes(id) ? '1' : '';
+        });
+      });
+      return;
+    }
+    const ids = Object.keys(d.opciones);
+    variables.push({ ...base, codigo: campo, texto: d.texto || campo, texto_del_archivo: d.texto,
+      tipo: d.tipo, opciones: ids.length
+        ? Object.fromEntries(ids.map((id, n) => [String(n + 1), d.opciones[id]])) : null,
+      orden: variables.length, avisos: d.texto ? [] : ['texto_vacio'] });
+    if (!d.texto) sinEtiqueta.push({ codigo: campo, campo, motivo: 'pregunta' });
+    resumen.filas_demo.forEach((w, i) => {
+      const v = w.respuesta[campo];
+      filas[i][campo] = ids.length ? String(ids.indexOf(v) + 1 || '') : (v ?? '');
+    });
+  });
+  const analisis = { filas: filas.length, variables, candidatas_a_id: ['id_persona'],
+    demograficas_sugeridas: [], campos_demograficos: [], calidad: null,
+    avisos: sinEtiqueta.length ? [{ tipo: 'textos_a_revisar', variables: sinEtiqueta.map((s) => s.codigo),
+      mensaje: `${sinEtiqueta.length} variable(s) tienen un texto dudoso —vacío, muy corto o `
+        + 'truncado por SPSS—. El texto es lo que se vectoriza, así que conviene corregirlo '
+        + 'antes de confirmar.' }] : [] };
+  delete resumen.filas_demo;
+  return { ...resumen, filas: filas.length, flows: ['7412880031'], sin_etiqueta: sinEtiqueta,
+    nombre: `whatsapp_encuesta_${encuestaId}.sav`,
+    avisos: sinEtiqueta.length ? [`${sinEtiqueta.length} variable(s) sin etiqueta: el Flow no dice `
+      + 'su texto o el de alguna opción. Corregilas en la revisión antes de ingestar.'] : [],
+    archivo_base64: aBase64(JSON.stringify({ [MARCA_SAV_DEMO]: true, analisis, filas })) };
+}
+
+function savDemo(base64) {
+  const texto = deBase64(base64 || '');
+  if (!texto.includes(MARCA_SAV_DEMO)) return null;
+  try { return JSON.parse(texto); } catch { return null; }
 }

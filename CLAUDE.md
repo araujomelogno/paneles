@@ -640,12 +640,13 @@ mensajes por WhatsApp o correo. Lo que no hay que deshacer:
   que no lleva a la `url_alchemer` de la encuesta se avisa **antes de
   guardar** (`409 url_distinta`). En el modal la confirmación es una
   casilla.
-- **Los estados de entrega (R-CF.7) están diferidos**: la URL de callback de
-  la app de Meta la usa otro sistema y Meta admite una sola. Un envío queda
-  `aceptado` o `fallido`. Cada aceptado guarda su `id_mensaje_meta` (con
-  índice único) y la base ya admite `entregado` y `leido`: sumarlos es una
-  función nueva, sin migrar. No den de alta un webhook sobre la URL que ya
-  está en uso.
+- **Los estados de entrega (R-CF.7) llegan por el webhook de D98**
+  (`main.whatsappwebhook`): un envío pasa de `aceptado` a `entregado` o
+  `leido`, solo hacia adelante, o a `fallido`. Cada aceptado guarda su
+  `id_mensaje_meta` (con índice único), que es por donde el webhook lo
+  encuentra. Meta admite **una** URL de callback por app: cambiarla es el
+  corte de R-WA.7, con su procedimiento en el documento de despliegue, y no
+  se hace de pasada.
 - **Enviar es `enviar_mensajes`** (admin y operaciones), no `fieldear`.
 
 ## Mensajes, canales, selección y audiencias
@@ -767,6 +768,49 @@ escribe todo el acumulado.
   motivo de fondo —el retiro de un estudio, el reproceso que descarta una
   respuesta— se lleva también su historial; si no, borrar una carga la
   podría devolver.
+
+## Participación, Alchemer y la bandeja de WhatsApp
+
+Desde `SPEC_alchemer_participacion_y_bandeja_whatsapp` (D96 a D98,
+`boveda/0038`):
+
+- **La historia de participación es un criterio de la consulta**
+  (`demografia`, dimensión `participacion`), resuelto en la bóveda con un
+  `count(*)` sobre `participacion`: se combina con todo y con el sorteo.
+  «Convocado» mira `convocado_en` e incluye a quien entró por una carga
+  (decisión de la spec, la excepción escrita a «mirar `convocado`»);
+  «respondió» mira la **fecha de campo** de la encuesta, no cuándo se cargó.
+- **La fecha de campo es obligatoria** (`encuestas.exigir_fecha_de_campo` en
+  las rutas que crean y en el `PATCH`; `not null` en la base). Sin ella una
+  encuesta no entraría en ninguna ventana sin que nadie se entere.
+- **Alchemer avisa, no bloquea.** Elegir la encuesta completa nombre y URL;
+  si no guarda el parámetro del panelista se dice y se guarda igual, y se
+  vuelve a verificar al pasar a «en campo». «No se pudo verificar» nunca es
+  «sí». El cuestionario de Alchemer es una **referencia en la bóveda**
+  (`alchemer_cuestionario`): no va al store semántico, donde las preguntas
+  salen del SAV. Las temáticas que propone con él se guardan por la vía de
+  siempre (`PUT /encuestas/<id>/tematicas`).
+- **El webhook de WhatsApp guarda antes de procesar.** El aviso se acepta
+  solo con la firma `X-Hub-Signature-256` verificada (falla cerrado), se
+  guarda crudo y commiteado, y recién después se procesa; lo que falla queda
+  `fallido` para reprocesar y a Meta se le contesta 200 igual. Todo es
+  idempotente por id. No lo muevan a una ruta de `api`: necesita el cuerpo
+  crudo y es público.
+- **La identidad sale del envío** (`context.id` → `envio.id_mensaje_meta`),
+  nunca del `flow_token`, que solo se compara (`flow_token_distinto`). Sin
+  envío es de afuera y se agrupa por el token, como la planilla.
+- **La bandeja tiene teléfonos**: vive en la bóveda, es de
+  `bandeja_whatsapp` (admin y operaciones), cada exportación queda en
+  `whatsapp_exportacion`, lo de afuera y el crudo vencen solos
+  (`bandeja_whatsapp.purgar`), y la baja borra lo de la persona **por
+  `id_persona` y por su teléfono** desde `bajas.retirar`.
+- **Ingestar las respuestas de WhatsApp es ingestar un SAV.** El servidor
+  arma un `.sav` con el diccionario de la definición del Flow
+  (`bandeja_whatsapp.conjunto_de_encuesta`) y la pantalla lo abre en el modal
+  de ingesta de siempre. No escriban una ingesta de WhatsApp: la de
+  `cargas.ingestar` ya resuelve revisión, calidad, temáticas, consentimiento,
+  `repetida` e historial. Lo que el Flow no permite traducir va **sin
+  etiqueta** y se corrige en la revisión.
 
 ## Reglas de negocio que el código debe respetar
 
