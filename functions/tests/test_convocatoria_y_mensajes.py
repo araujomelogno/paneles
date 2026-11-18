@@ -475,14 +475,17 @@ def test_el_envio_queda_aceptado_o_fallido_y_guarda_el_id_de_meta(ctx, actor, me
     assert len({f["id_mensaje_meta"] for f in filas if f["id_mensaje_meta"]}) == len(filas) - 1
 
 
-def test_no_hay_funcion_de_webhook_que_desplegar():
-    """R-CF.7 quedó diferido: la URL de callback de la app de Meta la usa
-    otro sistema y Meta admite una sola. Ni la función ni sus secretos."""
+def test_el_webhook_es_su_propia_funcion_con_sus_secretos():
+    """R-CF.7 quedó diferido en D86 y lo cierra D98: `whatsappwebhook` es una
+    función aparte de `api` (pública, con la firma de Meta sobre el cuerpo
+    crudo) y sus dos secretos están declarados. Cambiar la URL en Meta es el
+    corte de R-WA.7, no parte del deploy."""
     import pathlib
 
     main = (pathlib.Path(__file__).resolve().parents[1] / "main.py").read_text()
-    for ausente in ("whatsappwebhook", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET"):
-        assert ausente not in main, ausente
+    for presente in ("def whatsappwebhook(", '"WHATSAPP_VERIFY_TOKEN"', '"WHATSAPP_APP_SECRET"'):
+        assert presente in main, presente
+    assert "bandeja_whatsapp.atender(" in main
 
 
 # ════════════════════════════════════════════════════════════════════

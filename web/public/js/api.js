@@ -249,7 +249,7 @@ export const encuestas = {
   tematicasDesdeAlchemer: (id) => POST(`/encuestas/${id}/alchemer/tematicas`, {}),
   /* R-WA.6 (D98) — cuántas respuestas de WhatsApp tiene (y cuántas nuevas
      desde la última carga), y su `.sav` con el diccionario del Flow. */
-  whatsapp: (id) => GET(`/encuestas/${id}/whatsapp`),
+  whatsapp: (id) => GET(`/encuestas/${id}/whatsapp/resumen`),
   whatsappArchivo: (id) => POST(`/encuestas/${id}/whatsapp/archivo`, {}),
   guardarTematicas: (id, tematicas) => PUT(`/encuestas/${id}/tematicas`, { tematicas }),
   /* R-EU.5 — «crear encuesta con estos panelistas»: la foto de la selección

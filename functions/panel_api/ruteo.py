@@ -765,7 +765,7 @@ def bandeja_reprocesar(ctx, actor, params, cuerpo, consulta):
     return 200, bandeja_whatsapp.reprocesar(ctx.boveda, (cuerpo or {}).get("ids"))
 
 
-@ruta("GET", "/encuestas/<encuesta_id>/whatsapp", "ingestar", requisito="R-WA.6")
+@ruta("GET", "/encuestas/<encuesta_id>/whatsapp/resumen", "ingestar", requisito="R-WA.6")
 def whatsapp_de_encuesta(ctx, actor, params, cuerpo, consulta):
     """Cuántas respuestas de WhatsApp tiene la encuesta y cuántas personas
     son nuevas desde la última carga. Sin teléfonos: es para el analista."""

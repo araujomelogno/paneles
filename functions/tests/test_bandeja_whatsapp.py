@@ -480,7 +480,7 @@ def test_obtener_respuestas_informa_las_nuevas_y_la_carga_marca_repetidas(ctx, a
     """Criterio de aceptación (en chico): 3 respuestas y una carga anterior
     con 2 → 1 nueva; al ingestar, las 2 de antes quedan «repetida»."""
     _responder(ctx.boveda, ola, [0, 1])
-    status, resumen = ruteo.despachar("GET", f"/encuestas/{ola['encuesta']['id']}/whatsapp",
+    status, resumen = ruteo.despachar("GET", f"/encuestas/{ola['encuesta']['id']}/whatsapp/resumen",
                                       None, {}, actor("analista"), ctx)
     assert (resumen["personas"], resumen["nuevas"]) == (2, 2)
     assert "telefono" not in json.dumps(resumen, default=str)
@@ -492,7 +492,7 @@ def test_obtener_respuestas_informa_las_nuevas_y_la_carga_marca_repetidas(ctx, a
     assert any(t.endswith("¿Le gustó el producto? → Sí") for t in textos), textos
 
     _responder(ctx.boveda, ola, [2], desde=10)
-    _, resumen = ruteo.despachar("GET", f"/encuestas/{ola['encuesta']['id']}/whatsapp",
+    _, resumen = ruteo.despachar("GET", f"/encuestas/{ola['encuesta']['id']}/whatsapp/resumen",
                                  None, {}, actor("analista"), ctx)
     assert (resumen["personas"], resumen["nuevas"], resumen["repetidas"]) == (3, 1, 2)
     _, salida = ruteo.despachar("POST", f"/encuestas/{ola['encuesta']['id']}/whatsapp/archivo",

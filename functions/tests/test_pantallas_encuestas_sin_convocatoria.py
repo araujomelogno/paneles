@@ -77,7 +77,8 @@ def test_una_encuesta_desde_una_consulta_sigue_mostrando_convocatoria(pagina):
         const api = await import('/js/api.js');
         const { items } = await api.panelistas.listar({ limite: 3 });
         await api.encuestas.desdeConsulta('Seguimiento desde consulta',
-          { items: items.map((p) => ({ id_persona: p.id_persona })) }, null, {});
+          { items: items.map((p) => ({ id_persona: p.id_persona })) }, null,
+          { fecha_campo: '2026-11-20' });
     }""")
     _abrir(pagina, "Seguimiento desde consulta")
     assert pagina.text_content("#titulo-participacion").strip() == "Convocatoria"

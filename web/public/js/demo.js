@@ -1775,7 +1775,7 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
     bd.avisosWhatsappFallidos = 0;
     return { reprocesados: n, procesados: n, fallidos: 0 };
   }
-  if (metodo === 'GET' && partes[0] === 'encuestas' && partes[2] === 'whatsapp' && partes.length === 3) {
+  if (metodo === 'GET' && partes[0] === 'encuestas' && partes[2] === 'whatsapp' && partes[3] === 'resumen') {
     const r = resumenWhatsappDemo(Number(partes[1]));
     delete r.filas_demo;
     return r;
