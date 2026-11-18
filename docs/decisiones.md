@@ -5832,3 +5832,172 @@ y **Siguiente**, que revisa de nuevo. Y se arregló que con un `.csv` o un
 `web/public/js/respuestas.js`, `web/public/js/demo.js`. Pruebas:
 `functions/tests/test_pedido_historial_respuestas_por_carga.py`,
 `functions/tests/test_pantallas_cancelar_mixta_incrementales.py`.
+
+## D96 · Consultar por historia de participación, y la fecha de campo obligatoria
+
+`SPEC_alchemer_participacion_y_bandeja_whatsapp`, parte B. La consulta podía
+filtrar por atributos, temáticas, clientes y encuestas, pero no por **cuándo**
+se convocó o respondió a alguien. Para cuidar la fatiga («no convocados en los
+últimos 6 meses»), priorizar a los activos o depurar el panel había que cruzar
+listas a mano.
+
+- **R-PAR.1 — un criterio más de la consulta** (`demografia`, dimensión
+  `participacion`): `relacion` (`convocado` | `respondio`), `operador`
+  (`in` = sí, `not_in` = no), `ventana` (`meses`, `entre`, `siempre`) y
+  `veces` (P1: «al menos N» con sí, «menos de N» con no). Se resuelve en la
+  bóveda con un `count(*)` correlacionado sobre `participacion`, así que se
+  combina con todo lo demás y con el sorteo con semilla (D89) sin código
+  nuevo. Lo mal formado (relación desconocida, ventana sin meses, «desde»
+  posterior a «hasta», veces menor que 1) es error, nunca un filtro ignorado.
+- **«Convocado» mira `convocado_en`, no el flag `convocado`.** Es la decisión
+  que tomó la spec: incluye a quien entró por una carga sin convocatoria
+  formal (D81), porque para la fatiga cuenta igual haber estado en un
+  estudio. Es la excepción a «lo que pregunta “¿lo convocamos?” mira
+  `convocado`», y por eso está escrita acá. **«Respondió» mira la fecha de
+  campo de la encuesta**, no `respondio_en`: lo que importa es cuándo fue el
+  estudio, no cuándo se cargó el archivo.
+- **R-PAR.2 — la fecha de campo es obligatoria.** Una encuesta sin fecha no
+  entraría en ninguna ventana sin que nadie se entere. `POST /encuestas`,
+  `POST /encuestas/desde-consulta` y `POST /cargas` la exigen
+  (`encuestas.exigir_fecha_de_campo`, 400 con el campo), y `PATCH` no deja
+  vaciarla. La `boveda/0038` completa las que no la tienen con la fecha de su
+  **primera carga** (o la de creación), las anota en
+  `encuesta_fecha_completada` con la fuente para que el equipo las revise y
+  vuelve la columna `not null`. El `default current_date` de la base es para
+  los caminos internos que crean una encuesta sin formulario (la automática
+  de una carga ya la recibe); los formularios la piden siempre.
+- **Cambia datos**: corrida de prueba y verificación en
+  `scripts/migrar_fecha_de_campo.py`, que ejecuta el mismo archivo en una
+  transacción que se deshace y lista lo que va a completar.
+
+**Dónde vive.** `db/boveda/0038_…`, `scripts/migrar_fecha_de_campo.py`,
+`functions/panel_api/demografia.py`, `encuestas.py`, `ruteo.py`,
+`web/public/js/paginas/consultas.js`, `web/public/js/estudio.js`. Pruebas:
+`functions/tests/test_spec_participacion_y_alchemer.py`.
+
+## D97 · Alchemer al crear la encuesta: elegirla, verificar el parámetro y traer el cuestionario
+
+Parte A. La URL de Alchemer se pegaba a mano, sin saber si la encuesta
+guardaba el parámetro con el `id_persona`: si no lo guardaba, las respuestas
+volvían sin identidad y se descubría en la ingesta, con el campo terminado.
+
+- **R-ALC.1 — credenciales**: `ALCHEMER_API_TOKEN` y `ALCHEMER_API_SECRET` en
+  Secret Manager (declarados en `SECRETOS`); región (`ALCHEMER_REGION`: us, eu,
+  ca) o URL (`ALCHEMER_API_URL`) y nombre del parámetro (`ALCHEMER_PARAMETRO`,
+  `pid`) en `functions/.env`. Ningún nombre usa un prefijo reservado. Sin
+  credenciales, la búsqueda lo dice y la URL se escribe a mano, como antes.
+- **R-ALC.2 — elegir en lugar de pegar.** El campo «Encuesta de Alchemer» del
+  formulario del estudio (`estudio.js`, el mismo para la carga, «Nueva
+  encuesta» y la encuesta desde una consulta) busca por título; elegida, se
+  completan el nombre (editable) y la URL con `?pid=`, y si tiene más de un
+  enlace se elige cuál. Se guarda `encuesta.alchemer_id`.
+- **R-ALC.3 — verificar el parámetro: avisa, no bloquea.** No hay en la API
+  una marca de «esta encuesta guarda la variable de URL», así que se busca el
+  **código de fusión** (`[url("pid")]`, `[url:pid]`) en todo lo que devuelve
+  `surveyquestion`: preguntas ocultas, valores por defecto, acciones. Es una
+  heurística y se presenta como tal. Tres estados: guarda, no guarda (aviso
+  «las respuestas no van a traer el id_persona») y **no se pudo verificar**,
+  que nunca se informa como «sí». La encuesta se guarda igual. Al pasar a
+  **en campo** se vuelve a verificar, porque la encuesta de Alchemer pudo
+  cambiar después de vincularla, y el aviso vuelve en el `PATCH`.
+- **R-ALC.4 — el cuestionario como referencia, en la bóveda**
+  (`alchemer_cuestionario`). No va al store semántico: los códigos de la API
+  pueden no coincidir con los del SAV y escribirlo ahí duplicaría preguntas;
+  las respuestas siguen entrando por el SAV. Sirve para ver las preguntas y
+  para **proponer temáticas antes del campo** (`POST
+  /encuestas/<id>/alchemer/tematicas`), con `tematicas.preguntas_para_proponer`
+  —solo código y texto— y sin escribir: lo aceptado se guarda con `PUT
+  /encuestas/<id>/tematicas`, como siempre (R-TEM). «Actualizar desde
+  Alchemer» lo vuelve a traer.
+
+**Dónde vive.** `functions/panel_api/alchemer.py`, `ruteo.py`,
+`web/public/js/estudio.js`, `web/public/js/paginas/encuestas.js`. Pruebas:
+`functions/tests/test_spec_participacion_y_alchemer.py`,
+`functions/tests/test_pantallas_alchemer_participacion_y_bandeja.py`.
+
+## D98 · La bandeja de WhatsApp: el webhook de Meta pasa de la planilla a paneles
+
+Parte C. Las respuestas de los Flows, los comentarios y los estados de entrega
+llegaban a una planilla de Google por un Apps Script, porque Meta admite **una
+sola** URL de callback por app y estaba en uso (por eso D85 dejó diferidos los
+estados, R-CF.7). Ahora la URL es de paneles.
+
+- **R-WA.1 — el webhook es su propia función** (`main.whatsappwebhook`), no
+  una ruta de `api`: es pública (Meta no manda un token de Firebase), necesita
+  los bytes crudos del cuerpo para la firma, y ninguna ruta del ruteo es
+  pública sin estar en `es_publica`. `GET` responde el `hub.challenge` si el
+  `hub.verify_token` coincide con `WHATSAPP_VERIFY_TOKEN`; `POST` verifica
+  `X-Hub-Signature-256` con `WHATSAPP_APP_SECRET` y **falla cerrado** (sin
+  secreto, nada es válido).
+- **Primero se guarda, después se procesa.** El aviso se guarda crudo en
+  `whatsapp_aviso` (único por la huella de sus bytes) y se commitea; recién
+  después se procesa, en su propia transacción. Si falla, queda `fallido` con
+  el motivo —sin contenido— y a Meta se le contesta 200 igual: el aviso ya es
+  nuestro, y un 5xx lo haría reintentar algo que no va a cambiar. Se
+  reprocesa desde la bandeja; todo lo que escribe es idempotente por id. Los
+  `pendientes` de un proceso que murió se levantan con el aviso siguiente.
+  «Diferido» es eso y no una cola de Cloud Tasks: procesar un aviso son unas
+  pocas filas y cabe en lo que Meta espera; una cola agregaría una pieza que
+  falla sin que el crudo deje de ser la garantía.
+- **R-WA.2 — tres tipos**: `interactive.nfm_reply` (respuesta de Flow, el
+  `flow_token` se separa de la respuesta), texto/botón/interactivo
+  (comentario; un adjunto se registra como `[image]` sin bajarlo) y
+  `statuses`, que van a `whatsapp_estado` y llevan `envio.estado` a
+  `entregado`, `leido` o `fallido` **solo hacia adelante** (los avisos llegan
+  desordenados). **Cierra R-CF.7.**
+- **R-WA.3 — la identidad sale del envío**: `context.id` →
+  `envio.id_mensaje_meta` → persona, encuesta y mensaje. El `flow_token` solo
+  se compara: si no coincide es `flow_token_distinto`, no otra persona. Sin
+  envío es una encuesta de afuera y se agrupa como la planilla: `tpl=NOMBRE|…`,
+  lo anterior a `|`, o «GENERAL». Un comentario sin `context.id` no se asocia
+  por teléfono a «su último envío»: sería adivinar.
+- **R-WA.4 — la sección «WhatsApp»**, con el permiso `bandeja_whatsapp`
+  (admin y operaciones: tiene teléfonos, también de gente que no es
+  panelista). Una tabla por encuesta o plantilla con una columna por campo;
+  las de pantalla ordenadas por pantalla y número de componente
+  (`screen_0_Radio_1`, `screen_1_Checkbox_2`…), porque `jsonb` no conserva el
+  orden de llegada. Comentarios en otra pestaña. La exportación a CSV deja su
+  fila en `whatsapp_exportacion` (actor, filtro, filas).
+- **R-WA.5 — privacidad**: todo en la bóveda. Lo de afuera (sin `id_persona`)
+  se borra a los `WHATSAPP_CONSERVAR_AFUERA_DIAS` (180); el aviso crudo
+  procesado a los `WHATSAPP_CONSERVAR_AVISO_DIAS` (30), y cualquier crudo al
+  plazo largo. La purga corre con cada aviso y al abrir la bandeja: no hace
+  falta un proceso programado. La **baja** (`bajas.retirar`) borra lo del
+  panelista por `id_persona` **y por su teléfono** —lo que mandó desde su
+  número a una encuesta de afuera, y los crudos que lo nombran—, antes del
+  `delete from persona`, porque después no queda el celular para buscarlo.
+- **R-WA.6 — ingestar es un SAV.** «Obtener respuestas de WhatsApp» en la
+  ficha dice cuántas personas son **nuevas desde la última carga** (las que no
+  tienen vínculo con ninguna carga de la encuesta) y arma un `.sav` de verdad
+  (`pyreadstat.write_sav`) con el diccionario que sale de la **definición del
+  Flow** bajada de Meta (`/{flow_id}/assets` → `flow.json`): el payload de la
+  acción `complete` dice de qué componente sale cada campo (`${form.X}`,
+  `${screen.S.form.X}` o `${data.K}` pasado entre pantallas), la etiqueta del
+  componente es el texto de la pregunta (con la pantalla delante si dos dirían
+  lo mismo) y el `data-source` traduce los ids de opción. Cerrada → códigos
+  1..n con etiquetas; selección múltiple → una variable por opción
+  (`Pregunta:Opción`, 1 = marcada), como las baterías del SAV de Alchemer;
+  texto → abierta; lo que no se puede traducir va **sin etiqueta** y se avisa.
+  La pantalla lo abre en el **mismo modal de ingesta** que un archivo elegido a
+  mano, así que análisis, revisión, calidad del dato, temáticas,
+  consentimiento, carga incremental (`repetida`, D94) e historial (D95) son los
+  de siempre. **No hay una segunda ingesta.** La identidad es el `id_persona`
+  del envío, una fila por persona con su última respuesta.
+- **R-WA.7 — el corte** es operativo y está en el documento de despliegue:
+  desplegar la función no cambia nada hasta cambiar la URL en la app de Meta,
+  en un momento sin Flows en campo, con la verificación y un aviso de prueba
+  firmado antes, y la vuelta atrás es volver a poner la URL de la planilla.
+
+**De paso:** la barra lateral no se desplazaba y, con veinte secciones en una
+pantalla de 720 px de alto, las últimas quedaban fuera de alcance. Ahora la
+lista de secciones se desplaza sola.
+
+**Fuera de esta entrega (P1/P2 de la spec):** ingestar una encuesta de afuera
+(identidad por teléfono) e importar el histórico de la planilla.
+
+**Dónde vive.** `db/boveda/0038_…`, `functions/main.py`
+(`whatsappwebhook`), `functions/panel_api/bandeja_whatsapp.py`, `bajas.py`,
+`auth.py`, `ruteo.py`, `web/public/js/paginas/whatsapp.js`,
+`web/public/js/paginas/encuestas.js`, `web/public/js/app.js`,
+`web/public/js/demo.js`. Pruebas: `functions/tests/test_bandeja_whatsapp.py`,
+`functions/tests/test_pantallas_alchemer_participacion_y_bandeja.py`.

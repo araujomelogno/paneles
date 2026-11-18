@@ -35,7 +35,9 @@ EVIDENCIA = {
     "uso_semantico": {"variable": "CONS", "valor_afirmativo": "1",
                       "version_texto": VERSION},
 }
-DATOS_DEL_ARCHIVO = {"tipo_datos_origen": "encuesta", "modo_relevamiento": "web"}
+DATOS_DEL_ARCHIVO = {"tipo_datos_origen": "encuesta", "modo_relevamiento": "web",
+                     # R-PAR.2 (D96): la carga desde Panelistas exige la fecha.
+                     "fecha_estudio": "2026-11-01"}
 
 
 RAIZ = pathlib.Path(__file__).resolve().parents[2]

@@ -119,6 +119,10 @@ button { cursor: pointer; font-family: 'Montserrat', sans-serif; }
 /* ══ APP LAYOUT (coordinadora) ══ */
 .app { display: flex; min-height: 100vh; }
 .sidebar { width: 240px; flex-shrink: 0; background: var(--dark); display: flex; flex-direction: column; position: fixed; height: 100vh; z-index: 10; }
+/* La lista de secciones se desplaza sola: con 20 secciones y una pantalla de
+   720 px de alto, las últimas quedaban debajo del borde y no había forma de
+   llegar a ellas. */
+#nav { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .sidebar-top { padding: 1.5rem 1.2rem 1.3rem; border-bottom: 1px solid rgba(255,255,255,0.08); }
 .sidebar-section-label { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.32); padding: 1.1rem 1.2rem 0.5rem; }
 .nav-item { display: flex; align-items: center; gap: 0.7rem; padding: 0.75rem 1.2rem; width: 100%; text-align: left; border: none; background: none;
@@ -137,6 +141,7 @@ button { cursor: pointer; font-family: 'Montserrat', sans-serif; }
   .sidebar { position: static; width: 100%; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; }
   .sidebar-top { width: 100%; border-bottom: 1px solid rgba(255,255,255,0.08); }
   .sidebar-section-label { display: none; }
+  #nav { overflow: visible; display: contents; }
   .nav-item { width: auto; }
   .sidebar-footer { margin-left: auto; border: none; }
   .user-pill { margin-bottom: 0; }
@@ -676,3 +681,6 @@ tr.en-lista-negra td { background: var(--red-light); }
 .dos-urls { display: grid; gap: .35rem; margin: .5rem 0; }
 .dos-urls > div { display: grid; gap: .1rem; }
 .dos-urls code { word-break: break-all; padding: .25rem .4rem; background: var(--fondo-suave, #f4f4f5); border-radius: 4px; }
+
+/* R-PAR.2 (D96) — un campo obligatorio del formulario del estudio. */
+.obligatorio { color: var(--orange); font-weight: 700; margin-left: .15rem; }

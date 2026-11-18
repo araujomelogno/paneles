@@ -67,6 +67,11 @@ PERMISOS = {
     # analista, que sí fieldea e ingesta. Armar los mensajes es `fieldear`;
     # lanzarlos, esto. (Reemplaza a `enviar_whatsapp` de R4.5.)
     "enviar_mensajes": {"admin", "operaciones"},
+    # R-WA.4 (D98) — la bandeja de WhatsApp: respuestas y comentarios con
+    # **teléfonos**, también de gente que no es panelista, y su exportación
+    # a CSV. Va con quien opera el campo y envía los mensajes; el analista
+    # ve las respuestas de una encuesta cuando se ingestan, sin teléfonos.
+    "bandeja_whatsapp": {"admin", "operaciones"},
     # R4.1.b — declarar que dos preguntas de olas distintas son la misma
     # medición. Es una decisión metodológica, así que es del analista tanto
     # como de operaciones. El dpo no: no es su trabajo y una serie mal armada

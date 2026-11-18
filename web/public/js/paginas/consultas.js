@@ -195,6 +195,8 @@ export async function render(main, ctx) {
                   title="Quienes participaron (o no) en estudios para un cliente">+ Cliente</button>
           <button class="btn btn-outline btn-sm" id="agregar-encuesta"
                   title="Quienes están (o no) en la audiencia de una encuesta, o la respondieron">+ Encuesta</button>
+          <button class="btn btn-outline btn-sm" id="agregar-participacion"
+                  title="Convocados o que respondieron (o no) en una ventana de tiempo">+ Participación</button>
           <span class="toolbar-spacer"></span>
           <button class="btn btn-outline btn-sm" id="parametros">Parámetros</button>
         </div>
@@ -261,6 +263,7 @@ export async function render(main, ctx) {
   $('#seleccion').onchange = (e) => { definicion.seleccion = e.target.value; ayudaSeleccion(); };
   ayudaSeleccion();
   $('#agregar-encuesta').onclick = () => abrirCriterioEncuesta();
+  $('#agregar-participacion').onclick = () => abrirCriterioParticipacion();
   $('#dejar-de-agregar')?.addEventListener('click', () => {
     agregandoA = null;
     contexto.irA('consultas');
@@ -333,6 +336,9 @@ function pintarCriterios() {
         ? `<span class="badge badge-user">cliente</span>
            <strong>${esc(c.etiqueta || `${c.operador === 'not_in' ? 'No participó' : 'Participó'}
              en estudios para ${(Array.isArray(c.valor) ? c.valor : [c.valor]).join(' o ')}`)}</strong>`
+      : c.dimension === 'participacion'
+        ? `<span class="badge badge-user">participación</span> <strong>${esc(c.etiqueta
+          || 'Historia de participación')}</strong>`
       : c.dimension === 'encuesta'
         ? `<span class="badge badge-user">encuesta</span> <strong>${esc(c.etiqueta
           || `${c.operador === 'not_in' ? 'No ' : ''}${c.relacion === 'respondio'
@@ -601,6 +607,101 @@ async function abrirCriterioEncuesta() {
         } },
     ],
   });
+}
+
+/* R-PAR.1 (D96) — la historia de participación: convocado o respondió, sí o
+   no, en una ventana (últimos N meses, entre dos fechas o alguna vez) y,
+   opcionalmente, cuántas veces. Se resuelve en la bóveda; la etiqueta la
+   arma el servidor al normalizar (la de acá es la misma, para mostrarla ya). */
+function abrirCriterioParticipacion() {
+  const caja = modal({
+    titulo: 'Historia de participación',
+    ancho: '600px',
+    cuerpo: `
+      <div class="form-row">
+        <div class="form-group"><label>Quiénes</label>
+          <select class="fselect" name="relacion">
+            <option value="convocado">Convocados</option>
+            <option value="respondio">Que respondieron</option>
+          </select>
+          <div class="field-hint" data-ayuda-relacion></div></div>
+        <div class="form-group"><label>&nbsp;</label>
+          <select class="fselect" name="operador">
+            <option value="not_in">No (excluir)</option>
+            <option value="in">Sí (solo esos)</option>
+          </select></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Cuándo</label>
+          <select class="fselect" name="ventana">
+            <option value="meses">En los últimos…</option>
+            <option value="entre">Entre dos fechas</option>
+            <option value="siempre">Alguna vez</option>
+          </select></div>
+        <div class="form-group" data-ventana="meses"><label>Meses</label>
+          <input type="number" class="finput" name="meses" min="1" max="240" value="6" /></div>
+        <div class="form-group hidden" data-ventana="entre"><label>Desde</label>
+          <input type="date" name="desde" /></div>
+        <div class="form-group hidden" data-ventana="entre"><label>Hasta</label>
+          <input type="date" name="hasta" /></div>
+      </div>
+      <div class="form-group"><label>Veces (opcional)</label>
+        <input type="number" class="finput" name="veces" min="1" value="1" style="max-width:8rem" />
+        <div class="field-hint">Con «Sí», al menos esas veces; con «No», menos de esas veces.
+          Por ejemplo: convocados <em>Sí</em>, 3 veces, y respondieron <em>No</em>, alguna vez.</div></div>
+      <div class="field-hint">Para cuidar la fatiga (no convocados en los últimos 6 meses), priorizar
+        a los activos (respondieron en el último año) o depurar el panel (convocados que nunca
+        respondieron). Se combina con todos los demás criterios y con la selección aleatoria.</div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Agregar', clase: 'btn-orange', onClick: (c) => {
+          const relacion = $('[name="relacion"]', c).value;
+          const operador = $('[name="operador"]', c).value;
+          const tipo = $('[name="ventana"]', c).value;
+          const ventana = { tipo };
+          if (tipo === 'meses') ventana.meses = Number($('[name="meses"]', c).value) || 6;
+          if (tipo === 'entre') {
+            ventana.desde = $('[name="desde"]', c).value;
+            ventana.hasta = $('[name="hasta"]', c).value;
+            if (!ventana.desde || !ventana.hasta) {
+              toast('Indicá las dos fechas de la ventana.', 'err');
+              return;
+            }
+          }
+          const veces = Math.max(1, Number($('[name="veces"]', c).value) || 1);
+          definicion.criterios.push({
+            tipo: 'demografico', dimension: 'participacion', relacion, operador, ventana, veces,
+            etiqueta: etiquetaDeParticipacion(relacion, operador, ventana, veces),
+          });
+          cerrarModal();
+          pintarCriterios();
+        } },
+    ],
+  });
+  const ayuda = () => {
+    $('[data-ayuda-relacion]', caja).textContent = $('[name="relacion"]', caja).value === 'respondio'
+      ? 'Respondió una encuesta cuya fecha de campo cae en la ventana.'
+      : 'Convocado en la ventana, incluso si entró por una carga sin convocatoria formal.';
+  };
+  $('[name="relacion"]', caja).onchange = ayuda;
+  ayuda();
+  $('[name="ventana"]', caja).onchange = (e) => {
+    $$('[data-ventana]', caja).forEach((g) => g.classList.toggle('hidden', g.dataset.ventana !== e.target.value));
+  };
+}
+
+/* La misma etiqueta que `demografia._criterio_participacion`. */
+export function etiquetaDeParticipacion(relacion, operador, ventana, veces = 1) {
+  const que = relacion === 'respondio' ? 'respondió' : 'convocado';
+  const Que = que.charAt(0).toUpperCase() + que.slice(1);
+  const cuando = ventana.tipo === 'meses' ? `en los últimos ${ventana.meses} meses`
+    : ventana.tipo === 'entre' ? `entre el ${ventana.desde} y el ${ventana.hasta}` : 'alguna vez';
+  if (veces > 1) {
+    return operador === 'in' ? `${Que} al menos ${veces} veces ${cuando}`
+      : `${Que} menos de ${veces} veces ${cuando}`;
+  }
+  if (operador === 'in') return `${Que} ${cuando}`;
+  return ventana.tipo === 'siempre' ? `Nunca ${que}` : `No ${que} ${cuando}`;
 }
 
 function abrirCriterioDemografico() {

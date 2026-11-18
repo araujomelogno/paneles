@@ -168,10 +168,12 @@ def test_nueva_encuesta_independiente_con_el_mismo_formulario_que_la_carga(pagin
     de_la_encuesta = [c.get_attribute("data-campo-estudio")
                       for c in pagina.locator("[data-campo-estudio]").all()]
     assert de_la_encuesta == de_la_carga == [
-        "nombre", "fecha_campo", "publico_objetivo", "clientes", "url_alchemer", "descripcion"]
+        "nombre", "fecha_campo", "publico_objetivo", "clientes", "alchemer", "url_alchemer",
+        "descripcion"]
     pagina.select_option("#tipo-nueva", "independiente")
     assert not pagina.is_visible("#grupo-panel")
     pagina.fill('.modal-box [name="nombre"]', "Estudio en pasos")
+    pagina.fill('.modal-box [name="fecha_campo"]', "2026-11-20")   # R-PAR.2
     pagina.click(".modal-foot .btn-orange")
     pagina.wait_for_selector("#titulo-participacion")
     assert pagina.text_content("#titulo-participacion").strip() == "Convocatoria"

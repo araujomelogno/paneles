@@ -26,7 +26,7 @@ import threading
 import pytest
 
 from panel_api import cargas, db, diferida, ficha, ingesta, ruteo
-from panel_api.errores import IngestaEnCurso
+from panel_api.errores import DatosInvalidos, IngestaEnCurso
 
 from conftest import _conectar
 from test_ingesta_diferida import _filas, _plan, _procesar_todo, ola  # noqa: F401
@@ -253,11 +253,15 @@ def test_la_ficha_muestra_la_fecha_en_las_respuestas_de_la_carga(ctx, carga):
     assert {i["fecha_campo"] for i in items} == {"2026-08-15"}
 
 
-def test_una_carga_sin_fecha_del_estudio_no_inventa_una(ctx, conn_boveda):
+def test_una_carga_creada_sin_fecha_toma_la_del_dia(ctx, conn_boveda):
+    """R-PAR.2 (D96) — la fecha de campo es obligatoria: los formularios la
+    piden, y un camino interno que no la pasa toma la del día (el `default`
+    de la base), que es la que llega al cuestionario."""
     sin_fecha = cargas.crear(conn_boveda, "Sin fecha", tipo_datos_origen="encuesta",
                              modo_relevamiento="web")
     _cargar(ctx, sin_fecha, [_fila(1)])
-    assert _fecha_del_cuestionario(ctx.semantica, sin_fecha["ref_estudio"]) is None
+    hoy = db.una(conn_boveda, "select current_date as d")["d"]
+    assert _fecha_del_cuestionario(ctx.semantica, sin_fecha["ref_estudio"]) == hoy
 
 
 def test_una_encuesta_sigue_dejando_su_fecha_de_campo(
@@ -315,11 +319,14 @@ def test_editar_la_fecha_del_estudio_actualiza_el_cuestionario(ctx, actor, carga
     assert _fecha_del_cuestionario(ctx.semantica, carga["ref_estudio"]) \
         == datetime.date(2026, 9, 1)
 
-    # Vaciarla también se propaga: la ficha no puede seguir mostrando una
-    # fecha que el analista borró.
-    ruteo.despachar("PATCH", f"/cargas/{carga['id']}",
-                    {"fecha_estudio": None}, {}, actor("analista"), ctx)
-    assert _fecha_del_cuestionario(ctx.semantica, carga["ref_estudio"]) is None
+    # R-PAR.2 (D96) — vaciarla ya no se puede: la fecha es obligatoria, y el
+    # cuestionario conserva la última.
+    with pytest.raises(DatosInvalidos):
+        ruteo.despachar("PATCH", f"/cargas/{carga['id']}",
+                        {"fecha_estudio": None}, {}, actor("analista"), ctx)
+    ctx.boveda.rollback()
+    assert _fecha_del_cuestionario(ctx.semantica, carga["ref_estudio"]) \
+        == datetime.date(2026, 9, 1)
 
 
 def test_editar_otra_cosa_no_toca_el_store_semantico(ctx, actor, carga):

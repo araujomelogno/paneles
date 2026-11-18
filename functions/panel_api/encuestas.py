@@ -37,7 +37,7 @@ ORIGEN_MANUAL = "manual"
 ORIGENES = (ORIGEN_PANEL, ORIGEN_CONSULTA, ORIGEN_CARGA, ORIGEN_MANUAL)
 
 _COLUMNAS = ("id, panel_id, tipo, origen, nombre, fecha_campo, publico_objetivo, "
-             "url_alchemer, descripcion, estado, ref_estudio, creado_en")
+             "url_alchemer, descripcion, estado, ref_estudio, creado_en, alchemer_id")
 
 
 def _fecha(crudo):
@@ -58,6 +58,21 @@ def _fecha(crudo):
 
 def _texto(crudo):
     return (str(crudo).strip() or None) if crudo is not None else None
+
+
+# R-PAR.2 (D96) — lo que dicen los formularios cuando falta la fecha.
+FALTA_FECHA_DE_CAMPO = (
+    "La encuesta necesita su fecha de campo: ubica sus respuestas en el tiempo y "
+    "es lo que mira la consulta por historia de participación.")
+
+
+def exigir_fecha_de_campo(crudo, campo="fecha_campo"):
+    """R-PAR.2 — los formularios de encuesta y de carga exigen la fecha de
+    campo. Devuelve la fecha como `date`."""
+    fecha = _fecha(crudo)
+    if fecha is None:
+        raise DatosInvalidos(FALTA_FECHA_DE_CAMPO, {"campo": campo})
+    return fecha
 
 
 def _exigir_panel_activo(conn, panel_id):
@@ -112,7 +127,10 @@ def crear(conn, panel_id, nombre, fecha_campo=None, tipo=None,
         f"""
         insert into encuesta (panel_id, tipo, origen, nombre, fecha_campo,
                               publico_objetivo, descripcion, estado, url_alchemer)
-             values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+             -- R-PAR.2 (D96): la fecha de campo es obligatoria. Las rutas la
+             -- exigen (`exigir_fecha_de_campo`); un camino interno que no la
+             -- pase toma la de hoy, como el default de la columna.
+             values (%s, %s, %s, %s, coalesce(%s, current_date), %s, %s, %s, %s)
           returning {_COLUMNAS}
         """,
         (panel_id if tipo == DE_PANEL else None, tipo, origen, nombre,
@@ -139,6 +157,8 @@ def _serializar(fila):
         "descripcion": fila.get("descripcion"),
         # R-CF.3 — a dónde lleva el botón del mensaje, con el parámetro.
         "url_alchemer": fila.get("url_alchemer"),
+        # R-ALC.2 (D97) — la encuesta de Alchemer vinculada, si la hay.
+        "alchemer_id": fila.get("alchemer_id"),
         "estado": fila["estado"],
         "ref_estudio": str(fila["ref_estudio"]),
         "creado_en": fila["creado_en"].isoformat(),
@@ -289,8 +309,9 @@ def editar(conn, encuesta_id, cambios, conn_semantica=None):
     fecha = "fecha_campo" if "fecha_campo" in cambios else (
         "fecha_estudio" if "fecha_estudio" in cambios else None)
     if fecha:
+        # R-PAR.2 — se corrige, no se vacía.
         columnas.append("fecha_campo")
-        valores.append(_fecha(cambios.get(fecha)))
+        valores.append(exigir_fecha_de_campo(cambios.get(fecha), fecha))
     if columnas:
         db.ejecutar(
             conn,

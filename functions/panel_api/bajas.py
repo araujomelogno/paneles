@@ -227,6 +227,18 @@ def retirar(conn_boveda, id_persona, finalidad=TODAS, actor=None,
                     correo.borrar_de(conn_boveda, fila["email"])
             except Exception:  # noqa: BLE001 — sin la 0023 no hay nada que borrar
                 pass
+        # R-WA.5 (D98) — la bandeja de WhatsApp: lo suyo por `id_persona` (la
+        # cascada lo haría igual) y **por su teléfono**, que es lo que la
+        # cascada no ve: lo que mandó desde su número a una encuesta de
+        # afuera, y los avisos crudos que lo nombran. Antes del `delete`,
+        # porque después no queda el celular para buscarlo.
+        from . import bandeja_whatsapp
+
+        try:
+            with conn_boveda.transaction():
+                bandeja_whatsapp.borrar_de_persona(conn_boveda, id_persona)
+        except Exception:  # noqa: BLE001 — sin la 0038 no hay nada que borrar
+            pass
         # Borra la PII. Las FK con `on delete cascade` se llevan alias,
         # membresías, consentimientos, participaciones y movimientos de puntos.
         pii_borrada = db.ejecutar(

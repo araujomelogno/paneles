@@ -71,6 +71,24 @@ DIMENSION_ENCUESTA = "encuesta"
 AUDIENCIA, RESPONDIO = "audiencia", "respondio"
 RELACIONES_ENCUESTA = {AUDIENCIA: "está en la audiencia de", RESPONDIO: "respondió"}
 
+# R-PAR.1 (D96) — la historia de participación: «convocado» o «respondió»
+# en una ventana de tiempo, con sí o no. Se resuelve en la bóveda, sobre
+# `participacion`, sin tocar el store semántico.
+#
+# * **convocado** mira `convocado_en`, **sin** exigir `convocado`: quien entró
+#   por una carga también cuenta (decisión de la spec: para cuidar la fatiga,
+#   haber respondido un archivo es haber sido molestado).
+# * **respondió** mira `respondio` en una encuesta cuya **fecha de campo** cae
+#   en la ventana (por eso la fecha de campo pasó a ser obligatoria, R-PAR.2).
+#
+# La ventana: últimos N meses, entre dos fechas, o alguna vez. Y (P1) cuántas
+# veces: «al menos N» con sí, «menos de N» con no. Con N = 1 es el `exists`.
+DIMENSION_PARTICIPACION = "participacion"
+CONVOCADO, RESPONDIO_EN = "convocado", "respondio"
+RELACIONES_PARTICIPACION = {CONVOCADO: "convocado", RESPONDIO_EN: "respondió"}
+VENTANA_MESES, VENTANA_ENTRE, VENTANA_SIEMPRE = "meses", "entre", "siempre"
+VENTANAS = (VENTANA_MESES, VENTANA_ENTRE, VENTANA_SIEMPRE)
+
 # Qué dimensiones se comparan como número y no como texto. `edad` siempre lo
 # es; cualquier atributo `numerico` del catálogo también.
 NUMERICAS = {"edad"}
@@ -125,6 +143,8 @@ def normalizar_criterio(crudo, dimensiones=None, catalogo_por_clave=None):
         return _criterio_cliente(crudo)
     if dimension == DIMENSION_ENCUESTA:
         return _criterio_encuesta(crudo)
+    if dimension == DIMENSION_PARTICIPACION:
+        return _criterio_participacion(crudo)
     validas = (set(dimensiones) if dimensiones else set(DIMENSIONES_BASE)) \
         | {DIMENSION_TEMATICA, DIMENSION_AREA_TEMATICA, DIMENSION_CLIENTE}
     if dimension not in validas:
@@ -285,6 +305,113 @@ def _criterio_encuesta(crudo):
     }
 
 
+def _fecha_iso(valor, campo):
+    import datetime
+
+    try:
+        return datetime.date.fromisoformat(str(valor).strip()[:10]).isoformat()
+    except (TypeError, ValueError):
+        raise DatosInvalidos(f"La fecha {campo} no es válida: {valor!r}. Usá AAAA-MM-DD.",
+                             {"campo": campo}) from None
+
+
+def _ventana(crudo):
+    """`{tipo: meses, meses: N}` | `{tipo: entre, desde, hasta}` |
+    `{tipo: siempre}`."""
+    crudo = crudo or {}
+    if not isinstance(crudo, dict):
+        raise DatosInvalidos("La ventana del criterio de participación está mal formada.")
+    tipo = (crudo.get("tipo") or VENTANA_SIEMPRE).strip().lower()
+    if tipo not in VENTANAS:
+        raise DatosInvalidos(f"Ventana desconocida: {tipo!r}.", {"ventanas": list(VENTANAS)})
+    if tipo == VENTANA_MESES:
+        try:
+            meses = int(crudo.get("meses"))
+        except (TypeError, ValueError):
+            raise DatosInvalidos("Indicá cuántos meses abarca la ventana.") from None
+        if not 1 <= meses <= 240:
+            raise DatosInvalidos("La ventana tiene que ser de 1 a 240 meses.")
+        return {"tipo": tipo, "meses": meses}
+    if tipo == VENTANA_ENTRE:
+        desde, hasta = (_fecha_iso(crudo.get("desde"), "desde"),
+                        _fecha_iso(crudo.get("hasta"), "hasta"))
+        if desde > hasta:
+            raise DatosInvalidos("La fecha «desde» es posterior a «hasta».")
+        return {"tipo": tipo, "desde": desde, "hasta": hasta}
+    return {"tipo": VENTANA_SIEMPRE}
+
+
+def _texto_de_ventana(ventana):
+    if ventana["tipo"] == VENTANA_MESES:
+        return f"en los últimos {ventana['meses']} meses"
+    if ventana["tipo"] == VENTANA_ENTRE:
+        return f"entre el {ventana['desde']} y el {ventana['hasta']}"
+    return "alguna vez"
+
+
+def _criterio_participacion(crudo):
+    """R-PAR.1 — `{dimension: participacion, relacion: convocado |
+    respondio, operador: in (sí) | not_in (no), ventana, veces?}`."""
+    operador = (crudo.get("operador") or "in").strip().lower()
+    operador = {"eq": "in", "si": "in", "sí": "in", "incluir": "in",
+                "ne": "not_in", "no": "not_in", "excluir": "not_in"}.get(operador, operador)
+    if operador not in ("in", "not_in"):
+        raise DatosInvalidos(f"Sobre la participación se filtra con sí o no, no con {operador!r}.")
+    relacion = (crudo.get("relacion") or CONVOCADO).strip().lower()
+    if relacion not in RELACIONES_PARTICIPACION:
+        raise DatosInvalidos(f"Relación desconocida: {relacion!r}.",
+                             {"relaciones": list(RELACIONES_PARTICIPACION)})
+    ventana = _ventana(crudo.get("ventana"))
+    try:
+        veces = 1 if crudo.get("veces") in (None, "") else int(crudo.get("veces"))
+    except (TypeError, ValueError):
+        raise DatosInvalidos("«Veces» tiene que ser un número entero.") from None
+    if veces < 1:
+        raise DatosInvalidos("«Veces» tiene que ser al menos 1.")
+    que = RELACIONES_PARTICIPACION[relacion]
+    cuando = _texto_de_ventana(ventana)
+    if veces == 1:
+        etiqueta = (f"{que.capitalize()} {cuando}" if operador == "in"
+                    else ("Nunca " + que if ventana["tipo"] == VENTANA_SIEMPRE
+                          else f"No {que} {cuando}"))
+    else:
+        etiqueta = (f"{que.capitalize()} al menos {veces} veces {cuando}" if operador == "in"
+                    else f"{que.capitalize()} menos de {veces} veces {cuando}")
+    return {
+        "tipo": "demografico",
+        "dimension": DIMENSION_PARTICIPACION,
+        "operador": operador,
+        "relacion": relacion,
+        "ventana": ventana,
+        "veces": veces,
+        "duro": True,
+        "etiqueta": crudo.get("etiqueta") or etiqueta,
+    }
+
+
+def _condicion_participacion(criterio, alias):
+    """El fragmento SQL de un criterio de participación, sin interpolar
+    valores: cuenta las participaciones en la ventana y compara con `veces`."""
+    ventana = criterio.get("ventana") or {"tipo": VENTANA_SIEMPRE}
+    if criterio.get("relacion") == RESPONDIO_EN:
+        desde_sql = ("from participacion pa join encuesta e on e.id = pa.encuesta_id "
+                     f"where pa.id_persona = {alias}.id_persona and pa.respondio")
+        columna = "e.fecha_campo"
+    else:
+        desde_sql = f"from participacion pa where pa.id_persona = {alias}.id_persona"
+        columna = "pa.convocado_en::date"
+    parametros = []
+    if ventana["tipo"] == VENTANA_MESES:
+        desde_sql += f" and {columna} >= (current_date - make_interval(months => %s))"
+        parametros.append(int(ventana["meses"]))
+    elif ventana["tipo"] == VENTANA_ENTRE:
+        desde_sql += f" and {columna} between %s::date and %s::date"
+        parametros.extend([ventana["desde"], ventana["hasta"]])
+    comparacion = ">=" if criterio["operador"] == "in" else "<"
+    parametros.append(int(criterio.get("veces") or 1))
+    return f"(select count(*) {desde_sql}) {comparacion} %s", parametros
+
+
 def condiciones(criterios, alias="p", catalogo_por_clave=None, momento=None):
     """`[criterio]` → `(fragmentos_sql, parametros)`. Sin interpolar valores.
 
@@ -323,6 +450,11 @@ def condiciones(criterios, alias="p", catalogo_por_clave=None, momento=None):
                 f"and (%s or not t.es_especial))")
             parametros.extend([ids, nombres, list(criterio.get("areas") or []),
                                bool(criterio.get("incluir_especiales"))])
+            continue
+        if dimension == DIMENSION_PARTICIPACION:
+            fragmento, argumentos = _condicion_participacion(criterio, alias)
+            fragmentos.append(fragmento)
+            parametros.extend(argumentos)
             continue
         if dimension == DIMENSION_ENCUESTA:
             negado = "not " if criterio["operador"] == "not_in" else ""

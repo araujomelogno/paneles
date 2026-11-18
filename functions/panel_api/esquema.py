@@ -229,6 +229,14 @@ MIGRACIONES_BOVEDA = (
     ("0037_cancelar_carga_mixta_e_incrementales.sql", (
         "carga.provisoria", "encuesta.provisoria", "limpieza_provisoria",
     )),
+    # ── Alchemer, consulta por participación y bandeja de WhatsApp (D96 a
+    # D98). Cambia datos: completa la fecha de campo que falte y la vuelve
+    # obligatoria.
+    ("0038_alchemer_participacion_y_bandeja_whatsapp.sql", (
+        "encuesta_fecha_completada", "encuesta.alchemer_id", "alchemer_cuestionario",
+        "whatsapp_aviso", "whatsapp_entrante", "whatsapp_estado",
+        "whatsapp_exportacion",
+    )),
 )
 
 # Objetos que una migración creó y una posterior **retiró** (los tiró sin

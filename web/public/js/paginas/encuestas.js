@@ -263,6 +263,9 @@ async function renderDetalle(main, encuestaId) {
       <div class="card-header"><span class="card-header-title">Cargas</span>
         <div class="toolbar">
           <button class="btn btn-orange btn-sm" id="ingestar">+ Ingestar respuestas</button>
+          <button class="btn btn-outline btn-sm hidden" id="obtener-whatsapp"
+            title="Las respuestas que llegaron por los Flows de esta encuesta, por el mismo proceso que un SAV"
+            >Obtener respuestas de WhatsApp</button>
           <button class="btn btn-outline btn-sm" id="reprocesar"
             title="Corregir textos, etiquetas o normalización de lo ya ingestado, sin volver a subir el archivo">
             Corregir y reprocesar</button>
@@ -284,15 +287,20 @@ async function renderDetalle(main, encuestaId) {
     </div>
     <div class="card">
       <div class="card-header"><span class="card-header-title">Temáticas del estudio</span>
-        ${puedeEditarEstudio() && (encuesta.cargas || []).length
-          ? '<button class="btn btn-orange btn-sm" id="guardar-tematicas">Guardar temáticas</button>' : ''}</div>
+        <div class="toolbar">
+        ${puedeEditarEstudio() && encuesta.alchemer?.preguntas?.length
+          ? '<button class="btn btn-outline btn-sm" id="proponer-desde-alchemer">Proponer desde Alchemer</button>' : ''}
+        ${puedeEditarEstudio() && ((encuesta.cargas || []).length || encuesta.alchemer)
+          ? '<button class="btn btn-orange btn-sm" id="guardar-tematicas">Guardar temáticas</button>' : ''}</div></div>
       <div class="card-body">
         <div id="tematicas-alerta"></div>
         <div id="tematicas">${chipsDeTematicas(encuesta.tematicas || [])}</div>
         <p class="small muted" style="margin-top:.6rem">Se proponen con la primera carga;
-          una carga posterior propone solo para las preguntas que trae nuevas.</p>
+          una carga posterior propone solo para las preguntas que trae nuevas. Con la
+          encuesta vinculada a Alchemer, se pueden proponer antes del campo.</p>
       </div>
     </div>
+    ${encuesta.alchemer_id || encuesta.alchemer ? tarjetaDeAlchemer(encuesta) : ''}
     <div class="card">
       <div class="card-header">
         <span class="card-header-title" id="titulo-participacion">${esDeCarga(encuesta)
@@ -356,7 +364,19 @@ async function renderDetalle(main, encuestaId) {
     b.onclick = () => contexto.irA('cargas', { cargaId: Number(b.dataset.carga) });
   });
 
-  if (puedeEditarEstudio() && (encuesta.cargas || []).length) {
+  $('#actualizar-alchemer')?.addEventListener('click', async (e) => {
+    e.currentTarget.disabled = true;
+    try {
+      const salida = await api.encuestas.vincularAlchemer(encuestaId);
+      toast(salida.aviso || 'Cuestionario actualizado desde Alchemer.', salida.aviso ? 'err' : 'ok');
+      contexto.irA('encuestas', { encuestaId });
+    } catch (error) {
+      toast(error.message, 'err');
+      e.currentTarget.disabled = false;
+    }
+  });
+
+  if (puedeEditarEstudio() && ((encuesta.cargas || []).length || encuesta.alchemer)) {
     const [{ items: vocabulario }, { areas }] = await Promise.all([
       api.tematicas.listar().catch(() => ({ items: [] })),
       api.tematicas.taxonomia().catch(() => ({ areas: [] })),
@@ -378,6 +398,28 @@ async function renderDetalle(main, encuestaId) {
         e.currentTarget.disabled = false;
       }
     };
+    /* R-ALC.4 (D97) — la propuesta con las preguntas traídas de Alchemer,
+       antes del campo. Se suma al editor y no se guarda hasta «Guardar
+       temáticas», como la propuesta de una carga (R-TEM.5). */
+    $('#proponer-desde-alchemer')?.addEventListener('click', async (e) => {
+      const boton = e.currentTarget;
+      boton.disabled = true;
+      boton.textContent = 'Proponiendo…';
+      try {
+        const salida = await api.encuestas.tematicasDesdeAlchemer(encuestaId);
+        editor = editorDeTematicas($('#tematicas'), {
+          vocabulario, areas, iniciales: editor.valor(), puedeDesmarcar: false,
+          propuesta: salida.propuesta, aviso: salida.aviso });
+        $('#tematicas-alerta').innerHTML = salida.propuesta.length ? alerta(
+          'Claude propuso temáticas a partir del cuestionario de Alchemer. Revisalas y '
+          + 'apretá «Guardar temáticas»: nada se guardó todavía.', 'info') : '';
+      } catch (error) {
+        $('#tematicas-alerta').innerHTML = alerta(error.message);
+      } finally {
+        boton.disabled = false;
+        boton.textContent = 'Proponer desde Alchemer';
+      }
+    });
   }
 
   $('#convocar')?.addEventListener('click', () => convocar(encuestaId));
@@ -392,6 +434,7 @@ async function renderDetalle(main, encuestaId) {
   cargarMensajes(encuesta);
   $('#muestra')?.addEventListener('click', () => exportarMuestra(encuestaId));
   $('#ingestar').onclick = () => abrirNuevaCarga(encuesta);
+  ofrecerRespuestasDeWhatsapp(encuesta);
   // R8.9 — corregir lo ya ingestado sin volver a subir el archivo. El avance
   // se sigue en esta misma ficha, como el de una carga.
   $('#reprocesar').onclick = async () => {
@@ -419,6 +462,103 @@ async function renderDetalle(main, encuestaId) {
 /* R-EU.1 — ingestar en una encuesta es abrir una carga (un archivo) y seguir
    el flujo de la sección Panelistas, el mismo modal. Los datos del estudio
    no se piden (R-EU.2): solo los del archivo. */
+/* R-ALC.4 (D97) — el cuestionario de la encuesta de Alchemer, como
+   referencia: para ver las preguntas y proponer temáticas antes del campo.
+   No son las preguntas del store semántico: esas salen del SAV. */
+function tarjetaDeAlchemer(encuesta) {
+  const c = encuesta.alchemer;
+  const preguntas = c?.preguntas || [];
+  return `<div class="card" id="tarjeta-alchemer">
+    <div class="card-header"><span class="card-header-title">Cuestionario de Alchemer</span>
+      ${puedeEditarEstudio() ? `<button class="btn btn-outline btn-sm" id="actualizar-alchemer"
+        >Actualizar desde Alchemer</button>` : ''}</div>
+    <div class="card-body">
+      ${c?.aviso ? alerta(c.aviso, 'warn') : ''}
+      ${c ? `<p class="small">«${esc(c.titulo || '')}» · encuesta <code>${esc(c.alchemer_id)}</code>
+          · ${preguntas.length} pregunta(s)${c.captura_parametro
+            ? ` · guarda el parámetro <code>${esc(c.parametro)}</code>` : ''}
+          · actualizado ${esc(fechaHora(c.actualizado_en))}</p>
+        ${preguntas.length ? `<details><summary class="small">Ver las preguntas</summary>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Código</th><th>Pregunta</th><th>Tipo</th><th class="num">Opciones</th></tr></thead>
+            <tbody>${preguntas.map((p) => `<tr><td><code>${esc(p.codigo)}</code></td>
+              <td>${esc(p.texto)}</td><td class="small">${esc(p.tipo)}</td>
+              <td class="num">${Object.keys(p.opciones || {}).length || '—'}</td></tr>`).join('')}</tbody>
+          </table></div></details>` : ''}
+        <p class="small muted">Es una referencia: las respuestas siguen entrando por el SAV.</p>`
+        : `<p class="small muted">Vinculada a la encuesta <code>${esc(encuesta.alchemer_id)}</code>,
+            pero su cuestionario todavía no se pudo traer.</p>`}
+    </div></div>`;
+}
+
+/* R-WA.6 (D98) — «Obtener respuestas de WhatsApp». Solo aparece si la
+   encuesta tiene respuestas de sus Flows, y dice cuántas personas son nuevas
+   desde la última carga: las demás quedan «repetida» (D94). */
+async function ofrecerRespuestasDeWhatsapp(encuesta) {
+  const boton = $('#obtener-whatsapp');
+  if (!boton) return;
+  let resumen;
+  try {
+    resumen = await api.encuestas.whatsapp(encuesta.id);
+  } catch {
+    return; // sin permiso o sin la 0038: el botón no se ofrece
+  }
+  if (!resumen.personas) return;
+  boton.textContent = `Obtener respuestas de WhatsApp (${resumen.nuevas} nueva${
+    resumen.nuevas === 1 ? '' : 's'})`;
+  boton.classList.remove('hidden');
+  boton.onclick = () => abrirObtenerWhatsapp(encuesta, resumen);
+}
+
+function abrirObtenerWhatsapp(encuesta, resumen) {
+  const caja = modal({
+    titulo: `Respuestas de WhatsApp — ${encuesta.nombre}`,
+    ancho: '560px',
+    cuerpo: `
+      <div id="wa-alerta"></div>
+      <div class="stat-grid" id="wa-resumen">
+        <div class="stat s-total"><label>Personas que respondieron</label>
+          <strong>${resumen.personas}</strong></div>
+        <div class="stat"><label>Nuevas desde la última carga</label>
+          <strong data-nuevas>${resumen.nuevas}</strong></div>
+        <div class="stat"><label>Ya cargadas (quedan «repetida»)</label>
+          <strong>${resumen.repetidas}</strong></div>
+      </div>
+      ${resumen.inconsistencias ? alerta(`${resumen.inconsistencias} respuesta(s) traen un `
+        + 'flow_token que no coincide con la persona a la que se le envió el mensaje. La '
+        + 'identidad es la del envío.', 'warn') : ''}
+      <p class="small">Se arma un archivo con una fila por persona (su última respuesta) y
+        el texto de cada pregunta y de cada opción sale de la definición del Flow en Meta.
+        Sigue el mismo proceso que un SAV: revisión, calidad del dato, temáticas y carga
+        incremental. La identidad es la del envío: el <code>id_persona</code> de quien
+        recibió el mensaje.</p>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Continuar', clase: 'btn-orange', onClick: async (caja) => {
+          const boton = $('.modal-foot [data-accion="1"]', caja);
+          boton.disabled = true;
+          try {
+            const datos = await api.encuestas.whatsappArchivo(encuesta.id);
+            const bytes = Uint8Array.from(atob(datos.archivo_base64), (c) => c.charCodeAt(0));
+            const archivo = new File([bytes], datos.nombre, { type: 'application/octet-stream' });
+            const carga = await api.encuestas.nuevaCarga(encuesta.id, {
+              nombre: `WhatsApp — ${new Date().toISOString().slice(0, 10)}`,
+              tipo_datos_origen: 'encuesta', modo_relevamiento: 'whatsapp',
+            });
+            cerrarModal();
+            abrirCargaDePanelistas(carga,
+              () => contexto.irA('encuestas', { encuestaId: encuesta.id }), null,
+              { archivo, aviso: (datos.avisos || []).join(' ') || null });
+          } catch (error) {
+            $('#wa-alerta', caja).innerHTML = alerta(error.message);
+            boton.disabled = false;
+          }
+        } },
+    ],
+  });
+  return caja;
+}
+
 function abrirNuevaCarga(encuesta) {
   const caja = modal({
     titulo: `Ingestar respuestas — ${encuesta.nombre}`,
@@ -1195,13 +1335,17 @@ function parsearOpciones(texto) {
    el de la sección Panelistas y el de Encuestas. Lo que cambia según el
    estudio es el texto (una encuesta de panel suma a sus respondentes al
    panel; una independiente, no) y lo decide el servidor. */
-export function abrirCargaDePanelistas(carga, alTerminar, actor = null) {
+export function abrirCargaDePanelistas(carga, alTerminar, actor = null, inicial = {}) {
   return abrirIngesta(
     { tipo: 'carga', id: carga.id, nombre: carga.encuesta || carga.nombre,
       carga: carga.nombre, encuesta_id: carga.encuesta_id,
       encuesta_tipo: carga.encuesta_tipo || 'independiente', actor,
       // D92 — una carga provisoria se borra si se cancela antes de confirmar.
-      provisoria: Boolean(carga.provisoria) }, alTerminar);
+      provisoria: Boolean(carga.provisoria),
+      // R-WA.6 (D98) — un archivo que ya viene armado (las respuestas de
+      // WhatsApp como `.sav`) y el aviso que lo acompaña.
+      archivoInicial: inicial.archivo || null, avisoInicial: inicial.aviso || null },
+    alTerminar);
 }
 
 function abrirIngesta(destino, alTerminar) {
@@ -2029,6 +2173,17 @@ function abrirIngesta(destino, alTerminar) {
     if (e.dataTransfer.files[0]) cargarArchivo(e.dataTransfer.files[0]);
   };
   entrada.onchange = (e) => { if (e.target.files[0]) cargarArchivo(e.target.files[0]); };
+  /* R-WA.6 (D98) — las respuestas de WhatsApp llegan como un `.sav` armado
+     por el servidor con el diccionario del Flow: entran por el mismo camino
+     que uno elegido a mano, y el aviso de lo que quedó sin etiqueta se queda
+     fijo arriba (el de la carga se reescribe en cada paso). */
+  if (destino.archivoInicial) {
+    if (destino.avisoInicial) {
+      $('#ing-alerta', caja).insertAdjacentHTML('beforebegin',
+        `<div id="ing-aviso-inicial">${alerta(destino.avisoInicial, 'warn')}</div>`);
+    }
+    cargarArchivo(destino.archivoInicial);
+  }
 
   async function cargarArchivo(archivo) {
     try {
@@ -3388,8 +3543,10 @@ function selectorDeEstado(actual, atributos) {
 
 async function cambiarEstadoDeEncuesta(encuestaId, nuevo, alTerminar) {
   try {
-    await api.encuestas.cambiarEstado(encuestaId, nuevo);
+    const salida = await api.encuestas.cambiarEstado(encuestaId, nuevo);
     toast(`Estado: ${ESTADO_ETIQUETA[nuevo] || nuevo}.`, 'ok');
+    // R-ALC.3 (D97) — al salir a campo se vuelve a verificar el parámetro.
+    if (salida?.aviso_alchemer) toast(salida.aviso_alchemer, 'err');
   } catch (error) {
     toast(error.message, 'err');
   }
@@ -3499,10 +3656,13 @@ function dosUrls(urlBoton, urlAlchemer) {
 
 /* R-CF.4 — los mensajes de la encuesta. */
 const ETIQUETA_DE_CANAL = { whatsapp: 'WhatsApp', correo: 'Correo' };
-/* Un envío queda aceptado (Meta o Workspace lo tomaron) o fallido. Entregado
-   y leído llegarían por el webhook de Meta (R-CF.7), que quedó diferido. */
+/* Un envío queda aceptado (Meta o Workspace lo tomaron) o fallido. Desde
+   D98 el webhook de Meta lo lleva a entregado o leído (R-CF.7), y un `failed`
+   que llega después lo pasa a fallido: cuenta como no enviado. */
 const ESTADO_DE_ENVIO = {
   aceptado: ['Enviado', 'badge-on'],
+  entregado: ['Entregado', 'badge-on'],
+  leido: ['Leído', 'badge-on'],
   fallido: ['Falló', 'badge-off'],
 };
 const puedeEnviarMensajes = () => ['admin', 'operaciones'].includes(contexto.actor?.rol);

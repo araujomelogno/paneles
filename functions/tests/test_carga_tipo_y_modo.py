@@ -117,16 +117,17 @@ def test_las_opciones_son_las_pedidas():
 
 def test_la_ruta_exige_tipo_y_modo_en_una_carga_nueva(ctx, actor):
     with pytest.raises(DatosInvalidos, match="tipo de datos"):
-        ruteo.despachar("POST", "/cargas", {"nombre": "Ómnibus",
+        ruteo.despachar("POST", "/cargas", {"nombre": "Ómnibus", "fecha_estudio": "2026-08-15",
                                             "modo_relevamiento": "web"},
                         {}, actor("operaciones"), ctx)
     with pytest.raises(DatosInvalidos, match="modo de relevamiento"):
-        ruteo.despachar("POST", "/cargas", {"nombre": "Ómnibus",
+        ruteo.despachar("POST", "/cargas", {"nombre": "Ómnibus", "fecha_estudio": "2026-08-15",
                                             "tipo_datos_origen": "encuesta"},
                         {}, actor("operaciones"), ctx)
 
     status, carga = ruteo.despachar(
         "POST", "/cargas", {"nombre": "Ómnibus", "tipo_datos_origen": "encuesta",
+                            "fecha_estudio": "2026-08-15",
                             "modo_relevamiento": "cara_a_cara"},
         {}, actor("operaciones"), ctx)
     assert status == 201

@@ -88,7 +88,7 @@ def test_el_autocompletado_busca_sin_tildes_y_cuenta_cargas(ctx, actor, dos_carg
 def test_la_ruta_crea_la_carga_con_sus_clientes(ctx, actor):
     _, carga = ruteo.despachar("POST", "/cargas",
                                {"nombre": "Ómnibus", "clientes": ["Antel", "Movistar"],
-                                "tipo_datos_origen": "encuesta",
+                                "tipo_datos_origen": "encuesta", "fecha_estudio": "2026-08-15",
                                 "modo_relevamiento": "web"},
                                {}, actor("operaciones"), ctx)
     assert [c["nombre"] for c in carga["clientes"]] == ["antel", "movistar"]

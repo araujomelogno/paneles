@@ -41,14 +41,14 @@
     <li><a href="#s4"><span><span class="num">4</span> Paneles</span></a>
       <ul><li>Crear · Agregar miembros · Dar de baja una membresía · Archivar</li></ul></li>
     <li><a href="#s5"><span><span class="num">5</span> Encuestas</span></a>
-      <ul><li>Crear una encuesta de panel o independiente · Filtrar el listado · Convocar · Exportar la muestra · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Enviar por WhatsApp Flow · Verificar el cruce · Calidad del dato y vista previa · Corregir y reprocesar un estudio · Varias cargas en un estudio · Encuesta desde una consulta · Borrar una encuesta o una carga · Mensajes y la lista de la encuesta · Agregar audiencia desde una consulta</li></ul></li>
+      <ul><li>Crear una encuesta de panel o independiente · Filtrar el listado · Convocar · Exportar la muestra · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Enviar por WhatsApp Flow · Verificar el cruce · Calidad del dato y vista previa · Corregir y reprocesar un estudio · Varias cargas en un estudio · Encuesta desde una consulta · Borrar una encuesta o una carga · Mensajes y la lista de la encuesta · Agregar audiencia desde una consulta · Elegir la encuesta de Alchemer · Obtener las respuestas de WhatsApp</li></ul></li>
     <li><a href="#s6"><span><span class="num">6</span> Consultas</span></a>
       <ul><li>Buscar por significado · El ranking y la evidencia · Columnas ·
       La ficha desde un resultado · Exclusiones · Verificación incompleta ·
       Reidentificación · Modos · Consultas guardadas · Diagnóstico e
       intercambio con el verificador · Consultas solo demográficas, sorteadas ·
       Filtrar por cliente · Selección por ranking o aleatoria · Filtrar por
-      participación en una encuesta</li></ul></li>
+      participación en una encuesta · Historia de participación</li></ul></li>
     <li><a href="#s7"><span><span class="num">7</span> Composición</span></a>
       <ul><li>El ámbito: todos, un panel, una encuesta o una carga · Universo de referencia ·
       Brecha · Cruce de dos dimensiones, en cantidad o en porcentaje</li></ul></li>
@@ -77,8 +77,11 @@
       especiales · La taxonomía: áreas · Temáticas sin personas · Borrar una
       carga · Los clientes de una carga · De dónde vienen los
       reutilizados · Registrar los canales aceptados</li></ul></li>
-    <li><a href="#s13"><span><span class="num">16</span> Preguntas frecuentes</span></a></li>
-    <li><a href="#s14"><span><span class="num">17</span> Glosario</span></a></li>
+    <li><a href="#s-whatsapp"><span><span class="num">16</span> La bandeja de WhatsApp</span></a>
+      <ul><li>Respuestas y comentarios · Encuestas de afuera · Exportar ·
+      Avisos que fallaron · Cuánto se conserva</li></ul></li>
+    <li><a href="#s13"><span><span class="num">17</span> Preguntas frecuentes</span></a></li>
+    <li><a href="#s14"><span><span class="num">18</span> Glosario</span></a></li>
   </ol>
 
 </div>
@@ -160,8 +163,8 @@
       <td class="destacado">Responsable de panel</td>
       <td>Enrolar panelistas, armar paneles y membresías, crear encuestas,
       convocar, ingestar respuestas, consultar, cargar el universo de referencia,
-      resolver a qué persona corresponde cada identificador y agregar o sacar
-      a alguien de la lista negra.</td>
+      resolver a qué persona corresponde cada identificador, agregar o sacar
+      a alguien de la lista negra y ver la bandeja de WhatsApp.</td>
       <td>Retirar consentimientos, dar de baja y gestionar usuarios.</td>
     </tr>
     <tr>
@@ -171,7 +174,8 @@
       consultas.</td>
       <td>Enrolar panelistas, gestionar paneles, resolver identificadores a
       personas, filtrar o ver temáticas especiales, ver el motivo de la lista
-      negra (ve la marca) y gestionar usuarios.</td>
+      negra (ve la marca), ver la bandeja de WhatsApp (sí ingesta sus
+      respuestas desde la encuesta) y gestionar usuarios.</td>
     </tr>
     <tr>
       <td class="destacado">Cumplimiento / DPO</td>
@@ -1176,10 +1180,13 @@
     panel; se elige cuál) o <em>independiente</em> (su audiencia se arma a mano o
     desde consultas).</li>
     <li>Completar los <strong>datos del estudio</strong>: nombre, fecha de
-    campo, público objetivo, clientes, URL de la encuesta en Alchemer y
+    campo, público objetivo, clientes, la encuesta de Alchemer y
     descripción. Es <strong>el mismo formulario</strong> que pide una carga
     (sección 3.6): si mañana se suma un dato al estudio, aparece en los dos
-    lados.</li>
+    lados. La <strong>fecha de campo es obligatoria</strong> (lleva un
+    asterisco): sin ella la encuesta no entraría en ninguna consulta por
+    historia de participación (sección 6.14). Si es aproximada, se pone la
+    más cercana y se corrige después.</li>
     <li>Opcionalmente, las <strong>temáticas</strong> del estudio, a mano. Las
     que propone la inteligencia artificial llegan con la primera carga, a
     partir de las preguntas.</li>
@@ -2465,9 +2472,12 @@
 
   <p>En la sección Convocatoria, la columna <strong>Mensajes</strong> muestra, por
   panelista, cada mensaje con su estado: <i>Enviado</i> (WhatsApp o el correo lo
-  aceptaron) o <i>Falló</i> (pasando el ratón, el motivo). Si el mensaje llegó a
-  destino o se leyó todavía no se sabe desde el sistema. El primer mensaje que
-  alguien recibe lo deja convocado con esa fecha.</p>
+  aceptaron), <i>Entregado</i> y <i>Leído</i> (WhatsApp avisa cuando el mensaje
+  llegó al teléfono y cuando se abrió) o <i>Falló</i> (pasando el ratón, el
+  motivo). Un mensaje que WhatsApp aceptó y después no pudo entregar pasa a
+  <i>Falló</i> y vuelve a estar entre los «no enviado aún». El correo no informa
+  entrega ni lectura: queda en <i>Enviado</i>. El primer mensaje que alguien
+  recibe lo deja convocado con esa fecha.</p>
 
   <p>Un mensaje de WhatsApp puede llevar un botón de URL (la encuesta en
   Alchemer) o un <strong>botón de Flow</strong> (la encuesta adentro de
@@ -2523,6 +2533,82 @@
 </section>
 
 
+  <h3><span class="n">5.15</span> Elegir la encuesta de Alchemer</h3>
+
+  <p>En los datos del estudio, en lugar de pegar la URL, se puede
+  <strong>buscar la encuesta en Alchemer</strong> por su título. Al elegirla:</p>
+  <ul>
+    <li>se completan el <strong>nombre</strong> (se puede cambiar) y la
+    <strong>URL</strong>, ya con el parámetro del panelista al final
+    (<code>?pid=</code>);</li>
+    <li>si la encuesta tiene <strong>más de un enlace</strong> publicado (por
+    ejemplo, uno para la web y otro para WhatsApp), aparece un segundo
+    desplegable para elegir cuál;</li>
+    <li>el sistema <strong>verifica que la encuesta guarde el parámetro</strong>
+    con el <code>id_persona</code>. Si no lo guarda, avisa: <i>«Esta encuesta no
+    guarda el parámetro pid: las respuestas no van a traer el id_persona.»</i>
+    La encuesta se guarda igual; el aviso está para corregirlo en Alchemer
+    antes de salir a campo.</li>
+  </ul>
+
+  <p>La verificación se <strong>repite al pasar la encuesta a «en
+  campo»</strong>, porque la encuesta de Alchemer puede haber cambiado después
+  de vincularla. Si Alchemer no contesta, el sistema dice que <i>no se pudo
+  verificar</i>: nunca lo da por bueno.</p>
+
+  <p>La ficha muestra la tarjeta <strong>Cuestionario de Alchemer</strong>, con
+  las preguntas tal como están en Alchemer. Es una <strong>referencia</strong>:
+  las respuestas siguen entrando por el archivo de SPSS. Con ella, la tarjeta de
+  temáticas ofrece <strong>Proponer desde Alchemer</strong>, para tener las
+  temáticas del estudio <strong>antes del campo</strong>; la propuesta se revisa
+  y se guarda con <i>Guardar temáticas</i>, como siempre. Si la encuesta cambia
+  en Alchemer, <strong>Actualizar desde Alchemer</strong> la vuelve a
+  traer.</p>
+
+  <div class="aviso info">
+    <div class="t">Sin la conexión con Alchemer configurada</div>
+    <p>La búsqueda lo dice y la URL se escribe a mano, como antes. La conexión
+    la configura quien administra el sistema.</p>
+  </div>
+
+  <h3><span class="n">5.16</span> Obtener las respuestas de WhatsApp</h3>
+
+  <p>Cuando una encuesta se mandó con un <strong>botón de Flow</strong> (la
+  encuesta adentro de WhatsApp, sección 5.6), las respuestas llegan solas al
+  sistema. En la tarjeta <strong>Cargas</strong> aparece <strong>Obtener
+  respuestas de WhatsApp</strong>, con cuántas personas son <strong>nuevas
+  desde la última carga</strong>.</p>
+
+  <ol class="pasos">
+    <li>Utilizar <strong>Obtener respuestas de WhatsApp</strong>. El resumen
+    muestra cuántas personas respondieron, cuántas son nuevas y cuántas ya
+    estaban cargadas (esas quedan como <i>repetida</i>, sección 5.10).</li>
+    <li><strong>Continuar</strong> arma un archivo de SPSS con una fila por
+    persona y abre el <strong>mismo modal de ingesta</strong> que un archivo
+    elegido a mano, con el archivo ya analizado.</li>
+    <li>Revisar los textos y seguir como con cualquier carga: calidad del dato,
+    temáticas, revisión y confirmación.</li>
+  </ol>
+
+  <p>Los textos salen de la <strong>definición del Flow en Meta</strong>: cada
+  campo toma el texto de su pregunta y cada opción su etiqueta, así que una
+  respuesta <code>0_Si</code> se guarda como <i>«¿Le gustó el producto? →
+  Sí»</i>, igual que desde un SAV. Una selección múltiple se convierte en una
+  batería (una variable por opción) y un campo de texto en una pregunta
+  abierta. La identidad es la del <strong>envío</strong>: el panelista al que se
+  le mandó el mensaje.</p>
+
+  <div class="aviso">
+    <div class="t">Variables «sin etiqueta»</div>
+    <p>Si el Flow no dice el texto de un campo (por ejemplo, una etiqueta que se
+    arma en el momento), la variable llega con su código y un aviso arriba del
+    modal la marca <i>sin etiqueta</i>. Hay que escribir el texto de la pregunta
+    antes de confirmar: es lo que se vectoriza.</p>
+  </div>
+
+  <p>Las respuestas, los comentarios y el estado de cada aviso se ven en la
+  sección <strong>WhatsApp</strong> (sección 16).</p>
+</section>
 
 <!-- ════════════════ 6 ════════════════ -->
 <section id="s6">
@@ -3521,6 +3607,35 @@
   quien participó en la ola anterior, o para volver a hablar solo con quienes
   respondieron. Se resuelve en la bóveda y se combina con todo lo demás:
   demográficos, temáticas, clientes y criterios semánticos.</p>
+
+  <h3><span class="n">6.14</span> Historia de participación</h3>
+
+  <p><strong>+ Participación</strong> filtra por cuándo se convocó o respondió a
+  alguien, en cualquier encuesta. Tiene tres partes:</p>
+  <ul>
+    <li><strong>Quiénes</strong>: los <em>convocados</em> (cualquier
+    participación en la ventana, incluso de quien entró por una carga sin una
+    convocatoria formal) o los <em>que respondieron</em> (una encuesta cuya
+    <strong>fecha de campo</strong> cae en la ventana);</li>
+    <li><strong>Sí o no</strong>: solo esos, o excluirlos;</li>
+    <li><strong>Cuándo</strong>: en los últimos N meses, entre dos fechas o
+    alguna vez.</li>
+  </ul>
+
+  <p>Con <strong>Veces</strong> se pide una cantidad: con <em>sí</em>, al menos
+  esas veces; con <em>no</em>, menos de esas veces. Tres usos habituales:</p>
+  <table>
+    <thead><tr><th>Para</th><th>Criterio</th></tr></thead>
+    <tr><td>Cuidar la fatiga</td><td><i>Convocados · No · en los últimos 6
+    meses</i></td></tr>
+    <tr><td>Priorizar a los activos</td><td><i>Que respondieron · Sí · en los
+    últimos 12 meses</i></td></tr>
+    <tr><td>Depurar el panel</td><td><i>Convocados · Sí · alguna vez</i> y
+    <i>Que respondieron · No · alguna vez</i></td></tr>
+  </table>
+
+  <p>Se resuelve en la bóveda y se combina con todos los demás criterios y con
+  la selección aleatoria (sección 6.12).</p>
 </section>
 
 <!-- ════════════════ 7 ════════════════ -->
@@ -5302,10 +5417,80 @@
   </div>
 </section>
 
-<section id="s13">
+<!-- ════════════════ WhatsApp ════════════════ -->
+<section id="s-whatsapp">
   <div class="cab">
     <div class="barra"></div>
     <div class="kicker">Sección 16</div>
+    <h2>La bandeja de WhatsApp</h2>
+    <p>Lo que la gente contesta por WhatsApp, en el sistema y no en una planilla.</p>
+  </div>
+
+  <p>Cada respuesta de un Flow, cada comentario y cada aviso de entrega que
+  manda WhatsApp llega al sistema. La sección <strong>WhatsApp</strong> lo
+  muestra; la ven administración y responsables de panel, porque tiene
+  <strong>teléfonos</strong>, también de personas que no son panelistas.</p>
+
+  <h3><span class="n">16.1</span> Respuestas y comentarios</h3>
+
+  <p>Arriba se elige la <strong>encuesta o plantilla</strong> (con cuántas
+  respuestas y comentarios tiene) y, si hace falta, un rango de fechas. La
+  pestaña <strong>Respuestas</strong> muestra una tabla con la fecha, el
+  teléfono, la encuesta, el token y <strong>una columna por campo</strong> del
+  Flow, en el orden de sus pantallas, como la planilla. La pestaña
+  <strong>Comentarios</strong> muestra lo que la gente escribe después de un
+  mensaje («no me abre el formulario») y a qué mensaje contesta.</p>
+
+  <p>Una respuesta se asocia a la encuesta y al panelista <strong>por el
+  mensaje que contesta</strong>, no por lo que diga la respuesta. Si el
+  identificador que trae no coincide con el del panelista al que se le mandó,
+  la fila lleva la marca <i>inconsistencia</i>: vale la persona del envío.</p>
+
+  <h3><span class="n">16.2</span> Encuestas de afuera</h3>
+
+  <p>Los Flows que no se mandaron desde el sistema también llegan, y se agrupan
+  como en la planilla: por el nombre que trae el token
+  (<code>tpl=NOMBRE|…</code>, o lo que va antes de la primera barra), o en
+  <i>GENERAL</i>. Para seguir agrupándose, esas encuestas tienen que mantener
+  esa convención de token.</p>
+
+  <h3><span class="n">16.3</span> Exportar</h3>
+
+  <p><strong>Exportar CSV</strong> baja lo que se ve con ese filtro (respuestas
+  o comentarios, según la pestaña). Como tiene teléfonos, <strong>cada
+  exportación queda registrada</strong>: quién, cuándo, con qué filtro y cuántas
+  filas.</p>
+
+  <h3><span class="n">16.4</span> Avisos que fallaron</h3>
+
+  <p>Cada aviso de WhatsApp se guarda <strong>tal como llegó</strong> antes de
+  procesarlo. Si algo falla al procesarlo, arriba aparece cuántos fallaron y
+  <strong>Reprocesar</strong>: no se perdió nada, y reprocesar no duplica (cada
+  mensaje se guarda una sola vez).</p>
+
+  <h3><span class="n">16.5</span> Cuánto se conserva</h3>
+
+  <ul>
+    <li>Las respuestas de <strong>encuestas de afuera</strong> (de personas que
+    no son panelistas) se borran solas a los <strong>180 días</strong>.</li>
+    <li>El aviso tal como llegó de WhatsApp, a los <strong>30 días</strong>: lo
+    procesado ya está en sus tablas.</li>
+    <li>La <strong>baja</strong> de un panelista borra lo suyo, también lo que
+    mandó desde su número a una encuesta de afuera.</li>
+  </ul>
+
+  <div class="aviso info">
+    <div class="t">Ingestar las respuestas de una encuesta</div>
+    <p>No se hace desde acá sino desde la ficha de la encuesta, con
+    <strong>Obtener respuestas de WhatsApp</strong> (sección 5.16): sigue el
+    mismo proceso que un archivo de SPSS.</p>
+  </div>
+</section>
+
+<section id="s13">
+  <div class="cab">
+    <div class="barra"></div>
+    <div class="kicker">Sección 17</div>
     <h2>Preguntas frecuentes</h2>
     <p>Situaciones habituales y su explicación.</p>
   </div>
@@ -5684,7 +5869,7 @@
 <section id="s14">
   <div class="cab">
     <div class="barra"></div>
-    <div class="kicker">Sección 17</div>
+    <div class="kicker">Sección 18</div>
     <h2>Glosario</h2>
     <p>Los términos que aparecen en pantalla.</p>
   </div>
