@@ -27,7 +27,28 @@ export class ErrorApi extends Error {
   }
 }
 
-async function pedir(metodo, camino, { cuerpo, consulta } = {}) {
+/* D99 · R-ALB.3 — un pedido con tiempo máximo nunca deja la pantalla
+   girando: vencido, es un `ErrorApi` con `codigo = 'tiempo'` y el mensaje
+   que la pantalla muestra con sus opciones. El servidor no se entera (su
+   propia espera, la de Alchemer, es más corta), y si contesta tarde la
+   respuesta se descarta. */
+export const MENSAJE_TIEMPO = 'Alchemer tardó demasiado en responder.';
+
+function conTiempo(promesa, ms, mensaje = MENSAJE_TIEMPO) {
+  if (!ms) return promesa;
+  let reloj;
+  const vencido = new Promise((_, rechazar) => {
+    reloj = setTimeout(() => rechazar(new ErrorApi(mensaje, 0,
+      { error: 'tiempo', mensaje, detalle: { motivo: 'alchemer_tiempo' } })), ms);
+  });
+  return Promise.race([promesa, vencido]).finally(() => clearTimeout(reloj));
+}
+
+function pedir(metodo, camino, { cuerpo, consulta, tiempo } = {}) {
+  return conTiempo(pedirSinTiempo(metodo, camino, { cuerpo, consulta }), tiempo);
+}
+
+async function pedirSinTiempo(metodo, camino, { cuerpo, consulta } = {}) {
   if (estado.demo) return demo.responder(metodo, camino, cuerpo, consulta);
 
   const url = new URL(BASE + camino, window.location.origin);
@@ -104,8 +125,8 @@ export async function subir(camino, cuerpo, { alSubir } = {}) {
   });
 }
 
-const GET = (camino, consulta) => pedir('GET', camino, { consulta });
-const POST = (camino, cuerpo) => pedir('POST', camino, { cuerpo });
+const GET = (camino, consulta, opciones) => pedir('GET', camino, { consulta, ...opciones });
+const POST = (camino, cuerpo, opciones) => pedir('POST', camino, { cuerpo, ...opciones });
 const PUT = (camino, cuerpo) => pedir('PUT', camino, { cuerpo });
 const PATCH = (camino, cuerpo) => pedir('PATCH', camino, { cuerpo });
 const DELETE = (camino, consulta) => pedir('DELETE', camino, { consulta });
@@ -247,6 +268,12 @@ export const encuestas = {
   vincularAlchemer: (id, alchemerId) =>
     POST(`/encuestas/${id}/alchemer`, alchemerId ? { alchemer_id: alchemerId } : {}),
   tematicasDesdeAlchemer: (id) => POST(`/encuestas/${id}/alchemer/tematicas`, {}),
+  /* R-ALB.5 (D99) — cambiar el enlace de Alchemer de una encuesta ya
+     vinculada. La revisión (`solo_revisar`) sale de la misma ruta. */
+  cambiarEnlaceAlchemer: (id, enlaceId, soloRevisar = false) =>
+    POST(`/encuestas/${id}/alchemer/enlace`,
+      { enlace_id: enlaceId, ...(soloRevisar ? { solo_revisar: true } : {}) },
+      { tiempo: alchemer.tiempoMs }),
   /* R-WA.6 (D98) — cuántas respuestas de WhatsApp tiene (y cuántas nuevas
      desde la última carga), y su `.sav` con el diccionario del Flow. */
   whatsapp: (id) => GET(`/encuestas/${id}/whatsapp/resumen`),
@@ -512,7 +539,7 @@ export const cargas = {
      ella, no copiados en cada persona. */
   crear: (nombre, descripcion, {
     fechaEstudio, publicoObjetivo, tipoDatosOrigen, tipoDatosOrigenOtro,
-    modoRelevamiento, modoRelevamientoOtro, clientes, urlAlchemer, alchemerId,
+    modoRelevamiento, modoRelevamientoOtro, clientes, urlAlchemer, alchemerId, alchemerEnlaceId,
   } = {}) =>
     POST('/cargas', {
       nombre, descripcion,
@@ -530,6 +557,7 @@ export const cargas = {
       url_alchemer: urlAlchemer || null,
       // R-ALC.2 (D97) — la encuesta de Alchemer elegida, si se eligió.
       ...(alchemerId ? { alchemer_id: alchemerId } : {}),
+      ...(alchemerEnlaceId ? { alchemer_enlace_id: alchemerEnlaceId } : {}),
     }),
   /* R-CAR.1 — sin consulta, todas (los selectores); la sección Cargas
      filtra por temática (`tematica_id`) y busca por nombre (`q`). */
@@ -724,8 +752,22 @@ export const optimizador = {
 /* R-ALC (D97) — buscar en la cuenta de Alchemer y ver una encuesta (sus
    enlaces y si guarda el parámetro del panelista). No guardan nada. */
 export const alchemer = {
-  buscar: (q) => GET('/alchemer/encuestas', q ? { q } : {}),
-  ver: (alchemerId) => GET(`/alchemer/encuestas/${encodeURIComponent(alchemerId)}`),
+  /* D99 — los pedidos que llaman a Alchemer tienen tiempo máximo
+     (R-ALB.3): el del servidor (20 s por llamada) más margen. La búsqueda
+     es contra el catálogo y no llama a Alchemer. Se puede achicar en las
+     pruebas. */
+  tiempoMs: 30000,
+  // R-ALB.2 — contra el catálogo local: activas por defecto, `todas` incluye cerradas.
+  buscar: (q, todas = false) => GET('/alchemer/encuestas',
+    { ...(q ? { q } : {}), ...(todas ? { todas: 1 } : {}) }),
+  // R-ALB.1 — la URL pegada, el id o lo elegido del catálogo: una llamada.
+  resolver: (texto) => POST('/alchemer/resolver', { texto }, { tiempo: alchemer.tiempoMs }),
+  // R-ALB.5 — los enlaces de una encuesta: una llamada.
+  enlaces: (alchemerId) => GET(`/alchemer/encuestas/${encodeURIComponent(alchemerId)}/enlaces`,
+    {}, { tiempo: alchemer.tiempoMs }),
+  // R-ALB.2 — «Actualizar» el catálogo (en segundo plano) y su avance.
+  sincronizar: () => POST('/alchemer/sincronizacion', {}),
+  sincronizacion: () => GET('/alchemer/sincronizacion'),
 };
 
 /* R-WA (D98) — la bandeja de WhatsApp: grupos, respuestas y comentarios,

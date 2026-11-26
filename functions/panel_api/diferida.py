@@ -117,7 +117,7 @@ class EncoladorCloudTasks(Encolador):
     """
 
     def __init__(self, proyecto=None, region=None, cola=None, url=None,
-                 cuenta=None, cliente=None, prefijo="ingesta"):
+                 cuenta=None, cliente=None, prefijo="ingesta", tipo=None):
         self.proyecto = proyecto or os.environ.get("GCLOUD_PROJECT") or \
             os.environ.get("GOOGLE_CLOUD_PROJECT", "")
         self.region = region or os.environ.get("TAREAS_REGION", "southamerica-east1")
@@ -128,6 +128,9 @@ class EncoladorCloudTasks(Encolador):
         # R-CS — la ejecución completa de consultas usa esta misma clase con
         # su propia cola y su propio prefijo de nombre de tarea.
         self.prefijo = prefijo
+        # D99 — otra clase de tarea por la misma cola (la sincronización del
+        # catálogo de Alchemer): `procesaringesta` despacha por `tipo`.
+        self.tipo = tipo
 
     @property
     def cliente(self):
@@ -143,8 +146,10 @@ class EncoladorCloudTasks(Encolador):
                 "Falta `TAREAS_URL`: sin la dirección de la función que "
                 "procesa los lotes no se puede encolar nada, y la carga "
                 "quedaría guardada sin que la tome nadie.")
-        cuerpo = json.dumps({"data": {"trabajo_id": trabajo_id,
-                                      "indice": indice}}).encode()
+        datos = {"trabajo_id": trabajo_id, "indice": indice}
+        if self.tipo:
+            datos["tipo"] = self.tipo
+        cuerpo = json.dumps({"data": datos}).encode()
         tarea = {
             "http_request": {
                 "http_method": "POST",

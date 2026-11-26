@@ -301,6 +301,17 @@ def procesaringesta(req: https_fn.CallableRequest) -> dict:
         return {"estado": "descartada"}
 
     cfg = config.cargar()
+    if datos.get("tipo") == "alchemer_catalogo":
+        # D99 · R-ALB.2 — una página de la sincronización del catálogo de
+        # Alchemer. Misma cola y misma cuenta que la ingesta: no hace falta
+        # otra cola ni otro secreto. Solo usa la bóveda.
+        from panel_api import alchemer_catalogo
+
+        with contexto.abrir(cfg) as ctx:
+            return alchemer_catalogo.procesar_pagina(
+                ctx.boveda, int(trabajo_id), int(indice),
+                encolador=alchemer_catalogo.crear_encolador())
+
     with contexto.abrir(cfg) as ctx:
         return diferida.procesar_lote(
             ctx.boveda, ctx.semantica, int(trabajo_id), int(indice),

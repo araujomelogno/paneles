@@ -812,6 +812,27 @@ Desde `SPEC_alchemer_participacion_y_bandeja_whatsapp` (D96 a D98,
   `repetida` e historial. Lo que el Flow no permite traducir va **sin
   etiqueta** y se corrige en la revisión.
 
+Desde el PEDIDO de búsqueda de Alchemer (D99, `boveda/0039`):
+
+- **Ningún pedido de la pantalla recorre la API de Alchemer.** La búsqueda es
+  contra el catálogo local (`alchemer_encuesta`, `alchemer_catalogo.buscar`);
+  pegar la URL o el id es **una** llamada (`alchemer.id_de` +
+  `POST /alchemer/resolver`), y los enlaces otra. No vuelvan a paginar la
+  API dentro de una request: con 2.172 encuestas se pasaba de los 60 s de
+  Hosting y la pantalla quedaba girando. Toda llamada tiene tiempo máximo
+  (`ALCHEMER_TIEMPO_S`) y la pantalla, el suyo, con *Reintentar* y *Pegar la
+  URL*.
+- **El catálogo lo llena una sincronización en segundo plano**, una página
+  por tarea por la cola de la ingesta (`tipo = alchemer_catalogo`). El avance
+  se deriva de las páginas y hay una sola en curso (índice único parcial).
+  La incremental **comprueba** que Alchemer aplicó el filtro por fecha; si no,
+  recorre todo. Solo una completa sin fallas borra lo que no vio.
+- **Un enlace de Alchemer es `link_type == "link"`** (`type` es el tipo del
+  objeto) y su `uri` viene sin esquema: la URL la arma `alchemer.url_de_enlace`.
+  Se guarda qué enlace se eligió (`alchemer_enlace_id`); cambiarlo relee la
+  URL de Alchemer por su id y avisa por las plantillas de WhatsApp
+  (`encuestas.avisos_de_url`), con la revisión en la misma ruta.
+
 ## Reglas de negocio que el código debe respetar
 
 - No se puede convocar ni incluir en muestreo a una persona sin `consentimiento` **vigente** para la finalidad correspondiente.

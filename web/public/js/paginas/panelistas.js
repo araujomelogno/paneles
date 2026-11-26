@@ -460,7 +460,7 @@ async function seguirConLaCarga(caja) {
       modoRelevamiento: datos.modo_relevamiento,
       modoRelevamientoOtro: datos.modo_relevamiento_otro,
       clientes: datos.clientes, urlAlchemer: datos.url_alchemer,
-      alchemerId: datos.alchemer_id,
+      alchemerId: datos.alchemer_id, alchemerEnlaceId: datos.alchemer_enlace_id,
     });
     cerrarModal();
     // La pantalla de ingesta vive en Encuestas y es la misma para los dos

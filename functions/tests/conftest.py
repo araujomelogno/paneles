@@ -73,6 +73,8 @@ TABLAS_BOVEDA = [
     # y la bandeja de WhatsApp. Los avisos crudos y los estados no tienen FK.
     "encuesta_fecha_completada", "alchemer_cuestionario", "whatsapp_aviso",
     "whatsapp_entrante", "whatsapp_estado", "whatsapp_exportacion",
+    # D99 — el catálogo de Alchemer y sus sincronizaciones.
+    "alchemer_encuesta", "alchemer_sincronizacion", "alchemer_sincronizacion_pagina",
 ]
 
 # R3.14 — el catálogo de atributos **no** se trunca: `sexo`, `localidad`,
@@ -309,6 +311,16 @@ class ContextoDePrueba:
         if self._encolador is None:
             self._encolador = diferida.EncoladorEnMemoria()
         return self._encolador
+
+    _encolador_alchemer = None
+
+    @property
+    def encolador_alchemer(self):
+        from panel_api import diferida
+
+        if self._encolador_alchemer is None:
+            self._encolador_alchemer = diferida.EncoladorEnMemoria()
+        return self._encolador_alchemer
 
 
 @pytest.fixture
