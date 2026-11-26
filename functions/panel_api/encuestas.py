@@ -37,7 +37,8 @@ ORIGEN_MANUAL = "manual"
 ORIGENES = (ORIGEN_PANEL, ORIGEN_CONSULTA, ORIGEN_CARGA, ORIGEN_MANUAL)
 
 _COLUMNAS = ("id, panel_id, tipo, origen, nombre, fecha_campo, publico_objetivo, "
-             "url_alchemer, descripcion, estado, ref_estudio, creado_en, alchemer_id")
+             "url_alchemer, descripcion, estado, ref_estudio, creado_en, alchemer_id, "
+             "alchemer_enlace_id")
 
 
 def _fecha(crudo):
@@ -159,6 +160,8 @@ def _serializar(fila):
         "url_alchemer": fila.get("url_alchemer"),
         # R-ALC.2 (D97) — la encuesta de Alchemer vinculada, si la hay.
         "alchemer_id": fila.get("alchemer_id"),
+        # R-ALB.5 (D99) — qué enlace de Alchemer dio la URL.
+        "alchemer_enlace_id": fila.get("alchemer_enlace_id"),
         "estado": fila["estado"],
         "ref_estudio": str(fila["ref_estudio"]),
         "creado_en": fila["creado_en"].isoformat(),
@@ -326,11 +329,11 @@ def editar(conn, encuesta_id, cambios, conn_semantica=None):
         sincronizar_fecha(conn, conn_semantica, encuesta_id)
     salida = obtener(conn, encuesta_id, completa=True)
     if "url_alchemer" in cambios:
-        salida["avisos"] = _avisos_de_url(conn, encuesta_id, salida.get("url_alchemer"))
+        salida["avisos"] = avisos_de_url(conn, encuesta_id, salida.get("url_alchemer"))
     return salida
 
 
-def _avisos_de_url(conn, encuesta_id, url):
+def avisos_de_url(conn, encuesta_id, url):
     """R-CTL.1 — al cambiar la URL de Alchemer, los mensajes de WhatsApp con
     botón de URL que ya no coinciden: van a quedar bloqueados al enviar hasta
     revisar sus plantillas. Se comparan con la base del botón con que se

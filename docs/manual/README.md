@@ -14,6 +14,14 @@ pantalla existe desde la fase 3 y el manual nunca la había cubierto. La parte
 de reglas se documenta breve, porque lo que se agregó en esta fase es el
 optimizador.
 
+> **Búsqueda y enlaces de Alchemer · 2026-11-26.** PEDIDO de búsqueda (D99).
+> La 5.15 se reescribe: el campo acepta **la URL o el id** de la encuesta o
+> parte del título, que se busca en el **catálogo** (con «Actualizar» y su
+> avance); el selector de **enlace** se ve siempre, con nombre, estado y URL;
+> **Cambiar enlace** desde la ficha, con el aviso por las plantillas de
+> WhatsApp; y qué pasa si Alchemer tarda. Sin capturas nuevas; PDF
+> regenerado.
+
 > **Alchemer, historia de participación y bandeja de WhatsApp · 2026-11-18.**
 > `SPEC_alchemer_participacion_y_bandeja_whatsapp` (D96 a D98). La 5.1 dice
 > que la **fecha de campo es obligatoria**; la **5.15, Elegir la encuesta de

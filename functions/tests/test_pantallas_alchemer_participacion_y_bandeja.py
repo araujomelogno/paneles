@@ -99,8 +99,8 @@ def test_elegir_la_encuesta_de_alchemer_completa_nombre_y_url(pagina):
     sync_api.expect(caja.locator('[name="nombre"]')).to_have_value("Ola 4 — Consumo de bebidas")
     sync_api.expect(caja.locator('[name="url_alchemer"]')).to_have_value(
         "https://survey.alchemer.com/s3/7001234/ola-4?pid=")
-    # Un solo enlace: no hay nada que elegir.
-    sync_api.expect(caja.locator("[data-alchemer-enlace]")).to_be_hidden()
+    # Un solo enlace: el selector se ve igual (D99 · R-ALB.5), con ese enlace.
+    sync_api.expect(caja.locator("[data-alchemer-enlace] option")).to_have_count(1)
 
     # La otra no guarda el parámetro y tiene dos enlaces.
     caja.locator("[data-alchemer-buscar]").fill("")

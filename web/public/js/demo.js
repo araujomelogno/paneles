@@ -640,11 +640,27 @@ function conteosDeEncuesta(encuestaId) {
   };
 }
 
-/* R-ALC (D97) — dos encuestas de Alchemer de mentira: una guarda el
-   parámetro del panelista y la otra no, para recorrer el aviso. */
+/* R-ALC (D97) y D99 — encuestas de Alchemer de mentira: una guarda el
+   parámetro del panelista y la otra no; la 9105516 tiene los siete enlaces
+   activos (y uno cerrado) de la cuenta real; y el resto llena el catálogo. */
 const ALCHEMER_DEMO = [
+  { id: '9105516', titulo: 'AVANTI 2026 - S00726 - Evaluación de lanzamientos',
+    estado: 'Launched', modificada: '2026-11-24', captura: true,
+    enlaces: [
+      ['26582567', 'Default Link', 'Active',
+       'https://survey.alchemer.com/s3/9105516/AVANTI-2026-S00726-Evaluaci-n-de-lanzamientos'],
+      ['26582601', 'Panel', 'Active', 'https://encuestas.equipos.com.uy/s3/9105516/avanti-panel'],
+      ['26582602', 'WhatsApp', 'Active', 'https://encuestas.equipos.com.uy/s3/9105516/avanti-wa'],
+      ['26582603', 'Redes', 'Active', 'https://survey.alchemer.com/s3/9105516/avanti-redes?origen=ig'],
+      ['26582604', 'Correo masivo', 'Active', 'https://survey.alchemer.com/s3/9105516/avanti-mail'],
+      ['26582605', 'Telefónico', 'Active', 'https://encuestas.equipos.com.uy/s3/9105516/avanti-cati'],
+      ['26582606', 'Piloto', 'Active', 'https://survey.alchemer.com/s3/9105516/avanti-piloto'],
+      ['26582607', 'Prueba interna', 'Closed', 'https://survey.alchemer.com/s3/9105516/avanti-prueba'],
+    ].map(([id, nombre, estado, url]) => ({ id, nombre, estado, url })),
+    preguntas: [{ id: 2, codigo: 'P1', texto: '¿Conocía el lanzamiento?', tipo: 'cerrada',
+      opciones: { 1: 'Sí', 2: 'No' } }] },
   { id: '7001234', titulo: 'Ola 4 — Consumo de bebidas', estado: 'Launched', modificada: '2026-11-15',
-    captura: true, enlaces: [{ id: '1', nombre: 'Enlace principal',
+    captura: true, enlaces: [{ id: '1', nombre: 'Enlace principal', estado: 'Active',
       url: 'https://survey.alchemer.com/s3/7001234/ola-4' }],
     preguntas: [
       { id: 2, codigo: 'P1', texto: '¿Qué bebida consume habitualmente?', tipo: 'cerrada',
@@ -653,17 +669,66 @@ const ALCHEMER_DEMO = [
     ] },
   { id: '7005678', titulo: 'Tracking telefonía móvil', estado: 'Launched', modificada: '2026-11-10',
     captura: false, enlaces: [
-      { id: '1', nombre: 'Web', url: 'https://survey.alchemer.com/s3/7005678/telefonia' },
-      { id: '2', nombre: 'WhatsApp', url: 'https://survey.alchemer.com/s3/7005678/telefonia-wa' }],
+      { id: '1', nombre: 'Web', estado: 'Active',
+        url: 'https://survey.alchemer.com/s3/7005678/telefonia' },
+      { id: '2', nombre: 'WhatsApp', estado: 'Active',
+        url: 'https://survey.alchemer.com/s3/7005678/telefonia-wa' }],
     preguntas: [{ id: 4, codigo: 'T1', texto: '¿Qué compañía de celular usa?', tipo: 'cerrada',
       opciones: { 1: 'Antel', 2: 'Movistar', 3: 'Claro' } }] },
 ];
 const avisoAlchemerDemo = (captura) => (captura ? null
   : 'Esta encuesta no guarda el parámetro `pid`: las respuestas no van a traer el id_persona.');
 
-function vincularAlchemerDemo(encuesta, alchemerId) {
-  const a = ALCHEMER_DEMO.find((x) => x.id === String(alchemerId));
+/* D99 — el catálogo local: las de arriba y otras 40 que solo sirven para
+   buscar (cerradas una de cada tres), ya sincronizado hace dos horas. */
+const CATALOGO_ALCHEMER_DEMO = [
+  ...ALCHEMER_DEMO.map(({ id, titulo, estado, modificada }) => ({ id, titulo, estado, modificada })),
+  ...Array.from({ length: 40 }, (_, i) => ({
+    id: String(6000100 + i), titulo: `Tracking mensual ${String(i + 1).padStart(2, '0')}`,
+    estado: i % 3 === 0 ? 'Closed' : 'Launched',
+    modificada: new Date(Date.UTC(2026, 0, 1 + i * 7)).toISOString().slice(0, 10) })),
+];
+/* Para las pruebas de pantalla: `alchemerLento` deja sin respuesta los
+   pedidos que llaman a Alchemer, como un corte de 60 s. */
+export const ajustesDemo = { alchemerLento: false };
+const sincronizacionDemo = {
+  ultima: { id: 1, modo: 'completa', estado: 'terminada', paginas_total: 22,
+            paginas_procesadas: 22, avance: 1, terminada_en: diasAtras(2 / 24),
+            iniciada_en: diasAtras(2 / 24), estancada: false },
+};
+function estadoSincronizacionDemo() {
+  const u = sincronizacionDemo.ultima;
+  if (u.estado === 'en_curso') {
+    u.paginas_procesadas = Math.min(u.paginas_total, u.paginas_procesadas + 11);
+    u.avance = u.paginas_procesadas / u.paginas_total;
+    if (u.paginas_procesadas >= u.paginas_total) {
+      Object.assign(u, { estado: 'terminada', terminada_en: ahora() });
+    }
+  }
+  return { ultima: { ...u }, ultima_terminada: u.estado === 'terminada' ? { ...u } : null,
+           en_catalogo: CATALOGO_ALCHEMER_DEMO.length };
+}
+function idAlchemerDemo(texto) {
+  const t = String(texto || '').trim();
+  const m = /^(\d{4,})$/.exec(t) || /\/s\d*\/(\d{4,})/.exec(t) || /\/id\/(\d{4,})/.exec(t)
+    || /[?&]id=(\d{4,})/.exec(t);
+  if (!m) {
+    throw new ErrorDemo('No se reconoce una encuesta de Alchemer en lo que se pegó. Pegá el id '
+      + '(por ejemplo 9105516), la URL del enlace (…/s3/9105516/…) o la de edición.', 400);
+  }
+  return m[1];
+}
+const conParametroDemo = (url) => `${url}${url.includes('?') ? '&' : '?'}pid=`;
+const enlacesDemo = (a) => a.enlaces.map((e) => ({
+  ...e, activo: e.estado !== 'Closed', seguro: true, url_con_parametro: conParametroDemo(e.url) }))
+  .sort((x, y) => (x.activo === y.activo ? 0 : x.activo ? -1 : 1));
+const sinRespuesta = () => new Promise(() => {});
+
+function vincularAlchemerDemo(encuesta, alchemerId, enlaceId) {
+  const a = ALCHEMER_DEMO.find((x) => x.id === idAlchemerDemo(alchemerId));
   if (!a) throw new ErrorDemo('No existe esa encuesta en Alchemer.', 404);
+  if (encuesta.alchemer_id !== a.id) encuesta.alchemer_enlace_id = null;
+  if (enlaceId) encuesta.alchemer_enlace_id = String(enlaceId);
   encuesta.alchemer_id = a.id;
   encuesta.alchemer = {
     encuesta_id: encuesta.id, alchemer_id: a.id, titulo: a.titulo, preguntas: a.preguntas,
@@ -1719,7 +1784,8 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
         url_alchemer: (cuerpo.url_alchemer || '').trim() || null,
         clientes: clientesDemo(cuerpo.clientes),
       });
-    const vinculo = cuerpo.alchemer_id ? vincularAlchemerDemo(encuesta, cuerpo.alchemer_id) : null;
+    const vinculo = cuerpo.alchemer_id
+      ? vincularAlchemerDemo(encuesta, cuerpo.alchemer_id, cuerpo.alchemer_enlace_id) : null;
     return { ...encuestaCompleta(encuesta), ...(vinculo ? { alchemer: vinculo } : {}) };
   }
 
@@ -1791,18 +1857,63 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
 
   /* R-ALC (D97) — buscar y ver encuestas de Alchemer, vincular, actualizar
      y proponer temáticas con su cuestionario. */
+  // D99 · R-ALB.2 — el catálogo: activas por defecto, recientes primero.
   if (clave === 'GET /alchemer/encuestas') {
     const q = sinTildes(String(consulta.q || '').toLowerCase());
-    return { configurado: true, avisos: [],
-             items: ALCHEMER_DEMO.filter((a) => !q || sinTildes(a.titulo.toLowerCase()).includes(q))
-               .map(({ id, titulo, estado, modificada }) => ({ id, titulo, estado, modificada })) };
+    const todas = ['1', 'true', 1, true].includes(consulta.todas);
+    const items = CATALOGO_ALCHEMER_DEMO
+      .filter((a) => !q || sinTildes(a.titulo.toLowerCase()).includes(q) || a.id === q)
+      .filter((a) => todas || a.estado !== 'Closed')
+      .sort((x, y) => y.modificada.localeCompare(x.modificada));
+    return { configurado: true, avisos: [], items: items.slice(0, 50), hay_mas: items.length > 50,
+             en_catalogo: CATALOGO_ALCHEMER_DEMO.length, sincronizacion: estadoSincronizacionDemo() };
   }
-  if (metodo === 'GET' && partes[0] === 'alchemer' && partes[1] === 'encuestas' && partes[2]) {
+  if (clave === 'GET /alchemer/sincronizacion') return estadoSincronizacionDemo();
+  if (clave === 'POST /alchemer/sincronizacion') {
+    if (sincronizacionDemo.ultima.estado !== 'en_curso') {
+      sincronizacionDemo.ultima = { id: sincronizacionDemo.ultima.id + 1, modo: 'incremental',
+        estado: 'en_curso', paginas_total: 22, paginas_procesadas: 0, avance: 0,
+        iniciada_en: ahora(), terminada_en: null, estancada: false };
+    }
+    return { ...sincronizacionDemo.ultima };
+  }
+  // R-ALB.1 — la URL pegada o el id: una encuesta.
+  if (clave === 'POST /alchemer/resolver') {
+    if (ajustesDemo.alchemerLento) return sinRespuesta();
+    const id = idAlchemerDemo(cuerpo.texto);
+    const a = ALCHEMER_DEMO.find((x) => x.id === id);
+    if (!a) throw new ErrorDemo(`Alchemer respondió 404: no existe la encuesta ${id}.`, 409);
+    return { id: a.id, titulo: a.titulo, estado: a.estado, preguntas: a.preguntas.length,
+             parametro: 'pid', captura_parametro: a.captura, aviso: avisoAlchemerDemo(a.captura) };
+  }
+  // R-ALB.5 — sus enlaces, siempre a la vista.
+  if (metodo === 'GET' && partes[0] === 'alchemer' && partes[1] === 'encuestas'
+      && partes[3] === 'enlaces') {
+    if (ajustesDemo.alchemerLento) return sinRespuesta();
     const a = ALCHEMER_DEMO.find((x) => x.id === partes[2]);
-    if (!a) throw new ErrorDemo('No existe esa encuesta en Alchemer.', 404);
-    return { id: a.id, titulo: a.titulo, preguntas: a.preguntas.length, parametro: 'pid',
-             captura_parametro: a.captura, aviso: avisoAlchemerDemo(a.captura),
-             enlaces: a.enlaces.map((e) => ({ ...e, url_con_parametro: `${e.url}?pid=` })) };
+    return { items: a ? enlacesDemo(a) : [] };
+  }
+  if (metodo === 'POST' && partes[0] === 'encuestas' && partes[2] === 'alchemer'
+      && partes[3] === 'enlace') {
+    const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
+    const a = ALCHEMER_DEMO.find((x) => x.id === encuesta?.alchemer_id);
+    if (!a) throw new ErrorDemo('Esta encuesta no está vinculada a Alchemer.', 409);
+    const elegido = enlacesDemo(a).find((e) => e.id === String(cuerpo.enlace_id));
+    if (!elegido) throw new ErrorDemo(`La encuesta ${a.id} de Alchemer no tiene ese enlace.`, 404);
+    const nueva = elegido.url_con_parametro;
+    const afectados = bd.mensajes.filter((m) => m.encuesta_id === encuesta.id
+      && m.canal === 'whatsapp' && m.boton === 'url' && m.url_boton !== nueva);
+    const avisos = afectados.length ? [{ motivo: 'mensajes_bloqueados_por_url',
+      mensaje: `${afectados.length} mensaje(s) de WhatsApp —${afectados.map((m) => `«${m.nombre}»`)
+        .join(', ')}— llevan a otra URL: van a quedar bloqueados al enviar hasta revisar sus `
+        + 'plantillas.' }] : [];
+    if (cuerpo.solo_revisar) {
+      return { enlace: elegido, url_actual: encuesta.url_alchemer, url_nueva: nueva,
+               cambia: nueva !== encuesta.url_alchemer, avisos };
+    }
+    encuesta.url_alchemer = nueva;
+    encuesta.alchemer_enlace_id = elegido.id;
+    return { ...encuestaCompleta(encuesta), avisos, enlace: elegido };
   }
   if (partes[0] === 'encuestas' && partes[2] === 'alchemer') {
     const encuesta = bd.encuestas.find((e) => e.id === Number(partes[1]));
@@ -1898,7 +2009,9 @@ export async function responder(metodo, camino, cuerpo = {}, consulta = {}) {
       throw new ErrorDemo('La encuesta necesita su fecha de campo.', 400);
     }
     if (Array.isArray(cuerpo.clientes)) encuesta.clientes = clientesDemo(cuerpo.clientes);
-    if (cuerpo.alchemer_id) vincularAlchemerDemo(encuesta, cuerpo.alchemer_id);
+    if (cuerpo.alchemer_id) {
+      vincularAlchemerDemo(encuesta, cuerpo.alchemer_id, cuerpo.alchemer_enlace_id);
+    }
     if (cuerpo.estado === 'en_campo' && encuesta.alchemer && !encuesta.alchemer.captura_parametro) {
       return { ...encuestaCompleta(encuesta), aviso_alchemer: encuesta.alchemer.aviso };
     }

@@ -41,7 +41,7 @@
     <li><a href="#s4"><span><span class="num">4</span> Paneles</span></a>
       <ul><li>Crear · Agregar miembros · Dar de baja una membresía · Archivar</li></ul></li>
     <li><a href="#s5"><span><span class="num">5</span> Encuestas</span></a>
-      <ul><li>Crear una encuesta de panel o independiente · Filtrar el listado · Convocar · Exportar la muestra · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Enviar por WhatsApp Flow · Verificar el cruce · Calidad del dato y vista previa · Corregir y reprocesar un estudio · Varias cargas en un estudio · Encuesta desde una consulta · Borrar una encuesta o una carga · Mensajes y la lista de la encuesta · Agregar audiencia desde una consulta · Elegir la encuesta de Alchemer · Obtener las respuestas de WhatsApp</li></ul></li>
+      <ul><li>Crear una encuesta de panel o independiente · Filtrar el listado · Convocar · Exportar la muestra · Ingestar respuestas · Archivos de SPSS y alta de panelistas · Enviar por WhatsApp Flow · Verificar el cruce · Calidad del dato y vista previa · Corregir y reprocesar un estudio · Varias cargas en un estudio · Encuesta desde una consulta · Borrar una encuesta o una carga · Mensajes y la lista de la encuesta · Agregar audiencia desde una consulta · Elegir la encuesta de Alchemer (URL, catálogo y enlaces) · Obtener las respuestas de WhatsApp</li></ul></li>
     <li><a href="#s6"><span><span class="num">6</span> Consultas</span></a>
       <ul><li>Buscar por significado · El ranking y la evidencia · Columnas ·
       La ficha desde un resultado · Exclusiones · Verificación incompleta ·
@@ -2535,15 +2535,27 @@
 
   <h3><span class="n">5.15</span> Elegir la encuesta de Alchemer</h3>
 
-  <p>En los datos del estudio, en lugar de pegar la URL, se puede
-  <strong>buscar la encuesta en Alchemer</strong> por su título. Al elegirla:</p>
+  <p>En los datos del estudio, el campo <strong>Encuesta de Alchemer</strong>
+  acepta dos cosas:</p>
+  <ul>
+    <li><strong>La URL o el id de la encuesta</strong>: se pega la URL del enlace
+    (<code>…/s3/9105516/…</code>, también con el dominio propio), la de edición
+    o solo el número, y se aprieta <strong>Buscar</strong>. Es lo más rápido:
+    el sistema consulta esa sola encuesta.</li>
+    <li><strong>Parte del título</strong>: se busca en el <strong>catálogo</strong>
+    de encuestas de la cuenta, al instante. Por defecto aparecen las activas, las
+    más recientes primero; <i>Incluir las cerradas</i> muestra todas.</li>
+  </ul>
+
+  <p>Al elegirla:</p>
   <ul>
     <li>se completan el <strong>nombre</strong> (se puede cambiar) y la
     <strong>URL</strong>, ya con el parámetro del panelista al final
     (<code>?pid=</code>);</li>
-    <li>si la encuesta tiene <strong>más de un enlace</strong> publicado (por
-    ejemplo, uno para la web y otro para WhatsApp), aparece un segundo
-    desplegable para elegir cuál;</li>
+    <li>aparece el selector de <strong>enlace</strong>, aunque haya uno solo, con el
+    nombre, el estado y la URL de cada uno. La URL del estudio es la del enlace
+    elegido. Los enlaces cerrados se ven con <i>Mostrar también los enlaces
+    cerrados</i>;</li>
     <li>el sistema <strong>verifica que la encuesta guarde el parámetro</strong>
     con el <code>id_persona</code>. Si no lo guarda, avisa: <i>«Esta encuesta no
     guarda el parámetro pid: las respuestas no van a traer el id_persona.»</i>
@@ -2565,10 +2577,28 @@
   en Alchemer, <strong>Actualizar desde Alchemer</strong> la vuelve a
   traer.</p>
 
+  <p><strong>El catálogo.</strong> Debajo del buscador dice cuándo se
+  actualizó por última vez y cuántas encuestas tiene. <strong>Actualizar</strong>
+  lo vuelve a traer de Alchemer en segundo plano —la primera vez, unos minutos—
+  y muestra el avance; mientras tanto se puede seguir trabajando o pegar la URL.
+  Una encuesta recién creada en Alchemer que todavía no está en el catálogo se
+  vincula pegando su URL.</p>
+
+  <p><strong>Cambiar el enlace.</strong> Es normal crear enlaces nuevos en
+  Alchemer a medida que avanza el campo. En la ficha, la tarjeta del cuestionario
+  muestra el enlace actual y <strong>Cambiar enlace</strong>: se elige otro y el
+  sistema muestra la URL nueva. Si la encuesta tiene mensajes de WhatsApp con
+  botón a la URL anterior, lo avisa —quedan bloqueados al enviar hasta revisar
+  sus plantillas, porque cada plantilla se aprueba con una sola URL— y pide
+  confirmarlo con una casilla.</p>
+
   <div class="aviso info">
-    <div class="t">Sin la conexión con Alchemer configurada</div>
-    <p>La búsqueda lo dice y la URL se escribe a mano, como antes. La conexión
-    la configura quien administra el sistema.</p>
+    <div class="t">Si Alchemer tarda</div>
+    <p>Ningún pedido queda esperando para siempre: si Alchemer no contesta a
+    tiempo, aparece <i>«Alchemer tardó demasiado en responder.»</i> con
+    <strong>Reintentar</strong> y <strong>Pegar la URL</strong>. Sin la conexión
+    con Alchemer configurada, la búsqueda lo dice y la URL se escribe a mano; la
+    conexión la configura quien administra el sistema.</p>
   </div>
 
   <h3><span class="n">5.16</span> Obtener las respuestas de WhatsApp</h3>

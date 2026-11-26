@@ -364,6 +364,7 @@ async function renderDetalle(main, encuestaId) {
     b.onclick = () => contexto.irA('cargas', { cargaId: Number(b.dataset.carga) });
   });
 
+  $('#cambiar-enlace-alchemer')?.addEventListener('click', () => abrirCambioDeEnlace(encuesta));
   $('#actualizar-alchemer')?.addEventListener('click', async (e) => {
     e.currentTarget.disabled = true;
     try {
@@ -470,10 +471,16 @@ function tarjetaDeAlchemer(encuesta) {
   const preguntas = c?.preguntas || [];
   return `<div class="card" id="tarjeta-alchemer">
     <div class="card-header"><span class="card-header-title">Cuestionario de Alchemer</span>
-      ${puedeEditarEstudio() ? `<button class="btn btn-outline btn-sm" id="actualizar-alchemer"
-        >Actualizar desde Alchemer</button>` : ''}</div>
+      ${puedeEditarEstudio() ? `<div class="toolbar">
+        <button class="btn btn-outline btn-sm" id="cambiar-enlace-alchemer">Cambiar enlace</button>
+        <button class="btn btn-outline btn-sm" id="actualizar-alchemer"
+        >Actualizar desde Alchemer</button></div>` : ''}</div>
     <div class="card-body">
       ${c?.aviso ? alerta(c.aviso, 'warn') : ''}
+      <p class="small" id="enlace-alchemer">Enlace: ${encuesta.url_alchemer
+        ? `<code>${esc(encuesta.url_alchemer)}</code>` : '<span class="muted">sin URL</span>'}${
+        encuesta.alchemer_enlace_id ? ` <span class="muted">(enlace ${esc(encuesta.alchemer_enlace_id)})</span>`
+          : ''}</p>
       ${c ? `<p class="small">«${esc(c.titulo || '')}» · encuesta <code>${esc(c.alchemer_id)}</code>
           · ${preguntas.length} pregunta(s)${c.captura_parametro
             ? ` · guarda el parámetro <code>${esc(c.parametro)}</code>` : ''}
@@ -489,6 +496,89 @@ function tarjetaDeAlchemer(encuesta) {
         : `<p class="small muted">Vinculada a la encuesta <code>${esc(encuesta.alchemer_id)}</code>,
             pero su cuestionario todavía no se pudo traer.</p>`}
     </div></div>`;
+}
+
+/* R-ALB.5 (D99) — cambiar el enlace de Alchemer de una encuesta ya
+   vinculada: es normal crear enlaces nuevos a medida que avanza el campo.
+   Se listan todos (los activos por defecto) con nombre, estado y URL; la
+   revisión sale de la misma ruta que guarda (`solo_revisar`) y, si hay
+   mensajes de WhatsApp cuya plantilla apunta a la URL anterior, lo dice y
+   pide confirmarlo con una casilla (R-CTL.1): quedan bloqueados hasta
+   revisar sus plantillas. */
+function abrirCambioDeEnlace(encuesta) {
+  let enlaces = [];
+  let revision = null;
+  const caja = modal({
+    titulo: `Cambiar el enlace de Alchemer — ${encuesta.nombre}`,
+    ancho: '640px',
+    cuerpo: `
+      <div id="enlace-alerta"></div>
+      <p class="small">Actual: <code>${esc(encuesta.url_alchemer || '—')}</code></p>
+      <div class="form-group"><label>Enlace</label>
+        <select class="fselect" id="enlace-nuevo" disabled>
+          <option>Trayendo los enlaces de Alchemer…</option></select>
+        <label class="check small"><input type="checkbox" id="enlace-cerrados" />
+          Mostrar también los enlaces cerrados</label></div>
+      <div id="enlace-revision"></div>`,
+    acciones: [
+      { texto: 'Cancelar', clase: 'btn-outline', onClick: cerrarModal },
+      { texto: 'Guardar el enlace', clase: 'btn-orange', onClick: async (c) => {
+          const boton = $('.modal-foot [data-accion="1"]', c);
+          if (!revision?.cambia) { cerrarModal(); return; }
+          if (revision.avisos?.length && !$('#enlace-confirmo', c)?.checked) {
+            $('#enlace-alerta', c).innerHTML = alerta(
+              'Confirmá que entendés que esos mensajes quedan bloqueados hasta revisar sus plantillas.');
+            return;
+          }
+          boton.disabled = true;
+          try {
+            await api.encuestas.cambiarEnlaceAlchemer(encuesta.id, $('#enlace-nuevo', c).value);
+            cerrarModal();
+            toast('Enlace de Alchemer cambiado.', 'ok');
+            contexto.irA('encuestas', { encuestaId: encuesta.id });
+          } catch (error) {
+            $('#enlace-alerta', c).innerHTML = alerta(error.message);
+            boton.disabled = false;
+          }
+        } },
+    ],
+  });
+  const select = $('#enlace-nuevo', caja);
+  const revisar = async () => {
+    const revision$ = $('#enlace-revision', caja);
+    revision = null;
+    if (!select.value) return;
+    revision$.innerHTML = '<p class="small muted">Revisando…</p>';
+    try {
+      revision = await api.encuestas.cambiarEnlaceAlchemer(encuesta.id, select.value, true);
+      revision$.innerHTML = `<p class="small" data-enlace-nueva>Nueva: <code>${esc(revision.url_nueva)}</code>${
+        revision.cambia ? '' : ' <span class="muted">(es la misma)</span>'}</p>
+        ${(revision.avisos || []).map((a) => alerta(a.mensaje, 'warn')).join('')}
+        ${revision.avisos?.length ? `<label class="check small"><input type="checkbox" id="enlace-confirmo" />
+          Entiendo: esos mensajes quedan bloqueados al enviar hasta revisar sus plantillas.</label>` : ''}`;
+    } catch (error) {
+      revision$.innerHTML = alerta(error.message, 'warn');
+    }
+  };
+  const pintar = () => {
+    const visibles = enlaces.filter((e) => e.activo || $('#enlace-cerrados', caja).checked
+      || e.id === encuesta.alchemer_enlace_id);
+    select.innerHTML = visibles.map((e) => `<option value="${esc(e.id)}" ${
+      e.id === encuesta.alchemer_enlace_id ? 'selected' : ''}>${esc(e.nombre)} · ${
+      esc(e.estado || '—')} · ${esc(e.url)}</option>`).join('');
+    select.disabled = !visibles.length;
+    revisar();
+  };
+  select.onchange = revisar;
+  $('#enlace-cerrados', caja).onchange = pintar;
+  api.alchemer.enlaces(encuesta.alchemer_id)
+    .then((d) => { enlaces = d.items || []; pintar(); })
+    .catch((error) => {
+      select.innerHTML = '';
+      $('#enlace-alerta', caja).innerHTML = alerta(
+        `${error.message} Probá de nuevo en un momento.`, 'warn');
+    });
+  return caja;
 }
 
 /* R-WA.6 (D98) — «Obtener respuestas de WhatsApp». Solo aparece si la

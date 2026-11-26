@@ -96,6 +96,8 @@ NO_SON_SECRETOS = frozenset({
     # el nombre del parámetro del panelista. Las credenciales sí van
     # declaradas: `ALCHEMER_API_TOKEN` y `ALCHEMER_API_SECRET`.
     "ALCHEMER_REGION", "ALCHEMER_API_URL", "ALCHEMER_PARAMETRO",
+    # D99 · R-ALB.3 — cuánto se espera a Alchemer en una llamada.
+    "ALCHEMER_TIEMPO_S",
     # R-WA.5 (D98) — cuánto se conserva lo de afuera y el aviso crudo. Son
     # plazos de conservación, no credenciales.
     "WHATSAPP_CONSERVAR_AFUERA_DIAS", "WHATSAPP_CONSERVAR_AVISO_DIAS",

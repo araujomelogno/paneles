@@ -6001,3 +6001,70 @@ lista de secciones se desplaza sola.
 `web/public/js/paginas/encuestas.js`, `web/public/js/app.js`,
 `web/public/js/demo.js`. Pruebas: `functions/tests/test_bandeja_whatsapp.py`,
 `functions/tests/test_pantallas_alchemer_participacion_y_bandeja.py`.
+
+## D99 · Alchemer: pegar la URL, un catálogo local y los enlaces bien leídos
+
+`specs/PEDIDO_busqueda_alchemer.md`. Con la cuenta real la búsqueda de D97 no
+se podía usar: bajaba la lista entera de la API (de a 100, hasta 10 páginas a
+~8 s cada una) y recién después filtraba. Se pasaba de los 60 s de Hosting,
+la pantalla quedaba girando y, con el tope de 10 páginas sobre 22, las
+encuestas recientes nunca se buscaban. Y los enlaces de una encuesta no
+aparecían: se filtraba por `type` (el tipo del **objeto**, `SurveyCampaign`)
+en lugar de `link_type`, y la `uri` viene sin esquema.
+
+- **R-ALB.1 — pegar la URL o el id.** `alchemer.id_de` reconoce el id solo,
+  la URL pública (`…/s3/9105516/…`, también con el dominio propio) y la de
+  edición (`…/id/9105516`, `?id=`); lo que no reconoce es error, no un
+  número adivinado. `POST /alchemer/resolver` consulta **esa sola encuesta**:
+  una llamada. `vincular` acepta lo mismo.
+- **R-ALB.2 — un catálogo local** (`alchemer_encuesta`, `boveda/0039`): id,
+  título (y su forma sin tildes), estado y fechas. Ni cuestionario ni
+  respuestas. La búsqueda es una consulta a esa tabla: al instante, sin
+  llamar a Alchemer, activas por defecto (todo lo que no está cerrado,
+  archivado o borrado: una en diseño también se vincula), las más recientes
+  primero, con «Incluir las cerradas».
+- **La sincronización corre en segundo plano, una página por tarea**, por la
+  cola de la ingesta (`procesaringesta`, que despacha por `tipo`): sin cola
+  ni secreto nuevos. La página 1 dice cuántas hay y encola el resto, sin
+  tope. El avance se deriva de `alchemer_sincronizacion_pagina`. Una sola
+  en curso, garantizada por un índice único parcial; pedir otra la devuelve,
+  y si está **estancada** (15 minutos sin páginas) la reanuda. Lo transitorio
+  (tiempo, red, 5xx, 429) se propaga para que Cloud Tasks reintente; lo demás
+  deja la página `fallida`. Una completa sin fallas borra del catálogo lo que
+  no vio (encuestas borradas en Alchemer); con fallas o incremental, no
+  borra nada. Al vincular, la fila de esa encuesta se refresca con la misma
+  respuesta.
+- **R-ALB.4 — incremental, comprobada.** La documentación de la API v5 no se
+  pudo consultar al escribir esto (el dominio de la ayuda de Alchemer no
+  resolvía desde el entorno de desarrollo), así que el filtro por
+  `modified_on` **no se da por bueno**: si Alchemer lo rechaza, o devuelve
+  una encuesta anterior a la fecha pedida, la corrida pasa a completa y lo
+  anota (`filtro = rechazado | ignorado`; `aplicado` si sirvió). Se pide
+  desde la última modificación del catálogo menos dos días: las fechas de
+  Alchemer no traen zona horaria.
+- **R-ALB.3 — nada gira para siempre.** Una llamada a Alchemer espera como
+  mucho `ALCHEMER_TIEMPO_S` (20 s); pasarse es `motivo = alchemer_tiempo`
+  con *«Alchemer tardó demasiado en responder.»*. La pantalla pone su propio
+  tiempo máximo (30 s) y muestra el error con **Reintentar** y **Pegar la
+  URL**. Ningún pedido de la pantalla hace más de una llamada: resolver y
+  traer los enlaces son dos pedidos. La única excepción documentada es una
+  encuesta cuya respuesta no trae páginas: sus preguntas se piden aparte.
+- **R-ALB.5 — los enlaces.** Se filtra por `link_type == "link"` (por
+  `type` solo si falta), la URL se arma con `https://` si `SSL` es verdadero
+  (`http://` si no, y se marca porque paneles no la acepta), el parámetro va
+  con `&` si la URL ya tiene consulta, y el nombre sin espacios sobrantes. El
+  selector **se ve siempre**, con nombre, estado y URL; los cerrados, con un
+  filtro. Se guarda **qué enlace** se eligió (`encuesta.alchemer_enlace_id`).
+  Desde la ficha, **Cambiar enlace** relee la URL de Alchemer por el id del
+  enlace (no toma la que manda la pantalla), y la revisión —que sale de la
+  misma ruta, `solo_revisar`— avisa qué mensajes de WhatsApp quedan
+  bloqueados (R-CTL.1, `encuestas.avisos_de_url`); en la pantalla se confirma
+  con una casilla.
+
+**Dónde vive.** `db/boveda/0039_catalogo_y_enlaces_de_alchemer.sql`,
+`functions/panel_api/alchemer.py`, `alchemer_catalogo.py`, `diferida.py`
+(`EncoladorCloudTasks(tipo=…)`), `functions/main.py` (`procesaringesta`),
+`ruteo.py`, `web/public/js/estudio.js`, `api.js` (tiempo máximo),
+`web/public/js/paginas/encuestas.js`, `demo.js`. Pruebas:
+`functions/tests/test_pedido_busqueda_alchemer.py`,
+`functions/tests/test_pantallas_busqueda_alchemer.py`.

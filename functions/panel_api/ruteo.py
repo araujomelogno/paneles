@@ -11,6 +11,7 @@ import re
 
 from . import (
     alchemer,
+    alchemer_catalogo,
     bandeja_whatsapp,
     canales_carga,
     atributos,
@@ -587,8 +588,9 @@ def crear_encuesta(ctx, actor, params, cuerpo, consulta):
         # R-ALC.2/3 (D97) — la encuesta elegida de Alchemer: se guarda su id y
         # su cuestionario. Si no captura el parámetro, se avisa y la encuesta
         # se guarda igual.
-        resultado["alchemer"] = alchemer.vincular(ctx.boveda, resultado["id"],
-                                                  cuerpo["alchemer_id"])
+        resultado["alchemer"] = alchemer.vincular(
+            ctx.boveda, resultado["id"], cuerpo["alchemer_id"],
+            enlace_id=cuerpo.get("alchemer_enlace_id"))
     ctx.boveda.commit()
     return 201, resultado
 
@@ -630,9 +632,11 @@ def cambiar_encuesta(ctx, actor, params, cuerpo, consulta):
             # a campo: la encuesta de Alchemer pudo cambiar.
             aviso_alchemer = alchemer.verificar_para_campo(ctx.boveda, encuesta_id)
     if cuerpo.get("alchemer_id"):
-        vinculo = alchemer.vincular(ctx.boveda, encuesta_id, cuerpo["alchemer_id"])
+        vinculo = alchemer.vincular(ctx.boveda, encuesta_id, cuerpo["alchemer_id"],
+                                    enlace_id=cuerpo.get("alchemer_enlace_id"))
         resultado = resultado or encuestas.obtener(ctx.boveda, encuesta_id)
-    datos = {k: v for k, v in cuerpo.items() if k not in ("estado", "alchemer_id")}
+    datos = {k: v for k, v in cuerpo.items()
+             if k not in ("estado", "alchemer_id", "alchemer_enlace_id")}
     if datos:
         resultado = encuestas.editar(
             ctx.boveda, encuesta_id, datos,
@@ -653,28 +657,98 @@ def cambiar_encuesta(ctx, actor, params, cuerpo, consulta):
 #  R-ALC (D97) · Alchemer al crear una encuesta
 # ════════════════════════════════════════════════════════════════════
 
-@ruta("GET", "/alchemer/encuestas", "fieldear", requisito="R-ALC.2")
-def buscar_en_alchemer(ctx, actor, params, cuerpo, consulta):
-    """Las encuestas de la cuenta de Alchemer cuyo título contiene `q`.
-    Sin credenciales, la lista vacía y el aviso: la URL se escribe a mano."""
-    return 200, alchemer.buscar_encuestas(consulta.get("q"))
-
-
-@ruta("GET", "/alchemer/encuestas/<alchemer_id>", "fieldear", requisito="R-ALC.2, R-ALC.3")
-def ver_en_alchemer(ctx, actor, params, cuerpo, consulta):
-    """Los enlaces de una encuesta de Alchemer (con la URL ya armada con el
-    parámetro) y si guarda el parámetro del panelista. No guarda nada."""
+def _con_alchemer(funcion, *args, **kwargs):
+    """Sin credenciales es un 409 con su motivo, no un 500."""
     try:
-        traido = alchemer.cuestionario(params["alchemer_id"])
-        links = alchemer.enlaces(params["alchemer_id"])
+        return funcion(*args, **kwargs)
     except alchemer.SinConfigurar as error:
         raise Conflicto(str(error), {"motivo": "alchemer_sin_configurar"}) from None
-    return 200, {"id": params["alchemer_id"], "titulo": traido["titulo"],
-                 "enlaces": links, "preguntas": len(traido["preguntas"]),
+
+
+@ruta("GET", "/alchemer/encuestas", "fieldear", requisito="R-ALB.2, R-ALC.2")
+def buscar_en_alchemer(ctx, actor, params, cuerpo, consulta):
+    """D99 · R-ALB.2 — busca en el **catálogo local**, sin llamar a
+    Alchemer: al instante e incluyendo las encuestas de las últimas páginas
+    de la API. Por defecto las activas; `todas=1`, también las cerradas.
+    Trae el estado de la sincronización para mostrar «Actualizado …»."""
+    if not alchemer.configurado():
+        return 200, {"configurado": False, "items": [], "hay_mas": False,
+                     "en_catalogo": 0, "sincronizacion": None,
+                     "avisos": [alchemer.AVISO_SIN_CREDENCIALES]}
+    salida = alchemer_catalogo.buscar(ctx.boveda, consulta.get("q"),
+                                      todas=consulta.get("todas") in ("1", "true", True))
+    sincronizacion = alchemer_catalogo.estado(ctx.boveda)
+    return 200, {"configurado": True, **salida, "sincronizacion": sincronizacion,
+                 "avisos": [] if sincronizacion["en_catalogo"]
+                 else [alchemer_catalogo.AVISO_CATALOGO_VACIO]}
+
+
+@ruta("POST", "/alchemer/resolver", "fieldear", requisito="R-ALB.1, R-ALC.3")
+def resolver_en_alchemer(ctx, actor, params, cuerpo, consulta):
+    """D99 · R-ALB.1 — la encuesta a partir de lo que se pegó (la URL del
+    enlace, la de edición o el id) o de lo que se eligió del catálogo:
+    **una llamada** a Alchemer (`GET /survey/{id}`). Devuelve título,
+    estado, cuántas preguntas y si guarda el parámetro. No vincula nada."""
+    alchemer_id = alchemer.id_de(alchemer_catalogo.exigir_texto((cuerpo or {}).get("texto")))
+    traido = _con_alchemer(alchemer.cuestionario, alchemer_id)
+    return 200, {"id": traido["alchemer_id"], "titulo": traido["titulo"],
+                 "estado": traido["estado"], "preguntas": len(traido["preguntas"]),
                  "parametro": traido["parametro"],
                  "captura_parametro": traido["captura_parametro"],
                  "aviso": alchemer.aviso_de_parametro(traido["captura_parametro"],
                                                       traido["parametro"])}
+
+
+@ruta("GET", "/alchemer/encuestas/<alchemer_id>/enlaces", "fieldear", requisito="R-ALB.5")
+def enlaces_en_alchemer(ctx, actor, params, cuerpo, consulta):
+    """D99 · R-ALB.5 — los enlaces de una encuesta (**una llamada**), con su
+    nombre, estado y URL completa con el parámetro."""
+    alchemer_id = alchemer.id_de(params["alchemer_id"])
+    return 200, {"items": _con_alchemer(alchemer.enlaces, alchemer_id)}
+
+
+@ruta("GET", "/alchemer/sincronizacion", "fieldear", requisito="R-ALB.2")
+def estado_de_sincronizacion(ctx, actor, params, cuerpo, consulta):
+    """El avance de la sincronización del catálogo, derivado de sus páginas."""
+    return 200, alchemer_catalogo.estado(ctx.boveda)
+
+
+@ruta("POST", "/alchemer/sincronizacion", "fieldear", requisito="R-ALB.2")
+def lanzar_sincronizacion(ctx, actor, params, cuerpo, consulta):
+    """«Actualizar»: encola la sincronización del catálogo (en segundo plano,
+    una página de la API por tarea). Si hay una en curso la devuelve, y si
+    quedó estancada la reanuda."""
+    salida = _con_alchemer(alchemer_catalogo.lanzar, ctx.boveda, actor=actor,
+                           encolador=ctx.encolador_alchemer)
+    return 202, salida
+
+
+@ruta("POST", "/encuestas/<encuesta_id>/alchemer/enlace", "fieldear", requisito="R-ALB.5")
+def cambiar_enlace_de_alchemer(ctx, actor, params, cuerpo, consulta):
+    """D99 · R-ALB.5 — cambia el enlace de Alchemer de una encuesta ya
+    vinculada. La URL se relee de Alchemer por el id del enlace (no se toma
+    la que manda la pantalla). Con `solo_revisar` devuelve qué cambiaría
+    —y qué mensajes de WhatsApp quedarían bloqueados (R-CTL.1)— sin guardar:
+    la revisión sale de la misma ruta que guarda."""
+    encuesta_id = _entero(params["encuesta_id"])
+    cuerpo = cuerpo or {}
+    encuesta = encuestas.obtener(ctx.boveda, encuesta_id)
+    if not encuesta.get("alchemer_id"):
+        raise Conflicto("Esta encuesta no está vinculada a Alchemer.",
+                        {"motivo": "sin_alchemer"})
+    if not cuerpo.get("enlace_id"):
+        raise DatosInvalidos("Elegí un enlace.", {"campo": "enlace_id"})
+    elegido = _con_alchemer(alchemer.enlace, encuesta["alchemer_id"], cuerpo["enlace_id"])
+    nueva = elegido["url_con_parametro"]
+    if cuerpo.get("solo_revisar"):
+        return 200, {"enlace": elegido, "url_actual": encuesta.get("url_alchemer"),
+                     "url_nueva": nueva, "cambia": nueva != encuesta.get("url_alchemer"),
+                     "avisos": encuestas.avisos_de_url(ctx.boveda, encuesta_id, nueva)}
+    salida = encuestas.editar(ctx.boveda, encuesta_id, {"url_alchemer": nueva})
+    db.ejecutar(ctx.boveda, "update encuesta set alchemer_enlace_id = %s where id = %s",
+                (elegido["id"], encuesta_id))
+    ctx.boveda.commit()
+    return 200, {**salida, "alchemer_enlace_id": elegido["id"], "enlace": elegido}
 
 
 @ruta("POST", "/encuestas/<encuesta_id>/alchemer", "fieldear", requisito="R-ALC.2, R-ALC.4")
@@ -821,7 +895,8 @@ def encuesta_desde_consulta(ctx, actor, params, cuerpo, consulta):
         cantidad=cuerpo.get("cantidad"), url_alchemer=cuerpo.get("url_alchemer"))
     if cuerpo.get("alchemer_id"):
         # R-ALC.2 (D97) — vinculada a la encuesta de Alchemer elegida.
-        salida["alchemer"] = alchemer.vincular(ctx.boveda, salida["id"], cuerpo["alchemer_id"])
+        salida["alchemer"] = alchemer.vincular(ctx.boveda, salida["id"], cuerpo["alchemer_id"],
+                                               enlace_id=cuerpo.get("alchemer_enlace_id"))
     ctx.boveda.commit()
     return 201, salida
 
@@ -2005,7 +2080,8 @@ def crear_carga(ctx, actor, params, cuerpo, consulta):
     if cuerpo.get("alchemer_id"):
         # R-ALC.2 (D97) — la encuesta automática, vinculada a la de Alchemer.
         salida["alchemer"] = alchemer.vincular(ctx.boveda, carga["encuesta_id"],
-                                               cuerpo["alchemer_id"])
+                                               cuerpo["alchemer_id"],
+                                               enlace_id=cuerpo.get("alchemer_enlace_id"))
     ctx.boveda.commit()
     return 201, salida
 

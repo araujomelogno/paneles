@@ -111,6 +111,14 @@ class Contexto:
         return self._encolador
 
     @property
+    def encolador_alchemer(self):
+        """D99 — la sincronización del catálogo de Alchemer: la misma cola
+        que la ingesta, con su `tipo`."""
+        from . import alchemer_catalogo
+
+        return alchemer_catalogo.crear_encolador()
+
+    @property
     def proponente_tematicas(self):
         if self._proponente_tematicas is None:
             from . import tematicas

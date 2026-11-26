@@ -58,7 +58,9 @@ FASES_CON_PANTALLA = ("R7.", "R8.",
                       # SPEC_alchemer_participacion_y_bandeja_whatsapp (D97,
                       # D98) — Alchemer al crear la encuesta y la bandeja de
                       # WhatsApp.
-                      "R-ALC.", "R-WA.")
+                      "R-ALC.", "R-WA.",
+                      # PEDIDO de búsqueda y enlaces de Alchemer (D99).
+                      "R-ALB.")
 
 # Rutas de estas fases que **no** tienen pantalla, con el motivo. Vacío hoy;
 # si alguna vez hace falta, el motivo va escrito acá y no en la memoria de

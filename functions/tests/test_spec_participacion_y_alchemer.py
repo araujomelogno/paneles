@@ -296,20 +296,30 @@ def test_la_region_elige_la_api_y_ningun_nombre_usa_un_prefijo_reservado():
 
 
 def test_buscar_y_ver_una_encuesta_de_alchemer(ctx, actor, api_alchemer):
+    """Desde D99 la búsqueda es contra el catálogo (sincronizado en segundo
+    plano) y ver una encuesta y sus enlaces son dos pedidos de una llamada
+    cada uno (`test_pedido_busqueda_alchemer.py`)."""
+    from panel_api import alchemer_catalogo
+
+    _, salida = ruteo.despachar("POST", "/alchemer/sincronizacion", {}, {}, actor("admin"), ctx)
+    alchemer_catalogo.procesar_pagina(ctx.boveda, salida["id"], 1,
+                                      encolador=ctx.encolador_alchemer)
     status, salida = ruteo.despachar("GET", "/alchemer/encuestas", None, {"q": "BEBIDAS"},
                                      actor("analista"), ctx)
     assert status == 200 and [i["id"] for i in salida["items"]] == ["7001"]
     # Las credenciales viajan en la consulta a Alchemer, nunca de vuelta.
-    assert "tok" not in json.dumps(salida)
+    assert "tok" not in json.dumps(salida, default=str)
 
-    status, vista = ruteo.despachar("GET", "/alchemer/encuestas/7002", None, {},
+    status, vista = ruteo.despachar("POST", "/alchemer/resolver", {"texto": "7002"}, {},
                                     actor("analista"), ctx)
     assert status == 200
-    # Dos enlaces (el de correo no es un enlace): la pantalla obliga a elegir.
-    assert [e["url_con_parametro"] for e in vista["enlaces"]] == [
-        "https://s.alchemer.com/s3/7002/w?pid=", "https://s.alchemer.com/s3/7002/wa?pid="]
     assert vista["captura_parametro"] is False and "no guarda el parámetro" in vista["aviso"]
     assert vista["preguntas"] == 2                      # sin las instrucciones
+    # Dos enlaces (el de correo no es un enlace).
+    _, enlaces = ruteo.despachar("GET", "/alchemer/encuestas/7002/enlaces", None, {},
+                                 actor("analista"), ctx)
+    assert [e["url_con_parametro"] for e in enlaces["items"]] == [
+        "https://s.alchemer.com/s3/7002/w?pid=", "https://s.alchemer.com/s3/7002/wa?pid="]
 
 
 def test_una_encuesta_que_no_guarda_el_parametro_se_avisa_y_se_guarda_igual(

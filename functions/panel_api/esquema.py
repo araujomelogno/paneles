@@ -237,6 +237,10 @@ MIGRACIONES_BOVEDA = (
         "whatsapp_aviso", "whatsapp_entrante", "whatsapp_estado",
         "whatsapp_exportacion",
     )),
+    ("0039_catalogo_y_enlaces_de_alchemer.sql", (
+        "encuesta.alchemer_enlace_id", "alchemer_encuesta", "alchemer_sincronizacion",
+        "alchemer_sincronizacion_pagina",
+    )),
 )
 
 # Objetos que una migración creó y una posterior **retiró** (los tiró sin
